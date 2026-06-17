@@ -1,8 +1,7 @@
 {
   "name": "hyperpowers",
-  "version": "6.0.0",
-  "description": "Hyperpowers skills and runtime bootstrap for coding agents",
-  "type": "module",
+  "version": "6.0.2",
+  "description": "Hyperpowers skills and runtime bootstrap for coding agents",  "type": "module",
   "main": ".opencode/plugins/hyperpowers.js",
   "keywords": [
     "pi-package",

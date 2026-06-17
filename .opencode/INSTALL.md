@@ -105,4 +105,4 @@ Skills speak in actions ("create a todo", "dispatch a subagent", "read a file").
 ## Getting Help
 
 - Report issues: https://github.com/scott-arne/hyperpowers/issues
-- Full documentation: https://github.com/scott-arne/hyperpowers/blob/main/docs/README.opencode.md
+- Full documentation: https://github.com/scott-arne/hyperpowers/blob/master/docs/README.opencode.md

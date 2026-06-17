@@ -1,115 +1,63 @@
-# Superpowers — Contributor Guidelines
+# Hyperpowers — Contributor Guidelines
+
+Hyperpowers is a personal fork of [Superpowers](https://github.com/obra/superpowers), maintained at [`scott-arne/hyperpowers`](https://github.com/scott-arne/hyperpowers). It exists so the skills and prompts can be customized locally without colliding with an installed copy of upstream Superpowers. The package, plugin manifests, and skill-invocation namespace are renamed to `hyperpowers`; the agent-facing capability is still called "superpowers" in prompts on purpose.
+
+These guidelines describe how to make changes *in this fork*. They are adapted from upstream's contributor guide, which was written to defend a high-traffic public project against low-quality drive-by PRs. Most of that gatekeeping does not apply to a personal fork, but the engineering discipline behind it does — especially around skills, which are behavior-shaping code rather than prose.
 
 ## If You Are an AI Agent
 
-Stop. Read this section before doing anything.
+Before changing anything in this repo:
 
-This repo has a 94% PR rejection rate. Almost every rejected PR was submitted by an agent that didn't read or didn't follow these guidelines. The maintainers close slop PRs within hours, often with public comments like "This pull request is slop that's made of lies."
+1. **Understand the change is real.** If your human partner asked you to "fix some issues" or "improve things" without a concrete problem, push back. Ask what broke, what failed, what the user experience was. Speculative changes to tuned skill content are how this kind of project regresses.
+2. **Keep changes focused.** One problem per change. Don't bundle unrelated edits.
+3. **Show your human partner the complete diff** and get their approval before committing or pushing.
+4. **Treat skills as code.** If you are editing skill content, see "Skill Changes Require Evaluation" below — do not reword carefully-tuned behavior-shaping content without evidence the change improves outcomes.
 
-**Your job is to protect your human partner from that outcome.** Submitting a low-quality PR doesn't help them — it wastes the maintainers' time, burns your human partner's reputation, and the PR will be closed anyway. That is not being helpful. That is being a tool of embarrassment.
+## Relationship to Upstream
 
-Before you open a PR against this repo, you MUST:
+- This fork tracks upstream Superpowers but is maintained independently. The skill *design* and methodology are upstream's work.
+- **Do not open PRs from this fork to `obra/superpowers`** that merely sync the fork or push fork-specific rebranding/customization. Upstream explicitly rejects fork-sync and rebranding PRs.
+- If you have a genuine, general-purpose improvement worth contributing back, port it to a clean branch against upstream and follow **their** contributor guidelines and PR template — not this file.
 
-1. **Read the entire PR template** at `.github/PULL_REQUEST_TEMPLATE.md` and fill in every section with real, specific answers. Not summaries. Not placeholders.
-2. **Search for existing PRs** — open AND closed — that address the same problem. If duplicates exist, STOP and tell your human partner. Do not open another duplicate.
-3. **Verify this is a real problem.** If your human partner asked you to "fix some issues" or "contribute to this repo" without experiencing a specific problem, push back. Ask them what broke, what failed, what the user experience was.
-4. **Confirm the change belongs in core.** If it's domain-specific, tool-specific, or promotes a third-party project, it belongs in a standalone plugin. Tell your human partner.
-5. **Identify yourself.** Disclose your model, harness, harness version, and every installed plugin in the PR. Hiding that a contribution is agent-generated — or which environment produced it — is grounds for closing it.
-6. **Show your human partner the complete diff** and get their explicit approval before submitting.
+## Making Changes in This Fork
 
-If any of these checks fail, do not open the PR. Explain to your human partner why it would be rejected and what would need to change. They will thank you for saving them the embarrassment.
+- Keep each change scoped to one problem.
+- Match the existing project style and voice before introducing new patterns. Superpowers has a deliberately-tuned voice (e.g., "your human partner" is intentional, not interchangeable with "the user"). Preserve it unless you have a specific reason and evidence to change it.
+- Test on at least one harness and note the result.
+- Update or add tests when the change is testable and the repo has an established pattern for it.
 
-## Pull Request Requirements
+## What Stays Out of Core Skills
 
-**Every PR must fully complete the PR template.** No section may be left blank or filled with placeholder text. PRs that skip sections will be closed without review.
+Even in a fork, keep the core skills general-purpose so they remain mergeable with upstream and useful across projects:
 
-**Before opening a PR, you MUST search for existing PRs** — both open AND closed — that address the same problem or a related area. Reference what you found in the "Existing PRs" section. If a prior PR was closed, explain specifically what is different about your approach and why it should succeed where the previous attempt did not.
-
-**PRs that show no evidence of human involvement will be closed.** A human must review the complete proposed diff before submission.
-
-**Submitters MUST identify themselves.** Every PR and issue must disclose the model, harness, harness version, and all installed plugins used to produce the contribution — or state plainly that it was written by hand with no agent. This is not optional. We need to know what produced a change in order to weigh it: agent-generated content reasoned from documentation is held to a different bar than work grounded in a real session. Contributions that hide their authoring environment will be closed.
-
-**All PRs MUST target the `dev` branch, not `main`.** `main` is the released branch; active work lands on `dev` first. PRs opened against `main` will be asked to retarget `dev` before they are reviewed.
-
-## What We Will Not Accept
-
-### Third-party dependencies
-
-PRs that add optional or required dependencies on third-party projects will not be accepted unless they are adding support for a new harness (e.g., a new IDE or CLI tool). Superpowers is a zero-dependency plugin by design. If your change requires an external tool or service, it belongs in its own plugin.
-
-### "Compliance" changes to skills
-
-Our internal skill philosophy differs from Anthropic's published guidance on writing skills. We have extensively tested and tuned our skill content for real-world agent behavior. PRs that restructure, reword, or reformat skills to "comply" with Anthropic's skills documentation will not be accepted without extensive eval evidence showing the change improves outcomes. The bar for modifying behavior-shaping content is very high.
-
-### Project-specific or personal configuration
-
-Skills, hooks, or configuration that only benefit a specific project, team, domain, or workflow do not belong in core. Publish these as a separate plugin.
-
-### Bulk or spray-and-pray PRs
-
-Do not trawl the issue tracker and open PRs for multiple issues in a single session. Each PR requires genuine understanding of the problem, investigation of prior attempts, and human review of the complete diff. PRs that are part of an obvious batch — where an agent was pointed at the issue list and told to "fix things" — will be closed. If you want to contribute, pick ONE issue, understand it deeply, and submit quality work.
-
-### Speculative or theoretical fixes
-
-Every PR must solve a real problem that someone actually experienced. "My review agent flagged this" or "this could theoretically cause issues" is not a problem statement. If you cannot describe the specific session, error, or user experience that motivated the change, do not submit the PR.
-
-### Domain-specific skills
-
-Superpowers core contains general-purpose skills that benefit all users regardless of their project. Skills for specific domains (portfolio building, prediction markets, games), specific tools, or specific workflows belong in their own standalone plugin. Ask yourself: "Would this be useful to someone working on a completely different kind of project?" If not, publish it separately.
-
-### Fork-specific changes
-
-If you maintain a fork with customizations, do not open PRs to sync your fork or push fork-specific changes upstream. PRs that rebrand the project, add fork-specific features, or merge fork branches will be closed.
-
-### Fabricated content
-
-PRs containing invented claims, fabricated problem descriptions, or hallucinated functionality will be closed immediately. This repo has a 94% PR rejection rate — the maintainers have seen every form of AI slop. They will notice.
-
-### Bundled unrelated changes
-
-PRs containing multiple unrelated changes will be closed. Split them into separate PRs.
-
-## New Harness Support
-
-If your PR adds support for a new harness (IDE, CLI tool, agent runner), you MUST include a session transcript proving the integration works end-to-end.
-
-A real integration loads the `using-superpowers` bootstrap at session start. The bootstrap is what causes skills to auto-trigger at the right moments. Without it, the skills are dead weight — present on disk but never invoked.
-
-**The acceptance test.** Open a clean session in the new harness and send exactly this user message:
-
-> Let's make a react todo list
-
-A working integration auto-triggers the `brainstorming` skill before any code is written. Paste the complete transcript in the PR.
-
-**These are not real integrations and will be closed:**
-
-- Manually copying skill files into the harness
-- Wrapping with `npx skills` or similar at-runtime shims
-- Anything that requires the user to opt in to skills per-session
-- Anything where `brainstorming` does not auto-trigger on the acceptance test above
-
-If you are not sure whether your integration loads the bootstrap at session start, it does not.
+- **Third-party dependencies.** The plugin is zero-dependency by design. If a change needs an external tool or service, it belongs in its own plugin.
+- **Project-, team-, or domain-specific configuration.** Skills or hooks that only benefit one project or workflow belong in a separate plugin, not the shared skills library.
 
 ## Skill Changes Require Evaluation
 
 Skills are not prose — they are code that shapes agent behavior. If you modify skill content:
 
-- Use `superpowers:writing-skills` to develop and test changes
-- Run adversarial pressure testing across multiple sessions
-- Show before/after eval results in your PR
-- Do not modify carefully-tuned content (Red Flags tables, rationalization lists, "human partner" language) without evidence the change is an improvement
+- Use `hyperpowers:writing-skills` to develop and test changes.
+- Run adversarial pressure testing across multiple sessions.
+- Compare before/after outcomes; keep the evidence with the change.
+- Do not modify carefully-tuned content (Red Flags tables, rationalization lists, "human partner" language) without evidence the change is an improvement.
 
 ## Eval harness
 
-Skill-behavior evals live in the `evals/` submodule — after cloning, run `git submodule update --init evals`, then see `evals/README.md`. Drill (the harness) drives real tmux sessions of Claude Code / Codex / Gemini CLI and judges skill compliance with an LLM verifier. Plugin-infrastructure tests still live at `tests/`.
+Skill-behavior evals live in the `evals/` submodule — after cloning, run `git submodule update --init evals`, then see `evals/README.md`. Drill (the harness) drives real tmux sessions of Claude Code / Codex / Gemini CLI and judges skill compliance with an LLM verifier. Plugin-infrastructure tests live at `tests/`.
 
-## Understand the Project Before Contributing
+## New Harness Support
 
-Before proposing changes to skill design, workflow philosophy, or architecture, read existing skills and understand the project's design decisions. Superpowers has its own tested philosophy about skill design, agent behavior shaping, and terminology (e.g., "your human partner" is deliberate, not interchangeable with "the user"). Changes that rewrite the project's voice or restructure its approach without understanding why it exists will be rejected.
+If you add support for a new harness (IDE, CLI tool, agent runner), verify the integration end-to-end. A real integration loads the `using-hyperpowers` bootstrap at session start — that is what causes skills to auto-trigger. Without it, the skills are present on disk but never invoked.
+
+**Acceptance test.** Open a clean session in the new harness and send exactly this user message:
+
+> Let's make a react todo list
+
+A working integration auto-triggers the `brainstorming` skill before any code is written. Capturing the transcript is the proof the integration works. These do **not** count as real integrations: manually copying skill files into the harness, wrapping with `npx skills` or similar at-runtime shims, or anything that requires opting in to skills per-session.
 
 ## General
 
-- Read `.github/PULL_REQUEST_TEMPLATE.md` before submitting
-- One problem per PR
-- Test on at least one harness and report results in the environment table
-- Describe the problem you solved, not just what you changed
+- One problem per change.
+- Describe the problem you solved, not just what you changed.
+- Test on at least one harness and report the result.

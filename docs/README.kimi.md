@@ -1,29 +1,21 @@
-# Superpowers for Kimi Code
+# Hyperpowers for Kimi Code
 
-Complete guide for using Superpowers with [Kimi Code](https://github.com/MoonshotAI/kimi-code).
+Complete guide for using Hyperpowers with [Kimi Code](https://github.com/MoonshotAI/kimi-code).
+
+Hyperpowers is a fork of [Superpowers](https://github.com/obra/superpowers); see the [top-level README](../README.md) for the relationship to upstream.
 
 ## Installation
 
-Superpowers is available in Kimi Code's plugin marketplace.
-
-Open the plugin manager:
+This fork is **not** published to Kimi Code's plugin marketplace, so the in-app `Marketplace` browser will not list it. Install it directly from the repository:
 
 ```text
-/plugins
-```
-
-Go to `Marketplace` > `Superpowers` and install it.
-
-You can also install from this repository:
-
-```text
-/plugins install https://github.com/obra/superpowers
+/plugins install https://github.com/scott-arne/hyperpowers
 ```
 
 For unreleased validation against `dev`, pin the branch explicitly:
 
 ```text
-/plugins install https://github.com/obra/superpowers/tree/dev
+/plugins install https://github.com/scott-arne/hyperpowers/tree/dev
 ```
 
 Kimi Code applies plugin changes to new sessions. After installing, updating, enabling, disabling, or reloading a plugin, start a fresh session with `/new`.
@@ -35,10 +27,10 @@ The Kimi plugin manifest lives at `.kimi-plugin/plugin.json`.
 The manifest does three things:
 
 1. Points Kimi Code at the existing `skills/` directory.
-2. Loads `using-superpowers` at session start through `sessionStart.skill`.
+2. Loads `using-hyperpowers` at session start through `sessionStart.skill`.
 3. Provides Kimi-specific tool mapping through `skillInstructions`.
 
-Kimi Code reads Superpowers skills from this repository. There are no copied skills, symlinks, hooks, or extra runtime dependencies.
+Kimi Code reads the skills directly from this repository. There are no copied skills, symlinks, hooks, or extra runtime dependencies.
 
 ## Tool Mapping
 
@@ -57,32 +49,32 @@ Skills describe actions instead of hard-coding one runtime's tool names. On Kimi
 
 ## Updating
 
-Use Kimi Code's plugin manager:
+Reinstall from the repository to pick up the latest changes:
 
 ```text
-/plugins
+/plugins install https://github.com/scott-arne/hyperpowers
 ```
 
-Select Superpowers and update it from there. Start a fresh session with `/new` after updating.
+Start a fresh session with `/new` after updating.
 
 ## Troubleshooting
 
 ### Plugin not loading
 
-1. Run `/plugins info superpowers` and check diagnostics.
+1. Run `/plugins info hyperpowers` and check diagnostics.
 2. Make sure the plugin is enabled.
 3. Start a fresh session with `/new` after install or update.
 
 ### Direct GitHub install used an old release
 
-Kimi Code installs the latest GitHub release for a bare repository URL when one exists. To test unreleased changes before the next Superpowers release, install the branch explicitly:
+Kimi Code installs the latest GitHub release for a bare repository URL when one exists. To test unreleased changes, install the branch explicitly:
 
 ```text
-/plugins install https://github.com/obra/superpowers/tree/dev
+/plugins install https://github.com/scott-arne/hyperpowers/tree/dev
 ```
 
 ### Skills not triggering
 
-1. Confirm `/plugins info superpowers` shows the plugin enabled.
+1. Confirm `/plugins info hyperpowers` shows the plugin enabled.
 2. Start a fresh session with `/new`.
 3. Try the acceptance prompt: `Let's make a react todo list`. A working install should load `brainstorming` before writing code.

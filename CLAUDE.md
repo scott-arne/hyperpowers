@@ -44,7 +44,7 @@ Skills are not prose — they are code that shapes agent behavior. If you modify
 
 ## Eval harness
 
-Skill-behavior evals live in [superpowers-evals](https://github.com/prime-radiant-inc/superpowers-evals/), cloned into `evals/` — see `evals/README.md` for setup. Drill (the harness) drives real tmux sessions of Claude Code / Codex / Gemini CLI and judges skill compliance with an LLM verifier. Plugin-infrastructure tests still live at `tests/`.
+Skill-behavior evals live in [hyperpowers-evals](https://github.com/scott-arne/hyperpowers-evals/) — this fork's fork of upstream [superpowers-evals](https://github.com/prime-radiant-inc/superpowers-evals/) — cloned into `evals/` (see `evals/README.md` for setup). The fork carries hyperpowers-specific changes (the skill-invocation detector also matches the `hyperpowers:` namespace, plus fork-specific scenarios) and tracks upstream through a fetch-only `upstream` remote. The harness (quorum) drives real agent CLI sessions of Claude Code / Codex / Gemini CLI and judges skill compliance with an LLM verifier. Plugin-infrastructure tests still live at `tests/`.
 ## New Harness Support
 
 If you add support for a new harness (IDE, CLI tool, agent runner), verify the integration end-to-end. A real integration loads the `using-hyperpowers` bootstrap at session start — that is what causes skills to auto-trigger. Without it, the skills are present on disk but never invoked.

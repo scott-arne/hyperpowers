@@ -218,7 +218,7 @@ This fork exists so the skills and prompts can be modified locally. To work on t
 2. Follow the `writing-skills` skill for creating and testing new or modified skills — skills are behavior-shaping code, not prose, so changes should be evaluated.
 3. Run the plugin-infrastructure tests under `tests/` (each directory has a `run-*.sh`, or use `npm test` where present).
 
-Skill-behavior tests use the drill eval harness from [superpowers-evals](https://github.com/prime-radiant-inc/superpowers-evals/), cloned into `evals/` — see `evals/README.md` for setup. Plugin-infrastructure tests live at `tests/` and run via the relevant `run-*.sh` or `npm test`.
+Skill-behavior tests use the quorum eval harness from [hyperpowers-evals](https://github.com/scott-arne/hyperpowers-evals/) — this fork's fork of upstream [superpowers-evals](https://github.com/prime-radiant-inc/superpowers-evals/) — cloned into `evals/` (see `evals/README.md` for setup). Plugin-infrastructure tests live at `tests/` and run via the relevant `run-*.sh` or `npm test`.
 See `skills/writing-skills/SKILL.md` for the complete guide.
 
 ## Merging upstream Superpowers changes

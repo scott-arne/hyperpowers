@@ -17,25 +17,35 @@ registry="${HYPERPOWERS_PLUGINS_FILE:-${HOME:-}/.claude/plugins/installed_plugin
 [ -f "$registry" ] || exit 1
 command -v node >/dev/null 2>&1 || exit 1
 
-# Resolve the Codex install path from the first install record for the key.
+# Resolve the Codex install path from the registry. The key maps to an array of
+# install records; pick the last one whose companion script actually exists on
+# disk, so a stale record (uninstalled/old version) is skipped in favor of a
+# live install. node does the existence check while it holds the parsed records.
 install_path="$(node -e '
   const fs = require("fs");
+  const path = require("path");
   try {
     const reg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
     const recs = reg && reg.plugins && reg.plugins["codex@openai-codex"];
-    const p = Array.isArray(recs) && recs[0] && recs[0].installPath;
-    if (typeof p === "string" && p) process.stdout.write(p);
+    if (!Array.isArray(recs)) process.exit(0);
+    for (let i = recs.length - 1; i >= 0; i--) {
+      const p = recs[i] && recs[i].installPath;
+      if (typeof p !== "string" || !p) continue;
+      if (fs.existsSync(path.join(p, "scripts", "codex-companion.mjs"))) {
+        process.stdout.write(p);
+        break;
+      }
+    }
   } catch (e) { /* degrade */ }
 ' "$registry" 2>/dev/null)"
 
 [ -n "$install_path" ] || exit 1
+companion="$install_path/scripts/codex-companion.mjs"
 
 # Determine readiness. Tests inject the JSON; production runs the companion.
 if [ -n "${HYPERPOWERS_CODEX_SETUP_JSON:-}" ]; then
   setup_json="$HYPERPOWERS_CODEX_SETUP_JSON"
 else
-  companion="$install_path/scripts/codex-companion.mjs"
-  [ -f "$companion" ] || exit 1
   setup_json="$(node "$companion" setup --json 2>/dev/null)" || exit 1
 fi
 

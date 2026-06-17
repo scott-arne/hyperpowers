@@ -10,11 +10,16 @@ skip it silently — do not run the probe, do not emit the notice.
 
 ## 1. Probe availability
 
-Run, from the repo root:
+Run the probe by its absolute path inside the installed plugin (`$CLAUDE_PLUGIN_ROOT`
+is set by Claude Code to this plugin's install directory):
 
 ```bash
-bash skills/requesting-code-review/scripts/codex-available.sh
+bash "${CLAUDE_PLUGIN_ROOT}/skills/requesting-code-review/scripts/codex-available.sh"
 ```
+
+(When working inside a hyperpowers dev checkout rather than an installed plugin,
+`$CLAUDE_PLUGIN_ROOT` is unset; run `bash skills/requesting-code-review/scripts/codex-available.sh`
+from the repo root instead.)
 
 - **Exit 0:** a Codex review can run. stdout is the Codex install path — capture it
   as `CODEX_PATH` for the invocation step.

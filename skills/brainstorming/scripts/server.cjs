@@ -248,6 +248,9 @@ function brandMarkup() {
     ? ''
     : '<img class="brand-logo" src="' + SUPERPOWERS_BRAND_IMAGE_URL + '?v=' + encodeURIComponent(SUPERPOWERS_VERSION) + '" alt="Prime Radiant" referrerpolicy="no-referrer" decoding="async">';
 
+  // Brand link intentionally points at the upstream project (obra/superpowers)
+  // as authorship attribution. This fork (scott-arne/hyperpowers) is maintained
+  // by Scott Johnson; see README "Relationship to Upstream".
   return '<div class="brand"><a href="https://github.com/obra/superpowers">' + logo + '<span class="brand-copy">' + text + '</span></a></div>';
 }
 

@@ -6,6 +6,8 @@ Like the original, it is a complete software development methodology for your co
 
 > **Relationship to upstream.** This is a personal fork for customization. The skill *design*, methodology, and most prose are the work of the upstream Superpowers project; credit for the approach belongs there. The capability the agent is told it has is still called "superpowers" in agent-facing prompts on purpose — only the package, configuration, and skill-invocation namespace are renamed to `hyperpowers`.
 
+> **Attribution policy.** Package `author` fields and the visual companion's brand link credit the upstream author (Jesse Vincent / [`obra/superpowers`](https://github.com/obra/superpowers)). Fork maintainer identity — marketplace `owner` and each manifest's `interface.developerName` — is Scott Johnson. Keep these consistent when bumping versions or adding new manifests.
+
 ## How it works
 
 It starts from the moment you fire up your coding agent. As soon as it sees that you're building something, it *doesn't* just jump into trying to write code. Instead, it steps back and asks you what you're really trying to do.

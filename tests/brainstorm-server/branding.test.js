@@ -119,7 +119,15 @@ async function test(name, fn) {
   }
 }
 
+function assertUpstreamAttributionLink(html) {
+  assert(
+    html.includes('href="https://github.com/obra/superpowers"'),
+    'brand link intentionally attributes upstream obra/superpowers (see README attribution policy)'
+  );
+}
+
 function assertBrandedWithLogo(html, version = PACKAGE_VERSION) {
+  assertUpstreamAttributionLink(html);
   assert(
     html.includes(`Superpowers v${version}`),
     'branding text should include dynamic package version'
@@ -155,6 +163,7 @@ function assertBrandedWithLogo(html, version = PACKAGE_VERSION) {
 }
 
 function assertBrandedFallbackText(html, version = PACKAGE_VERSION) {
+  assertUpstreamAttributionLink(html);
   assert(
     html.includes(`Prime Radiant Superpowers v${version}`),
     'disabled telemetry should keep plain text Prime Radiant/Superpowers branding'

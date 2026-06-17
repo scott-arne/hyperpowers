@@ -1,7 +1,7 @@
 /**
- * Superpowers plugin for OpenCode.ai
+ * Hyperpowers plugin for OpenCode.ai
  *
- * Injects superpowers bootstrap context via message transform.
+ * Injects hyperpowers bootstrap context via message transform.
  * Auto-registers skills directory via config hook (no symlinks needed).
  */
 
@@ -52,9 +52,9 @@ const normalizePath = (p, homeDir) => {
 // every agent step.  See #1202 for the full analysis.
 let _bootstrapCache = undefined; // undefined = not yet loaded, null = file missing
 
-export const SuperpowersPlugin = async ({ client, directory }) => {
+export const HyperpowersPlugin = async ({ client, directory }) => {
   const homeDir = os.homedir();
-  const superpowersSkillsDir = path.resolve(__dirname, '../../skills');
+  const hyperpowersSkillsDir = path.resolve(__dirname, '../../skills');
   const envConfigDir = normalizePath(process.env.OPENCODE_CONFIG_DIR, homeDir);
   const configDir = envConfigDir || path.join(homeDir, '.config/opencode');
 
@@ -63,8 +63,8 @@ export const SuperpowersPlugin = async ({ client, directory }) => {
     // Return cached result on subsequent calls
     if (_bootstrapCache !== undefined) return _bootstrapCache;
 
-    // Try to load using-superpowers skill
-    const skillPath = path.join(superpowersSkillsDir, 'using-superpowers', 'SKILL.md');
+    // Try to load using-hyperpowers skill
+    const skillPath = path.join(hyperpowersSkillsDir, 'using-hyperpowers', 'SKILL.md');
     if (!fs.existsSync(skillPath)) {
       _bootstrapCache = null;
       return null;
@@ -89,7 +89,7 @@ Use OpenCode's native \`skill\` tool to list and load skills.`;
     _bootstrapCache = `<EXTREMELY_IMPORTANT>
 You have superpowers.
 
-**IMPORTANT: The using-superpowers skill content is included below. It is ALREADY LOADED - you are currently following it. Do NOT use the skill tool to load "using-superpowers" again - that would be redundant.**
+**IMPORTANT: The using-hyperpowers skill content is included below. It is ALREADY LOADED - you are currently following it. Do NOT use the skill tool to load "using-hyperpowers" again - that would be redundant.**
 
 ${content}
 
@@ -100,15 +100,15 @@ ${toolMapping}
   };
 
   return {
-    // Inject skills path into live config so OpenCode discovers superpowers skills
+    // Inject skills path into live config so OpenCode discovers hyperpowers skills
     // without requiring manual symlinks or config file edits.
     // This works because Config.get() returns a cached singleton — modifications
     // here are visible when skills are lazily discovered later.
     config: async (config) => {
       config.skills = config.skills || {};
       config.skills.paths = config.skills.paths || [];
-      if (!config.skills.paths.includes(superpowersSkillsDir)) {
-        config.skills.paths.push(superpowersSkillsDir);
+      if (!config.skills.paths.includes(hyperpowersSkillsDir)) {
+        config.skills.paths.push(hyperpowersSkillsDir);
       }
     },
 

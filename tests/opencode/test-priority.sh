@@ -21,8 +21,8 @@ trap cleanup_test_env EXIT
 echo "Setting up priority test fixtures..."
 
 # 1. Create in superpowers location (lowest priority)
-mkdir -p "$SUPERPOWERS_SKILLS_DIR/priority-test"
-cat > "$SUPERPOWERS_SKILLS_DIR/priority-test/SKILL.md" <<'EOF'
+mkdir -p "$HYPERPOWERS_SKILLS_DIR/priority-test"
+cat > "$HYPERPOWERS_SKILLS_DIR/priority-test/SKILL.md" <<'EOF'
 ---
 name: priority-test
 description: Superpowers version of priority test skill
@@ -68,7 +68,7 @@ echo "  Created priority-test skill in all three locations"
 echo ""
 echo "Test 1: Verifying test fixtures..."
 
-if [ -f "$SUPERPOWERS_SKILLS_DIR/priority-test/SKILL.md" ]; then
+if [ -f "$HYPERPOWERS_SKILLS_DIR/priority-test/SKILL.md" ]; then
     echo "  [PASS] Superpowers version exists"
 else
     echo "  [FAIL] Superpowers version missing"
@@ -199,8 +199,8 @@ describe_priority_result \
 echo ""
 echo "Test 4: Testing non-colliding superpowers skill remains available..."
 
-mkdir -p "$SUPERPOWERS_SKILLS_DIR/superpowers-only-test"
-cat > "$SUPERPOWERS_SKILLS_DIR/superpowers-only-test/SKILL.md" <<'EOF'
+mkdir -p "$HYPERPOWERS_SKILLS_DIR/superpowers-only-test"
+cat > "$HYPERPOWERS_SKILLS_DIR/superpowers-only-test/SKILL.md" <<'EOF'
 ---
 name: superpowers-only-test
 description: Superpowers-only priority test skill

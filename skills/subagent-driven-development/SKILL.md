@@ -58,12 +58,14 @@ digraph process {
         "Task reviewer reports spec ✅ and quality approved?" [shape=diamond];
         "Dispatch fix subagent for Critical/Important findings" [shape=box];
         "Mark task complete in todo list and progress ledger" [shape=box];
+        "Codex task code gate\n(Claude Code; degrade if absent)" [shape=box];
     }
 
     "Read plan, note context and global constraints, create todos" [shape=box];
     "More tasks remain?" [shape=diamond];
     "Dispatch final code reviewer subagent (../requesting-code-review/code-reviewer.md)" [shape=box];
     "Use hyperpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
+    "Codex final code gate\n(Claude Code; degrade if absent)" [shape=box];
 
     "Read plan, note context and global constraints, create todos" -> "Dispatch implementer subagent (./implementer-prompt.md)";
     "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer subagent asks questions?";
@@ -74,11 +76,13 @@ digraph process {
     "Write diff file, dispatch task reviewer subagent (./task-reviewer-prompt.md)" -> "Task reviewer reports spec ✅ and quality approved?";
     "Task reviewer reports spec ✅ and quality approved?" -> "Dispatch fix subagent for Critical/Important findings" [label="no"];
     "Dispatch fix subagent for Critical/Important findings" -> "Write diff file, dispatch task reviewer subagent (./task-reviewer-prompt.md)" [label="re-review"];
-    "Task reviewer reports spec ✅ and quality approved?" -> "Mark task complete in todo list and progress ledger" [label="yes"];
+    "Task reviewer reports spec ✅ and quality approved?" -> "Codex task code gate\n(Claude Code; degrade if absent)" [label="yes"];
+    "Codex task code gate\n(Claude Code; degrade if absent)" -> "Mark task complete in todo list and progress ledger";
     "Mark task complete in todo list and progress ledger" -> "More tasks remain?";
     "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
     "More tasks remain?" -> "Dispatch final code reviewer subagent (../requesting-code-review/code-reviewer.md)" [label="no"];
-    "Dispatch final code reviewer subagent (../requesting-code-review/code-reviewer.md)" -> "Use hyperpowers:finishing-a-development-branch";
+    "Dispatch final code reviewer subagent (../requesting-code-review/code-reviewer.md)" -> "Codex final code gate\n(Claude Code; degrade if absent)";
+    "Codex final code gate\n(Claude Code; degrade if absent)" -> "Use hyperpowers:finishing-a-development-branch";
 }
 ```
 
@@ -215,6 +219,25 @@ final whole-branch review. When you fill a reviewer template:
   subagent with the complete findings list — not one fixer per finding.
   Per-finding fixers each rebuild context and re-run suites; a real
   session's final-review fix wave cost more than all its tasks combined.
+
+## Codex Review Gate (Claude Code only)
+
+When running under Claude Code, add a Codex **code** review gate at two points,
+following [../requesting-code-review/codex-review-gate.md](../requesting-code-review/codex-review-gate.md).
+Probe once per skill run and reuse the result; if Codex is absent, emit the
+no-Codex notice once and run both gates as no-ops.
+
+- **Per task:** after the task reviewer approves (spec ✅ and quality approved) and
+  before marking the task complete, run the gate with `--base <the task BASE you
+  recorded before dispatching the implementer>`. Route blocking findings through the
+  same fix-subagent loop you already use, then re-review per the gate contract.
+- **Final whole-branch:** after the final code-reviewer subagent and before
+  hyperpowers:finishing-a-development-branch, run the gate with `--base <branch
+  merge-base, e.g. git merge-base main HEAD>`. Resolve blocking findings (one fix
+  subagent with the complete list, per this skill's existing guidance) before finishing.
+
+The gate's round cap bounds the loop; if it is hit with unresolved blocking
+findings, surface them rather than looping.
 
 ## File Handoffs
 

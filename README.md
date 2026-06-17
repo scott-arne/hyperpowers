@@ -40,6 +40,25 @@ Install separately for each harness you use. The marketplace name bundled in thi
   /plugin install hyperpowers@hyperpowers-dev
   ```
 
+- **Prerequisite for Codex review gates:** Hyperpowers' spec, plan, and code review
+  steps will additionally ask [codex-plugin-cc](https://github.com/openai/codex-plugin-cc)
+  to review the work when it is installed. Without it, the skills work normally but
+  skip the Codex review (you'll see a one-line notice). To enable it:
+
+  ```bash
+  /plugin marketplace add openai/codex-plugin-cc
+  /plugin install codex@openai-codex
+  /reload-plugins
+  /codex:setup
+  ```
+
+  Requires Node 18.18+ and the Codex CLI (`npm install -g @openai/codex`) with
+  ChatGPT or OpenAI API authentication.
+
+  > **Overlap note:** codex-plugin-cc also offers its own optional Stop-time review
+  > gate (`/codex:setup --enable-review-gate`). Hyperpowers' gates are independent of
+  > it. Enabling both means code is reviewed by Codex twice at stop time.
+
 ### Antigravity
 
 Install as a plugin straight from the repository:

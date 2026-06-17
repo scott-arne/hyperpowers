@@ -30,7 +30,7 @@ Before changing anything in this repo:
 
 Even in a fork, keep the core skills general-purpose so they remain mergeable with upstream and useful across projects:
 
-- **Third-party dependencies.** The plugin is zero-dependency by design. If a change needs an external tool or service, it belongs in its own plugin.
+- **Third-party dependencies.** Upstream Superpowers is zero-dependency by design. This fork deliberately diverges: it takes targeted Claude Code dependencies where they add value — the first is [codex-plugin-cc](https://github.com/openai/codex-plugin-cc), which powers the optional Codex review gates (spec, plan, code). Such dependencies must degrade cleanly (skills stay fully functional when the dependency is absent) and stay scoped to the harness where they apply. General-purpose, cross-harness skills should still avoid external tools so they remain mergeable with upstream.
 - **Project-, team-, or domain-specific configuration.** Skills or hooks that only benefit one project or workflow belong in a separate plugin, not the shared skills library.
 
 ## Skill Changes Require Evaluation

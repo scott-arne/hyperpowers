@@ -88,7 +88,7 @@ To pin a specific version, use a branch or tag:
 
 ```json
 {
-  "plugin": ["hyperpowers@git+https://github.com/scott-arne/hyperpowers.git#v6.0.0"]
+  "plugin": ["hyperpowers@git+https://github.com/scott-arne/hyperpowers.git#vX.Y.Z"]
 }
 ```
 

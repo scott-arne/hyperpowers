@@ -12,10 +12,10 @@ This fork is **not** published to Kimi Code's plugin marketplace, so the in-app 
 /plugins install https://github.com/scott-arne/hyperpowers
 ```
 
-For unreleased validation against `dev`, pin the branch explicitly:
+For unreleased validation against the latest `main`, pin the branch explicitly:
 
 ```text
-/plugins install https://github.com/scott-arne/hyperpowers/tree/dev
+/plugins install https://github.com/scott-arne/hyperpowers/tree/main
 ```
 
 Kimi Code applies plugin changes to new sessions. After installing, updating, enabling, disabling, or reloading a plugin, start a fresh session with `/new`.
@@ -70,7 +70,7 @@ Start a fresh session with `/new` after updating.
 Kimi Code installs the latest GitHub release for a bare repository URL when one exists. To test unreleased changes, install the branch explicitly:
 
 ```text
-/plugins install https://github.com/scott-arne/hyperpowers/tree/dev
+/plugins install https://github.com/scott-arne/hyperpowers/tree/main
 ```
 
 ### Skills not triggering

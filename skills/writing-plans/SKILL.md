@@ -153,6 +153,16 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
+## Codex Plan Review Gate (Claude Code only)
+
+After the plan self-review and before presenting the plan to the user, run the
+Codex review gate over the plan file as a **document** review. Follow
+[../requesting-code-review/codex-review-gate.md](../requesting-code-review/codex-review-gate.md):
+probe availability; if Codex is present, have it review the plan (feasibility, task
+sizing, missing steps, spec coverage) and resolve blocking findings in the fix loop
+before the execution handoff; if Codex is absent, emit the no-Codex notice and
+proceed. This gate never blocks the handoff — at worst it is skipped.
+
 ## Execution Handoff
 
 After saving the plan, offer execution choice:

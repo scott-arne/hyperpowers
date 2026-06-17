@@ -17,7 +17,7 @@ Skills speak in actions ("dispatch a subagent", "create a todo", "read a file").
 
 ## Skills
 
-Pi discovers skills from configured skill directories and installed Pi packages. A Superpowers Pi package should expose `skills/` through its `pi.skills` manifest entry. Pi does not expose Claude Code's `Skill` tool, but the agent should still follow the Superpowers rule: when a skill applies, load and follow it before responding.
+Pi discovers skills from configured skill directories and installed Pi packages. A Hyperpowers Pi package should expose `skills/` through its `pi.skills` manifest entry. Pi does not expose Claude Code's `Skill` tool, but the agent should still follow the Hyperpowers rule: when a skill applies, load and follow it before responding.
 
 ## Subagents
 
@@ -25,4 +25,4 @@ Pi core does not ship a standard subagent tool. The `pi-subagents` package is a 
 
 ## Task lists
 
-Pi core does not ship a standard task-list tool. If a todo/task extension is installed, use its documented tool. Otherwise use Superpowers plan files, checklists in Markdown, or a repo-local `TODO.md` for task tracking. Older Superpowers docs may refer to `TodoWrite`; treat that as the task-tracking action above.
+Pi core does not ship a standard task-list tool. If a todo/task extension is installed, use its documented tool. Otherwise use Hyperpowers plan files, checklists in Markdown, or a repo-local `TODO.md` for task tracking. Older Hyperpowers docs may refer to `TodoWrite`; treat that as the task-tracking action above.

@@ -24,7 +24,7 @@ Antigravity surfaces every installed skill's `name` + `description` to you at th
 start of each session, but it has **no `Skill`/`activate_skill` tool**. To load a
 skill, **read its `SKILL.md` with `view_file`, setting `IsSkillFile: true`** when
 the skill applies — e.g. `view_file` on
-`.../plugins/superpowers/skills/<skill-name>/SKILL.md` with `IsSkillFile: true`.
+`.../plugins/hyperpowers/skills/<skill-name>/SKILL.md` with `IsSkillFile: true`.
 (`IsSkillFile` is agy's own signal that you're reading a file to *execute its
 instructions*, not to edit or preview it — set it whenever you load a skill.)
 

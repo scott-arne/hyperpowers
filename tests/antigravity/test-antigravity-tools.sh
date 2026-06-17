@@ -30,6 +30,12 @@ grep -qiE "SKILL\.md" "$MAPPING" \
 grep -q "IsSkillFile" "$MAPPING" \
   || fail "mapping does not document setting IsSkillFile when loading a skill"
 
+# --- No stale upstream plugin path (rebrand regression) ---------------------
+# The skill-load example must point at this fork's plugin tree, not a
+# co-installed upstream copy at plugins/superpowers.
+! grep -q "plugins/superpowers" "$MAPPING" \
+  || fail "mapping points at stale upstream plugins/superpowers path"
+
 # --- Core action→tool mappings are documented -------------------------------
 for tool in write_to_file replace_file_content run_command grep_search invoke_subagent; do
   grep -q "$tool" "$MAPPING" \

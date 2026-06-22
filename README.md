@@ -24,7 +24,7 @@ There's a bunch more to it, but that's the core of the system. And because the s
 
 **This fork is distributed only from its GitHub repository ([`scott-arne/hyperpowers`](https://github.com/scott-arne/hyperpowers)).** It is *not* published to any public or official plugin marketplace — not Anthropic's official Claude marketplace, not OpenAI's Codex plugin store, not Cursor's, and not the upstream `superpowers` marketplaces. Install it directly from the repo using the per-harness commands below. If you want the original, marketplace-distributed project instead, install [Superpowers](https://github.com/obra/superpowers).
 
-Install separately for each harness you use. The marketplace name bundled in this repo is `hyperpowers-dev` and the plugin name is `hyperpowers`; the install commands below reflect those.
+Install separately for each harness you use. The marketplace name bundled in this repo is `hyperpowers` and the plugin name is `hyperpowers`; the install commands below reflect those.
 
 ### Claude Code
 
@@ -37,7 +37,7 @@ Install separately for each harness you use. The marketplace name bundled in thi
 - Install the plugin from it:
 
   ```bash
-  /plugin install hyperpowers@hyperpowers-dev
+  /plugin install hyperpowers@hyperpowers
   ```
 
 - **Prerequisite for Codex review gates:** Hyperpowers' spec, plan, and code review
@@ -88,7 +88,7 @@ This fork is not on Cursor's plugin marketplace, so marketplace search will not 
 - Install the plugin:
 
   ```bash
-  droid plugin install hyperpowers@hyperpowers-dev
+  droid plugin install hyperpowers@hyperpowers
   ```
 
 ### Gemini CLI
@@ -116,7 +116,7 @@ This fork is not on Cursor's plugin marketplace, so marketplace search will not 
 - Install the plugin:
 
   ```bash
-  copilot plugin install hyperpowers@hyperpowers-dev
+  copilot plugin install hyperpowers@hyperpowers
   ```
 
 ### Kimi Code

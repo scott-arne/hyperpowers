@@ -1,6 +1,7 @@
 {
   "name": "hyperpowers",
-  "version": "6.0.2",  "description": "An agentic skills framework & software development methodology that works: planning, TDD, debugging, and collaboration workflows.",
+  "version": "6.0.3",
+  "description": "An agentic skills framework & software development methodology that works: planning, TDD, debugging, and collaboration workflows.",
   "author": {
     "name": "Jesse Vincent",
     "email": "jesse@fsck.com",

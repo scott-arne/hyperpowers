@@ -1,6 +1,6 @@
 {
-  "name": "hyperpowers-dev",
-  "description": "Development marketplace for Hyperpowers core skills library",
+  "name": "hyperpowers",
+  "description": "Hyperpowers core skills library for coding agents",
   "owner": {
     "name": "Scott Johnson",
     "email": "scott.arne.johnson@gmail.com"
@@ -9,7 +9,7 @@
     {
       "name": "hyperpowers",
       "description": "Core skills library for Claude Code: TDD, debugging, collaboration patterns, and proven techniques",
-      "version": "6.0.2",
+      "version": "6.0.3",
       "source": "./",
       "author": {
         "name": "Scott Johnson",

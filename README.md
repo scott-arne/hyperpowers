@@ -238,6 +238,8 @@ git config rerere.autoupdate true            # ...and replay them automatically 
 
 ### Syncing a release
 
+**Current upstream base: `v6.0.2`** (`obra/superpowers` @ `b62616f`, merged 2026-06-17). This is the last upstream release merged into the fork; the machine-readable record lives in [`.upstream-version.json`](.upstream-version.json). Update both whenever you merge a newer upstream release. Note this is independent of the fork's own version — they may share a number by coincidence without sharing content.
+
 Work tag-to-tag (`v6.0.0` → `v6.0.2` → …), not off the moving `upstream/main` — releases are coherent, reviewable units.
 
 ```bash

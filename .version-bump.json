@@ -14,7 +14,9 @@
       "RELEASE-NOTES.md",
       "node_modules",
       ".git",
+      "evals",
       ".version-bump.json",
+      ".upstream-version.json",
       "scripts/bump-version.sh"
     ]
   }

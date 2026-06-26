@@ -26,7 +26,7 @@ You MUST create a task for each of these items and complete them in order:
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
-6. **Write design doc** — save to `docs/hyperpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
+6. **Write design doc** — save to `docs/hyperpowers/specs/YYYY-MM-DD-<topic>-design.md` (do not commit unless the user asks)
 7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
 8. **Codex spec review gate** (Claude Code only) — run the Codex review gate over the spec before involving the user (see below)
 9. **User reviews written spec** — ask user to review the spec file before proceeding
@@ -109,7 +109,7 @@ digraph brainstorming {
 - Write the validated design (spec) to `docs/hyperpowers/specs/YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
 - Use elements-of-style:writing-clearly-and-concisely skill if available
-- Commit the design document to git
+- Do NOT commit the design document. Leave it as an uncommitted working file unless the user explicitly asks you to commit it.
 
 **Spec Self-Review:**
 After writing the spec document, look at it with fresh eyes:
@@ -133,7 +133,7 @@ it is skipped.
 **User Review Gate:**
 After the spec review loop passes, ask the user to review the written spec before proceeding:
 
-> "Spec written and committed to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
+> "Spec written to `<path>` (not committed). Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
 
 Wait for the user's response. If they request changes, make them and re-run the spec review loop. Only proceed once the user approves.
 

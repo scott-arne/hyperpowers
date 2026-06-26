@@ -17,6 +17,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Save plans to:** `docs/hyperpowers/plans/YYYY-MM-DD-<feature-name>.md`
 - (User preferences for plan location override this default)
+- Do NOT commit the plan document. Leave it as an uncommitted working file unless the user explicitly asks you to commit it. (The "frequent commits" guidance below is about the implementation task steps the plan describes, not the plan file itself.)
 
 ## Scope Check
 

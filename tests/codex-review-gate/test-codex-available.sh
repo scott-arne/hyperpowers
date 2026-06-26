@@ -21,6 +21,32 @@ make_install() {
   : > "$dir/scripts/codex-companion.mjs"
 }
 
+# Install a fake companion whose `setup --json` output is driven by env, so the
+# retry path can be exercised without a real Codex runtime:
+#   PROBE_TEST_MODE    recover|transient|terminal (default recover)
+#   PROBE_TEST_COUNTER file path; incremented once per invocation so a test can
+#                      assert how many times the probe called the companion.
+make_fake_companion() {
+  local dir="$1"
+  mkdir -p "$dir/scripts"
+  cat > "$dir/scripts/codex-companion.mjs" <<'EOF'
+import fs from "node:fs";
+const counter = process.env.PROBE_TEST_COUNTER;
+const mode = process.env.PROBE_TEST_MODE || "recover";
+let n = 0;
+try { n = parseInt(fs.readFileSync(counter, "utf8"), 10) || 0; } catch (e) {}
+try { fs.writeFileSync(counter, String(n + 1)); } catch (e) {}
+const transient = { ready: false, auth: { loggedIn: false, detail: "codex app-server exited unexpectedly (exit 1)." } };
+const terminal = { ready: false, auth: { loggedIn: false, detail: "Azure OpenAI requires OpenAI authentication" } };
+const ok = { ready: true, auth: { loggedIn: true, detail: "Azure OpenAI is configured and does not require OpenAI authentication" } };
+let out = ok;
+if (mode === "terminal") out = terminal;
+else if (mode === "transient") out = transient;
+else out = n < 1 ? transient : ok;
+process.stdout.write(JSON.stringify(out));
+EOF
+}
+
 echo "codex-available probe tests"
 
 # 1. Missing registry -> degrade (exit 1)
@@ -88,6 +114,53 @@ if [ "$rc" -eq 0 ] && [ "$out" = "$TMP/codex2" ]; then
   pass "multi-record skips stale -> picks valid install"
 else
   fail "multi-record skips stale -> picks valid install (rc=$rc out=$out)"
+fi
+
+# 8. Transient app-server error on the first probe, healthy on retry ->
+#    the probe must retry and ultimately succeed (exit 0 + install path).
+make_fake_companion "$TMP/codex_retry"
+printf '%s' '{"version":2,"plugins":{"codex@openai-codex":[{"installPath":"'"$TMP"'/codex_retry"}]}}' > "$TMP/retry.json"
+: > "$TMP/recover_counter"
+out="$(HYPERPOWERS_PLUGINS_FILE="$TMP/retry.json" PROBE_TEST_MODE=recover \
+        PROBE_TEST_COUNTER="$TMP/recover_counter" HYPERPOWERS_PROBE_RETRY_DELAY=0 \
+        bash "$PROBE" 2>/dev/null)"
+rc=$?
+calls="$(cat "$TMP/recover_counter")"
+if [ "$rc" -eq 0 ] && [ "$out" = "$TMP/codex_retry" ] && [ "$calls" -ge 2 ]; then
+  pass "transient-then-ready -> retries, exit 0 (calls=$calls)"
+else
+  fail "transient-then-ready -> retries, exit 0 (rc=$rc out=$out calls=$calls)"
+fi
+
+# 9. Persistent transient error -> retries up to the cap, then degrades (exit 1).
+#    Default cap is 2 retries (3 attempts total).
+: > "$TMP/transient_counter"
+if HYPERPOWERS_PLUGINS_FILE="$TMP/retry.json" PROBE_TEST_MODE=transient \
+     PROBE_TEST_COUNTER="$TMP/transient_counter" HYPERPOWERS_PROBE_RETRY_DELAY=0 \
+     bash "$PROBE" >/dev/null 2>&1; then
+  fail "persistent transient -> exit 1"
+else
+  calls="$(cat "$TMP/transient_counter")"
+  if [ "$calls" -eq 3 ]; then
+    pass "persistent transient -> exit 1 after cap (calls=$calls)"
+  else
+    fail "persistent transient -> exit 1 after cap (expected 3 calls, got $calls)"
+  fi
+fi
+
+# 10. Terminal not-ready reason (not logged in) -> degrade immediately, NO retry.
+: > "$TMP/terminal_counter"
+if HYPERPOWERS_PLUGINS_FILE="$TMP/retry.json" PROBE_TEST_MODE=terminal \
+     PROBE_TEST_COUNTER="$TMP/terminal_counter" HYPERPOWERS_PROBE_RETRY_DELAY=0 \
+     bash "$PROBE" >/dev/null 2>&1; then
+  fail "terminal not-ready -> exit 1"
+else
+  calls="$(cat "$TMP/terminal_counter")"
+  if [ "$calls" -eq 1 ]; then
+    pass "terminal not-ready -> exit 1 without retry (calls=$calls)"
+  else
+    fail "terminal not-ready -> exit 1 without retry (expected 1 call, got $calls)"
+  fi
 fi
 
 if [ "$FAILURES" -gt 0 ]; then

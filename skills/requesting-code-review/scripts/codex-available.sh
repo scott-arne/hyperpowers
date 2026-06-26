@@ -42,22 +42,62 @@ install_path="$(node -e '
 [ -n "$install_path" ] || exit 1
 companion="$install_path/scripts/codex-companion.mjs"
 
-# Determine readiness. Tests inject the JSON; production runs the companion.
-if [ -n "${HYPERPOWERS_CODEX_SETUP_JSON:-}" ]; then
-  setup_json="$HYPERPOWERS_CODEX_SETUP_JSON"
-else
-  setup_json="$(node "$companion" setup --json 2>/dev/null)" || exit 1
-fi
+# Determine readiness, retrying transient failures. The companion verifies auth
+# by spawning `codex app-server` and doing a live JSON-RPC handshake against the
+# shared sqlite state under ~/.codex. That handshake intermittently loses a lock
+# race against a concurrently-running Codex session and reports
+# "app-server exited unexpectedly", which the probe would otherwise mistake for
+# "Codex unavailable". Such transient runtime errors are retried; terminal
+# reasons (Codex not installed, genuinely not authenticated) are not.
+max_retries="${HYPERPOWERS_PROBE_MAX_RETRIES:-2}"
+retry_delay="${HYPERPOWERS_PROBE_RETRY_DELAY:-0.5}"
 
-ready="$(printf '%s' "$setup_json" | node -e '
-  const fs = require("fs");
-  try {
-    const d = JSON.parse(fs.readFileSync(0, "utf8"));
-    process.stdout.write(d && d.ready === true ? "yes" : "no");
-  } catch (e) { process.stdout.write("no"); }
-' 2>/dev/null)"
+# Classify one setup report: "yes" (ready), "retry" (transient handshake
+# failure, worth another attempt), or "no" (terminal — do not retry).
+classify() {
+  printf '%s' "$1" | node -e '
+    const fs = require("fs");
+    let verdict = "no";
+    try {
+      const d = JSON.parse(fs.readFileSync(0, "utf8"));
+      if (d && d.ready === true) {
+        verdict = "yes";
+      } else {
+        const detail = (d && d.auth && typeof d.auth.detail === "string") ? d.auth.detail : "";
+        // Live app-server handshake hiccups — retryable under contention.
+        const transient = /exited unexpectedly|connection closed|app-server (?:client )?is closed|stdin is not available|broker connection is not connected|Failed to parse codex app-server/i;
+        verdict = transient.test(detail) ? "retry" : "no";
+      }
+    } catch (e) { verdict = "no"; }
+    process.stdout.write(verdict);
+  ' 2>/dev/null
+}
 
-[ "$ready" = "yes" ] || exit 1
+attempt=0
+while :; do
+  # Tests inject the JSON; production runs the companion.
+  if [ -n "${HYPERPOWERS_CODEX_SETUP_JSON:-}" ]; then
+    setup_json="$HYPERPOWERS_CODEX_SETUP_JSON"
+  else
+    setup_json="$(node "$companion" setup --json 2>/dev/null)" || setup_json=""
+  fi
 
-printf '%s\n' "$install_path"
-exit 0
+  verdict="$(classify "$setup_json")"
+  case "$verdict" in
+    yes)
+      printf '%s\n' "$install_path"
+      exit 0
+      ;;
+    retry)
+      if [ "$attempt" -lt "$max_retries" ]; then
+        attempt=$((attempt + 1))
+        sleep "$retry_delay"
+        continue
+      fi
+      exit 1
+      ;;
+    *)
+      exit 1
+      ;;
+  esac
+done

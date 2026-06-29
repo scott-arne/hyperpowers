@@ -48,10 +48,13 @@ Dispatch a `general-purpose` subagent, filling the template at [code-reviewer.md
 **4. Codex review gate (Claude Code only):**
 After acting on the Claude reviewer's feedback and before declaring the review
 complete, run the Codex review gate over the same `{BASE_SHA}`..`{HEAD_SHA}` range
-as a **code** review. Follow [codex-review-gate.md](codex-review-gate.md): probe
-availability; if Codex is present, resolve its blocking findings in the fix loop;
-if absent, emit the no-Codex notice and finish. This gate never blocks completion —
-at worst it is skipped.
+as a **code** review using the code-review recipe. Follow
+[codex-review-gate.md](codex-review-gate.md): probe availability; if Codex is
+present, provide the same plan/requirements context given to the Claude reviewer,
+then resolve Codex blocking findings in the fix loop. After any
+Codex-triggered code fix, re-run the Claude code-reviewer before re-running
+Codex. If Codex is absent, emit the no-Codex notice and finish. This gate never
+blocks completion — at worst it is skipped.
 
 ## Example
 

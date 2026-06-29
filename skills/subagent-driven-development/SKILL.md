@@ -228,13 +228,21 @@ Probe once per skill run and reuse the result; if Codex is absent, emit the
 no-Codex notice once and run both gates as no-ops.
 
 - **Per task:** after the task reviewer approves (spec ✅ and quality approved) and
-  before marking the task complete, run the gate with `--base <the task BASE you
-  recorded before dispatching the implementer>`. Route blocking findings through the
-  same fix-subagent loop you already use, then re-review per the gate contract.
+  before marking the task complete, run the gate using the per-task code recipe
+  with `--base <the task BASE you recorded before dispatching the implementer>`.
+  Provide the task brief path, implementer report path, review-package path, and
+  a file containing the global constraints that bind the task. Route blocking
+  findings through the same fix-subagent loop you already use. After any
+  Codex-triggered code fix, re-run the task reviewer before re-running the
+  per-task Codex gate.
 - **Final whole-branch:** after the final code-reviewer subagent and before
-  hyperpowers:finishing-a-development-branch, run the gate with `--base <branch
-  merge-base, e.g. git merge-base main HEAD>`. Resolve blocking findings (one fix
-  subagent with the complete list, per this skill's existing guidance) before finishing.
+  hyperpowers:finishing-a-development-branch, run the gate using the final
+  whole-branch code recipe with `--base <branch merge-base, e.g. git merge-base
+  main HEAD>`. Provide the branch review-package path, plan or requirements path,
+  and Minor findings ledger if present. Resolve blocking findings (one fix
+  subagent with the complete list, per this skill's existing guidance) before
+  finishing. After any Codex-triggered final-review fix, re-run the final
+  code-reviewer before re-running the final Codex gate.
 
 The gate's round cap bounds the loop; if it is hit with unresolved blocking
 findings, surface them rather than looping.
@@ -262,7 +270,9 @@ and is re-read on every later turn. Hand artifacts over as files:
   returns only status, commits, a one-line test summary, and concerns.
 - **Reviewer inputs:** the task reviewer gets three paths — the same brief
   file, the report file, and the review package — plus the global
-  constraints that bind the task.
+  constraints that bind the task. For the Codex per-task gate, write those
+  global constraints to a small file alongside the brief/report and pass that
+  path as the global constraints handoff.
 - Fix dispatches append their fix report (with test results) to the same
   report file and return a short summary; re-reviews read the updated file.
 

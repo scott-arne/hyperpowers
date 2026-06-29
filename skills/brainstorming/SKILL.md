@@ -123,12 +123,14 @@ Fix any issues inline. No need to re-review — just fix and move on.
 
 **Codex Spec Review Gate (Claude Code only):**
 After the spec self-review passes and before involving the user, run the Codex
-review gate over the spec file as a **document** review. Follow
+review gate over the spec file as a **document** review using the spec recipe.
+Follow
 [../requesting-code-review/codex-review-gate.md](../requesting-code-review/codex-review-gate.md):
-probe availability, and if Codex is present, have it review the spec and resolve
-blocking findings in the fix loop before the user review; if Codex is absent, emit
-the no-Codex notice and proceed. This gate never blocks the user review — at worst
-it is skipped.
+probe availability, and if Codex is present, provide the spec path plus any
+available approved-design context, have it review the spec, and resolve blocking
+findings in the fix loop before the user review; if Codex is absent, emit the
+no-Codex notice and proceed. This gate never blocks the user review — at worst it
+is skipped.
 
 **User Review Gate:**
 After the spec review loop passes, ask the user to review the written spec before proceeding:

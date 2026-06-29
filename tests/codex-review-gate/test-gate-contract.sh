@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+GATE="$REPO_ROOT/skills/requesting-code-review/codex-review-gate.md"
+BRAINSTORMING="$REPO_ROOT/skills/brainstorming/SKILL.md"
+WRITING_PLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
+SDD="$REPO_ROOT/skills/subagent-driven-development/SKILL.md"
+REQUESTING_REVIEW="$REPO_ROOT/skills/requesting-code-review/SKILL.md"
+
+FAILURES=0
+
+pass() { echo "  [PASS] $1"; }
+fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
+
+assert_contains() {
+  local file="$1"
+  local needle="$2"
+  local description="$3"
+  local haystack
+
+  haystack="$(tr '\n\t' '  ' <"$file" | sed 's/  */ /g')"
+  if printf '%s' "$haystack" | grep -Fq -- "$needle"; then
+    pass "$description"
+  else
+    fail "$description"
+    echo "    expected to find: $needle"
+    echo "    in: $file"
+  fi
+}
+
+assert_not_contains() {
+  local file="$1"
+  local needle="$2"
+  local description="$3"
+  local haystack
+
+  haystack="$(tr '\n\t' '  ' <"$file" | sed 's/  */ /g')"
+  if printf '%s' "$haystack" | grep -Fq -- "$needle"; then
+    fail "$description"
+    echo "    did not expect to find: $needle"
+    echo "    in: $file"
+  else
+    pass "$description"
+  fi
+}
+
+echo "Codex review gate contract tests"
+
+assert_contains "$GATE" "## 3. Invoke Codex by artifact type" \
+  "shared gate has artifact-specific invocation recipes"
+assert_contains "$GATE" "**Spec documents**" \
+  "shared gate has a spec document recipe"
+assert_contains "$GATE" "**Plan documents**" \
+  "shared gate has a plan document recipe"
+assert_contains "$GATE" "<SPEC_ABSOLUTE_PATH>" \
+  "plan recipe requires the source spec path"
+assert_contains "$GATE" "<PLAN_ABSOLUTE_PATH>" \
+  "plan recipe requires the plan path"
+assert_contains "$GATE" "**Per-task code**" \
+  "shared gate has a per-task code recipe"
+assert_contains "$GATE" "<TASK_BRIEF_PATH>" \
+  "per-task recipe requires task brief context"
+assert_contains "$GATE" "<IMPLEMENTER_REPORT_PATH>" \
+  "per-task recipe requires implementer report context"
+assert_contains "$GATE" "<REVIEW_PACKAGE_PATH>" \
+  "per-task recipe requires review package context"
+assert_contains "$GATE" "<GLOBAL_CONSTRAINTS_PATH>" \
+  "per-task recipe requires global constraints context"
+assert_contains "$GATE" "**Final whole-branch code**" \
+  "shared gate has a final whole-branch recipe"
+assert_contains "$GATE" "<BRANCH_REVIEW_PACKAGE_PATH>" \
+  "final recipe requires the branch review package"
+
+assert_contains "$GATE" "### Required document-review output" \
+  "document review output is explicitly structured"
+assert_contains "$GATE" "Copy the Required document-review output block below into the prompt" \
+  "document review prompts include the output schema in Codex context"
+assert_contains "$GATE" "Cannot verify" \
+  "document review output includes cannot-verify items"
+assert_contains "$GATE" "line references" \
+  "document review output asks for evidence"
+
+assert_contains "$GATE" "After any code fix, re-run the same Claude reviewer gate before re-running Codex." \
+  "code fix loop requires Claude re-review before Codex re-review"
+assert_contains "$SDD" "After any Codex-triggered code fix, re-run the task reviewer before re-running the per-task Codex gate." \
+  "SDD per-task loop names Claude re-review order"
+assert_contains "$SDD" "After any Codex-triggered final-review fix, re-run the final code-reviewer before re-running the final Codex gate." \
+  "SDD final loop names Claude re-review order"
+assert_contains "$REQUESTING_REVIEW" "After any Codex-triggered code fix, re-run the Claude code-reviewer before re-running Codex." \
+  "requesting-code-review loop names Claude re-review order"
+
+assert_contains "$BRAINSTORMING" "using the spec recipe" \
+  "brainstorming points at the spec-specific recipe"
+assert_contains "$WRITING_PLANS" "using the plan recipe" \
+  "writing-plans points at the plan-specific recipe"
+assert_contains "$WRITING_PLANS" "the source spec path and the plan path" \
+  "writing-plans requires both source spec and plan paths"
+assert_contains "$SDD" "using the per-task code recipe" \
+  "SDD points per-task gates at the per-task recipe"
+assert_contains "$SDD" "using the final whole-branch code recipe" \
+  "SDD points final gate at the final recipe"
+assert_contains "$REQUESTING_REVIEW" "using the code-review recipe" \
+  "requesting-code-review points at the code-review recipe"
+
+assert_not_contains "$GATE" "Read Codex's free-form reply and extract its verdict and findings." \
+  "document review no longer relies on free-form extraction"
+
+if [ "$FAILURES" -gt 0 ]; then
+  echo "STATUS: FAILED ($FAILURES failure(s))"
+  exit 1
+fi
+
+echo "STATUS: PASSED"

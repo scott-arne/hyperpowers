@@ -1,6 +1,6 @@
 {
   "name": "hyperpowers",
-  "version": "6.0.4",
+  "version": "6.0.5",
   "description": "Hyperpowers skills and runtime bootstrap for coding agents",
   "type": "module",
   "main": ".opencode/plugins/hyperpowers.js",

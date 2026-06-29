@@ -157,12 +157,14 @@ If you find issues, fix them inline. No need to re-review — just fix and move 
 ## Codex Plan Review Gate (Claude Code only)
 
 After the plan self-review and before presenting the plan to the user, run the
-Codex review gate over the plan file as a **document** review. Follow
+Codex review gate over the plan file as a **document** review using the plan
+recipe. Follow
 [../requesting-code-review/codex-review-gate.md](../requesting-code-review/codex-review-gate.md):
-probe availability; if Codex is present, have it review the plan (feasibility, task
-sizing, missing steps, spec coverage) and resolve blocking findings in the fix loop
-before the execution handoff; if Codex is absent, emit the no-Codex notice and
-proceed. This gate never blocks the handoff — at worst it is skipped.
+probe availability; if Codex is present, provide the source spec path and the plan
+path, have it review the plan (feasibility, task sizing, missing steps, ordering,
+type/signature consistency, and spec coverage), and resolve blocking findings in
+the fix loop before the execution handoff; if Codex is absent, emit the no-Codex
+notice and proceed. This gate never blocks the handoff — at worst it is skipped.
 
 ## Execution Handoff
 

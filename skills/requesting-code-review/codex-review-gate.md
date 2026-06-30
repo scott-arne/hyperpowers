@@ -48,6 +48,10 @@ Then proceed exactly as the skill would without this gate.
 Use absolute paths for every file placeholder. Prefer file handoffs over pasted
 content; the prompt should point Codex at the source material, not copy it.
 
+On a re-review (round 2+), prepend the round-aware preamble from §5 (Round
+ledger) to the prompt below and pass the ledger path, so Codex confirms prior
+resolutions instead of re-reviewing cold. The first round uses the prompt as-is.
+
 **Spec documents** — use `task`, read-only (no `--write`):
 
 ```bash
@@ -289,10 +293,13 @@ backstop is a true backstop, not the common exit.
 
 Summarize concisely before returning to the skill's normal next step:
 
-- Codex verdict (and round count if it looped),
+- Codex verdict, the round count, and whether the loop exited by convergence or
+  by hitting the backstop,
 - what Codex flagged (by mapped severity),
 - what was fixed,
 - what was declined and why,
-- any unresolved blocking findings if the cap was hit.
+- any unresolved blocking findings if the backstop was hit,
+- whether an incomplete result occurred and how it was resolved (recovered via
+  `status`/`result`, or surfaced to the user).
 
 Then continue the skill (present to user / mark complete / finish branch).

@@ -134,6 +134,14 @@ assert_contains "$REQUESTING_REVIEW" "using the code-review recipe" \
 assert_not_contains "$GATE" "Read Codex's free-form reply and extract its verdict and findings." \
   "document review no longer relies on free-form extraction"
 
+# --- Task 3: §3 references the round-aware preamble; hand-back reports exit reason + incompletion ---
+assert_contains "$GATE" "On a re-review (round 2+), prepend the round-aware preamble from §5" \
+  "§3 recipes point at the §5 round-aware re-review preamble"
+assert_contains "$GATE" "whether the loop exited by convergence or by hitting the backstop" \
+  "hand-back reports the loop exit reason"
+assert_contains "$GATE" "whether an incomplete result occurred" \
+  "hand-back reports incompletion"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

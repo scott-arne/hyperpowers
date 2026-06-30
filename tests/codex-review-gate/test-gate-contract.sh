@@ -104,6 +104,20 @@ assert_contains "$SDD" "After any Codex-triggered final-review fix, re-run the f
 assert_contains "$REQUESTING_REVIEW" "After any Codex-triggered code fix, re-run the Claude code-reviewer before re-running Codex." \
   "requesting-code-review loop names Claude re-review order"
 
+# --- Task 2: completion check (incomplete is not approval) ---
+assert_contains "$GATE" "## 4b. Completion check — incomplete is not approval" \
+  "gate has a completion-check section"
+assert_contains "$GATE" "incomplete is not approval" \
+  "gate states incomplete is not approval"
+assert_contains "$GATE" "foreground-only" \
+  "completion check is grounded in the foreground-only review path"
+assert_contains "$GATE" "There is no background path for code gates" \
+  "gate states there is no background path for code gates"
+assert_contains "$GATE" "600000 ms (10 minutes)" \
+  "completion check pins a concrete review timeout"
+assert_contains "$GATE" ".storedJob.result.result" \
+  "completion check pins the concrete result JSON field"
+
 assert_contains "$BRAINSTORMING" "using the spec recipe" \
   "brainstorming points at the spec-specific recipe"
 assert_contains "$WRITING_PLANS" "using the plan recipe" \

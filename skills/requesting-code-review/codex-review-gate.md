@@ -159,6 +159,66 @@ Map Codex severities to Hyperpowers' vocabulary:
 
 **Blocking = Critical + Important.** Minor findings are noted, not fixed in the loop.
 
+## 4b. Completion check — incomplete is not approval
+
+A Codex result has three outcomes, not two: *approve*, *blocking findings*, and
+**incomplete**. An incomplete result carries no verdict and must never be read as
+approval or as "no findings."
+
+**Why this matters (grounding).** The code recipes call `adversarial-review`,
+which runs **foreground-only**: `handleReviewCommand` always calls
+`runForegroundCommand`; only the `task` command has a background-launch path. The
+companion's 240s `waitTimedOut` deadline belongs to `status --wait`, not to the
+review command. On a long review the harness's own command/tool timeout can abort
+the blocking call before a verdict arrives, leaving partial trace output and no
+terminal result.
+
+**A code-review result is incomplete when any hold:**
+
+- the invocation is aborted by the harness command/tool timeout before returning,
+- the process exits non-zero,
+- the `--json` payload has no terminal verdict / no structured `result` payload,
+- the rendered text reads as in-progress ("still verifying", "continuing to
+  review", partial findings with no verdict).
+
+**Required handling:**
+
+1. Do not interpret an incomplete result as approval, and do not interpret it as
+   findings. Treat it as "review not yet known."
+2. Give the review room, then recover best-effort, bounded:
+   - invoke the review under an explicit command timeout of **600000 ms (10
+     minutes)** so a normal-length review (typically 2–4 minutes) is not aborted
+     mid-flight;
+   - if it still returns without a terminal verdict, recover without re-running
+     the review — review jobs are tracked on disk. Find the most recent review
+     job with `status --json`, whose snapshot exposes `running` (active jobs),
+     `latestFinished`, and `recent` (each job carries `id` and
+     `jobClass: "review"`) — there is no flat `jobs[]` array. Poll a specific job
+     with `status <job-id> --json` and read `.job.status`. Read the stored review
+     payload with `result <job-id> --json`: the parsed verdict/findings are at
+     `.storedJob.result.result`, and the raw review text at
+     `.storedJob.result.rawOutput` or `.storedJob.result.codex.stdout`. The
+     authoritative signals are `.job.status` (`queued`/`running` = not done;
+     `completed`/`failed`/`cancelled` = terminal) and the
+     `.storedJob.result.result` payload;
+   - if `.job.status` is still `running`, wait ~30s and re-query, up to **2
+     additional poll cycles**. A poll cycle is not a review round — it does not
+     consume the §5 convergence/backstop budget.
+3. If still incomplete after the bounded recovery, hand back to the user as
+   "Codex review did not complete (still running / aborted before verdict)" —
+   never silently pass. Like every other gate failure this degrades to "no Codex
+   review," not "Codex approved."
+
+There is no background path for code gates: adding background launch to
+`adversarial-review` would require changing `codex-plugin-cc`, which is out of
+scope. The mitigation for slow reviews is the generous explicit timeout plus the
+best-effort recovery above — not `--background`. Synchronous `task` document
+gates are short and unaffected.
+
+> **Red Flag — Never** treat an unfinished, timed-out, or "still verifying"
+> Codex result as "no findings" / approval. Incomplete is not a pass. Recover via
+> `status`/`result` or surface it — do not infer a verdict Codex did not give.
+
 ## 5. Fix-and-re-review loop (converge, then stop)
 
 After the first Codex review, every later round is a **re-review against known

@@ -159,18 +159,71 @@ Map Codex severities to Hyperpowers' vocabulary:
 
 **Blocking = Critical + Important.** Minor findings are noted, not fixed in the loop.
 
-## 5. Fix-and-re-review loop (cap = 2 rounds)
+## 5. Fix-and-re-review loop (converge, then stop)
+
+After the first Codex review, every later round is a **re-review against known
+state**, not a cold re-derivation. The loop ends as soon as the work is actually
+done — it does not burn a fixed attempt budget.
+
+### Round ledger (re-review memory)
+
+Before re-running Codex (round 2+), write a small handoff file next to the other
+gate artifacts (e.g. `…/codex-round-ledger.md`). Do not paste it into your own
+context — hand it over as a file path. For each completed round it records:
+
+- **Resolved** — each blocking finding and how it was addressed, with the fix
+  commit/diff reference (code) or the spec/plan edit (documents).
+- **Declined** — each finding you declined, with the explicit reasoning (the
+  decision below to decline a finding, carried forward instead of lost).
+- **Still open** — any blocking finding not yet resolved, and why.
+
+Each later round appends a new section; the ledger is the cumulative record.
+
+The round 2+ invocation prepends a round-aware preamble to the §3 prompt:
+
+> This is re-review round N. The prior-round findings and how each was resolved
+> or declined are in `<LEDGER_PATH>`. Confirm the resolved findings are actually
+> fixed. Do not re-raise a finding listed as declined unless you can show the
+> stated reasoning is wrong. You may raise any genuinely new **blocking
+> (Critical or High)** finding — whether or not it is a regression — provided it
+> is not already listed as resolved and not a declined item without a new
+> argument. Do not raise new Minor (medium/low) findings on a re-review.
+
+The bar on re-review is "new and blocking," not "new and a regression": a
+newly-noticed Critical or High issue is still blocking even if it predates round
+1. What is excluded on re-review is Minor noise, not new blocking severity.
+
+### The loop
 
 1. If verdict is `approve` and there are no blocking findings → done; go to step 6.
 2. Otherwise address each blocking finding: for a document, edit the spec/plan; for
    code, dispatch a fix through the skill's existing fix path (e.g. SDD's fix
    subagent). You MAY decline a finding with explicit reasoning instead of fixing it.
+   Record resolutions, declines, and still-open items in the round ledger.
    After any code fix, re-run the same Claude reviewer gate before re-running Codex.
-3. Re-run the same Codex invocation over the updated artifact once the relevant
-   Claude review gate is clean.
-4. Repeat until `approve`/no blocking findings, or **2 rounds** have run. On reaching
-   the cap with unresolved blocking findings, stop looping and hand back with them
-   listed — do not loop indefinitely.
+3. Re-run the same Codex invocation (with the round-aware preamble and ledger
+   path) over the updated artifact once the relevant Claude review gate is clean.
+4. **Stop when any holds:**
+   - **Approved** — `approve` with no blocking findings.
+   - **Converged** — the round produced **no new blocking findings**: everything
+     it raised is already-resolved (confirmed via the ledger) or a
+     previously-declined item with no new argument. This is a fixed point; stop
+     even if the backstop is not reached.
+   - **Backstop hit** — the per-gate round ceiling below is reached. Stop and
+     hand back with any unresolved blocking findings listed; do not loop
+     indefinitely.
+
+### Per-gate round backstops
+
+| Gate | Recipe | Backstop |
+|------|--------|----------|
+| Spec / Plan (document gates) | task | 4 |
+| Per-task / final / code-review (code gates) | adversarial-review | 3 |
+
+Document gates get 4 rounds (cheap: a text edit + a `task` re-run). Code gates
+get 3 rounds (expensive: fix subagent + Claude-reviewer re-run + a fresh
+`adversarial-review` per round). Convergence usually stops the loop earlier; the
+backstop is a true backstop, not the common exit.
 
 ## 6. Hand back
 

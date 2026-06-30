@@ -84,6 +84,19 @@ assert_contains "$GATE" "line references" \
 
 assert_contains "$GATE" "After any code fix, re-run the same Claude reviewer gate before re-running Codex." \
   "code fix loop requires Claude re-review before Codex re-review"
+
+# --- Task 1: convergence loop + per-gate backstops + round ledger ---
+assert_contains "$GATE" "### Round ledger (re-review memory)" \
+  "gate defines a round ledger for re-review memory"
+assert_contains "$GATE" "no new blocking findings" \
+  "gate defines a convergence stop-rule"
+assert_contains "$GATE" "Document gates get 4 rounds" \
+  "gate sets the document-gate backstop to 4 rounds"
+assert_contains "$GATE" "Code gates get 3 rounds" \
+  "gate sets the code-gate backstop to 3 rounds"
+assert_not_contains "$GATE" "## 5. Fix-and-re-review loop (cap = 2 rounds)" \
+  "gate no longer uses the single 2-round cap heading"
+
 assert_contains "$SDD" "After any Codex-triggered code fix, re-run the task reviewer before re-running the per-task Codex gate." \
   "SDD per-task loop names Claude re-review order"
 assert_contains "$SDD" "After any Codex-triggered final-review fix, re-run the final code-reviewer before re-running the final Codex gate." \

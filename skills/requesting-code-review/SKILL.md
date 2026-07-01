@@ -51,10 +51,11 @@ complete, run the Codex review gate over the same `{BASE_SHA}`..`{HEAD_SHA}` ran
 as a **code** review using the code-review recipe. Follow
 [codex-review-gate.md](codex-review-gate.md): probe availability; if Codex is
 present, provide the same plan/requirements context given to the Claude reviewer,
-then resolve Codex blocking findings in the fix loop. After any
-Codex-triggered code fix, re-run the Claude code-reviewer before re-running
-Codex. If Codex is absent, emit the no-Codex notice and finish. This gate never
-blocks completion — at worst it is skipped.
+then resolve Codex blocking findings in the fix loop. Incomplete Codex results are
+never treated as approval — recover or surface them per the gate's completion
+check. After any Codex-triggered code fix, re-run the Claude code-reviewer before
+re-running Codex. If Codex is absent, emit the no-Codex notice and finish. This
+gate never blocks completion — at worst it is skipped.
 
 ## Example
 

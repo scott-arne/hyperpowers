@@ -148,6 +148,14 @@ assert_contains "$SDD" "code-gate backstop of 3 rounds" \
 assert_contains "$SDD" "Treat an unfinished or \"still verifying\" Codex result as approval" \
   "SDD Red Flags echo the incomplete-is-not-approval rule"
 
+# --- Task 5: caller skills reference the new contract ---
+assert_contains "$BRAINSTORMING" "document-gate backstop of 4 rounds" \
+  "brainstorming names the document-gate backstop"
+assert_contains "$WRITING_PLANS" "document-gate backstop of 4 rounds" \
+  "writing-plans names the document-gate backstop"
+assert_contains "$REQUESTING_REVIEW" "Incomplete Codex results are never treated as approval" \
+  "requesting-code-review names the completion contract"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

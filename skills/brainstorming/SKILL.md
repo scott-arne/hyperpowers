@@ -128,9 +128,9 @@ Follow
 [../requesting-code-review/codex-review-gate.md](../requesting-code-review/codex-review-gate.md):
 probe availability, and if Codex is present, provide the spec path plus any
 available approved-design context, have it review the spec, and resolve blocking
-findings in the fix loop before the user review; if Codex is absent, emit the
-no-Codex notice and proceed. This gate never blocks the user review — at worst it
-is skipped.
+findings in the convergence fix loop (document-gate backstop of 4 rounds) before
+the user review; if Codex is absent, emit the no-Codex notice and proceed. This
+gate never blocks the user review — at worst it is skipped.
 
 **User Review Gate:**
 After the spec review loop passes, ask the user to review the written spec before proceeding:

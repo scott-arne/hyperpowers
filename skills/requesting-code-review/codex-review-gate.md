@@ -269,10 +269,15 @@ newly-noticed Critical or High issue is still blocking even if it predates round
    path) over the updated artifact once the relevant Claude review gate is clean.
 4. **Stop when any holds:**
    - **Approved** — `approve` with no blocking findings.
-   - **Converged** — the round produced **no new blocking findings**: everything
-     it raised is already-resolved (confirmed via the ledger) or a
-     previously-declined item with no new argument. This is a fixed point; stop
-     even if the backstop is not reached.
+   - **Converged** — the round produced **no new blocking findings** (everything
+     it raised is already-resolved, confirmed via the ledger, or a
+     previously-declined item with no new argument) **and** the round ledger has
+     no still-open blocking findings. Converge only if the round ledger has no
+     still-open blocking findings — a blocker the latest round merely failed to
+     re-mention is still open and still blocks. This is a fixed point; stop even
+     if the backstop is not reached. If a still-open blocker remains, do not
+     converge: keep looping (fix it or explicitly decline it with reasoning) or
+     stop only via the backstop and hand back the unresolved finding.
    - **Backstop hit** — the per-gate round ceiling below is reached. Stop and
      hand back with any unresolved blocking findings listed; do not loop
      indefinitely.

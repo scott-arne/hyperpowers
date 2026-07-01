@@ -156,6 +156,10 @@ assert_contains "$WRITING_PLANS" "document-gate backstop of 4 rounds" \
 assert_contains "$REQUESTING_REVIEW" "Incomplete Codex results are never treated as approval" \
   "requesting-code-review names the completion contract"
 
+# --- Final-review fix: convergence forbidden while a blocker is still open ---
+assert_contains "$GATE" "only if the round ledger has no still-open blocking findings" \
+  "convergence requires the ledger to have no still-open blockers"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

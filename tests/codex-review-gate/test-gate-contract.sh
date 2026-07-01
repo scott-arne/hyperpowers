@@ -142,6 +142,12 @@ assert_contains "$GATE" "whether the loop exited by convergence or by hitting th
 assert_contains "$GATE" "whether an incomplete result occurred" \
   "hand-back reports incompletion"
 
+# --- Task 4: SDD references new caps + completion Red Flag ---
+assert_contains "$SDD" "code-gate backstop of 3 rounds" \
+  "SDD names the code-gate backstop of 3 rounds"
+assert_contains "$SDD" "Treat an unfinished or \"still verifying\" Codex result as approval" \
+  "SDD Red Flags echo the incomplete-is-not-approval rule"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

@@ -163,8 +163,9 @@ recipe. Follow
 probe availability; if Codex is present, provide the source spec path and the plan
 path, have it review the plan (feasibility, task sizing, missing steps, ordering,
 type/signature consistency, and spec coverage), and resolve blocking findings in
-the fix loop before the execution handoff; if Codex is absent, emit the no-Codex
-notice and proceed. This gate never blocks the handoff — at worst it is skipped.
+the convergence fix loop (document-gate backstop of 4 rounds) before the execution
+handoff; if Codex is absent, emit the no-Codex notice and proceed. This gate never
+blocks the handoff — at worst it is skipped.
 
 ## Execution Handoff
 

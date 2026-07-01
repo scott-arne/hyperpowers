@@ -244,8 +244,12 @@ no-Codex notice once and run both gates as no-ops.
   finishing. After any Codex-triggered final-review fix, re-run the final
   code-reviewer before re-running the final Codex gate.
 
-The gate's round cap bounds the loop; if it is hit with unresolved blocking
-findings, surface them rather than looping.
+The gate's convergence stop-rule and per-gate backstop bound the loop (code
+gates use a code-gate backstop of 3 rounds); if the backstop is hit with
+unresolved blocking findings, surface them rather than looping. A per-task gate
+that hits its backstop with unresolved blocking findings follows the existing
+hand-back rule — it does not silently continue: route it through the same
+BLOCKED-escalation path that governs whether execution pauses between tasks.
 
 ## File Handoffs
 
@@ -418,6 +422,8 @@ Done!
 - Move to next task while the review has open Critical/Important issues
 - Re-dispatch a task the progress ledger already marks complete — check
   the ledger (and `git log`) after any compaction or resume
+- Treat an unfinished or "still verifying" Codex result as approval — incomplete
+  is not a pass; recover via `status`/`result` or surface it
 
 **If subagent asks questions:**
 - Answer clearly and completely

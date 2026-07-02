@@ -4,9 +4,12 @@
 # through the controller's context.
 #
 # Usage: task-brief PLAN_FILE TASK_NUMBER [OUTFILE]
-# Default OUTFILE: <git-dir>/sdd/task-<N>-brief.md — unique per repo
-# instance, so concurrent sessions cannot collide.
+# Default OUTFILE: <sdd-dir>/task-<N>-brief.md — unique per repo instance,
+# so concurrent sessions cannot collide. The scratch dir comes from the
+# sdd-dir helper (off any protected path); see that script for why.
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ $# -lt 2 ] || [ $# -gt 3 ]; then
   echo "usage: task-brief PLAN_FILE TASK_NUMBER [OUTFILE]" >&2
@@ -20,9 +23,7 @@ n=$2
 if [ $# -eq 3 ]; then
   out=$3
 else
-  dir=$(git rev-parse --git-path sdd)
-  mkdir -p "$dir"
-  dir=$(cd "$dir" && pwd)
+  dir=$("$SCRIPT_DIR/sdd-dir")
   out="$dir/task-${n}-brief.md"
 fi
 

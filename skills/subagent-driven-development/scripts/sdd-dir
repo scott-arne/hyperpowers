@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Emit the SDD scratch directory for this repo instance, off any protected
+# path. Single source of truth for task-brief, review-package, and the
+# SKILL.md ledger guidance.
+#
+# Why not <git-dir>/sdd: .git/ is a hardcoded protected path in Claude Code.
+# Writes under it prompt in every permission mode except bypassPermissions,
+# and that check runs BEFORE permission rules and PreToolUse hooks — so
+# neither an allow-glob nor a hook can suppress it. SDD is write-intensive,
+# so that meant a prompt per scratch file. Relocating off .git/ lets the
+# normal permission machinery cover the writes.
+#
+# The dir is keyed by a stable hash of the absolute git-dir. That preserves
+# the two properties the old `git rev-parse --git-path sdd` idiom gave for
+# free: per-repo-instance isolation, and per-worktree distinctness (linked
+# worktrees have distinct absolute git-dirs). It lives under the user cache,
+# so it is never inside the working tree and cannot be accidentally
+# committed. Hashing uses `git hash-object` rather than shasum/sha256sum
+# because the latter's name differs across platforms while git is already a
+# hard dependency here.
+set -euo pipefail
+
+git rev-parse --git-dir >/dev/null 2>&1 || {
+  echo "sdd-dir: not inside a git repository" >&2
+  exit 2
+}
+
+key=$(printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin)
+dir="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/sdd/${key}"
+mkdir -p "$dir"
+printf '%s\n' "$dir"

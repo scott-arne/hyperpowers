@@ -5,10 +5,13 @@
 # tasks intact.
 #
 # Usage: review-package BASE HEAD [OUTFILE]
-# Default OUTFILE: <git-dir>/sdd/review-<base7>..<head7>.diff — unique per
-# repo instance and per range, so concurrent sessions cannot collide and a
-# re-review after fixes always gets a distinctly named fresh file.
+# Default OUTFILE: <sdd-dir>/review-<base7>..<head7>.diff — unique per repo
+# instance and per range, so concurrent sessions cannot collide and a
+# re-review after fixes always gets a distinctly named fresh file. The
+# scratch dir comes from the sdd-dir helper (off any protected path).
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ $# -lt 2 ] || [ $# -gt 3 ]; then
   echo "usage: review-package BASE HEAD [OUTFILE]" >&2
@@ -24,9 +27,7 @@ git rev-parse --verify --quiet "$head" >/dev/null || { echo "bad HEAD: $head" >&
 if [ $# -eq 3 ]; then
   out=$3
 else
-  dir=$(git rev-parse --git-path sdd)
-  mkdir -p "$dir"
-  dir=$(cd "$dir" && pwd)
+  dir=$("$SCRIPT_DIR/sdd-dir")
   out="$dir/review-$(git rev-parse --short "$base")..$(git rev-parse --short "$head").diff"
 fi
 

@@ -288,15 +288,23 @@ sequences — the single most expensive failure observed. Track progress in
 a ledger file, not only in todos.
 
 - At skill start, check for a ledger:
-  `cat "$(git rev-parse --git-path sdd)/progress.md"`. Tasks listed there
-  as complete are DONE — do not re-dispatch them; resume at the first task
-  not marked complete.
+  `cat "$(scripts/sdd-dir)/progress.md"` (a session started before v6.0.7
+  may have one at `$(git rev-parse --git-path sdd)/progress.md` instead —
+  check there too). Tasks listed there as complete are DONE — do not
+  re-dispatch them; resume at the first task not marked complete.
 - When a task's review comes back clean, append one line to the ledger in
   the same message as your other bookkeeping:
   `Task N: complete (commits <base7>..<head7>, review clean)`.
 - The ledger is your recovery map: the commits it names exist in git even
   when your context no longer remembers creating them. After compaction,
   trust the ledger and `git log` over your own recollection.
+
+The ledger, briefs, reports, and review packages all live in the scratch
+dir `scripts/sdd-dir` prints — under the user cache
+(`${XDG_CACHE_HOME:-~/.cache}/hyperpowers/sdd/<per-repo-key>/`), not in the
+working tree. It is off any protected path (so writing there does not
+trigger a permission prompt) and is never committed. That is where to look
+for a session's `progress.md` and reports.
 
 ## Prompt Templates
 

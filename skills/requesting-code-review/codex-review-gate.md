@@ -48,6 +48,13 @@ Then proceed exactly as the skill would without this gate.
 Use absolute paths for every file placeholder. Prefer file handoffs over pasted
 content; the prompt should point Codex at the source material, not copy it.
 
+Write the gate's own scratch files — the prompt files below, the round ledger,
+and any handoff — under `${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/codex-review/`
+(create it if needed). Never place them under `.git/`, `~/.claude/`, or anywhere
+outside the working directory: those paths are protected or out-of-workspace and
+force an approval prompt on every write. The reviewed artifact (spec, plan, diff)
+stays where it lives — only the gate's transient scratch goes in the cache dir.
+
 On a re-review (round 2+), prepend the round-aware preamble from §5 (Round
 ledger) to the prompt below and pass the ledger path, so Codex confirms prior
 resolutions instead of re-reviewing cold. The first round uses the prompt as-is.
@@ -231,9 +238,10 @@ done — it does not burn a fixed attempt budget.
 
 ### Round ledger (re-review memory)
 
-Before re-running Codex (round 2+), write a small handoff file next to the other
-gate artifacts (e.g. `…/codex-round-ledger.md`). Do not paste it into your own
-context — hand it over as a file path. For each completed round it records:
+Before re-running Codex (round 2+), write a small handoff file to the gate scratch
+dir from §3 (e.g. `${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/codex-review/codex-round-ledger.md`).
+Do not paste it into your own context — hand it over as a file path. For each
+completed round it records:
 
 - **Resolved** — each blocking finding and how it was addressed, with the fix
   commit/diff reference (code) or the spec/plan edit (documents).

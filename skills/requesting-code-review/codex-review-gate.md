@@ -59,6 +59,13 @@ On a re-review (round 2+), prepend the round-aware preamble from §5 (Round
 ledger) to the prompt below and pass the ledger path, so Codex confirms prior
 resolutions instead of re-reviewing cold. The first round uses the prompt as-is.
 
+Run `task` in the **foreground** — as written below, with no `--background`. The
+default `task` mode blocks and returns Codex's result inline when the review
+finishes; there is nothing to poll for and nothing to wait on. Never add
+`--background` to a document review: it enqueues a detached worker and forces you
+into a `status`/`result` polling loop for no benefit. Do not `sleep` and then
+poll — the foreground call already returns exactly when Codex is done.
+
 **Spec documents** — use `task`, read-only (no `--write`):
 
 ```bash
@@ -212,9 +219,13 @@ terminal result.
      authoritative signals are `.job.status` (`queued`/`running` = not done;
      `completed`/`failed`/`cancelled` = terminal) and the
      `.storedJob.result.result` payload;
-   - if `.job.status` is still `running`, wait ~30s and re-query, up to **2
-     additional poll cycles**. A poll cycle is not a review round — it does not
-     consume the §5 convergence/backstop budget.
+   - if `.job.status` is still `running`, block on it with
+     `status <job-id> --wait --json` — the companion polls server-side (2s
+     interval, 240s deadline) and returns the moment the job reaches a terminal
+     state. Do not hand-roll a `sleep`-then-re-query loop; `--wait` is the
+     condition-based primitive and returns as soon as Codex is done. Cap this at
+     **2 additional wait cycles**. A wait cycle is not a review round — it does
+     not consume the §5 convergence/backstop budget.
 3. If still incomplete after the bounded recovery, hand back to the user as
    "Codex review did not complete (still running / aborted before verdict)" —
    never silently pass. Like every other gate failure this degrades to "no Codex
@@ -223,12 +234,24 @@ terminal result.
 There is no background path for code gates: adding background launch to
 `adversarial-review` would require changing `codex-plugin-cc`, which is out of
 scope. The mitigation for slow reviews is the generous explicit timeout plus the
-best-effort recovery above — not `--background`. Synchronous `task` document
-gates are short and unaffected.
+best-effort recovery above — not `--background`.
+
+Document gates (spec/plan) need none of this recovery machinery: run `task` in
+the foreground (§3) and it blocks and returns the verdict inline. Do not add
+`--background` and do not poll — backgrounding a document review only replaces a
+clean blocking call with a detached worker you then have to chase through
+`status`/`result`. If you ever do need a job's terminal state, use
+`status <job-id> --wait`, never a blind `sleep`.
 
 > **Red Flag — Never** treat an unfinished, timed-out, or "still verifying"
 > Codex result as "no findings" / approval. Incomplete is not a pass. Recover via
 > `status`/`result` or surface it — do not infer a verdict Codex did not give.
+
+> **Red Flag — Never** background a document review, and never `sleep`-then-poll
+> for any Codex result. Foreground `task` returns the verdict inline; when a job
+> genuinely needs awaiting, `status <job-id> --wait` returns the instant it is
+> done. A blind wait-then-poll burns wall-clock and risks reading a verdict
+> before it exists.
 
 ## 5. Fix-and-re-review loop (converge, then stop)
 

@@ -37,8 +37,3 @@ label = "Cursor plugin"
 file = ".kimi-plugin/plugin.json"
 type = "package-json"
 label = "Kimi plugin"
-
-[[locations]]
-file = "gemini-extension.json"
-type = "package-json"
-label = "Gemini extension"

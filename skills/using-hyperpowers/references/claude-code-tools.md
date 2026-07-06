@@ -47,4 +47,4 @@ For path-scoped rules and larger-project organization, see `.claude/rules/` (rul
 
 ## Personal skills directory
 
-User-level skills live at **`~/.claude/skills/`**. Each skill is a subdirectory containing a `SKILL.md` (with `name` and `description` frontmatter) plus any supporting files. Claude Code does not currently recognize the cross-runtime `~/.agents/skills/` path that Codex, Copilot CLI, and Gemini CLI read; if you're relying on cross-runtime support in the future, verify against the [official skills docs](https://code.claude.com/docs/en/skills).
+User-level skills live at **`~/.claude/skills/`**. Each skill is a subdirectory containing a `SKILL.md` (with `name` and `description` frontmatter) plus any supporting files. Claude Code does not currently recognize the cross-runtime `~/.agents/skills/` path that Codex and Copilot CLI read; if you're relying on cross-runtime support in the future, verify against the [official skills docs](https://code.claude.com/docs/en/skills).

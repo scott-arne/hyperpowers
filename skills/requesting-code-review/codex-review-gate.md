@@ -49,11 +49,27 @@ Use absolute paths for every file placeholder. Prefer file handoffs over pasted
 content; the prompt should point Codex at the source material, not copy it.
 
 Write the gate's own scratch files — the prompt files below, the round ledger,
-and any handoff — under `${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/codex-review/`
-(create it if needed). Never place them under `.git/`, `~/.claude/`, or anywhere
-outside the working directory: those paths are protected or out-of-workspace and
-force an approval prompt on every write. The reviewed artifact (spec, plan, diff)
-stays where it lives — only the gate's transient scratch goes in the cache dir.
+and any handoff — inside a fresh per-run scratch dir. At gate start, run the
+helper once and capture its output as `GATE_DIR`:
+
+```bash
+GATE_DIR="$(bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/codex-review-dir")"
+```
+
+(In a hyperpowers dev checkout `$CLAUDE_PLUGIN_ROOT` is unset; the `:-.` fallback
+runs `skills/requesting-code-review/scripts/codex-review-dir` from the repo root.)
+The helper prints a unique directory under
+`${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/codex-review/`, created for this one
+gate invocation. **Use one `GATE_DIR` for the whole gate** — every prompt file
+and the round ledger live inside it, and every round reuses the same dir. Because
+the dir is unique per invocation, two review gates running at once — even two
+Claude Code sessions in the same worktree, or the spec gate and code gate of one
+run — never share a ledger or clobber each other's prompt files. Never hand-write
+these files under `.git/`, `~/.claude/`, or anywhere outside the working
+directory: those paths are protected or out-of-workspace and force an approval
+prompt on every write, which is why the helper places them under the user cache.
+The reviewed artifact (spec, plan, diff) stays where it lives — only the gate's
+transient scratch goes in `GATE_DIR`.
 
 On a re-review (round 2+), prepend the round-aware preamble from §5 (Round
 ledger) to the prompt below and pass the ledger path, so Codex confirms prior
@@ -261,8 +277,8 @@ done — it does not burn a fixed attempt budget.
 
 ### Round ledger (re-review memory)
 
-Before re-running Codex (round 2+), write a small handoff file to the gate scratch
-dir from §3 (e.g. `${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/codex-review/codex-round-ledger.md`).
+Before re-running Codex (round 2+), write a small handoff file inside the
+per-run `GATE_DIR` from §3 (e.g. `"$GATE_DIR/codex-round-ledger.md"`).
 Do not paste it into your own context — hand it over as a file path. For each
 completed round it records:
 

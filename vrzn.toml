@@ -1,0 +1,44 @@
+# vrzn configuration — single source of truth for the plugin version.
+#
+# Seven manifests must carry the same version or installs across harnesses
+# drift. Each is JSON with exactly one `"version": "X.Y.Z"` key, so the
+# package-json preset matches unambiguously (including the nested key in
+# marketplace.json). Bump every file at once with:
+#
+#     vrzn -y bump patch      # or: minor / major
+#     vrzn get                # verify all seven agree
+
+[[locations]]
+file = "package.json"
+type = "package-json"
+label = "npm package"
+
+[[locations]]
+file = ".claude-plugin/plugin.json"
+type = "package-json"
+label = "Claude Code plugin"
+
+[[locations]]
+file = ".claude-plugin/marketplace.json"
+type = "package-json"
+label = "Claude Code marketplace"
+
+[[locations]]
+file = ".codex-plugin/plugin.json"
+type = "package-json"
+label = "Codex plugin"
+
+[[locations]]
+file = ".cursor-plugin/plugin.json"
+type = "package-json"
+label = "Cursor plugin"
+
+[[locations]]
+file = ".kimi-plugin/plugin.json"
+type = "package-json"
+label = "Kimi plugin"
+
+[[locations]]
+file = "gemini-extension.json"
+type = "package-json"
+label = "Gemini extension"

@@ -91,20 +91,6 @@ This fork is not on Cursor's plugin marketplace, so marketplace search will not 
   droid plugin install hyperpowers@hyperpowers
   ```
 
-### Gemini CLI
-
-- Install the extension from the repository:
-
-  ```bash
-  gemini extensions install https://github.com/scott-arne/hyperpowers
-  ```
-
-- Update later:
-
-  ```bash
-  gemini extensions update hyperpowers
-  ```
-
 ### GitHub Copilot CLI
 
 - Register this repository as a marketplace:

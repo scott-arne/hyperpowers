@@ -260,6 +260,13 @@ mutating the message array in code.
 
 ### Shape C — Instructions-file
 
+> **Note:** Gemini CLI itself is EOL as of 2026-06-18 and is no longer shipped by
+> this fork — `gemini-extension.json`, `GEMINI.md`, and `references/gemini-tools.md`
+> have been removed. It remains the clearest worked example of the instructions-file
+> shape, so it is kept here for illustration; the file names below refer to those
+> deleted references. When porting a live Shape C harness, apply the same pattern
+> with your own manifest and context file.
+
 The harness has neither a shell hook nor a code plugin — its session-start
 surface is a context file that *your installed extension ships and the manifest
 declares* (e.g. Gemini's `contextFileName` → the extension's own `GEMINI.md`).

@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Emit a fresh, run-scoped scratch directory for one Codex review-gate
+# invocation, off any protected path. The gate writes its transient files —
+# the prompt files, the round ledger, and any handoff — inside the printed
+# dir and reuses that one dir across every round of the same gate.
+#
+# Why a fresh dir per call (unlike sdd-dir, which is stable per repo): the
+# gate is a bounded, self-contained loop inside a single skill step, not a
+# resumable multi-session workflow, so it needs no cross-invocation
+# stability. What it does need is that two review gates running at once never
+# share a ledger or clobber each other's prompt files — even two Claude Code
+# sessions in the SAME worktree, or the spec gate and code gate of one run.
+# A stable per-repo dir (git-dir-keyed alone) would still collide in those
+# cases; a per-invocation `mktemp -d` cannot. So the caller runs this once at
+# gate start, captures the path, and reuses it for the whole gate.
+#
+# The git-dir-keyed parent is only for tidiness — it groups a repo's runs
+# together and mirrors sdd-dir's layout. Isolation comes from mktemp, not the
+# key.
+#
+# Field evidence this is a real bug, not a hypothetical: the prior flat path
+# hard-coded one shared ledger, `.../codex-review/codex-round-ledger.md`, for
+# every session on the machine. Two symptoms were observed in the wild. (1)
+# Users had begun hand-prefixing ledger filenames per project (ddf-, lic-,
+# oeio-cube-, ctx-, ...) to dodge the collision — a manual workaround for
+# missing isolation. (2) A session reviewing the `oedesalt` plan pointed Codex
+# at the bare shared ledger while that file still held a DIFFERENT project's
+# (`oefp`) spec-review findings from three days earlier, so the re-review
+# prompt asserted "this ledger DOES pertain to the files below" about a ledger
+# that did not. A fresh per-invocation dir makes both impossible.
+#
+# Why not <git-dir>/... or ~/.claude/...: .git/ and Claude's home are
+# hardcoded protected paths in Claude Code. Writes there prompt in every
+# permission mode except bypassPermissions, and that check runs BEFORE
+# permission rules and PreToolUse hooks — so neither an allow-glob nor a hook
+# can suppress it. Living under the user cache keeps writes on the normal
+# permission path, and outside the working tree so scratch is never committed.
+# Hashing uses `git hash-object` rather than shasum/sha256sum because the
+# latter's name differs across platforms while git is already a hard
+# dependency here.
+set -euo pipefail
+
+git rev-parse --git-dir >/dev/null 2>&1 || {
+  echo "codex-review-dir: not inside a git repository" >&2
+  exit 2
+}
+
+key=$(printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin)
+base="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/codex-review/${key}"
+mkdir -p "$base"
+mktemp -d "${base}/run-XXXXXXXX"

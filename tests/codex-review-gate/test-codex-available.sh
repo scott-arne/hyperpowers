@@ -79,10 +79,12 @@ fi
 out="$(HYPERPOWERS_PLUGINS_FILE="$TMP/reg.json" HYPERPOWERS_CODEX_SETUP_JSON='{"ready":true}' \
         bash "$PROBE" 2>/dev/null)"
 rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "$TMP/codex" ]; then
-  pass "ready:true -> exit 0 + install path"
+first="$(printf '%s\n' "$out" | sed -n 1p)"
+second="$(printf '%s\n' "$out" | sed -n 2p)"
+if [ "$rc" -eq 0 ] && [ "$first" = "$TMP/codex" ] && [ "$second" = "unknown" ]; then
+  pass "ready:true -> exit 0 + install path + version line"
 else
-  fail "ready:true -> exit 0 + install path (rc=$rc out=$out)"
+  fail "ready:true -> exit 0 + install path + version line (rc=$rc out=$out)"
 fi
 
 # 5. Malformed registry JSON -> degrade
@@ -110,7 +112,7 @@ printf '%s' '{"version":2,"plugins":{"codex@openai-codex":[{"installPath":"'"$TM
 out="$(HYPERPOWERS_PLUGINS_FILE="$TMP/multi.json" HYPERPOWERS_CODEX_SETUP_JSON='{"ready":true}' \
         bash "$PROBE" 2>/dev/null)"
 rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "$TMP/codex2" ]; then
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "$TMP/codex2" ]; then
   pass "multi-record skips stale -> picks valid install"
 else
   fail "multi-record skips stale -> picks valid install (rc=$rc out=$out)"
@@ -126,7 +128,7 @@ out="$(HYPERPOWERS_PLUGINS_FILE="$TMP/retry.json" PROBE_TEST_MODE=recover \
         bash "$PROBE" 2>/dev/null)"
 rc=$?
 calls="$(cat "$TMP/recover_counter")"
-if [ "$rc" -eq 0 ] && [ "$out" = "$TMP/codex_retry" ] && [ "$calls" -ge 2 ]; then
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "$TMP/codex_retry" ] && [ "$calls" -ge 2 ]; then
   pass "transient-then-ready -> retries, exit 0 (calls=$calls)"
 else
   fail "transient-then-ready -> retries, exit 0 (rc=$rc out=$out calls=$calls)"
@@ -161,6 +163,20 @@ else
   else
     fail "terminal not-ready -> exit 1 without retry (expected 1 call, got $calls)"
   fi
+fi
+
+# 11. Companion manifest present -> its version is printed on line 2.
+make_install "$TMP/codex_ver"
+mkdir -p "$TMP/codex_ver/.claude-plugin"
+printf '%s' '{"name":"codex","version":"9.9.9"}' > "$TMP/codex_ver/.claude-plugin/plugin.json"
+printf '%s' '{"version":2,"plugins":{"codex@openai-codex":[{"installPath":"'"$TMP"'/codex_ver"}]}}' > "$TMP/ver.json"
+out="$(HYPERPOWERS_PLUGINS_FILE="$TMP/ver.json" HYPERPOWERS_CODEX_SETUP_JSON='{"ready":true}' \
+        bash "$PROBE" 2>/dev/null)"
+rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 2p)" = "9.9.9" ]; then
+  pass "manifest version -> printed on line 2"
+else
+  fail "manifest version -> printed on line 2 (rc=$rc out=$out)"
 fi
 
 if [ "$FAILURES" -gt 0 ]; then

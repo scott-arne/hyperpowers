@@ -19,10 +19,16 @@ bash "${CLAUDE_PLUGIN_ROOT}/skills/requesting-code-review/scripts/codex-availabl
 
 (When working inside a hyperpowers dev checkout rather than an installed plugin,
 `$CLAUDE_PLUGIN_ROOT` is unset; run `bash skills/requesting-code-review/scripts/codex-available.sh`
-from the repo root instead.)
+from the repo root instead. If it is unset in an *installed-plugin* session —
+some shells do not inherit it — resolve the newest install and run the probe
+from there: `ls -d ~/.claude/plugins/cache/hyperpowers/hyperpowers/*/ | sort -V | tail -1`.)
 
-- **Exit 0:** a Codex review can run. stdout is the Codex install path — capture it
-  as `CODEX_PATH` for the invocation step.
+- **Exit 0:** a Codex review can run. stdout line 1 is the Codex install path —
+  capture it as `CODEX_PATH` for the invocation step. stdout line 2 is the
+  installed codex-plugin-cc version — capture it as `CODEX_VERSION` and report
+  it in the §6 hand-back. The JSON field paths in §4b are verified against
+  codex-plugin-cc **1.0.5**; on another version, confirm a field exists in the
+  actual payload before relying on it (fall back to `.storedJob.result.rawOutput`).
 - **Non-zero exit:** Codex is unavailable. Emit the **No-Codex notice** (below) at
   this point and continue the skill unchanged. Do not treat this as an error.
 
@@ -80,7 +86,10 @@ default `task` mode blocks and returns Codex's result inline when the review
 finishes; there is nothing to poll for and nothing to wait on. Never add
 `--background` to a document review: it enqueues a detached worker and forces you
 into a `status`/`result` polling loop for no benefit. Do not `sleep` and then
-poll — the foreground call already returns exactly when Codex is done.
+poll — the foreground call already returns exactly when Codex is done. Give the
+blocking call an explicit command timeout of **600000 ms (10 minutes)**:
+document reviews typically finish in 2–5 minutes, but default tool timeouts are
+far shorter and an aborted call loses the verdict.
 
 **Spec documents** — use `task`, read-only (no `--write`):
 
@@ -118,11 +127,48 @@ type/signature consistency, and spec coverage. Do not edit anything. Return
 exactly the Required document-review output from the output shape included below.
 ```
 
+**Code reviews — launch detached, watch in the foreground.** The three code
+recipes below all use `adversarial-review`, which the companion runs as one
+long turn (typically 2–5 minutes, sometimes 10+). Never run it as a plain
+blocking shell call: if the harness command timeout kills that call, the
+companion dies mid-turn and never writes a terminal job state — the job is
+orphaned as `running`, `result` refuses it forever, and the verdict is
+unrecoverable except by a full re-run. Instead:
+
+1. **Launch in the background.** Run the recipe command with the shell tool's
+   run-in-background option (not `nohup`, not a trailing `&`). The detached
+   process survives watcher timeouts and always persists a terminal result;
+   its captured output also holds the full `--json` payload as a fallback.
+2. **Capture the job id.** Immediately run
+   `node "$CODEX_PATH/scripts/codex-companion.mjs" status --json` in the
+   foreground and take the `id` of the newest `.running[]` entry with
+   `jobClass: "review"`; if the job has not registered yet, re-run the status
+   call after a couple of seconds.
+3. **Watch in the foreground — never idle.** Block on
+   `node "$CODEX_PATH/scripts/codex-companion.mjs" status <job-id> --wait --json`;
+   each call returns the moment the job goes terminal, or after its 240 s
+   deadline with `waitTimedOut: true`. If `.job.status` is still
+   `queued`/`running`, immediately issue the next `status <job-id> --wait --json`.
+   While the review runs, the session must always be inside one of these
+   blocking watch calls — never `sleep`, never fire-and-forget and move on.
+   This keeps the session visibly working in harness UIs and the wait
+   interruptible, while the review itself is immune to any single call being
+   killed.
+4. **Read the verdict.** Once `.job.status` is terminal, run
+   `node "$CODEX_PATH/scripts/codex-companion.mjs" result <job-id> --json`:
+   the parsed verdict/findings are at `.storedJob.result.result`, the raw
+   review text at `.storedJob.result.rawOutput`.
+
+Cap the watch at **4 consecutive wait cycles** (~16 minutes). If the job is
+still not terminal, treat the result as incomplete per §4b — optionally
+`cancel <job-id>` to stop a stalled worker — and never read the absence of a
+verdict as approval.
+
 **Per-task code** — use `adversarial-review` so Codex sees the diff and the
 task-scoped context:
 
 ```bash
-node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <BASE_SHA> --wait --json "Task-scoped review. Requirements: <TASK_BRIEF_PATH>. Implementer report: <IMPLEMENTER_REPORT_PATH>. Review package: <REVIEW_PACKAGE_PATH>. Global constraints: <GLOBAL_CONSTRAINTS_PATH>. Review for task compliance and code quality. Do not edit anything."
+node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <BASE_SHA> --json "Task-scoped review. Requirements: <TASK_BRIEF_PATH>. Implementer report: <IMPLEMENTER_REPORT_PATH>. Review package: <REVIEW_PACKAGE_PATH>. Global constraints: <GLOBAL_CONSTRAINTS_PATH>. Review for task compliance and code quality. Do not edit anything."
 ```
 
 `<BASE_SHA>` is the recorded task base from before the implementer was
@@ -133,7 +179,7 @@ report, review package, and global constraints carry the real context.
 point Codex at the final-review inputs:
 
 ```bash
-node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <MERGE_BASE_SHA> --wait --json "Final whole-branch review. Branch review package: <BRANCH_REVIEW_PACKAGE_PATH>. Plan or requirements: <PLAN_OR_REQUIREMENTS_PATH>. Minor findings ledger, if present: <MINOR_LEDGER_PATH>. Review for correctness, requirements coverage, integration risk, and code quality. Do not edit anything."
+node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <MERGE_BASE_SHA> --json "Final whole-branch review. Branch review package: <BRANCH_REVIEW_PACKAGE_PATH>. Plan or requirements: <PLAN_OR_REQUIREMENTS_PATH>. Minor findings ledger, if present: <MINOR_LEDGER_PATH>. Review for correctness, requirements coverage, integration risk, and code quality. Do not edit anything."
 ```
 
 **Code-review requests** — use `adversarial-review` over the same range the
@@ -141,7 +187,7 @@ Claude reviewer used. If the requirements are a file, pass the file path; if
 they are short text, include that text in the focus string.
 
 ```bash
-node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <BASE_SHA> --wait --json "Code review. Requirements or review context: <PLAN_OR_REQUIREMENTS_CONTEXT>. Review for correctness, requirements alignment, integration risk, and code quality. Do not edit anything."
+node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <BASE_SHA> --json "Code review. Requirements or review context: <PLAN_OR_REQUIREMENTS_CONTEXT>. Review for correctness, requirements alignment, integration risk, and code quality. Do not edit anything."
 ```
 
 ### Required document-review output
@@ -199,19 +245,29 @@ A Codex result has three outcomes, not two: *approve*, *blocking findings*, and
 **incomplete**. An incomplete result carries no verdict and must never be read as
 approval or as "no findings."
 
-**Why this matters (grounding).** The code recipes call `adversarial-review`,
-which runs **foreground-only**: `handleReviewCommand` always calls
-`runForegroundCommand`; only the `task` command has a background-launch path. The
-companion's 240s `waitTimedOut` deadline belongs to `status --wait`, not to the
-review command. On a long review the harness's own command/tool timeout can abort
-the blocking call before a verdict arrives, leaving partial trace output and no
-terminal result.
+**Why this matters (grounding).** Within the companion, `adversarial-review` is
+**foreground-only**: `handleReviewCommand` always calls `runForegroundCommand`,
+and the review command's own `--wait`/`--background` flags are parsed but
+ignored. The background path for code gates therefore comes from the harness
+side — the detached launch in §3 — and it is required, not optional. If the
+review is instead run as a plain blocking call and the harness command timeout
+kills it, the companion process dies mid-turn and never writes a terminal job
+state: the job record stays `running` with a dead worker, `status <job-id>
+--wait` burns its full deadline, and `result` refuses forever. No recovery can
+conjure the verdict in that case; prevention (the detached launch) is the
+mitigation. The 240 s `waitTimedOut` deadline belongs to `status --wait` —
+hitting it is not a review failure, just the cue to issue the next watch call.
 
-**A code-review result is incomplete when any hold:**
+**A review result is incomplete when any hold:**
 
-- the invocation is aborted by the harness command/tool timeout before returning,
-- the process exits non-zero,
-- the `--json` payload has no terminal verdict / no structured `result` payload,
+- the background launch exits non-zero, or its job never appears in
+  `status --json`,
+- the §3 watch cap is reached with `.job.status` still `queued`/`running`,
+- a foreground call (document review) is aborted by the harness command timeout
+  before returning, or exits non-zero,
+- the `--json` payload has no terminal verdict / no structured `result` payload
+  (`.storedJob.result.result` null — check `.storedJob.result.parseError` for a
+  schema-compliance failure that still exits 0),
 - the rendered text reads as in-progress ("still verifying", "continuing to
   review", partial findings with no verdict).
 
@@ -219,41 +275,45 @@ terminal result.
 
 1. Do not interpret an incomplete result as approval, and do not interpret it as
    findings. Treat it as "review not yet known."
-2. Give the review room, then recover best-effort, bounded:
-   - invoke the review under an explicit command timeout of **600000 ms (10
-     minutes)** so a normal-length review (typically 2–4 minutes) is not aborted
-     mid-flight;
-   - if it still returns without a terminal verdict, recover without re-running
-     the review — review jobs are tracked on disk. Find the most recent review
-     job with `status --json`, whose snapshot exposes `running` (active jobs),
+2. Recover best-effort, bounded:
+   - **Code gates:** the §3 watch loop *is* the recovery path — the job id is
+     known from launch, and `status <job-id> --wait --json` / `result <job-id>
+     --json` return the verdict whenever the detached worker finishes, no matter
+     how many individual watch calls timed out along the way. If the watch cap
+     passes with `.job.status` still `queued`/`running`, the worker is stalled
+     or dead: run `status <job-id> --json` one final time, optionally
+     `cancel <job-id>`, and stop — relaunch the review at most once, and only if
+     the failure looked transient. If the job id was lost, find it again with
+     `status --json`, whose snapshot exposes `running` (active jobs),
      `latestFinished`, and `recent` (each job carries `id` and
-     `jobClass: "review"`) — there is no flat `jobs[]` array. Poll a specific job
-     with `status <job-id> --json` and read `.job.status`. Read the stored review
-     payload with `result <job-id> --json`: the parsed verdict/findings are at
-     `.storedJob.result.result`, and the raw review text at
-     `.storedJob.result.rawOutput` or `.storedJob.result.codex.stdout`. The
-     authoritative signals are `.job.status` (`queued`/`running` = not done;
-     `completed`/`failed`/`cancelled` = terminal) and the
-     `.storedJob.result.result` payload;
-   - if `.job.status` is still `running`, block on it with
-     `status <job-id> --wait --json` — the companion polls server-side (2s
-     interval, 240s deadline) and returns the moment the job reaches a terminal
-     state. Do not hand-roll a `sleep`-then-re-query loop; `--wait` is the
-     condition-based primitive and returns as soon as Codex is done. Cap this at
-     **2 additional wait cycles**. A wait cycle is not a review round — it does
-     not consume the §5 convergence/backstop budget.
+     `jobClass: "review"`) — there is no flat `jobs[]` array.
+   - **Document gates:** the foreground `task` call returned without a verdict.
+     Check `status --json` for a completed job holding the result
+     (`result <job-id> --json`); if none, re-run the document review once with
+     the §3 explicit 600000 ms (10 minutes) timeout if the failure looked
+     transient, otherwise surface it.
+   - The authoritative signals everywhere are `.job.status`
+     (`queued`/`running` = not done; `completed`/`failed`/`cancelled` =
+     terminal) and the `.storedJob.result.result` payload, with the raw review
+     text at `.storedJob.result.rawOutput` or `.storedJob.result.codex.stdout`.
+     Do not hand-roll a `sleep`-then-re-query loop; `status <job-id> --wait
+     --json` is the condition-based primitive (2 s interval, 240 s deadline)
+     and returns as soon as Codex is done. A wait cycle is not a review round —
+     it does not consume the §5 convergence/backstop budget.
 3. If still incomplete after the bounded recovery, hand back to the user as
    "Codex review did not complete (still running / aborted before verdict)" —
    never silently pass. Like every other gate failure this degrades to "no Codex
    review," not "Codex approved."
 
-There is no background path for code gates: adding background launch to
-`adversarial-review` would require changing `codex-plugin-cc`, which is out of
-scope. The mitigation for slow reviews is the generous explicit timeout plus the
-best-effort recovery above — not `--background`.
+The companion itself offers no working `--background` for `adversarial-review`;
+the detached launch in §3 supplies the background path from the harness side.
+A plain blocking call turns any harness timeout into an unrecoverable lost
+review — that is why the detached launch is the required form, not an
+optimization.
 
-Document gates (spec/plan) need none of this recovery machinery: run `task` in
-the foreground (§3) and it blocks and returns the verdict inline. Do not add
+Document gates (spec/plan) need none of this watch machinery: run `task` in
+the foreground (§3) with the explicit timeout and it blocks and returns the
+verdict inline. Do not add
 `--background` and do not poll — backgrounding a document review only replaces a
 clean blocking call with a detached worker you then have to chase through
 `status`/`result`. If you ever do need a job's terminal state, use
@@ -268,6 +328,11 @@ clean blocking call with a detached worker you then have to chase through
 > genuinely needs awaiting, `status <job-id> --wait` returns the instant it is
 > done. A blind wait-then-poll burns wall-clock and risks reading a verdict
 > before it exists.
+
+> **Red Flag — Never** launch a code review and move on (or fall idle) while it
+> runs. The §3 watch loop keeps a blocking `status <job-id> --wait` call in the
+> foreground for the whole review — launch-and-forget hides that work is in
+> flight and risks acting before the verdict exists.
 
 ## 5. Fix-and-re-review loop (converge, then stop)
 
@@ -304,6 +369,12 @@ The bar on re-review is "new and blocking," not "new and a regression": a
 newly-noticed Critical or High issue is still blocking even if it predates round
 1. What is excluded on re-review is Minor noise, not new blocking severity.
 
+If a re-review round returns new Minor (medium/low) findings anyway, they are
+out of contract: record them in the round ledger as noted (and in the skill's
+Minor ledger, if it keeps one), do not fix them in the loop, do not dispatch a
+fix for them, and do not let them delay convergence. Only blocking findings
+drive the loop.
+
 ### The loop
 
 1. If verdict is `approve` and there are no blocking findings → done; go to step 6.
@@ -327,7 +398,9 @@ newly-noticed Critical or High issue is still blocking even if it predates round
      stop only via the backstop and hand back the unresolved finding.
    - **Backstop hit** — the per-gate round ceiling below is reached. Stop and
      hand back with any unresolved blocking findings listed; do not loop
-     indefinitely.
+     indefinitely. Fixes applied in the backstop round ship without a
+     confirming Codex pass — flag them in the §6 hand-back as verified by the
+     Claude reviewer and tests only, not re-reviewed by Codex.
 
 ### Per-gate round backstops
 
@@ -351,7 +424,16 @@ Summarize concisely before returning to the skill's normal next step:
 - what was fixed,
 - what was declined and why,
 - any unresolved blocking findings if the backstop was hit,
+- whether any fixes were applied after the last Codex round (backstop exits) —
+  state explicitly that those fixes are not re-reviewed by Codex,
+- any Minor findings noted but not fixed, including out-of-contract Minors
+  raised on re-review,
 - whether an incomplete result occurred and how it was resolved (recovered via
-  `status`/`result`, or surfaced to the user).
+  `status`/`result`, or surfaced to the user),
+- the review runtime: the codex-plugin-cc version (`CODEX_VERSION` from the §1
+  probe) and the Codex model and reasoning effort the reviews ran with — read
+  `model` and `model_reasoning_effort` from
+  `${CODEX_HOME:-$HOME/.codex}/config.toml`; the companion runs reviews at
+  these config defaults.
 
 Then continue the skill (present to user / mark complete / finish branch).

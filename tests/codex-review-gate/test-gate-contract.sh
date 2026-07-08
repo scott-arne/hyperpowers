@@ -110,13 +110,27 @@ assert_contains "$GATE" "## 4b. Completion check — incomplete is not approval"
 assert_contains "$GATE" "incomplete is not approval" \
   "gate states incomplete is not approval"
 assert_contains "$GATE" "foreground-only" \
-  "completion check is grounded in the foreground-only review path"
-assert_contains "$GATE" "There is no background path for code gates" \
-  "gate states there is no background path for code gates"
+  "completion check is grounded in the companion's foreground-only review path"
+assert_not_contains "$GATE" "would require changing codex-plugin-cc" \
+  "gate no longer claims backgrounding needs a companion change"
+assert_contains "$GATE" "Launch in the background" \
+  "code recipes launch the review detached"
+assert_contains "$GATE" "Watch in the foreground — never idle" \
+  "watch loop keeps a blocking foreground call while the review runs"
+assert_contains "$GATE" "4 consecutive wait cycles" \
+  "watch loop has a bounded cap"
+assert_not_contains "$GATE" "adversarial-review --base <BASE_SHA> --wait" \
+  "per-task and code-review recipes drop the ignored --wait flag"
+assert_not_contains "$GATE" "adversarial-review --base <MERGE_BASE_SHA> --wait" \
+  "final whole-branch recipe drops the ignored --wait flag"
 assert_contains "$GATE" "600000 ms (10 minutes)" \
-  "completion check pins a concrete review timeout"
+  "document reviews pin a concrete explicit timeout"
 assert_contains "$GATE" ".storedJob.result.result" \
   "completion check pins the concrete result JSON field"
+assert_contains "$GATE" "CODEX_VERSION" \
+  "probe contract captures the companion version"
+assert_contains "$GATE" "verified against codex-plugin-cc **1.0.5**" \
+  "§4b field paths are pinned to a verified companion version"
 
 assert_contains "$BRAINSTORMING" "using the spec recipe" \
   "brainstorming points at the spec-specific recipe"
@@ -141,6 +155,12 @@ assert_contains "$GATE" "whether the loop exited by convergence or by hitting th
   "hand-back reports the loop exit reason"
 assert_contains "$GATE" "whether an incomplete result occurred" \
   "hand-back reports incompletion"
+assert_contains "$GATE" "do not let them delay convergence" \
+  "out-of-contract Minors on re-review are noted, not fixed"
+assert_contains "$GATE" "not re-reviewed by Codex" \
+  "backstop-round fixes are flagged as unverified by Codex"
+assert_contains "$GATE" "model_reasoning_effort" \
+  "hand-back reports the review model and effort"
 
 # --- Task 4: SDD references new caps + completion Red Flag ---
 assert_contains "$SDD" "code-gate backstop of 3 rounds" \

@@ -3,7 +3,9 @@
 # install path from Claude Code's plugin registry, then asks the Codex
 # companion whether it is ready (CLI present + authenticated).
 #
-# On success: print the Codex install path to stdout and exit 0.
+# On success: print the Codex install path (line 1) and the installed
+# codex-plugin-cc version, or "unknown" (line 2), then exit 0. The version
+# line lets callers pin payload-shape expectations to a tested range.
 # On any failure or uncertainty: exit 1 with no stdout (caller degrades to
 # "no Codex review"). This probe never hard-errors a calling skill.
 #
@@ -85,7 +87,15 @@ while :; do
   verdict="$(classify "$setup_json")"
   case "$verdict" in
     yes)
-      printf '%s\n' "$install_path"
+      # An absent or unreadable plugin manifest degrades the version line to
+      # "unknown", never to a probe failure.
+      version="$(node -e '
+        try {
+          const v = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version;
+          if (typeof v === "string" && v) process.stdout.write(v);
+        } catch (e) { /* degrade */ }
+      ' "$install_path/.claude-plugin/plugin.json" 2>/dev/null)"
+      printf '%s\n%s\n' "$install_path" "${version:-unknown}"
       exit 0
       ;;
     retry)

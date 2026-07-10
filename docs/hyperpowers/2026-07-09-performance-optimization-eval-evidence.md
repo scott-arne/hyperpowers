@@ -204,3 +204,45 @@ Baseline tests dispatched fresh subagents (general-purpose, no performance skill
 - Guesses were correct (in this fixture) but method was wrong — would fail on non-obvious bottlenecks
 
 **Next step:** GREEN validation (Tasks 2 and 6) will write the skills to prevent these specific failures, then re-run scenarios to verify compliance.
+
+---
+
+## GREEN: profiling-performance
+
+**Test date:** 2026-07-09
+
+GREEN validation confirms the `profiling-performance` skill prevents the technique failures observed in RED baseline.
+
+### Scenario
+
+Same fixture as RED baseline: slow Python email validator (`technique_fixture.py`) with quadratic list concatenation bottleneck.
+
+### Test Setup
+
+Dispatched fresh subagent (general-purpose) WITH the `profiling-performance` skill content provided in full. Task: "Why is this program slow and what should be optimized?" with explicit instruction to follow the skill methodology.
+
+### Observed Behavior
+
+**Agent correctly:**
+1. ✅ Established correctness baseline ("Found 500 valid emails", exact integer equality)
+2. ✅ Measured total runtime and scaling (N=1000: 0.57ms, N=5000: 5.75ms, N=10000: 27.74ms)
+3. ✅ Profiled component isolation (measured concatenation: 20.21ms vs append: 0.07ms at N=5000)
+4. ✅ Identified the bound: **allocation/memory-copy bound** (primary) + compute-bound (secondary)
+5. ✅ Produced ranked candidate list with all 5 required fields:
+   - Rank 1: Replace concatenation with append (289x measured speedup, high confidence, trivial cost)
+   - Rank 2: Move regex compilation outside function (measured 0.15ms savings per 1000 emails)
+   - Rank 3: Pre-filter with `str.count('@')` (labeled as HYPOTHESIS, not measured)
+6. ✅ All speedup claims were MEASURED except candidate #3 which was explicitly labeled "hypothesis (not measured)"
+
+**Key quote from agent output:**
+> "**Critical finding:** The O(n²) list concatenation is the dominant bottleneck, not the regex compilation. The 289x measured difference between concatenation and append at N=5000 makes this the highest-leverage optimization."
+
+### RED → GREEN Comparison
+
+| RED Baseline Failure | GREEN Behavior |
+|---------------------|----------------|
+| **(a) Guessed bottleneck from code** (3/3 reps) | ✅ Measured with profiler and component isolation |
+| **(b) Never established what code is bound by** (3/3 reps) | ✅ Identified "allocation/memory-copy bound" with evidence |
+| **(d) No ranked candidate list** (3/3 reps) | ✅ Produced ranked list with all 5 required fields |
+
+**Outcome:** The skill successfully prevents all three technique failures. The agent measured instead of guessing, identified the bottleneck's bound, and produced the structured ranked candidate list required for the `optimizing-performance` workflow.

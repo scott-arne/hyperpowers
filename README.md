@@ -183,6 +183,10 @@ The Pi package loads the skills and a small extension that injects the `using-hy
 - **finishing-a-development-branch** - Merge/PR decision workflow
 - **subagent-driven-development** - Fast iteration with two-stage review (spec compliance, then code quality)
 
+**Performance**
+- **profiling-performance** - Measure, find the bound, and rank bottlenecks before optimizing (language packs: C++, Python, JS)
+- **optimizing-performance** - Benchmark-driven fix workflow with keep/revert tie-break, via SDD + Codex gates
+
 **Meta**
 - **writing-skills** - Create new skills following best practices (includes testing methodology)
 - **using-hyperpowers** - Introduction to the skills system

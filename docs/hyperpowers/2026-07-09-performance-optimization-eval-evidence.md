@@ -342,3 +342,47 @@ Dispatched fresh subagent (general-purpose) WITH the `profiling-performance` ski
 - **Python-specific levers:** WITH pack clearly identified the vectorization path and JIT compilation; control recognized NumPy but lacked the Python-specific tooling path
 
 **Outcome:** The pack provides Python-specific profilers (py-spy, scalene), GIL-awareness (not tested in this scenario but present in content), vectorization idioms (NumPy/Numba), and interpreter-level micro-optimizations (attribute hoisting) that the agnostic spine cannot. The control gave sound methodology and recognized NumPy but lacked the sampling profiler recommendation, JIT path, and interpreter-overhead awareness.
+
+---
+
+## Retrieval: JS/Node Pack
+
+**Test date:** 2026-07-09
+
+**Purpose:** Verify the JavaScript/Node language pack (`skills/profiling-performance/references/javascript.md`) provides Node-specific profilers, V8 JIT strategies, GC-awareness, and event-loop optimization patterns that the agnostic spine alone cannot deliver.
+
+**Test setup:** Two fresh sub-subagents given identical slow Node.js function (synchronous file reads in loop, string concatenation in nested loop, closure creation in map). Task: "This function is slow when processing 100+ users. Identify the bound, recommend profiler, and suggest optimization levers."
+
+- **WITH pack:** agnostic `profiling-performance` spine + full `javascript.md` content
+- **WITHOUT pack (control):** agnostic spine only
+
+### Results
+
+**WITH pack agent:**
+- ✅ Named specific profiler: **`clinic doctor`** (I/O vs. compute vs. event-loop bottleneck identification) + **`--trace-gc`** for GC pressure measurement
+- ✅ Identified bound precisely: **event-loop-bound** (synchronous file I/O blocks event loop) **+ allocation-bound** (1000+ string reallocations per user)
+- ✅ Top candidates (ranked by bound):
+  1. **Replace `fs.readFileSync` with `fs.promises.readFile` + `Promise.all()`** — concurrent I/O addresses event-loop blocking
+  2. **Replace string concatenation with `Array.join()` or pre-allocate buffer** — addresses allocation-bound string concat
+  3. **Hoist `processRecord` call or refactor to avoid closure-per-iteration** — reduces allocation overhead
+- ✅ Node/V8-specific concerns: Noted the closure in `map` may cause deopt if `processRecord` call site becomes **megamorphic** (V8 inline cache terminology)
+- ✅ Tools: `clinic doctor`, `--trace-gc`, event-loop monitoring, V8-specific deopt awareness
+
+**WITHOUT pack agent (control):**
+- ⚠️ Generic profiler: **`node --prof`** (built-in, but less specific than `clinic doctor`)
+- ⚠️ Identified bound generically: "**I/O and allocation-bound**" (no event-loop terminology)
+- ⚠️ Top candidates:
+  1. **Replace `readFileSync` with async batching** (`Promise.all` + `fs.promises.readFile`) — recognized async I/O need
+  2. **Preallocate array for `summary` or use `Array.join`** — recognized allocation issue
+  3. **Hoist closure or use arrow inline** — minor allocation reduction
+- ❌ No mention of: `clinic doctor`, `clinic bubbleprof`, `0x`, `--trace-gc`, `perf_hooks.monitorEventLoopDelay`
+- ❌ No V8-specific concerns: megamorphic call sites, deoptimization, hidden classes, JIT behavior
+- ❌ No event-loop-specific terminology or analysis (used generic "I/O-bound" instead of "event-loop-bound")
+
+**Key differences:**
+- **Profiler precision:** WITH pack → `clinic doctor` (Node-specific, identifies event-loop issues); control → `node --prof` (generic sampling)
+- **Bound identification:** WITH pack → **event-loop-bound** (Node-specific); control → "I/O-bound" (generic)
+- **V8-awareness:** WITH pack → megamorphic call sites, deopts; control → no V8 internals
+- **Event-loop tooling:** WITH pack → `clinic bubbleprof`, `perf_hooks.monitorEventLoopDelay`; control → none
+
+**Outcome:** The pack provides Node-specific profilers (clinic doctor/flame/bubbleprof, 0x, --cpu-prof/--heap-prof), event-loop analysis tools (monitorEventLoopDelay), V8 JIT strategies (monomorphic/megamorphic awareness, deopt tracking, hidden classes), and GC-pressure mitigation (buffer reuse, typed arrays, object pooling) that the agnostic spine cannot. The control gave sound methodology and recognized async I/O need but lacked the Node-specific profiler, event-loop terminology, and V8 internals awareness.

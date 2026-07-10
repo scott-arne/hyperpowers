@@ -1,6 +1,6 @@
 ---
 name: profiling-performance
-description: Use when you need to find out why code is slow — a hot loop, high latency, heavy memory/allocation use, a throughput ceiling, or a performance regression — or to establish a benchmark/baseline and rank the real bottlenecks before committing to any rewrite. Covers profiling, measurement, and diagnosis across languages.
+description: Use when code is slower than expected, latency or throughput has regressed, memory/allocation use is unexplained, a hot loop is suspected, a throughput ceiling is hit, or optimization is being considered without measured bottleneck evidence. Use before any performance rewrite.
 ---
 
 # Profiling Performance
@@ -79,14 +79,16 @@ Use when:
 
    **How to identify:**
    - CPU at 100%, low cache misses → compute-bound
-   - High cache miss rate, memory bandwidth maxed → memory-bound
+   - High memory bandwidth saturation, streaming access → memory-bandwidth-bound
+   - High cache miss rate, random access pattern → memory-latency-bound
    - Frequent allocations, GC pauses → allocation/GC-bound
    - Low CPU, waiting on I/O → I/O-bound
    - Low CPU, threads blocked → lock-contention-bound
 
 4. **The bound determines what you can improve**
    - If compute-bound: better algorithm, SIMD, compiler flags help
-   - If memory-bound: cache-friendly layout, prefetch, compression help
+   - If memory-bandwidth-bound: compression, smaller data types, reduce data movement help
+   - If memory-latency-bound: cache-friendly layout, prefetch, data structure changes help
    - If allocation-bound: object reuse, arena allocation help
    - If I/O-bound: batching, async, caching help
 
@@ -101,7 +103,7 @@ Each candidate records five fields:
 4. **confidence** — high/medium/low (based on measurement vs. theory)
 5. **complexity-cost** — rough implementation cost (trivial / moderate / high)
 
-**Ranking taxonomy (highest leverage first):**
+**Candidate optimization families** (unordered checklist — rank by the identified bound):
 
 ### (a) Algorithm & Complexity
 - Change O(n²) to O(n log n) or O(n)
@@ -118,9 +120,9 @@ Each candidate records five fields:
 **When it applies:** If memory-latency-bound, allocation/GC-bound, or high cache miss rate.
 
 ### (c) Leverage the Platform
-- Compiler/JIT/interpreter optimization flags (`-O3`, `--turbo`)
+- Enable the optimizing build/JIT mode
 - Build mode (release vs. debug)
-- Tuned libraries (BLAS, LAPACK, specialized codecs)
+- Use a tuned native numeric library or specialized codec
 
 **When it applies:** Often a quick win with low complexity cost; try first if not already at max optimization level.
 
@@ -136,6 +138,7 @@ Each candidate records five fields:
 - Parallelize independent work
 - Use thread pools, worker threads
 - Leverage SIMD/vectorization
+- Work around the runtime's global-lock / true-parallelism limits
 
 **When it applies:** If compute-bound and work is parallelizable; also if single-threaded on multi-core.
 
@@ -146,6 +149,8 @@ Each candidate records five fields:
 - Eliminate hot-path allocations
 
 **When it applies:** After higher-level wins exhausted; requires measurement to verify.
+
+**Final ranking is DERIVED from:** the measured bound + expected-payoff-vs-bound + confidence + complexity-cost — NOT from the list order above.
 
 **Output this ranked list** as the primary deliverable. The `hyperpowers:optimizing-performance` skill consumes this list.
 
@@ -196,9 +201,9 @@ This is the structured input for `hyperpowers:optimizing-performance`.
 
 Language-specific profilers, idioms, and tooling are in the reference packs. Load the matching pack on demand:
 
-- **C++:** [cpp.md](references/cpp.md) — compiler flags, autovectorization, SIMD, modern C++ performance idioms
-- **Python:** [python.md](references/python.md) — profilers, GIL, NumPy/Cython, object/allocation overhead
-- **JavaScript/Node:** [javascript.md](references/javascript.md) — V8 profiling, JIT deopts, event loop, typed arrays
+- **C++:** [cpp.md](references/cpp.md) — compiler flags, autovectorization, SIMD, modern performance idioms
+- **Python:** [python.md](references/python.md) — profilers, runtime parallelism limits, numeric libraries, object/allocation overhead
+- **JavaScript/Node:** [javascript.md](references/javascript.md) — runtime profiling, JIT deoptimization triggers, event loop, typed arrays
 
 **Packs are loaded on demand** — only read the pack for the language you're optimizing.
 

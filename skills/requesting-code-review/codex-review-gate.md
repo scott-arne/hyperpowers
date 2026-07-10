@@ -144,7 +144,7 @@ append this to the plan prompt:
       alternative: <name, or None>
       justification: ...
 
-Plans with no material algorithmic content omit this section entirely.
+Plans with no material algorithmic or data-structure choices omit this section entirely.
 Algorithm suggestions are **advisory input to the controller's decision** —
 they do not map onto the Critical/Important severity ladder (§4) and never
 drive the fix loop (§5). If Codex separately judges an algorithm choice to be
@@ -416,9 +416,11 @@ round-1 output and **before applying the loop's exit rule**, so an
 - **Needs-attention:** the normal fix loop runs anyway; adjudicate and lock
   alongside the round-1 blocking fixes.
 
-Ledger entry formats:
+Ledger entry formats (one entry per assessed choice, so the round-2+ lock line
+always has explicit referents):
 - `Algorithm locked: <new> (was <old>) — <rationale>`
 - `Algorithm locked: <original> — Codex suggested <alt>, declined: <reason>`
+- `Algorithm locked: <choice> — assessed appropriate, no alternative suggested`
 
 On plan-gate re-reviews, append this line to the round-aware preamble and omit
 the Algorithm Assessment section from the prompt:

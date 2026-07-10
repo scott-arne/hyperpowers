@@ -24,7 +24,7 @@ You MUST create a task for each of these items and complete them in order:
 1. **Explore project context** — check files, docs, recent commits
 2. **Use the visual companion just-in-time** — NOT upfront. The first time a question would genuinely be clearer shown than described, open it then and tell the user what you're doing — no separate approval gate. If no visual question ever arises, never open it. See the Visual Companion section below.
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
-4. **Propose 2-3 approaches** — with trade-offs and your recommendation. **Codex approach gate (conditional, Claude Code only):** before finalizing your approaches, if the design space has real architectural or algorithmic alternatives — or your human partner asks for Codex input — run [codex-approach-gate.md](codex-approach-gate.md) and fold its approaches into this step with provenance tags. Trivial/mechanical tasks skip it silently.
+4. **Propose 2-3 approaches** — with trade-offs and your recommendation. **Codex approach gate (conditional, Claude Code only):** before finalizing your approaches, if the design space has real architectural, algorithmic, or data-model alternatives — or your human partner asks for Codex input — run [codex-approach-gate.md](codex-approach-gate.md) and fold its approaches into this step with provenance tags. Trivial/mechanical tasks skip it silently.
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
 6. **Write design doc** — save to `docs/hyperpowers/specs/YYYY-MM-DD-<topic>-design.md` (do not commit unless the user asks)
 7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
@@ -47,12 +47,12 @@ digraph brainstorming {
     "User reviews spec?" [shape=diamond];
     "Invoke writing-plans skill" [shape=doublecircle];
 
-    "Real architectural/algorithmic choices\nor partner requests Codex?" [shape=diamond];
+    "Real architecture/algorithm/data-model choices\nor partner requests Codex?" [shape=diamond];
     "Codex approach gate (one-shot)\n(Claude Code; degrade if absent)" [shape=box];
     "Explore project context" -> "Ask clarifying questions";
-    "Ask clarifying questions" -> "Real architectural/algorithmic choices\nor partner requests Codex?";
-    "Real architectural/algorithmic choices\nor partner requests Codex?" -> "Codex approach gate (one-shot)\n(Claude Code; degrade if absent)" [label="yes"];
-    "Real architectural/algorithmic choices\nor partner requests Codex?" -> "Propose 2-3 approaches" [label="no - trivial"];
+    "Ask clarifying questions" -> "Real architecture/algorithm/data-model choices\nor partner requests Codex?";
+    "Real architecture/algorithm/data-model choices\nor partner requests Codex?" -> "Codex approach gate (one-shot)\n(Claude Code; degrade if absent)" [label="yes"];
+    "Real architecture/algorithm/data-model choices\nor partner requests Codex?" -> "Propose 2-3 approaches" [label="no - trivial"];
     "Codex approach gate (one-shot)\n(Claude Code; degrade if absent)" -> "Propose 2-3 approaches";
     "Propose 2-3 approaches" -> "Present design sections";
     "Present design sections" -> "User approves design?";
@@ -85,7 +85,7 @@ digraph brainstorming {
 - Propose 2-3 different approaches with trade-offs
 - Present options conversationally with your recommendation and reasoning
 - Lead with your recommended option and explain why
-- **Codex approach gate (conditional):** when the design space has real architectural or algorithmic alternatives — or your human partner explicitly asks — get Codex's independent approaches first via [codex-approach-gate.md](codex-approach-gate.md): blind handoff, one shot, approaches folded into this step with provenance tags and judged on merits, not origin.
+- **Codex approach gate (conditional):** when the design space has real architectural, algorithmic, or data-model alternatives — or your human partner explicitly asks — get Codex's independent approaches first via [codex-approach-gate.md](codex-approach-gate.md): blind handoff, one shot, approaches folded into this step with provenance tags and judged on merits, not origin.
 
 **Presenting the design:**
 

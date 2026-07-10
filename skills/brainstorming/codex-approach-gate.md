@@ -8,9 +8,9 @@ Fire when, while formulating approaches after the clarifying questions are answe
 
 ## Probe and Degrade
 
-Run the §1 probe from `codex-review-gate.md` (at most once per skill run; reuse the result). If Codex is unavailable, tell your human partner once — "Note: codex-plugin-cc is not available, so this brainstorm proceeds without independent Codex approaches." — followed by the same four install lines §2 uses, then continue exactly as brainstorming works today. An incomplete or failed call is handled the same way: no Codex input, noted once, never blocking, never retried into a loop.
+Run the §1 probe from [../requesting-code-review/codex-review-gate.md](../requesting-code-review/codex-review-gate.md) (at most once per skill run; reuse the result). If Codex is unavailable, tell your human partner once — "Note: codex-plugin-cc is not available, so this brainstorm proceeds without independent Codex approaches." — followed by the same four install lines §2 uses, then continue exactly as brainstorming works today. An incomplete or failed call is handled the same way: no Codex input, noted once, never blocking, never retried into a loop.
 
-The §2 install instructions from `codex-review-gate.md`:
+The §2 install instructions from [../requesting-code-review/codex-review-gate.md](../requesting-code-review/codex-review-gate.md):
 
 ```
 /plugin marketplace add openai/codex-plugin-cc
@@ -21,7 +21,7 @@ The §2 install instructions from `codex-review-gate.md`:
 
 ## The Blind Handoff
 
-Write `approach-context.md` into the per-run scratch dir from `scripts/codex-review-dir`. Contents: (a) the original idea, verbatim; (b) each clarifying question and your human partner's answer; (c) relevant codebase **facts** — paths, constraints, existing patterns. **EXCLUDE Claude's own candidate approaches, preferences, or framings** — Codex's ideas must be independent, not anchored.
+Write `approach-context.md` into the per-run scratch dir from `../requesting-code-review/scripts/codex-review-dir` (invocation below). Contents: (a) the original idea, verbatim; (b) each clarifying question and your human partner's answer; (c) relevant codebase **facts** — paths, constraints, existing patterns. **EXCLUDE Claude's own candidate approaches, preferences, or framings** — Codex's ideas must be independent, not anchored.
 
 Run the scratch dir helper once at gate start and capture its output as `SCRATCH_DIR`:
 

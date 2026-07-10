@@ -180,6 +180,21 @@ assert_contains "$REQUESTING_REVIEW" "Incomplete Codex results are never treated
 assert_contains "$GATE" "only if the round ledger has no still-open blocking findings" \
   "convergence requires the ledger to have no still-open blockers"
 
+# --- Approach gate: brainstorming companion doc contract ---
+APPROACH="$REPO_ROOT/skills/brainstorming/codex-approach-gate.md"
+assert_contains "$APPROACH" "materially different tradeoffs" \
+  "approach gate trigger keys on real architectural/algorithmic alternatives"
+assert_contains "$APPROACH" "explicitly requests Codex input" \
+  "approach gate honors an explicit partner request even for trivial tasks"
+assert_contains "$APPROACH" "EXCLUDE" \
+  "approach handoff explicitly excludes Claude's own candidate approaches"
+assert_contains "$APPROACH" "proceeds without independent Codex approaches" \
+  "approach gate carries its own non-review degradation notice"
+assert_contains "$APPROACH" "one-shot" \
+  "approach gate is one-shot: no fix loop, no re-review"
+assert_contains "$BRAINSTORMING" "codex-approach-gate.md" \
+  "brainstorming SKILL.md links the approach gate companion doc"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

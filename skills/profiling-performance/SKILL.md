@@ -124,7 +124,7 @@ Each candidate records five fields:
 - Build mode (release vs. debug)
 - Use a tuned native numeric library or specialized codec
 
-**When it applies:** Often a quick win with low complexity cost; try first if not already at max optimization level.
+**When it applies:** When evidence shows the build/runtime/library choice materially affects the identified bound (e.g. a debug build in a compute-bound loop, a missing optimizing/JIT mode, or a hand-rolled routine a tuned library would beat). Rank it through the same five-field payoff process as every other family — its typically low complexity cost is one input to that ranking, not a reason to try it ahead of the bound.
 
 ### (d) I/O / Syscalls / DB / Network
 - Batch operations
@@ -201,9 +201,9 @@ This is the structured input for `hyperpowers:optimizing-performance`.
 
 Language-specific profilers, idioms, and tooling are in the reference packs. Load the matching pack on demand:
 
-- **C++:** [cpp.md](references/cpp.md) — compiler flags, autovectorization, SIMD, modern performance idioms
-- **Python:** [python.md](references/python.md) — profilers, runtime parallelism limits, numeric libraries, object/allocation overhead
-- **JavaScript/Node:** [javascript.md](references/javascript.md) — runtime profiling, JIT deoptimization triggers, event loop, typed arrays
+- **C++:** [cpp.md](references/cpp.md)
+- **Python:** [python.md](references/python.md)
+- **JavaScript/Node:** [javascript.md](references/javascript.md)
 
 **Packs are loaded on demand** — only read the pack for the language you're optimizing.
 

@@ -44,7 +44,7 @@ The GIL is CPython's global lock that prevents true parallel execution of Python
 **Key rules:**
 1. **CPU-bound pure-Python work does NOT scale on threads** — the GIL serializes bytecode execution, so adding threads to a CPU-bound task buys nothing (or makes it worse due to context-switch overhead).
 2. **I/O-bound work DOES benefit from threads or `asyncio`** — I/O operations release the GIL, so threads can overlap I/O waits.
-3. **Native extensions and NumPy release the GIL** — C extensions that call `Py_BEGIN_ALLOW_THREADS` release the GIL during compute; NumPy, SciPy, Cython with `nogil`, and well-written C extensions fall into this category. Multi-threaded NumPy can scale on multiple cores.
+3. **Many native extensions and NumPy/SciPy kernels release the GIL — but not all** — a C extension only releases it if it calls `Py_BEGIN_ALLOW_THREADS`. Many NumPy/SciPy low-level kernels and Cython `nogil` code do, so multi-threaded numeric work can scale on multiple cores. But object-dtype arrays, Python-callback paths, and extensions that never release it do **not** gain thread parallelism — verify actual thread scaling with a profiler rather than assuming.
 
 **Workarounds for CPU-bound parallelism:**
 - **`multiprocessing`** — separate Python processes, each with its own GIL
@@ -53,7 +53,7 @@ The GIL is CPython's global lock that prevents true parallel execution of Python
   - Use `Pool`, `ProcessPoolExecutor` for task parallelism
 - **Native extensions / Cython with `nogil`** — move hot loops into compiled code that releases the GIL
 - **Numba with `@jit(nogil=True)`** — JIT-compiled functions that release the GIL
-- **Alternative interpreters:** PyPy (JIT, still has GIL), free-threaded CPython builds (3.13+, experimental, opt-in `--disable-gil` builds) — the free-threaded build is real but still experimental as of early 2026; do not assume it is the default or widely deployed yet.
+- **Alternative interpreters:** PyPy (JIT, still has GIL); free-threaded CPython — available since 3.13 and officially supported in 3.14 (PEP 779), but **optional and not the default** build, with ecosystem support that varies (some C extensions re-enable the GIL). Do not assume a deployment is free-threaded; confirm the build and that key dependencies support it.
 
 **Identifying GIL-bound code:**
 - Profile shows CPU at 100% but adding threads doesn't help
@@ -69,7 +69,7 @@ The GIL is CPython's global lock that prevents true parallel execution of Python
    - `arr.sum()` instead of `sum(arr)`
    - `arr * 2` instead of `[x * 2 for x in arr]`
    - NumPy operations are C-level loops, 10-100× faster
-2. **Use built-in `map`, `filter`, comprehensions** over manual loops (marginal, but still better)
+2. **Prefer comprehensions / built-ins** over manual loop+append where they keep work in C or avoid materialization — this can cut interpreter overhead, but the win is version- and callback-dependent (a Python `lambda` in `map` can lose to a comprehension). Measure in the target runtime.
 3. **Drop into compiled extensions for hot kernels:**
    - **Numba** — JIT-compile Python functions with `@jit` / `@njit`
      - Minimal code changes, works on subset of Python + NumPy
@@ -143,7 +143,7 @@ The CPython bytecode interpreter itself has overhead. Small changes can reduce i
 - **Hoist global lookups** similarly
 
 **Prefer built-ins and comprehensions:**
-- Built-in functions (`sum`, `max`, `min`, `map`, `filter`) are implemented in C and faster than equivalent Python loops
+- Built-in functions like `sum`, `max`, `min` are implemented in C and typically faster than equivalent Python loops; `map`/`filter` help only when the callback stays in C — a Python `lambda` can erase the gain, so measure
 - List/dict/set comprehensions are faster than manual loop+append
 
 **Avoid recomputation:**
@@ -177,19 +177,19 @@ The CPython bytecode interpreter itself has overhead. Small changes can reduce i
 4. **Check for allocation hotspots** — use `scalene` or `memory_profiler` to find allocation-heavy lines; consider generators, pre-allocation, or `__slots__`.
 5. **Check for interpreter overhead** — hoist attribute/global lookups, use built-ins.
 
-**Typical win stack (descending order of impact):**
-1. Algorithmic change (O(n²) → O(n log n))
-2. Vectorize with NumPy (10-100× for numeric loops)
-3. Offload to native code (Numba, Cython)
-4. Parallelize with `multiprocessing` (if GIL-bound)
-5. Reduce allocations (generators, reuse, `__slots__`)
-6. Interpreter micro-opts (hoist lookups, use built-ins)
+**Python-specific candidate families** (not a fixed priority order — rank them by the measured bound per the agnostic spine's ranking rule):
+- Algorithmic change (O(n²) → O(n log n))
+- Vectorize with NumPy/pandas (large wins for numeric loops)
+- Offload hot kernels to native code (Numba, Cython)
+- Parallelize with `multiprocessing` (when CPU-bound and GIL-limited)
+- Reduce allocations (generators, reuse, `__slots__`)
+- Interpreter micro-opts (hoist lookups, use built-ins)
 
 ## Common Python Performance Anti-Patterns
 
 **STOP if you see:**
 - **Nested Python loops over large NumPy arrays** — vectorize or use Numba
-- **`for i in range(len(arr)): arr[i] = ...`** — use vectorized assignment or `np.vectorize` / Numba
+- **`for i in range(len(arr)): arr[i] = ...`** — use true vectorization (ufuncs / broadcasting), Numba `@njit`/`@vectorize`, or Cython. Avoid `np.vectorize` for speed — NumPy documents it as a convenience wrapper that is essentially a Python-level loop, not compiled vectorization.
 - **String concatenation in a loop** — use `"".join()`
 - **List when a generator would do** — wasteful allocation
 - **Calling expensive pure function repeatedly with same args** — memoize (`functools.lru_cache`)

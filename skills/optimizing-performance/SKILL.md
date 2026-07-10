@@ -15,7 +15,7 @@ This is the empirical fix workflow: **measure the baseline, change one thing, re
 
 **REQUIRED SUB-SKILL:** Use hyperpowers:profiling-performance for the baseline, the bound, and the ranked candidates. If no baseline and candidate list exist yet, invoke it first — do not start optimizing without them.
 
-This workflow also uses, by name: hyperpowers:writing-plans (turn candidates into a batch), hyperpowers:subagent-driven-development (execute the batch), and hyperpowers:requesting-code-review together with the Codex code-review gate that subagent-driven-development already runs (Claude Code only; degrades cleanly when Codex is absent).
+**REQUIRED SUB-SKILLS** (this workflow runs on them, in order — do not improvise an ad-hoc substitute): **hyperpowers:writing-plans** (turn candidates into a batch), **hyperpowers:subagent-driven-development** (execute the batch), and **hyperpowers:requesting-code-review** together with the Codex code-review gate that subagent-driven-development already runs (Claude Code only; degrades cleanly when Codex is absent). Do **not** reach for hyperpowers:dispatching-parallel-agents — benchmark measurement stays serial (see the workflow below).
 
 ## When to Use
 

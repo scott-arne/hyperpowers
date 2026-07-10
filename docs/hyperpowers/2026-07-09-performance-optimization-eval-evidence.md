@@ -516,3 +516,61 @@ The earlier single-rep validation used the note-less GREEN fixture (`discipline_
 | Measurement honesty (before+after, no fabrication, no hiding) | 0/3 measured honestly | 1/1 measured honestly | Measured all attempts (N=7-15), reported all reverts | Wording binds under pressure |
 
 **Combined reading.** The N=1 pressure test (note-less fixture) is the strongest single-run evidence the wording binds under adversarial conditions; the multi-rep micro-test (note-carrying fixture) confirms the wording is stable and non-regressive across fresh contexts but is inconclusive on necessity. Neither replaces the RED baseline as the demonstration that the rules are needed. If future edits change the wording of the (c)/(d)/honesty rules, re-run a multi-rep micro-test on a **note-less** fixture (so the control can actually fail) to measure necessity rather than mere non-regression.
+
+---
+
+## Summary
+
+This evaluation demonstrates the performance optimization skills prevent the specific rationalization and methodology failures observed in pre-skill baselines.
+
+**profiling-performance (before/after):**
+- RED baseline (3 reps): agents defaulted to algorithmic complexity analysis from code inspection, never ran a profiler, never established what the code was bound by (CPU/memory/I/O), and produced no ranked measured candidate list.
+- GREEN validation: agent measured with profiler and component isolation, identified the allocation/memory-copy bound with evidence, produced the required ranked candidate list with all 5 fields per candidate (rank, change, measured/estimated payoff, confidence, cost). All speedup claims were measured except one explicitly labeled "hypothesis (not measured)."
+- Post-Codex-fix re-run: skill remained compliant after document review fixes (frontmatter triggers-only, unordered payoff taxonomy, language-agnostic spine, separate memory-bandwidth vs. memory-latency).
+
+**Language pack retrieval (C++, Python, JS/Node):**
+- C++ pack: provided perf stat, cache-miss rates, SoA layout, -O3 -march=native, autovectorization verification, -ffast-math caveats, alignas(64) — all absent from agnostic spine control.
+- Python pack: provided scalene, py-spy, Numba JIT, NumPy vectorization, interpreter-overhead (attribute hoisting) — control used cProfile and recognized NumPy generically but lacked sampling profiler, JIT path, interpreter-level optimizations.
+- JS/Node pack: provided clinic doctor, event-loop-bound identification, --trace-gc, V8 megamorphic/deopt awareness, perf_hooks.monitorEventLoopDelay — control used node --prof and generic "I/O-bound" terminology with no V8 internals or event-loop tooling.
+
+**optimizing-performance (RED → GREEN → REFACTOR):**
+- RED baseline (3 reps, discipline fixture): 2/3 kept benchmark-specific optimizations (@lru_cache exploiting repeated data) and reported inflated speedups (9.1-10×); 3/3 never established correctness validation before changing behavior.
+- GREEN validation (pressure test): agent measured the same 9.3× caching artifact, re-tested on representative data (1.07×), reverted it, and refused to report the fake number. Established bitwise correctness reference on 4 inputs before any change. Applied noise, representative-workload, and materiality gates. Reverted multiprocessing attempt (3.8% speedup, high complexity, below 5-10% bar). Reported all 4 reverted attempts with measured deltas and the gate each failed.
+- REFACTOR: zero surviving rationalizations; no loopholes closed.
+- Multi-rep micro-test (6 variant + 6 control, representative-workload fixture with explicit production note): 0/6 variant and 0/6 control exhibited any RED failure mode. Total outcome convergence (12/12 shipped closed-form fix, rejected caching). Variant reps showed cleaner process (measured dead-ends, representative-workload harnesses, variance reporting) but the fixture's production note telegraphed the trap, making the test inconclusive on necessity. Necessity claim rests on the RED baseline (no production note, where control failed (c) 2/3 and (d) 3/3) plus the GREEN pressure test.
+
+**Codex gate assessment:** The eval evidence doc passed Codex document review after addressing SDO compliance (triggers-only frontmatter), taxonomy ordering (unordered checklist), language-agnostic spine (moved examples to packs), and memory-bound precision (separated bandwidth vs. latency).
+
+---
+
+## Coverage Cross-Check
+
+This section confirms every RED baseline failure mode has a corresponding GREEN outcome or explicit gap.
+
+### Discipline Failures (optimizing-performance)
+
+| RED baseline item | GREEN outcome | Evidence location |
+|-------------------|---------------|-------------------|
+| **(c) Kept benchmark-specific optimization** (caching repeated data; 2/3 reps) | ✅ **Fixed** | GREEN validation: agent measured caching artifact (9.3×), re-tested on representative data (1.07×), reverted it, refused to report fake number |
+| **(d) No correctness check** (3/3 reps) | ✅ **Fixed** | GREEN validation: established bitwise correctness reference on 4 inputs before any change; confirmed every candidate against it |
+
+### Technique Failures (profiling-performance)
+
+| RED baseline item | GREEN outcome | Evidence location |
+|-------------------|---------------|-------------------|
+| **(a) Guessed bottleneck from code inspection** (3/3 reps) | ✅ **Fixed** | GREEN validation: measured with profiler and component isolation instead of guessing from algorithmic analysis |
+| **(b) Never established what code is bound by** (3/3 reps) | ✅ **Fixed** | GREEN validation: identified "allocation/memory-copy bound (primary) + compute-bound (secondary)" with evidence |
+| **(d) No ranked candidate list** (3/3 reps) | ✅ **Fixed** | GREEN validation: produced ranked list with all 5 required fields per candidate (rank, change, measured/estimated payoff, confidence, cost) |
+
+### Tempting Rationalizations (optimizing-performance)
+
+| Tempting rationalization | GREEN outcome | Evidence location |
+|---------------------------|---------------|-------------------|
+| Claim speedup without benchmarking / estimate numbers | ✅ **Fixed** | GREEN validation: only measured numbers reported (N=7-15 runs); no estimates |
+| Hide reverted attempts | ✅ **Fixed** | GREEN validation: all 4 reverted attempts reported with measured deltas and the gate each failed |
+
+### Coverage Summary
+
+**All RED baseline items covered.** Every discipline failure ((c), (d)) and technique failure ((a), (b), (d)) has a corresponding GREEN outcome demonstrating the skill prevents that failure mode. The two tempting rationalizations are also addressed.
+
+**Nuance on necessity:** The multi-rep micro-test (6 variant + 6 control) showed 0/6 failure rate in both arms on a fixture with an explicit production note (~0% cache hit rate). This confirms the wording is non-regressive and produces cleaner process, but is **inconclusive on necessity** because the fixture telegraphed the trap. The necessity claim for the (c)/(d)/honesty rules rests on the **RED baseline** (note-less fixture where control failed (c) 2/3 and (d) 3/3) plus the **GREEN pressure test** (which caught the caching artifact under adversarial prompting and reverted it based on representative-workload measurement).

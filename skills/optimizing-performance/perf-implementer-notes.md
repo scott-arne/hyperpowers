@@ -4,7 +4,7 @@ You received these because your task is a **performance optimization**. Follow t
 
 ## Your task is exactly one candidate
 
-- Implement **exactly the one candidate** named in your task brief. Do not bundle a second optimization, and do not fold in an unrelated "while I'm here" refactor — a mixed change cannot be attributed to a measured delta.
+- Implement **exactly the one candidate** named in your task brief. The brief carries the candidate's five profiling fields — use `why-it-applies` as the rationale, and keep `expected-payoff-vs-bound`, `confidence`, and the producer's `complexity-cost` in view to sanity-check your result. Do not bundle a second optimization, and do not fold in an unrelated "while I'm here" refactor — a mixed change cannot be attributed to a measured delta.
 - If the change needs a cleanup to be readable, that is fine, but it must be part of *this* candidate and counted in its complexity cost, not a separate improvement.
 
 ## Use the shared baseline — do not re-measure it
@@ -30,7 +30,7 @@ Report (write the detail to your report file, per the normal contract):
 - **Measured delta** — optimized vs. the recorded baseline (mean, and % change).
 - **Run-to-run variance** — the spread across your N runs (stddev, or min/max).
 - **Correctness** — pass/fail against the reference, and the rule used.
-- **One-line complexity cost** — added LOC / new dependency / readability impact.
+- **One-line complexity cost** — added LOC / new dependency / readability impact, stated against the candidate's original `complexity-cost` estimate from the brief (flag a large divergence).
 - **Reproducibility** — the exact command and the run count N.
 
 Then stop. The **keep / revert / tie-break decision is the coordinator's** — they hold the baseline and the cross-attempt view. Report evidence, not a verdict.

@@ -525,7 +525,7 @@ This evaluation demonstrates the performance optimization skills prevent the spe
 
 **profiling-performance (before/after):**
 - RED baseline (3 reps): agents defaulted to algorithmic complexity analysis from code inspection, never ran a profiler, never established what the code was bound by (CPU/memory/I/O), and produced no ranked measured candidate list.
-- GREEN validation: agent measured with profiler and component isolation, identified the allocation/memory-copy bound with evidence, produced the required ranked candidate list with all 5 fields per candidate (rank, change, measured/estimated payoff, confidence, cost). All speedup claims were measured except one explicitly labeled "hypothesis (not measured)."
+- GREEN validation: agent measured with profiler and component isolation, identified the allocation/memory-copy bound with evidence, produced the required ranked candidate list with all 5 fields per candidate (hypothesis, why-it-applies, expected-payoff-vs-bound, confidence, complexity-cost). All speedup claims were measured except one explicitly labeled "hypothesis (not measured)."
 - Post-Codex-fix re-run: skill remained compliant after document review fixes (frontmatter triggers-only, unordered payoff taxonomy, language-agnostic spine, separate memory-bandwidth vs. memory-latency).
 
 **Language pack retrieval (C++, Python, JS/Node):**
@@ -560,7 +560,7 @@ This section confirms every RED baseline failure mode has a corresponding GREEN 
 |-------------------|---------------|-------------------|
 | **(a) Guessed bottleneck from code inspection** (3/3 reps) | ✅ **Fixed** | GREEN validation: measured with profiler and component isolation instead of guessing from algorithmic analysis |
 | **(b) Never established what code is bound by** (3/3 reps) | ✅ **Fixed** | GREEN validation: identified "allocation/memory-copy bound (primary) + compute-bound (secondary)" with evidence |
-| **(d) No ranked candidate list** (3/3 reps) | ✅ **Fixed** | GREEN validation: produced ranked list with all 5 required fields per candidate (rank, change, measured/estimated payoff, confidence, cost) |
+| **(d) No ranked candidate list** (3/3 reps) | ✅ **Fixed** | GREEN validation: produced ranked list with all 5 required fields per candidate (hypothesis, why-it-applies, expected-payoff-vs-bound, confidence, complexity-cost) |
 
 ### Tempting Rationalizations (optimizing-performance)
 

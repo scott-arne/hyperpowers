@@ -10,6 +10,7 @@ A measured number is only as good as the method that produced it. Check, and **f
 - **Representative workload.** The benchmark reflects real usage, not an artifact. Watch specifically for a "win" that exists only because the benchmark replays identical inputs the change can cache (or otherwise exploits an incidental benchmark pattern). If the speedup would evaporate on representative, non-repeating data, flag it as a benchmark artifact.
 - **Anti-dead-code-elimination guards.** The compiler/runtime did not optimize the timed work away — results are consumed or a `DoNotOptimize`-equivalent (e.g. `benchmark::DoNotOptimize`, a volatile sink, returning/printing the result) is in place.
 - **Warmup.** JIT/cache warmup is excluded so steady-state is measured.
+- **Measurement-condition parity.** Because the shared baseline is measured once and not re-measured per attempt, the variant must be measured under comparable conditions — same host/session, no competing load. Flag a delta whose magnitude is within plausible system-load drift, or measurements taken under visibly different conditions, as unreliable.
 - **Timing hygiene.** The timed region is the right region; iteration counts are adequate; no I/O or logging inside the timed loop.
 
 ## Confirm correctness actually ran

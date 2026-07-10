@@ -206,8 +206,10 @@ assert_contains "$GATE" "before applying the loop's exit rule" \
   "algorithm adjudication happens before the approve exit"
 assert_contains "$GATE" "Algorithm locked:" \
   "round ledger defines the algorithm lock entry format"
-assert_contains "$GATE" "a new blocking correctness defect (Critical or High) in the locked choice" \
-  "lock re-opens only for blocking correctness defects, matching the severity ladder"
+assert_contains "$GATE" "a new blocking (Critical or High) defect in the locked choice" \
+  "lock re-opens only for new blocking defects, matching the severity ladder"
+assert_contains "$GATE" "Advisory preference" \
+  "lock explicitly keeps advisory preference/optimization alternatives locked"
 assert_contains "$WRITING_PLANS" "Algorithm Assessment" \
   "writing-plans points at the round-1 algorithm assessment"
 

@@ -148,7 +148,7 @@ Plans with no material algorithmic or data-structure choices omit this section e
 Algorithm suggestions are **advisory input to the controller's decision** —
 they do not map onto the Critical/Important severity ladder (§4) and never
 drive the fix loop (§5). If Codex separately judges an algorithm choice to be
-a genuine correctness defect, that is a normal blocking finding, unchanged.
+a genuine blocking defect, that is a normal blocking finding, unchanged.
 
 **Code reviews — launch detached, watch in the foreground.** The three code
 recipes below all use `adversarial-review`, which the companion runs as one
@@ -426,7 +426,9 @@ On plan-gate re-reviews, append this line to the round-aware preamble and omit
 the Algorithm Assessment section from the prompt:
 
 > Algorithm choices are locked per the ledger; do not re-open them absent
-> a new blocking correctness defect (Critical or High) in the locked choice.
+> a new blocking (Critical or High) defect in the locked choice — correctness,
+> feasibility, or fit at the stated constraints and scale. Advisory preference
+> or optimization alternatives remain locked.
 
 ### The loop
 

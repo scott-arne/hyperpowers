@@ -12,7 +12,9 @@ This pack is C++-standard-agnostic. Detect the project's `-std` (or ask), and pr
   - `perf stat -d` for cache-miss rates and IPC
 - Intel VTune (cross-platform, commercial) — deep microarchitecture analysis
 - Apple Instruments (macOS) — Time Profiler, Allocations, System Trace
-- Callgrind (Valgrind suite) — call-graph profiling
+
+**Instrumentation / call-graph profilers:**
+- Callgrind (Valgrind suite) — precise call graph + cache simulation; this is instrumentation/simulation, *not* sampling, so overhead is high and timings are modeled rather than measured on real hardware
 
 **Microbenchmarking:**
 - **Google Benchmark** (preferred) — handles warmup, iteration, `DoNotOptimize`/`ClobberMemory` to prevent dead-code elimination
@@ -50,7 +52,7 @@ Always name this tradeoff explicitly rather than slipping `-ffast-math` into a r
 **Help the compiler autovectorize before hand-writing SIMD:**
 
 1. **Clean countable loops** — range-for or `for (size_t i = 0; i < n; ++i)` with known bounds
-2. **No aliasing surprises** — use `__restrict__` pointers, or `std::assume_aligned` (C++20)
+2. **No aliasing surprises** — promise non-overlap via `__restrict__` (a compiler extension) or non-aliasing API contracts. Alignment is a *separate* concern: `std::assume_aligned` (C++20)/`alignas`/aligned allocators communicate alignment (only when it is actually guaranteed) and do **not** assert non-aliasing.
 3. **No loop-carried dependencies** you don't need
 
 **Verify it actually vectorized** — don't assume. Check compiler reports:
@@ -69,7 +71,7 @@ Climb this ladder; each rung costs portability/maintainability, so stop as soon 
    - Google Highway or xsimd
    - For linear algebra: Eigen, BLAS/LAPACK, MKL (almost always faster and validated)
 3. **Raw intrinsics** (AVX2/AVX-512/NEON) as last resort
-   - Gate behind runtime dispatch or `#ifdef` to avoid illegal-instruction crashes on older hardware
+   - For runtime safety, gate behind **runtime CPU-feature dispatch** or function multiversioning, or restrict to an explicitly documented deployment target. `#ifdef`/`-march` only decide what gets *compiled* — they do not stop a distributed binary from executing AVX2/AVX-512/NEON on hardware that lacks it (an illegal-instruction crash).
 
 ## Branch and Instruction-Level Tuning (Last, and Only Where Measured)
 
@@ -128,6 +130,8 @@ Measure the conversion, not just the improved kernel, and say which regime you'r
 - `std::jthread` + `std::stop_token` (C++20) for task/worker parallelism
 - `std::execution` parallel algorithms (C++17) for parallel `for_each`/`transform`/`reduce`
 - OpenMP for straightforward loop parallelism
+
+**Caveat:** `std::execution` parallel algorithms need a parallel backend configured in your standard library (e.g. Intel TBB for libstdc++); without it they may compile but run serially. Verify the backend and measure actual parallel speedup before relying on it.
 
 **Watch for:**
 - **False sharing** — pad/align per-thread accumulators

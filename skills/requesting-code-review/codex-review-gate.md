@@ -127,6 +127,29 @@ type/signature consistency, and spec coverage. Do not edit anything. Return
 exactly the Required document-review output from the output shape included below.
 ```
 
+**Round-1 Algorithm Assessment (plan gate only).** When BOTH hold — this is
+round 1 of the plan gate, AND the plan contains material algorithmic or
+data-structure choices (sorting/searching, graph traversal, caching strategies,
+concurrency schemes, index/layout choices — not glue code or CRUD wiring) —
+append this to the plan prompt:
+
+    Additionally, assess the plan's material algorithm and data-structure choices.
+    For each one: is it the right choice for the stated constraints and data
+    scale? If not, propose exactly one alternative with justification (complexity,
+    tradeoffs, why it wins here). Return this block after the Required output:
+
+    Algorithm Assessment (round 1 only):
+    - choice: <algorithm/structure as planned>
+      verdict: appropriate | alternative-suggested
+      alternative: <name, or None>
+      justification: ...
+
+Plans with no material algorithmic content omit this section entirely.
+Algorithm suggestions are **advisory input to the controller's decision** —
+they do not map onto the Critical/Important severity ladder (§4) and never
+drive the fix loop (§5). If Codex separately judges an algorithm choice to be
+a genuine correctness defect, that is a normal blocking finding, unchanged.
+
 **Code reviews — launch detached, watch in the foreground.** The three code
 recipes below all use `adversarial-review`, which the companion runs as one
 long turn (typically 2–5 minutes, sometimes 10+). Never run it as a plain
@@ -374,6 +397,34 @@ out of contract: record them in the round ledger as noted (and in the skill's
 Minor ledger, if it keeps one), do not fix them in the loop, do not dispatch a
 fix for them, and do not let them delay convergence. Only blocking findings
 drive the loop.
+
+### Algorithm adjudication and lock (plan gate)
+
+Adjudicate the round-1 Algorithm Assessment immediately after parsing the
+round-1 output and **before applying the loop's exit rule**, so an
+`alternative-suggested` entry is never dropped by an early `approve` exit:
+
+- **Approve + no alternatives (or all declined):** record the lock(s), then
+  exit as usual. A decline changes no plan content, so no re-review is needed;
+  declines appear in the ledger and the §6 hand-back.
+- **Accepted alternative:** revise the affected plan task(s) — keeping
+  interfaces, steps, and cross-task references consistent — record the lock,
+  then run **one normal re-review round** over the revised plan (assessment
+  omitted, lock line present). A materially revised plan is never handed off
+  without a confirming Codex pass. The loop then converges as usual within
+  the existing backstop.
+- **Needs-attention:** the normal fix loop runs anyway; adjudicate and lock
+  alongside the round-1 blocking fixes.
+
+Ledger entry formats:
+- `Algorithm locked: <new> (was <old>) — <rationale>`
+- `Algorithm locked: <original> — Codex suggested <alt>, declined: <reason>`
+
+On plan-gate re-reviews, append this line to the round-aware preamble and omit
+the Algorithm Assessment section from the prompt:
+
+> Algorithm choices are locked per the ledger; do not re-open them absent
+> a new blocking correctness defect (Critical or High) in the locked choice.
 
 ### The loop
 

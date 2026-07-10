@@ -195,6 +195,22 @@ assert_contains "$APPROACH" "one-shot" \
 assert_contains "$BRAINSTORMING" "codex-approach-gate.md" \
   "brainstorming SKILL.md links the approach gate companion doc"
 
+# --- Round-1 Algorithm Assessment + lock (plan gate) ---
+assert_contains "$GATE" "Round-1 Algorithm Assessment" \
+  "plan recipe defines the round-1 algorithm assessment"
+assert_contains "$GATE" "alternative-suggested" \
+  "algorithm assessment output shape carries the alternative-suggested verdict"
+assert_contains "$GATE" "advisory input to the controller" \
+  "algorithm suggestions are advisory, not blocking"
+assert_contains "$GATE" "before applying the loop's exit rule" \
+  "algorithm adjudication happens before the approve exit"
+assert_contains "$GATE" "Algorithm locked:" \
+  "round ledger defines the algorithm lock entry format"
+assert_contains "$GATE" "a new blocking correctness defect (Critical or High) in the locked choice" \
+  "lock re-opens only for blocking correctness defects, matching the severity ladder"
+assert_contains "$WRITING_PLANS" "Algorithm Assessment" \
+  "writing-plans points at the round-1 algorithm assessment"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

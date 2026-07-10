@@ -164,8 +164,11 @@ probe availability; if Codex is present, provide the source spec path and the pl
 path, have it review the plan (feasibility, task sizing, missing steps, ordering,
 type/signature consistency, and spec coverage), and resolve blocking findings in
 the convergence fix loop (document-gate backstop of 4 rounds) before the execution
-handoff; if Codex is absent, emit the no-Codex notice and proceed. This gate never
-blocks the handoff — at worst it is skipped.
+handoff; if Codex is absent, emit the no-Codex notice and proceed. On round 1 the
+gate also runs the Round-1 Algorithm Assessment when the plan has material
+algorithmic choices (advisory; adjudicated before the loop's exit rule and locked
+in the round ledger — see the gate doc's §3 and §5). This gate never blocks the
+handoff — at worst it is skipped.
 
 ## Execution Handoff
 

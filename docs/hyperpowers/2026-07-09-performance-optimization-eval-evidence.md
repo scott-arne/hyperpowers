@@ -246,3 +246,24 @@ Dispatched fresh subagent (general-purpose) WITH the `profiling-performance` ski
 | **(d) No ranked candidate list** (3/3 reps) | ✅ Produced ranked list with all 5 required fields |
 
 **Outcome:** The skill successfully prevents all three technique failures. The agent measured instead of guessing, identified the bottleneck's bound, and produced the structured ranked candidate list required for the `optimizing-performance` workflow.
+
+### Post-Codex-Fix Re-run
+
+**Test date:** 2026-07-09 (after addressing Codex document review findings)
+
+**Changes tested:**
+- Frontmatter description rewritten to triggers/symptoms only (SDO compliance)
+- Payoff taxonomy reframed as unordered checklist (ranking derives from bound, not list order)
+- Language-specific examples removed from spine (moved to generic categories, concrete tools stay in packs)
+- Memory-bandwidth vs memory-latency separated in bound identification and remediation
+
+**Test scenario:** Fresh sub-subagent with revised skill content, simple Python function with allocation-bound bottleneck (nested loop repeatedly rebuilding dict).
+
+**Observed behavior:**
+1. ✅ Established baseline: 3.53ms per iteration
+2. ✅ Profiled: 50,500 hash digest calls dominating runtime
+3. ✅ Identified bound: ALLOCATION/COMPUTE-bound
+4. ✅ Produced ranked list with all 5 fields per candidate
+5. ✅ Ranking matched bound (top candidate: hoist dict outside loop → 1000× allocation reduction) NOT taxonomy family order
+
+**Outcome:** PASS. Skill remains compliant after Codex review fixes. Ranking correctly derives from measured bound rather than following the unordered taxonomy.

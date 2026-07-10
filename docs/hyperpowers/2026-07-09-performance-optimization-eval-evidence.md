@@ -300,3 +300,45 @@ Dispatched fresh subagent (general-purpose) WITH the `profiling-performance` ski
 - ❌ No C++-specific tools or flags
 
 **Outcome:** The pack provides the C++-specific levers (profilers, flags, SoA/alignment, autovectorization verification, `-ffast-math` caveat) the agnostic spine cannot. The control gave sound methodology but lacked concrete tools and idioms.
+
+---
+
+## Retrieval: Python Pack
+
+**Test date:** 2026-07-09
+
+**Purpose:** Verify the Python language pack (`skills/profiling-performance/references/python.md`) provides Python-specific profilers, GIL-awareness, vectorization strategies, and allocation/interpreter-level optimization patterns that the agnostic spine alone cannot deliver.
+
+**Test setup:** Two fresh sub-subagents given identical slow Python function (1 million iterations, per-element loop with `math.sqrt`, list append accumulator). Task: "This function is too slow. Recommend profiler, expected bottleneck, and top 2-3 optimization candidates ranked by expected payoff."
+
+- **WITH pack:** agnostic `profiling-performance` spine + full `python.md` content
+- **WITHOUT pack (control):** agnostic spine only
+
+### Results
+
+**WITH pack agent:**
+- ✅ Named specific profiler: **`scalene`** (CPU + memory profiling, low overhead, per-line breakdown)
+- ✅ Identified bound: CPU-bound (Python interpreter loop overhead) + allocation overhead (list appends)
+- ✅ Top candidates (ranked):
+  1. **Vectorize with NumPy** (`np.sqrt(np.array(data)) * 2.5`) — 10-100× expected payoff, eliminates Python-level loop entirely
+  2. **Use Numba JIT** (`@njit` decorator) — compiles loop to native code, high confidence
+  3. **Hoist attribute lookup** (`sqrt = math.sqrt` before loop) — marginal interpreter overhead reduction
+- ✅ Python-specific tools: `scalene`, `py-spy`, Numba (JIT), NumPy vectorization
+- ✅ Awareness of interpreter-level overhead (attribute lookup hoisting)
+
+**WITHOUT pack agent (control):**
+- ⚠️ Generic profiler: **`cProfile`** (stdlib, deterministic) — correct but not the sampling profiler the pack recommends for broad profiling
+- ⚠️ Identified bound generically: "likely compute-bound or allocation-bound"
+- ⚠️ Top candidates:
+  1. **Use NumPy** (category c: "tuned native numeric library") — recognized vectorization but framed generically
+  2. **Pre-allocate result list** — suggested `result = [None] * len(data)` (valid but lower leverage)
+  3. **List comprehension** — micro-optimization (~1.2-1.5× expected)
+- ❌ No mention of: `py-spy`, `scalene`, Numba, GIL-awareness, or interpreter-loop overhead
+- ❌ No Python-specific optimization path (Numba/Cython)
+
+**Key differences:**
+- **Profiler precision:** WITH pack → `scalene` (sampling, low overhead); control → `cProfile` (deterministic, higher overhead)
+- **Optimization specificity:** WITH pack → Numba JIT, NumPy vectorization, attribute hoisting; control → generic "native library", pre-allocation, list comprehension
+- **Python-specific levers:** WITH pack clearly identified the vectorization path and JIT compilation; control recognized NumPy but lacked the Python-specific tooling path
+
+**Outcome:** The pack provides Python-specific profilers (py-spy, scalene), GIL-awareness (not tested in this scenario but present in content), vectorization idioms (NumPy/Numba), and interpreter-level micro-optimizations (attribute hoisting) that the agnostic spine cannot. The control gave sound methodology and recognized NumPy but lacked the sampling profiler recommendation, JIT path, and interpreter-overhead awareness.

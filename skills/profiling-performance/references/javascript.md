@@ -4,42 +4,38 @@ This reference provides JavaScript/Node-specific profilers, V8 JIT strategies, G
 
 ## Profiling Tools
 
-**Sampling profilers (lower overhead, no code changes):**
-- **`node --prof`** (built-in V8 profiler) — sampling profiler, no instrumentation
+Group tools by what they measure, not by "sampling vs. instrumentation" — the common Node CPU profilers are all sampling-based; they differ in output format and which layer of the stack they surface.
+
+**(a) CPU sampling profilers** (statistical stack sampling — low overhead, no code changes):
+- **`node --prof`** (built-in V8 tick profiler) — samples the stack, no instrumentation
   - `node --prof script.js` → generates `isolate-*-v8.log`
   - `node --prof-process isolate-*-v8.log > profile.txt` — human-readable report
   - Shows ticks (samples) per function, native vs. JS time
-- **`0x`** — flamegraph profiler for Node
-  - `0x script.js` — generates flamegraph in browser
-  - Visual sampling-based profiler, good for identifying hot functions
-- **`clinic` suite** — comprehensive Node.js profiling toolkit
-  - **`clinic doctor`** — detects event-loop issues, I/O bottlenecks
-  - **`clinic flame`** — flamegraph profiler
-  - **`clinic bubbleprof`** — async operations and event-loop delays
-  - `clinic doctor -- node script.js`
-  - Identifies if you're I/O-bound, event-loop-blocked, or compute-bound
-
-**Instrumentation profilers (higher overhead, precise call counts):**
-- **Chrome DevTools / `--inspect`** — full debugging/profiling UI
-  - `node --inspect script.js` or `node --inspect-brk script.js` (pauses at start)
-  - Open `chrome://inspect` in Chrome
-  - CPU profiler, heap snapshots, memory profiler
-  - Good for deep dives with visual UI
-- **`--cpu-prof` / `--heap-prof`** (built-in) — generates CPU/heap profiles without debugger
+- **`--cpu-prof`** (built-in) — sampling CPU profile without attaching a debugger
   - `node --cpu-prof script.js` → generates `.cpuprofile` (open in Chrome DevTools)
-  - `node --heap-prof script.js` → generates `.heapprofile`
-  - Lower overhead than `--inspect`, useful for production-like profiling
+  - Same sampling engine the DevTools CPU profiler uses; convenient for production-like runs
+- **`0x`** — sampling flamegraph profiler for Node
+  - `0x script.js` — generates an interactive flamegraph in the browser
+  - Good for spotting the widest (hottest) stacks visually
+- **`clinic flame`** — sampling flamegraph (part of the Clinic suite)
+  - `clinic flame -- node script.js`
+- **Chrome DevTools CPU profiler / `--inspect`** — sampling CPU profiler behind a visual UI
+  - `node --inspect script.js` or `node --inspect-brk script.js` (pauses at start), then open `chrome://inspect`
+  - Same sampling profiler as `--cpu-prof`, with an interactive UI
 
-**Microbenchmarking:**
-- **`performance.now()`** (built-in `perf_hooks`) — high-resolution timestamps
-  ```javascript
-  const { performance } = require('perf_hooks');
-  const start = performance.now();
-  expensiveOperation();
-  console.log(`Took ${performance.now() - start} ms`);
-  ```
-- **`Benchmark.js`** — mature microbenchmarking library (handles warmup, iteration, statistical analysis)
-- **`perf_hooks.monitorEventLoopDelay()`** — measure event-loop lag
+**(b) Heap / allocation profilers** (memory, not CPU time):
+- **`--heap-prof`** (built-in) — sampling heap allocation profile without a debugger
+  - `node --heap-prof script.js` → generates `.heapprofile` (open in Chrome DevTools)
+- **Chrome DevTools heap snapshots / allocation timeline** (via `--inspect`) — retained-size analysis, leak hunting, allocation sites
+  - Use for "what is holding memory" and "where are allocations coming from" questions
+
+**(c) Async / event-loop diagnostics** (not CPU sampling — they surface where async time and event-loop delay go):
+- **`clinic doctor`** — flags event-loop delay, I/O waits, GC pressure, and points you at the likely bound
+  - `clinic doctor -- node script.js`
+  - Good first move to decide I/O-bound vs. event-loop-blocked vs. compute-bound
+- **`clinic bubbleprof`** — visualizes async operations and where async delay accumulates
+  - `clinic bubbleprof -- node script.js`
+- **`perf_hooks.monitorEventLoopDelay()`** — quantifies event-loop lag as a histogram
   ```javascript
   const { monitorEventLoopDelay } = require('perf_hooks');
   const histogram = monitorEventLoopDelay({ resolution: 10 });
@@ -48,12 +44,22 @@ This reference provides JavaScript/Node-specific profilers, V8 JIT strategies, G
   console.log(histogram.percentiles);
   ```
 
+**(d) Timers / microbenchmarks** (measure a specific snippet, not a whole program):
+- **`performance.now()`** (built-in `perf_hooks`) — high-resolution timestamps
+  ```javascript
+  const { performance } = require('perf_hooks');
+  const start = performance.now();
+  expensiveOperation();
+  console.log(`Took ${performance.now() - start} ms`);
+  ```
+- **`Benchmark.js`** — mature microbenchmarking library (handles warmup, iteration, statistical analysis)
+
 **Choosing:**
-- Start with **`clinic doctor`** to identify I/O vs. compute vs. event-loop bottlenecks
-- Use **`0x`** or **`clinic flame`** for CPU-bound sampling flamegraphs
-- Use **`--cpu-prof`** for CPU profiling without a debugger
-- Use **Chrome DevTools (`--inspect`)** for deep dives with heap snapshots and memory profiling
-- Use **`clinic bubbleprof`** for async/event-loop analysis
+- Start with **`clinic doctor`** to decide I/O vs. compute vs. event-loop bottlenecks
+- For a compute-bound hot path, reach for a **CPU sampling profiler** — `--cpu-prof`, `0x`, or `clinic flame`
+- For memory growth or leaks, use a **heap/allocation profiler** — `--heap-prof` or DevTools heap snapshots
+- For async/event-loop delay, use **`clinic bubbleprof`** or **`monitorEventLoopDelay()`**
+- Use **Chrome DevTools (`--inspect`)** when you want an interactive UI over the same CPU/heap data
 
 ## The V8 JIT (Just-In-Time Compiler)
 
@@ -61,31 +67,33 @@ V8 optimizes hot code with a multi-tier JIT. Understanding how it works helps av
 
 **Key concepts:**
 1. **Monomorphic vs. polymorphic vs. megamorphic call sites**
-   - **Monomorphic** — function called with single object shape (hidden class); fastest, V8 inlines and optimizes aggressively
-   - **Polymorphic** — called with 2-4 shapes; slower, still optimizable
-   - **Megamorphic** — called with 5+ shapes; V8 gives up on inline caching, much slower
-   - **Mitigation:** keep object shapes stable, pass consistent types to hot functions
+   - **Monomorphic** — function called with a single object shape (hidden class); monomorphic sites *tend* to optimize and inline well
+   - **Polymorphic** — called with a few (roughly 2-4) shapes; still optimizable, often with somewhat less benefit
+   - **Megamorphic** — called with many shapes; the inline cache *can* fall back to a slower generic path and optimization quality *can* drop
+   - **Mitigation (when profiling shows a hot polymorphic/megamorphic site):** keep object shapes stable, pass consistent types to hot functions
 
 2. **Hidden classes (object shapes)**
    - V8 tracks object shapes via hidden classes
-   - Objects with same property names in same order share a hidden class
-   - Adding/deleting properties in different orders creates new hidden classes → megamorphic code
+   - Objects with the same property names in the same order tend to share a hidden class
+   - Adding/deleting properties in different orders creates new hidden classes, which *can* push a call site toward polymorphic/megamorphic behavior
    - **Best practices:**
-     - Initialize all properties in constructor in consistent order
-     - Avoid `delete` on hot-path objects (sets property to `undefined` instead, or use `Map`)
+     - Initialize all properties in the constructor in a consistent order
+     - Avoid `delete` on hot-path objects (set the property to `undefined` instead, or use `Map`)
      - Avoid adding properties after construction in hot paths
 
 3. **Deoptimization (deopts)**
    - V8 speculatively optimizes based on observed types
-   - If assumptions violated (e.g., function suddenly gets different type), V8 deoptimizes
-   - Repeated deopt/reopt cycles destroy performance
+   - If assumptions are violated (e.g., a function suddenly gets a different type), V8 deoptimizes
+   - Repeated deopt/reopt cycles *can* be costly *when profiling confirms they sit in the hot path*
    - **Mitigation:** keep types stable in hot functions, avoid passing `null`/`undefined` unexpectedly
 
 **Debugging JIT issues:**
-- **`--trace-opt` / `--trace-deopt`** — log optimizations and deoptimizations
+- **`--trace-opt` / `--trace-deopt`** — log optimizations and deoptimizations (still valid flags)
   - `node --trace-opt --trace-deopt script.js`
   - Identifies deopt reasons (e.g., "Wrong map", "Not a Smi")
-- **`--trace-ic`** — trace inline cache state (monomorphic → polymorphic → megamorphic)
+- **Inline-cache tracing is version-dependent.** Older `--trace-ic` has been removed in current Node/V8; the equivalent is now `--log-ic`. Check what your build supports before relying on either:
+  - `node --v8-options | rg 'trace-ic|log-ic'` — lists the flags this build actually accepts
+  - Use `--log-ic` where available to trace inline-cache state (monomorphic → polymorphic → megamorphic)
 
 **Guidance:**
 - Frame these as *tendencies*, not guarantees — V8 internals evolve, and behavior varies by workload
@@ -118,9 +126,9 @@ Node uses V8's generational GC. Excessive allocations cause GC pauses.
    }
    ```
 
-2. **Use typed arrays for numeric work** — `Float64Array`, `Int32Array`, etc.
-   - Contiguous memory, better cache locality
-   - Less GC pressure than arrays of boxed numbers
+2. **Consider typed arrays for large homogeneous numeric buffers** — `Float64Array`, `Int32Array`, etc.
+   - Contiguous, fixed-layout memory; useful for binary data and native/WASM interop (zero-copy)
+   - Not a guaranteed GC win: V8 can already store ordinary numeric arrays as unboxed Smi/double elements (not boxed `Number` objects), so a plain `Array` of numbers is often not paying a per-element boxing cost. Treat typed arrays as a *measured* option for stable-layout numeric buffers, not a blanket replacement — profile before switching
 
 3. **Avoid creating closures in hot loops**
    ```javascript
@@ -183,18 +191,19 @@ Node uses V8's generational GC. Excessive allocations cause GC pauses.
 ## Typed Arrays for Numeric Work (Optional)
 
 For compute-heavy numeric kernels:
-- **`Float64Array`, `Int32Array`, etc.** — contiguous typed memory
-  - Better cache locality than arrays of boxed numbers
-  - Can be passed to WebAssembly or native modules zero-copy
-  - Less GC pressure
+- **`Float64Array`, `Int32Array`, etc.** — contiguous, fixed-element-type memory
+  - Predictable, stable layout for large homogeneous numeric buffers
+  - Can be passed to WebAssembly or native modules zero-copy (a common reason to reach for them)
+  - **Not automatically lower GC pressure than a plain numeric `Array`:** V8 can store ordinary numeric arrays as unboxed Smi/double elements, so an `Array` of numbers is often not paying per-element boxing. The typed-array wins are the fixed layout, binary/interop compatibility, and cache predictability — confirm any allocation/GC benefit by measuring
 
 **When to use:**
-- Numeric hot loops (math-heavy, simulation, DSP, etc.)
-- Large numeric datasets
+- Large homogeneous numeric buffers with a stable layout
+- Binary data handling and native/WASM interop
+- Numeric hot loops where a profiler shows the plain-array path is the bottleneck
 
 **When NOT to use:**
 - General application logic (arrays of objects, mixed types)
-- Premature optimization — measure first
+- As a reflexive "faster than `Array`" swap — measure first; the plain-array path may already be unboxed
 
 ## Example: Identifying and Fixing a Slow Node Function
 
@@ -204,9 +213,9 @@ For compute-heavy numeric kernels:
 2. **If event-loop-blocked:** look for synchronous I/O or long synchronous compute; offload to `worker_threads` or make async
 3. **If I/O-bound:** check for serial I/O that could be concurrent, excessive syscalls, or missing caching
 4. **If compute-bound:** profile with `0x` or `--cpu-prof` to find hot functions
-   - Check for megamorphic call sites (`--trace-ic`) or deopts (`--trace-deopt`)
+   - Check for deopts (`--trace-deopt`); for inline-cache state, use `--log-ic` where your build supports it (`node --v8-options | rg 'trace-ic|log-ic'`)
    - Check for GC pressure (`--trace-gc`)
-   - Consider typed arrays for numeric work
+   - Consider typed arrays for large stable-layout numeric buffers (measure first)
    - Consider `worker_threads` for parallelizable compute
 
 **JavaScript/Node-specific candidate families** (not a fixed priority order — rank them by the measured bound per the agnostic spine's ranking rule):
@@ -238,26 +247,28 @@ npm install -g 0x clinic
 
 **Quick command reference:**
 ```bash
-# Sampling profilers
+# CPU sampling profilers
 node --prof script.js && node --prof-process isolate-*-v8.log > profile.txt
+node --cpu-prof script.js   # generates .cpuprofile (open in Chrome DevTools)
 0x script.js
+clinic flame -- node script.js    # sampling flamegraph
 
-# Clinic suite
-clinic doctor -- node script.js   # I/O vs. compute vs. event-loop
-clinic flame -- node script.js    # flamegraph
-clinic bubbleprof -- node script.js  # async/event-loop
-
-# CPU/heap profiles (no debugger)
-node --cpu-prof script.js   # generates .cpuprofile
+# Heap / allocation profilers
 node --heap-prof script.js  # generates .heapprofile
 
-# Chrome DevTools
+# Async / event-loop diagnostics
+clinic doctor -- node script.js      # I/O vs. compute vs. event-loop
+clinic bubbleprof -- node script.js  # async/event-loop delay
+
+# Chrome DevTools (interactive UI over the same CPU/heap data)
 node --inspect script.js
 # Open chrome://inspect
 
 # JIT debugging
 node --trace-opt --trace-deopt script.js
-node --trace-ic script.js
+node --v8-options | rg 'trace-ic|log-ic'   # check inline-cache flags this build supports
+# then, where available:
+node --log-ic script.js
 
 # GC monitoring
 node --trace-gc script.js

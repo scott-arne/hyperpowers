@@ -267,3 +267,36 @@ Dispatched fresh subagent (general-purpose) WITH the `profiling-performance` ski
 5. ✅ Ranking matched bound (top candidate: hoist dict outside loop → 1000× allocation reduction) NOT taxonomy family order
 
 **Outcome:** PASS. Skill remains compliant after Codex review fixes. Ranking correctly derives from measured bound rather than following the unordered taxonomy.
+
+---
+
+## Retrieval: C++ Pack
+
+**Test date:** 2026-07-09
+
+**Purpose:** Verify the C++ language pack (`skills/profiling-performance/references/cpp.md`) provides C++-specific tools, flags, and techniques that the agnostic spine alone cannot deliver.
+
+**Test setup:** Two fresh sub-subagents given identical slow C++ molecular distance kernel (O(n²) all-pairs computation with AoS layout, `sqrt` per pair). Task: "This is slow for large molecules (1000+ atoms). Can you help optimize it?"
+
+- **WITH pack:** agnostic `profiling-performance` spine + full `cpp.md` content
+- **WITHOUT pack (control):** agnostic spine only
+
+### Results
+
+**WITH pack agent:**
+- ✅ Named specific profiler: `perf stat -d` for cache-miss rates and IPC
+- ✅ Identified memory-latency-bound (AoS → cache misses)
+- ✅ Top candidate: Extract to SoA (`double x[n], y[n], z[n]`) with 3–5× expected speedup rationale
+- ✅ Recommended `-O3 -march=native` flags and `-Rpass=loop-vectorize` verification
+- ✅ Flagged `-ffast-math` correctness tradeoff explicitly
+- ✅ Noted `alignas(64)` for SIMD/cache-line alignment
+- ✅ Domain-aware: referenced cheminformatics memory-bound kernels as typical case
+
+**WITHOUT pack agent (control):**
+- ⚠️ Generic: "Profile before optimizing", wall-clock timing, scaling verification
+- ⚠️ Suggested sqrt removal and "data layout changes" but no specifics (no SoA terminology, no alignment)
+- ⚠️ Mentioned "compiler optimization flags" generically — no `-O3 -march=native`, no vectorization verification
+- ❌ No profiler named (would need to ask or guess)
+- ❌ No C++-specific tools or flags
+
+**Outcome:** The pack provides the C++-specific levers (profilers, flags, SoA/alignment, autovectorization verification, `-ffast-math` caveat) the agnostic spine cannot. The control gave sound methodology but lacked concrete tools and idioms.

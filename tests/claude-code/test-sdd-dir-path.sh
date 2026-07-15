@@ -125,6 +125,37 @@ else
     fail "task-brief honors an explicit OUTFILE override"
 fi
 
+# 10. Stale sibling scratch dirs (idle past the 14-day threshold) are
+# reclaimed on invocation; fresh siblings survive.
+sdd_base="$XDG_CACHE_HOME/hyperpowers/sdd"
+stale_dir="$sdd_base/stale-run"
+fresh_dir="$sdd_base/fresh-run"
+mkdir -p "$stale_dir" "$fresh_dir"
+touch "$stale_dir/task-1-brief.md"
+# Backdate after populating: adding the file bumps the dir mtime.
+touch -t 202601010000 "$stale_dir"
+run_sdd_dir "$repo_a" >/dev/null
+if [ ! -d "$stale_dir" ]; then
+    pass "stale sibling scratch dir is pruned"
+else
+    fail "stale sibling scratch dir is pruned (still present: $stale_dir)"
+fi
+if [ -d "$fresh_dir" ]; then
+    pass "fresh sibling scratch dir survives pruning"
+else
+    fail "fresh sibling scratch dir survives pruning (missing: $fresh_dir)"
+fi
+
+# 11. The current repo's dir is never pruned, even when idle past the
+# threshold — a resumed session must find its ledger.
+touch -t 202601010000 "$dir_a"
+dir_a3="$(run_sdd_dir "$repo_a")"
+if [ -d "$dir_a" ] && [ "$dir_a3" = "$dir_a" ]; then
+    pass "current repo's dir survives pruning when idle"
+else
+    fail "current repo's dir survives pruning when idle (missing or moved: $dir_a)"
+fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"

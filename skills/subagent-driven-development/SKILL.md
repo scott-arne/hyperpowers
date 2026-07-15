@@ -304,7 +304,10 @@ dir `scripts/sdd-dir` prints — under the user cache
 (`${XDG_CACHE_HOME:-~/.cache}/hyperpowers/sdd/<per-repo-key>/`), not in the
 working tree. It is off any protected path (so writing there does not
 trigger a permission prompt) and is never committed. That is where to look
-for a session's `progress.md` and reports.
+for a session's `progress.md` and reports. The helper also reclaims
+sibling scratch dirs idle for 14+ days — a finished session's files
+eventually vanish on their own — but never the current repo's dir, so a
+resumed session always finds its ledger.
 
 ## Prompt Templates
 

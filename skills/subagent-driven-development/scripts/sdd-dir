@@ -26,6 +26,20 @@ git rev-parse --git-dir >/dev/null 2>&1 || {
 }
 
 key=$(printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin)
-dir="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/sdd/${key}"
+base="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/sdd"
+dir="${base}/${key}"
 mkdir -p "$dir"
+
+# Reclaim sibling scratch dirs idle for 14+ days. Left alone the cache grows
+# one dir per repo instance forever, and editors that follow agent-touched
+# files (Zed's agent panel, for one) hold a filesystem watcher per scratch
+# file — enough accumulation has exhausted macOS FSEvent streams in practice.
+# A dir's mtime refreshes whenever a file is added or removed inside it, so
+# 14 idle days means the run is long finished. The current key is excluded:
+# mkdir -p does not bump mtime on an existing dir, so a repo resumed after a
+# long pause would otherwise lose its live ledger. Best-effort by design —
+# pruning must never break the contract that stdout is exactly the dir path.
+find "$base" -mindepth 1 -maxdepth 1 -type d ! -name "$key" -mtime +14 \
+  -exec rm -rf {} + 2>/dev/null || true
+
 printf '%s\n' "$dir"

@@ -589,7 +589,6 @@ the review sweep"):
 
 ```bash
 SWEEP_REPO="$(git rev-parse --show-toplevel)"
-GATE_DIR="$(bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/codex-review-dir")"
 bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" pending "$SWEEP_REPO"
 ```
 
@@ -625,10 +624,15 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/base-ref-ok
    A failed `base-ref-ok` closes the event `unsweepable` with the checker's
    reason (same `mark-swept` shape as step 2).
 
-4. **Normal loop, normal authority.** The sweep review runs the §5 loop
-   with this sweep's own `GATE_DIR`, `gate-round` at the code-gate ceiling,
-   and `verdict-normalize` as the only approval authority. Close the event
-   with the loop's outcome:
+4. **Normal loop, normal authority.** Each pending event gets a FRESH `GATE_DIR` — create it from the source repo at the start of that event's review:
+
+```bash
+GATE_DIR="$(bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/codex-review-dir")"
+```
+
+   (Run from `"$SWEEP_REPO"` — the `codex-review-dir` helper captures it internally.)
+
+   The sweep review runs the §5 loop inside the §5 loop with THIS EVENT's `GATE_DIR` and `gate-round` at the code-gate ceiling — a shared sweep-wide dir would let the first event's rounds spend the ceiling for every later event. `verdict-normalize` is the only approval authority. Close the event with the loop's outcome:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" mark-swept --ref <id> --verdict <approved|blocking|incomplete> --note "<one line>" "$SWEEP_REPO"

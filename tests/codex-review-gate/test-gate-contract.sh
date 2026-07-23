@@ -240,6 +240,12 @@ assert_contains "$GATE" 'without a `proceed` from `gate-round`' "red flag: no ro
 assert_contains "$GATE" "pending sweep" "healthy preflight re-surfaces pending notice"
 assert_contains "$GATE" 'A non-zero `gate-round` exit is an internal failure' "gate-round internal failure maps to backstop"
 
+echo "Review sweep (6.4.0):"
+assert_contains "$GATE" "## 7. Review sweep" "sweep section exists"
+assert_contains "$GATE" "only on explicit consent" "sweep is consent-gated"
+assert_contains "$GATE" 'SWEEP_REPO' "sweep anchors to the source repo"
+assert_contains "$GATE" 'never `base..current-HEAD`' "sweep reviews the recorded range"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

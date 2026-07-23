@@ -44,12 +44,44 @@ It prints one JSON line. Branch on `.status`:
   since). Tell the user once, quoting `.recovery` verbatim:
   "Note [status: stale-broker]: the Codex companion broker for this repo is stale, so this review will run without a Codex review. To restore Codex for the next gate, run this in a terminal: <.recovery>" — then continue as the §2 degrade path.
   The next gate re-runs preflight and picks the recovery up automatically.
-- **Non-zero exit** (internal failure) — treat exactly as `not-installed`:
-  §2 notice, degrade, never an error.
+- **Non-zero exit** (internal failure — the preflight tooling itself broke) —
+  degrade exactly like §2, but with its own attribution. Tell the user once:
+  "Note [status: preflight-error]: the Codex preflight failed (<stderr summary>), so this review will run without an additional Codex review."
+  Do not treat this as an error and do not claim Codex is not installed.
+
+**Record every degrade durably.** Whenever a gate proceeds on a degrade
+branch (`not-installed`, `not-ready`, `stale-broker`, `preflight-error`),
+append a ledger event before continuing — document gates:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class degraded-gate --gate <spec|plan> --status <token> --note "<one line>"
+```
+
+Code gates additionally record the exact range that will ship unreviewed:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class degraded-gate --gate <task|final|adhoc> --base <the gate's BASE sha> --head "$(git rev-parse HEAD)" --status <token> --note "<one line>"
+```
+
+`--gate-dir` is omitted here on purpose: preflight runs BEFORE §3 creates
+`GATE_DIR`, and `gateDir` is a forensic breadcrumb only — class-1 preflight
+events legitimately carry `gateDir:null`. If a `GATE_DIR` already exists
+for this gate when the degrade occurs, passing `--gate-dir "$GATE_DIR"` is
+welcome but never required.
+
+If the append itself fails, say so loudly in the §6 hand-back ("ungated
+event could NOT be recorded — note this manually") and continue — a
+bookkeeping failure never blocks the gate.
+
+**Re-surface pending work on healthy preflight.** When `.status` is `ok`,
+check the backlog once per skill run: `ungated-ledger pending --count .` —
+if `.count` > 0, tell the user once:
+"N ungated review item(s) pending sweep in this repo — say \"run the review sweep\" (§7) to clear them."
+Then proceed with this gate normally; the notice never blocks or delays it.
 
 Preflight at most once per skill run and reuse the result for every gate in
 that run. Every degrade notice must name its status (`not-installed`,
-`not-ready`, or `stale-broker`) so the §6 hand-back — and future transcript
+`not-ready`, `stale-broker`, or `preflight-error`) so the §6 hand-back — and future transcript
 mining — can attribute exactly why a gate ran without Codex.
 
 ## 2. No-Codex notice (degrade path)
@@ -356,6 +388,12 @@ hitting it is not a review failure, just the cue to issue the next watch call.
    "Codex review did not complete (still running / aborted before verdict)" —
    never silently pass. Like every other gate failure this degrades to "no Codex
    review," not "Codex approved."
+   Before continuing past an unrecovered incomplete, record it durably (code
+   gates with the range; document gates without):
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class incomplete-review --gate <spec|plan|task|final|adhoc> [--base <BASE sha> --head "$(git rev-parse HEAD)"] --status incomplete --gate-dir "$GATE_DIR" --note "review did not complete"
+   ```
 
 The companion itself offers no working `--background` for `adversarial-review`;
 the detached launch in §3 supplies the background path from the harness side.
@@ -475,6 +513,16 @@ The loop's exit rule is mechanical: a round converges only when
 output. `blocking` continues the fix loop; `incomplete` follows §4b recovery
 and never converges the loop by itself.
 
+0. Before composing ANY round's prompt (round 1 included), advance the
+   mechanical counter with this gate's ceiling from the backstop table:
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-round" "$GATE_DIR" --ceiling <4 for document gates, 3 for code gates> --gate <spec|plan|task|final|adhoc>
+   ```
+
+   `"verdict":"proceed"` composes the round. `"verdict":"backstop"` means
+   the ceiling is already spent: do NOT invoke Codex again for this gate —
+   follow the backstop stop-condition below.
 1. If `verdict-normalize` returned `"result":"approved"` for the latest round's captured output, this round raised no blocking findings, and the round ledger has no still-open blocking findings → done; go to step 6.
 2. Otherwise address each blocking finding: for a document, edit the spec/plan; for
    code, dispatch a fix through the skill's existing fix path (e.g. SDD's fix
@@ -485,7 +533,7 @@ and never converges the loop by itself.
    path) over the updated artifact once the relevant Claude review gate is clean.
 4. **Stop when any holds:**
    - **Approved (converged):** `verdict-normalize` returned `"result":"approved"` for the latest round's captured output, this round raised no blocking findings, **and** the round ledger has no still-open blocking findings. A round that normalizes to `approved` while the ledger shows an unresolved blocker has not converged (the blocker may predate this round); a round that normalizes to `blocking` has not converged regardless of ledger state — do not exit without a normalized approval.
-   - **Backstop hit** — the per-gate round ceiling below is reached. Stop and hand back with any unresolved blocking findings listed; do not loop indefinitely. Fixes applied in the backstop round ship without a confirming Codex pass — flag them in the §6 hand-back as verified by the Claude reviewer and tests only, not re-reviewed by Codex.
+   - **Backstop hit** — the per-gate round ceiling below is reached. Stop and hand back with any unresolved blocking findings listed; do not loop indefinitely. Fixes applied in the backstop round ship without a confirming Codex pass — flag them in the §6 hand-back as verified by the Claude reviewer and tests only, not re-reviewed by Codex. When backstop-round fixes ship, also record them durably using the `reminder` template from `gate-round`'s backstop output: `ungated-ledger append --class backstop-fix --gate <task|final|adhoc> --base <task BASE sha> --head <head sha> --gate-dir "$GATE_DIR" --note "<one line>"` — and name the returned event id in the §6 hand-back.
 If any stop condition conflicts with the mechanical exit rule, the mechanical rule governs: no normalized approved, no converged exit.
 
 ### Per-gate round backstops
@@ -499,6 +547,10 @@ Document gates get 4 rounds (cheap: a text edit + a `task` re-run). Code gates
 get 3 rounds (expensive: fix subagent + Claude-reviewer re-run + a fresh
 `adversarial-review` per round). Convergence usually stops the loop earlier; the
 backstop is a true backstop, not the common exit.
+
+> **Red Flag — Never** invoke the companion for a review round without a `proceed` from `gate-round`
+> for this `GATE_DIR`. The agent's own round count is not authoritative — the counter file is; a
+> backstop verdict means the ceiling is spent no matter what your recollection says.
 
 ## 6. Hand back
 

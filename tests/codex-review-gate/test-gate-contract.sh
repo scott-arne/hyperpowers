@@ -227,6 +227,15 @@ assert_contains "$GATE" "verdict-normalize" "gate uses verdict-normalize"
 assert_contains "$GATE" 'launch `adversarial-review` without a passing `base-ref-ok`' "red flag: base validation"
 assert_contains "$GATE" 'a `verdict-normalize` result of `approved` counts as approval' "red flag: verdict authority"
 
+echo "Gate resilience (6.4.0):"
+assert_contains "$GATE" "append --class degraded-gate" "degrade branches append class-1"
+assert_contains "$GATE" '[status: preflight-error]' "internal failure has its own status token"
+assert_contains "$GATE" "append --class incomplete-review" "incomplete final appends class-3"
+assert_contains "$GATE" "ungated-ledger append --class backstop-fix" "backstop procedure appends class-2"
+assert_contains "$GATE" 'gate-round" "$GATE_DIR" --ceiling' "round composition requires gate-round"
+assert_contains "$GATE" 'without a `proceed` from `gate-round`' "red flag: no round without proceed"
+assert_contains "$GATE" "pending sweep" "healthy preflight re-surfaces pending notice"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

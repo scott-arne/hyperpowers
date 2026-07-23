@@ -123,7 +123,8 @@ while :; do
   if [ -n "${HYPERPOWERS_CODEX_SETUP_JSON:-}" ]; then
     setup_json="$HYPERPOWERS_CODEX_SETUP_JSON"
   else
-    setup_json="$(node "$companion" setup --json 2>/dev/null)" || setup_json=""
+    # Run setup from the target repo: readiness is workspace-scoped.
+    setup_json="$( (cd "$repo" && node "$companion" setup --json) 2>/dev/null)" || setup_json=""
   fi
   out="$(classify "$setup_json")"
   verdict="${out%%$'\t'*}"; detail="${out#*$'\t'}"

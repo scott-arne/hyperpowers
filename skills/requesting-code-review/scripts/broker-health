@@ -2,15 +2,20 @@
 # broker-health <state-dir> — classify one repo's codex-plugin-cc broker record.
 #
 # stdout: {"status":"healthy|dead|absent|unknown","reason":"..."}
-#   healthy - socket path exists AND recorded pid is alive
-#   dead    - positive evidence of death: sessionDir gone, socket gone,
-#             or pid not alive (safe to quarantine)
+#   healthy - socket path exists AND recorded pid is alive AND verified as a broker
+#             process (or identity unverifiable where ps is denied)
+#   dead    - positive evidence of death: sessionDir gone, socket gone, pid not alive,
+#             or pid reused by a non-broker process (safe to quarantine)
 #   absent  - no broker.json (normal before first companion call)
 #   unknown - unparseable/unexpected schema (hands-off: never quarantined)
 #
 # Exit 0 for every determinate answer; exit 2 for usage/internal errors.
 # Socket presence is an existence check (-e), not -S: a purged or missing
 # path is the death signal either way, and plain-file fixtures stay hermetic.
+#
+# Environment:
+#   HYPERPOWERS_BROKER_CMD_PATTERN - extended regex matching broker process
+#                                    command lines (default: codex|app-server-broker|cxc-)
 set -uo pipefail
 
 dir="${1:-}"
@@ -42,4 +47,18 @@ sdir="$(printf '%s\n' "$parsed" | sed -n 3p)"
 [ -d "$sdir" ] || emit dead "sessionDir missing"
 [ -e "$sock" ] || emit dead "socket missing"
 kill -0 "$pid" 2>/dev/null || emit dead "pid $pid not alive"
-emit healthy "socket present and pid $pid alive"
+
+# Verify process identity: pid must belong to a broker process, not a reused PID.
+cmd="$(ps -p "$pid" -o command= 2>/dev/null)"
+if [ -z "$cmd" ]; then
+  # ps failed or returned nothing while kill -0 succeeded: sandboxed/denied context.
+  emit healthy "socket present and pid $pid alive (identity unverified)"
+fi
+
+# ps succeeded: match command against broker signature.
+pattern="${HYPERPOWERS_BROKER_CMD_PATTERN:-codex|app-server-broker|cxc-}"
+if printf '%s' "$cmd" | grep -Eq "$pattern"; then
+  emit healthy "socket present and pid $pid is a live broker process"
+else
+  emit dead "pid $pid reused by non-broker process"
+fi

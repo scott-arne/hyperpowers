@@ -23,6 +23,31 @@ escape_for_json() {
     printf '%s' "$s"
 }
 
+# --- Codex broker janitor (spec 4.2) --------------------------------------
+# Quarantine provably-dead codex-plugin-cc broker records so the companion
+# re-provisions instead of failing every call against a purged socket. Runs
+# unsandboxed (hooks are ordinary user processes). Best-effort by contract:
+# it must never fail, slow, or pollute this hook's stdout JSON.
+codex_state_root="${HYPERPOWERS_CODEX_STATE_ROOT:-${HOME:-}/.claude/plugins/data/codex-openai-codex/state}"
+if [ -d "$codex_state_root" ]; then
+  (
+    set +e
+    broker_health="${PLUGIN_ROOT}/skills/requesting-code-review/scripts/broker-health"
+    for state_dir in "$codex_state_root"/*/; do
+      [ -f "${state_dir}broker.json" ] || continue
+      health="$(bash "$broker_health" "${state_dir%/}" 2>/dev/null)"
+      case "$health" in
+        '{"status":"dead"'*)
+          mv "${state_dir}broker.json" "${state_dir}broker.json.stale-$(date +%s)" 2>/dev/null
+          ;;
+      esac
+    done
+    # GC quarantined records older than 14 days (same policy as sdd-dir GC).
+    find "$codex_state_root" -maxdepth 2 -name 'broker.json.stale-*' -mtime +14 -delete 2>/dev/null
+  ) >/dev/null 2>&1 || true
+fi
+# ---------------------------------------------------------------------------
+
 using_hyperpowers_escaped=$(escape_for_json "$using_hyperpowers_content")
 session_context="<EXTREMELY_IMPORTANT>\nYou have superpowers.\n\n**Below is the full content of your 'hyperpowers:using-hyperpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_hyperpowers_escaped}\n</EXTREMELY_IMPORTANT>"
 

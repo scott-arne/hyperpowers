@@ -74,8 +74,10 @@ acquire_lock() { # sets LOCK_NOTE on takeover
     age=$((now - lockts))
     if [ "$age" -ge 30 ]; then
       # Atomic reap: exactly one waiter wins the rename; the reaped dir is
-      # then ours to discard. A just-recreated live lock has a fresh mtime,
-      # so the age gate re-checked on this iteration's stat keeps it safe.
+      # then ours to discard. Residual: a just-recreated live lock can be
+      # reaped in the stat-to-mv window (<=0.5s); the token guard ensures
+      # the displaced owner cannot remove the new lock, and appends stay
+      # serialized by whoever owns at write time.
       if mv "$lock" "$lock.reaped.$$" 2>/dev/null; then
         rm -rf "$lock.reaped.$$" 2>/dev/null || true
         if mkdir "$lock" 2>/dev/null; then
@@ -92,6 +94,10 @@ acquire_lock() { # sets LOCK_NOTE on takeover
     [ "$waited" -ge 70 ] && { trap - EXIT; echo "ungated-ledger: could not acquire lock" >&2; exit 2; }
     sleep 0.5
   done
+  # Loop-exit acquisition (normal contention): the while-condition's mkdir
+  # succeeded, so we own the lock here too — token it like every other path.
+  OWNER_TOKEN="$$-$(date +%s)-$RANDOM"
+  printf '%s' "$OWNER_TOKEN" > "$lock/owner"
 }
 # Only removes a lock this process still owns: after a stale takeover by
 # another writer, the owner file no longer matches and we must not touch it.

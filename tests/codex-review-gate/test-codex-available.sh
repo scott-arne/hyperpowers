@@ -7,7 +7,12 @@ PROBE="$REPO_ROOT/skills/requesting-code-review/scripts/codex-available.sh"
 
 FAILURES=0
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# The probe is now a wrapper over codex-preflight, which checks broker
+# state before setup; isolate these legacy readiness cases from whatever
+# broker state this machine happens to have.
+iso_state_root="$(mktemp -d "${TMPDIR:-/tmp}/ca-state.XXXXXX")"
+export HYPERPOWERS_CODEX_STATE_ROOT="$iso_state_root"
+trap 'rm -rf "$TMP" "$iso_state_root"' EXIT
 
 pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
@@ -177,6 +182,28 @@ if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 2p)" = "9.9.9" ]; then
   pass "manifest version -> printed on line 2"
 else
   fail "manifest version -> printed on line 2 (rc=$rc out=$out)"
+fi
+
+# 12. Stale broker -> the wrapper maps preflight's stale-broker to exit 1 (unavailable).
+#     Set up a fake state root with a dead broker record for a test repo.
+stale_root="$TMP/stale_state"
+repo_id="$(printf 'fakerepo' | sha256sum | cut -c1-16)"
+sd="$stale_root/fakerepo-$repo_id"
+mkdir -p "$sd"
+cat > "$sd/broker.json" <<EOF
+{ "endpoint": "unix:$TMP/gone/broker.sock", "pidFile": "x", "logFile": "x",
+  "sessionDir": "$TMP/gone", "pid": $$ }
+EOF
+make_install "$TMP/codex_stale"
+printf '%s' '{"version":2,"plugins":{"codex@openai-codex":[{"installPath":"'"$TMP"'/codex_stale"}]}}' > "$TMP/stale.json"
+repo_dir="$TMP/fakerepo"
+mkdir -p "$repo_dir"; git -C "$repo_dir" init -q
+if HYPERPOWERS_PLUGINS_FILE="$TMP/stale.json" HYPERPOWERS_CODEX_SETUP_JSON='{"ready":true}' \
+     HYPERPOWERS_CODEX_STATE_ROOT="$stale_root" \
+     bash "$PROBE" "$repo_dir" >/dev/null 2>&1; then
+  fail "stale broker -> exit 1"
+else
+  pass "stale broker -> exit 1"
 fi
 
 if [ "$FAILURES" -gt 0 ]; then

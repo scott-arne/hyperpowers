@@ -187,7 +187,7 @@ fi
 # 12. Stale broker -> the wrapper maps preflight's stale-broker to exit 1 (unavailable).
 #     Set up a fake state root with a dead broker record for a test repo.
 stale_root="$TMP/stale_state"
-repo_id="$(printf 'fakerepo' | sha256sum | cut -c1-16)"
+repo_id="0123456789abcdef"
 sd="$stale_root/fakerepo-$repo_id"
 mkdir -p "$sd"
 cat > "$sd/broker.json" <<EOF

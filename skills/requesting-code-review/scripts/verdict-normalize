@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# verdict-normalize <payload-file> — the gate's only approval authority.
+#
+# Accepts either document-gate text (the Required document-review output
+# shape) or a code-gate --json payload, and reduces it to a tri-state
+# (spec 4.5). Fail-closed: anything without a parseable verdict is
+# "incomplete", and incomplete is never approval. The contradictory
+# approve-with-blocking-findings case is "blocking" (conservative).
+#
+# stdout: {"result":"approved|blocking|incomplete",
+#          "verdict":"approve|needs-attention|none",
+#          "blockingCount":N,"reason":"..."}
+# Exit 0 for every determinate answer; exit 2 on usage/internal error.
+set -uo pipefail
+
+file="${1:-}"
+[ -n "$file" ] && [ -f "$file" ] || { echo "usage: verdict-normalize <payload-file>" >&2; exit 2; }
+command -v node >/dev/null 2>&1 || { echo "verdict-normalize: node not found" >&2; exit 2; }
+
+node -e '
+  const fs = require("fs");
+  const text = fs.readFileSync(process.argv[1], "utf8");
+
+  const out = (result, verdict, blockingCount, reason) => {
+    process.stdout.write(JSON.stringify({ result, verdict, blockingCount, reason }) + "\n");
+    process.exit(0);
+  };
+
+  // Reduce a structured verdict object ({verdict, findings[]}) to the tri-state.
+  const fromStructured = (v, source) => {
+    if (!v || typeof v.verdict !== "string") return false;
+    const findings = Array.isArray(v.findings) ? v.findings : [];
+    const blocking = findings.filter(f => f && /^(critical|high)$/i.test(String(f.severity || ""))).length;
+    if (v.verdict === "approve" && blocking === 0) out("approved", "approve", 0, source + ": approve, no blocking findings");
+    if (v.verdict === "approve") out("blocking", "approve", blocking, source + ": contradictory approve with blocking findings");
+    out("blocking", "needs-attention", blocking, source + ": " + v.verdict);
+    return true;
+  };
+
+  // 1) JSON payload path (code gates, --json).
+  try {
+    const d = JSON.parse(text);
+    // Known roots across companion 1.0.5/1.0.6: storedJob.result.result,
+    // result.result, or a bare verdict object.
+    const roots = [
+      d && d.storedJob && d.storedJob.result && d.storedJob.result.result,
+      d && d.result && d.result.result,
+      d && d.result,
+      d,
+    ];
+    for (const r of roots) if (fromStructured(r, "json payload")) break;
+    // Parsed as JSON but no structured verdict anywhere: try its rawOutput
+    // as text below; otherwise incomplete.
+    const raw = (d && d.storedJob && d.storedJob.result && d.storedJob.result.rawOutput) || "";
+    if (!/^\s*Verdict:\s*(approve|needs-attention)\s*$/im.test(raw)) {
+      out("incomplete", "none", 0, "json payload has no terminal verdict");
+    }
+    parseText(raw, "json rawOutput");
+  } catch (e) { /* not JSON: fall through to text */ }
+
+  // 2) Document-gate text path.
+  function parseText(t, source) {
+    const m = t.match(/^\s*Verdict:\s*(approve|needs-attention)\s*$/im);
+    if (!m) out("incomplete", "none", 0, source + ": no terminal Verdict line");
+    const verdict = m[1].toLowerCase();
+    // Count critical/high entries inside the Blocking Findings section only.
+    let blocking = 0;
+    const sec = t.split(/^\s*Blocking Findings:\s*$/im)[1];
+    if (sec !== undefined) {
+      const body = sec.split(/^\s*(?:Non-blocking Findings|Cannot verify|Summary):\s*/im)[0] || "";
+      blocking = (body.match(/^\s*-\s*severity:\s*(critical|high)\b/gim) || []).length;
+    }
+    if (verdict === "approve" && blocking === 0) out("approved", "approve", 0, source + ": approve, no blocking findings");
+    if (verdict === "approve") out("blocking", "approve", blocking, source + ": contradictory approve with blocking findings");
+    out("blocking", "needs-attention", blocking, source + ": needs-attention");
+  }
+  parseText(text, "document text");
+' "$file"

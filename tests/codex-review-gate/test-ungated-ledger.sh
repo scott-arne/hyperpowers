@@ -70,6 +70,17 @@ wait
 out="$(bash "$UL" pending --count "$repo")"
 expect "$out" '"count":3' "concurrent appends both recorded"
 
+# forced contention: waiter must acquire via the loop-exit path AND still
+# token + release the lock (regression: tokenless loop-exit stranded it)
+lockpath="$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.lock"
+mkdir -p "$lockpath"
+( sleep 1; rmdir "$lockpath" ) &
+holder=$!
+out="$(bash "$UL" append --class degraded-gate --gate task --base "$base_sha" --head "$head_sha" --status not-ready --note contended "$repo")"
+wait "$holder" 2>/dev/null
+printf '%s' "$out" | grep -Fq '"ok":true' && pass "contended append succeeds" || fail "contended append succeeds (got $out)"
+[ ! -d "$lockpath" ] && pass "lock released after contended acquire" || fail "lock released after contended acquire"
+
 # stale lock takeover: pre-create an old lockdir with a foreign owner, append must still succeed
 lock="$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.lock"
 mkdir -p "$lock"

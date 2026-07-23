@@ -22,12 +22,24 @@ done
 state="$gd/gate-round.json"
 round=0; prev_ceiling=""; prev_gate=""
 if [ -f "$state" ]; then
-  round="$(node -e 'try{console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).round||0)}catch(e){console.log(0)}' "$state")"
-  prev_ceiling="$(node -e 'try{const c=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).ceiling;console.log(c==null?"":c)}catch(e){console.log("")}' "$state")"
-  prev_gate="$(node -e 'try{console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).gate||"")}catch(e){console.log("")}' "$state")"
+  # Damaged state file: parse error on existing file is fail-closed (exit 2).
+  # Use a sentinel to distinguish "parse succeeded and got nothing" from "parse failed".
+  parse_ok="$(node -e 'try{JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(1)}catch(e){console.log(0)}' "$state")"
+  if [ "$parse_ok" -ne 1 ]; then
+    echo "gate-round: state file exists but is unreadable: $state" >&2
+    exit 2
+  fi
+  round="$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const r=d.round||0;if(typeof r!=="number"||r!==Math.floor(r)){throw new Error("invalid round")}console.log(r)' "$state")" || {
+    echo "gate-round: state file exists but is unreadable: $state" >&2
+    exit 2
+  }
+  prev_ceiling="$(node -e 'const c=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).ceiling;console.log(c==null?"":c)' "$state")"
+  prev_gate="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).gate||"")' "$state")"
 fi
 
 if [ "$peek" -eq 1 ]; then
+  # Peek also fails closed on damaged state: if state file exists and is unreadable,
+  # we exited 2 above. So peek here only runs on fresh or valid state.
   # Peek answers with what the NEXT advance would return; enum stays
   # proceed|backstop only.
   c="${prev_ceiling:-${ceiling:-0}}"
@@ -41,7 +53,15 @@ fi
 round=$((round + 1))
 g="${gate:-${prev_gate:-unknown}}"
 case "$g" in spec|plan|task|final|adhoc|unknown) : ;; *) g="unknown" ;; esac
-printf '{"round":%s,"ceiling":%s,"gate":"%s"}\n' "$round" "$ceiling" "$g" > "$state"
+printf '{"round":%s,"ceiling":%s,"gate":"%s"}\n' "$round" "$ceiling" "$g" > "$state" || {
+  echo "gate-round: state write failed" >&2
+  exit 2
+}
+# Verify durability: state file must exist and be non-empty.
+if ! [ -s "$state" ]; then
+  echo "gate-round: state write failed" >&2
+  exit 2
+fi
 
 if [ "$round" -gt "$ceiling" ]; then
   printf '{"round":%s,"ceiling":%s,"verdict":"backstop","reminder":"If fixes ship in this backstop exit, record them: ungated-ledger append --class backstop-fix --gate <task|final|adhoc> --base <task base sha> --head <head sha> --gate-dir %s --note <one line> <repo-dir>"}\n' "$round" "$ceiling" "$gd"

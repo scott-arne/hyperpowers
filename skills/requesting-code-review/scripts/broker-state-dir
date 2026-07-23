@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# broker-state-dir [repo-dir] — locate the codex-plugin-cc state dir for a repo.
+#
+# The companion derives its per-repo key internally (git-root realpath ->
+# slug -> hash). Reimplementing that hash would be schema-drift-fragile, so
+# this resolves data-driven instead (spec 4.3):
+#   1) evidence scan across ALL state dirs: one whose state.json records this
+#      repo's git-root realpath as a job workspaceRoot wins (name-independent,
+#      so slug-sanitized basenames — spaces, special characters — are found);
+#   2) name fallback: a unique <repo-basename>-<16 hex> candidate wins;
+#   3) else absent.
+# Never guesses: ambiguity -> absent (a repo with no state dir also has no
+# broker to recover, so absent is always safe).
+#
+# stdout: {"status":"found|absent","dir":"...","reason":"..."}   exit 0.
+# Root: $HYPERPOWERS_CODEX_STATE_ROOT override, else the fixed default.
+# Never reads CLAUDE_PLUGIN_DATA (that names the CALLING plugin's data dir).
+set -uo pipefail
+
+repo="${1:-.}"
+root="${HYPERPOWERS_CODEX_STATE_ROOT:-${HOME:-}/.claude/plugins/data/codex-openai-codex/state}"
+
+emit() { printf '{"status":"%s","dir":"%s","reason":"%s"}\n' "$1" "$2" "$3"; exit 0; }
+
+[ -d "$root" ] || emit absent "" "state root missing"
+gitroot="$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null)" || emit absent "" "not a git repo"
+gitroot="$(cd "$gitroot" && pwd -P)"
+base="$(basename "$gitroot")"
+
+# 1) Evidence scan first (name-independent): the companion's own state.json
+# records are authoritative, and this finds repos whose basenames the
+# companion sanitizes into a different slug.
+evidenced=()
+for d in "$root"/*/; do
+  d="${d%/}"
+  [ -f "$d/state.json" ] || continue
+  if grep -Fq "\"workspaceRoot\": \"$gitroot\"" "$d/state.json" 2>/dev/null; then
+    evidenced+=("$d")
+  fi
+done
+if [ "${#evidenced[@]}" -eq 1 ]; then
+  emit found "${evidenced[0]}" "state.json workspaceRoot match"
+fi
+if [ "${#evidenced[@]}" -gt 1 ]; then
+  emit absent "" "multiple state dirs claim this repo; refusing to guess"
+fi
+
+# 2) Name fallback: a unique <basename>-<16 hex> candidate wins.
+candidates=()
+for d in "$root/$base"-*; do
+  [ -d "$d" ] || continue
+  suffix="${d##*-}"
+  [ "${#suffix}" -eq 16 ] || continue
+  case "$suffix" in *[!0-9a-f]*) continue ;; esac
+  candidates+=("$d")
+done
+if [ "${#candidates[@]}" -eq 1 ]; then
+  emit found "${candidates[0]}" "unique candidate"
+fi
+emit absent "" "no unambiguous state dir; refusing to guess"

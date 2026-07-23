@@ -44,6 +44,13 @@ printf '{"round":3,"ceiling":"x","gate":"task"}' > "$gd3/gate-round.json"
 bash "$GR" "$gd3" --ceiling 3 >/dev/null 2>&1 && fail "non-numeric ceiling advance exits 2" || pass "non-numeric ceiling advance exits 2"
 bash "$GR" "$gd3" --peek >/dev/null 2>&1 && fail "non-numeric ceiling peek exits 2" || pass "non-numeric ceiling peek exits 2"
 
+# missing or null round field in persisted state fails closed (damaged state, not round 0)
+gd4="$work/gate4"; mkdir -p "$gd4"
+printf '{"ceiling":3,"gate":"task"}' > "$gd4/gate-round.json"
+bash "$GR" "$gd4" --ceiling 3 >/dev/null 2>&1 && fail "missing round field exits 2" || pass "missing round field exits 2"
+printf '{"round":null,"ceiling":3}' > "$gd4/gate-round.json"
+bash "$GR" "$gd4" --peek >/dev/null 2>&1 && fail "null round peek exits 2" || pass "null round peek exits 2"
+
 # unwritable GATE_DIR -> exit 2, no verdict emitted
 ro="$work/ro"; mkdir -p "$ro"; chmod 555 "$ro"
 out="$(bash "$GR" "$ro" --ceiling 3 2>/dev/null)"; rc=$?

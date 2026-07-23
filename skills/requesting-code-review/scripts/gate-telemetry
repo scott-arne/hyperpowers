@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# gate-telemetry [--json] [--all] [repo-dir] — read-only aggregation over
+# the hyperpowers scratch roots (spec 4.5): sdd/<key>, codex-review/<key>,
+# ungated/<key>. Markdown to stdout by default; --json for snapshots.
+# Nothing is written anywhere. Unparseable/old-format artifacts are counted
+# and reported, never silently dropped. Exit 0; exit 2 usage/not-a-repo.
+set -uo pipefail
+
+command -v node >/dev/null 2>&1 || { echo "gate-telemetry: node not found" >&2; exit 2; }
+json=0; all=0; repo="."
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --json) json=1; shift ;;
+    --all) all=1; shift ;;
+    -*) echo "gate-telemetry: unknown flag $1" >&2; exit 2 ;;
+    *) repo="$1"; shift ;;
+  esac
+done
+
+base="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers"
+keys=()
+if [ "$all" -eq 1 ]; then
+  seen=""
+  for d in "$base"/sdd/* "$base"/codex-review/* "$base"/ungated/*; do
+    [ -d "$d" ] || continue
+    k="$(basename "$d")"
+    case " $seen " in *" $k "*) : ;; *) keys+=("$k"); seen="$seen $k" ;; esac
+  done
+else
+  git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || {
+    echo "gate-telemetry: not a git repository (use --all for the fleet view)" >&2; exit 2; }
+  keys=("$(printf '%s' "$(git -C "$repo" rev-parse --absolute-git-dir)" | git -C "$repo" hash-object --stdin)")
+fi
+
+# shellcheck disable=SC2016
+node -e '
+  const fs = require("fs"), path = require("path");
+  const [base, jsonOut, ...keys] = process.argv.slice(1);
+  const repos = [];
+  for (const key of keys) {
+    const r = { key, tasks: 0, fixBriefs: 0, runs: 0, backstops: 0,
+      byGate: {}, oldFormatRuns: 0, degrades: {}, pending: 0,
+      oldestPendingDays: null, swept: {}, unsweepableClass: 0, skipped: 0 };
+    // SDD: fix-cycle rate
+    const sdd = path.join(base, "sdd", key);
+    if (fs.existsSync(sdd)) for (const f of fs.readdirSync(sdd)) {
+      if (/^task-\d+-brief\.md$/.test(f)) r.tasks++;
+      if (/codex-fix-brief/.test(f)) r.fixBriefs++;
+    }
+    // Gate runs: rounds + backstops from gate-round.json, bucketed by gate
+    // type; run dirs WITHOUT round data are counted, never silently ignored.
+    const cr = path.join(base, "codex-review", key);
+    if (fs.existsSync(cr)) for (const run of fs.readdirSync(cr)) {
+      if (!fs.statSync(path.join(cr, run)).isDirectory()) continue;
+      const gr = path.join(cr, run, "gate-round.json");
+      if (!fs.existsSync(gr)) { r.oldFormatRuns++; continue; }
+      try {
+        const d = JSON.parse(fs.readFileSync(gr, "utf8"));
+        const g = d.gate || "unknown";
+        r.byGate[g] = r.byGate[g] || { rounds: [], backstops: 0, runs: 0 };
+        r.byGate[g].runs++; r.byGate[g].rounds.push(d.round);
+        r.runs++;
+        if (d.round > d.ceiling) { r.backstops++; r.byGate[g].backstops++; }
+      } catch (e) { r.skipped++; }
+    }
+    // Ungated ledger
+    const lf = path.join(base, "ungated", key, "ledger.jsonl");
+    if (fs.existsSync(lf)) {
+      const events = [];
+      for (const l of fs.readFileSync(lf, "utf8").split("\n")) {
+        if (!l.trim()) continue;
+        try { events.push(JSON.parse(l)); } catch (e) { r.skipped++; }
+      }
+      const sweptRefs = new Set(events.filter(e => e.event === "swept").map(e => e.ref));
+      let oldestTs = null;
+      for (const e of events) {
+        if (e.event === "ungated") {
+          // Degrades = preflight-degrade events ONLY; class-3
+          // incomplete-review events carry status "incomplete" but are a
+          // different metric (they appear in pending/swept, not here).
+          if (e.class === "degraded-gate" && e.status) r.degrades[e.status] = (r.degrades[e.status] || 0) + 1;
+          if (e.sweepable === false) r.unsweepableClass++;
+          else if (!sweptRefs.has(e.id)) {
+            r.pending++;
+            const t = Date.parse(e.ts);
+            if (!Number.isNaN(t) && (oldestTs === null || t < oldestTs)) oldestTs = t;
+          }
+        } else if (e.event === "swept") {
+          r.swept[e.verdict] = (r.swept[e.verdict] || 0) + 1;
+        }
+      }
+      if (oldestTs !== null) r.oldestPendingDays = Math.floor((Date.now() - oldestTs) / 86400000);
+    }
+    repos.push(r);
+  }
+  // Fleet aggregate (spec 4.5: every per-repo metric class, aggregated).
+  const agg = { repos: repos.length, tasks: 0, fixBriefs: 0, runs: 0,
+    backstops: 0, oldFormatRuns: 0, pending: 0, oldestPendingDays: null,
+    sweptTotal: 0, swept: {}, skipped: 0, degrades: {}, byGate: {} };
+  for (const r of repos) {
+    agg.tasks += r.tasks; agg.fixBriefs += r.fixBriefs; agg.runs += r.runs;
+    agg.backstops += r.backstops; agg.oldFormatRuns += r.oldFormatRuns;
+    agg.pending += r.pending; agg.skipped += r.skipped;
+    if (r.oldestPendingDays !== null &&
+        (agg.oldestPendingDays === null || r.oldestPendingDays > agg.oldestPendingDays))
+      agg.oldestPendingDays = r.oldestPendingDays;
+    for (const [k, v] of Object.entries(r.swept)) {
+      agg.swept[k] = (agg.swept[k] || 0) + v; agg.sweptTotal += v;
+    }
+    for (const [k, v] of Object.entries(r.degrades)) agg.degrades[k] = (agg.degrades[k] || 0) + v;
+    for (const [g, v] of Object.entries(r.byGate)) {
+      agg.byGate[g] = agg.byGate[g] || { rounds: [], backstops: 0, runs: 0 };
+      agg.byGate[g].rounds.push(...v.rounds);
+      agg.byGate[g].backstops += v.backstops; agg.byGate[g].runs += v.runs;
+    }
+  }
+  if (jsonOut === "1") {
+    process.stdout.write(JSON.stringify({ v: 1, repos, aggregate: agg }) + "\n");
+    process.exit(0);
+  }
+  for (const r of repos) {
+    const sweptTotal = Object.values(r.swept).reduce((a, b) => a + b, 0);
+    console.log(`# Gate telemetry — ${r.key}`);
+    console.log(`- Gate runs (with round data): ${r.runs}; old-format runs: ${r.oldFormatRuns}`);
+    const byg = Object.entries(r.byGate).map(([g, v]) => `${g}: [${v.rounds.join(", ")}] (backstops ${v.backstops}/${v.runs})`).join("; ") || "none";
+    console.log(`- Rounds by gate — ${byg}`);
+    console.log(`- Backstop rate: ${r.backstops}/${r.runs}`);
+    console.log(`- Fix-cycle rate: ${r.fixBriefs}/${r.tasks} tasks`);
+    const deg = Object.entries(r.degrades).map(([k, v]) => `${k}: ${v}`).join("; ") || "none";
+    console.log(`- Degrades by status — ${deg}`);
+    console.log(`- Ungated backlog — Pending: ${r.pending}${r.oldestPendingDays === null ? "" : `; Oldest pending: ${r.oldestPendingDays} day(s)`}; Swept: ${sweptTotal} (${Object.entries(r.swept).map(([k,v])=>`${k}:${v}`).join(", ") || "-"}); doc-recorded: ${r.unsweepableClass}`);
+    console.log(`- Artifacts skipped: ${r.skipped}` + (r.skipped ? " (skipped: " + r.skipped + " unparseable)" : ""));
+    console.log("");
+  }
+  if (repos.length > 1) {
+    console.log(`# Fleet aggregate (${agg.repos} repos)`);
+    console.log(`- Runs: ${agg.runs}; Backstop rate: ${agg.backstops}/${agg.runs}; old-format runs: ${agg.oldFormatRuns}`);
+    const abyg = Object.entries(agg.byGate).map(([g, v]) => `${g}: [${v.rounds.join(", ")}] (backstops ${v.backstops}/${v.runs})`).join("; ") || "none";
+    console.log(`- Rounds by gate — ${abyg}`);
+    console.log(`- Fix-cycle rate: ${agg.fixBriefs}/${agg.tasks} tasks`);
+    console.log(`- Degrades by status — ` + (Object.entries(agg.degrades).map(([k, v]) => `${k}: ${v}`).join("; ") || "none"));
+    console.log(`- Total pending: ${agg.pending}${agg.oldestPendingDays === null ? "" : `; Oldest pending: ${agg.oldestPendingDays} day(s)`}; Total swept: ${agg.sweptTotal} (${Object.entries(agg.swept).map(([k,v])=>`${k}:${v}`).join(", ") || "-"}); Artifacts skipped: ${agg.skipped}`);
+  }
+' "$base" "$json" "${keys[@]}"

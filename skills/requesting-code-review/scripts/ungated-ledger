@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# ungated-ledger — durable record of work that shipped without a Codex
+# confirmation (spec 4.1). Append-only JSONL under the user cache:
+#   ${XDG_CACHE_HOME:-~/.cache}/hyperpowers/ungated/<key>/ledger.jsonl
+# <key> is byte-identical to sdd-dir's derivation. The ungated/ root is
+# deliberately OUTSIDE sdd/ — no GC touches it.
+#
+# Subcommands:
+#   append --class degraded-gate|backstop-fix|incomplete-review
+#          --gate spec|plan|task|final|adhoc
+#          [--base SHA --head SHA] [--status TOKEN] [--gate-dir P]
+#          [--note S] [repo-dir]              -> {"ok":true,"id":"..."}
+#   pending [--count] [repo-dir]              -> array | {"count":N,"skipped":M}
+#   mark-swept --ref ID --verdict approved|blocking|incomplete|unsweepable
+#          [--note S] [repo-dir]              -> {"ok":true}
+#
+# sweepable derives from --gate: spec|plan -> false (base/head not needed);
+# task|final|adhoc -> true, --base/--head required. swept events append —
+# nothing is ever mutated. Writers take a mkdir lockdir (ledger.lock/) with
+# a 30s stale takeover recorded in the event note; readers never lock.
+# Exit 0 for determinate answers; exit 2 for usage/internal errors.
+set -uo pipefail
+
+command -v node >/dev/null 2>&1 || { echo "ungated-ledger: node not found" >&2; exit 2; }
+sub="${1:-}"; shift || true
+[ -n "$sub" ] || { echo "usage: ungated-ledger append|pending|mark-swept ..." >&2; exit 2; }
+
+# Parse trailing repo-dir (last non-flag arg) and flags.
+repo="."
+class=""; gate=""; base=""; head=""; status=""; gatedir=""; note=""; ref=""; verdict=""; count_only=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --class) class="$2"; shift 2 ;;
+    --gate) gate="$2"; shift 2 ;;
+    --base) base="$2"; shift 2 ;;
+    --head) head="$2"; shift 2 ;;
+    --status) status="$2"; shift 2 ;;
+    --gate-dir) gatedir="$2"; shift 2 ;;
+    --note) note="$2"; shift 2 ;;
+    --ref) ref="$2"; shift 2 ;;
+    --verdict) verdict="$2"; shift 2 ;;
+    --count) count_only=1; shift ;;
+    -*) echo "ungated-ledger: unknown flag $1" >&2; exit 2 ;;
+    *) repo="$1"; shift ;;
+  esac
+done
+
+git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || {
+  echo "ungated-ledger: not inside a git repository: $repo" >&2; exit 2; }
+# Byte-identical to sdd-dir's derivation.
+key=$(printf '%s' "$(git -C "$repo" rev-parse --absolute-git-dir)" | git -C "$repo" hash-object --stdin)
+root="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/ungated/${key}"
+ledger="$root/ledger.jsonl"
+
+acquire_lock() { # sets LOCK_NOTE on takeover
+  LOCK_NOTE=""
+  local lock="$root/ledger.lock" waited=0
+  while ! mkdir "$lock" 2>/dev/null; do
+    # Stale takeover: lockdir older than 30s. Portability trap: GNU stat
+    # treats -f as filesystem mode (%m = mount point, non-numeric, exit 0),
+    # so probe GNU -c %Y FIRST and numerically validate every result; an
+    # unparseable timestamp is treated as fresh (no takeover) — fail safe.
+    local now lockts age
+    now=$(date +%s)
+    lockts=$(stat -c %Y "$lock" 2>/dev/null)
+    case "$lockts" in ''|*[!0-9]*) lockts=$(stat -f %m "$lock" 2>/dev/null) ;; esac
+    case "$lockts" in ''|*[!0-9]*) lockts="$now" ;; esac
+    age=$((now - lockts))
+    if [ "$age" -ge 30 ]; then
+      rmdir "$lock" 2>/dev/null || true
+      if mkdir "$lock" 2>/dev/null; then LOCK_NOTE=" [lock takeover after ${age}s]"; return 0; fi
+    fi
+    waited=$((waited + 1))
+    [ "$waited" -ge 70 ] && { echo "ungated-ledger: could not acquire lock" >&2; exit 2; }
+    sleep 0.5
+  done
+}
+release_lock() { rmdir "$root/ledger.lock" 2>/dev/null || true; }
+
+case "$sub" in
+  append)
+    case "$class" in degraded-gate|backstop-fix|incomplete-review) : ;; *)
+      echo "ungated-ledger: --class must be degraded-gate|backstop-fix|incomplete-review" >&2; exit 2 ;; esac
+    case "$gate" in
+      spec|plan) sweepable=false ;;
+      task|final|adhoc)
+        sweepable=true
+        [ -n "$base" ] && [ -n "$head" ] || {
+          echo "ungated-ledger: --base and --head are required for gate '$gate'" >&2; exit 2; } ;;
+      *) echo "ungated-ledger: --gate must be spec|plan|task|final|adhoc" >&2; exit 2 ;;
+    esac
+    mkdir -p "$root"
+    reporoot="$(cd "$(git -C "$repo" rev-parse --show-toplevel)" && pwd -P)"
+    acquire_lock
+    trap release_lock EXIT
+    id="$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
+    node -e '
+      const [id, cls, gate, ts, repo, base, head, status, sweepable, gateDir, note] = process.argv.slice(1);
+      const e = { v: 1, id, event: "ungated", class: cls, gate, ts, repo,
+        base: base || null, head: head || null, status: status || null,
+        sweepable: sweepable === "true", gateDir: gateDir || null, note };
+      process.stdout.write(JSON.stringify(e) + "\n");
+    ' "$id" "$class" "$gate" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$reporoot" \
+      "$base" "$head" "$status" "$sweepable" "$gatedir" "${note}${LOCK_NOTE}" >> "$ledger" \
+      || { echo "ungated-ledger: write failed" >&2; exit 2; }
+    release_lock; trap - EXIT
+    printf '{"ok":true,"id":"%s"}\n' "$id"
+    ;;
+  pending)
+    [ -f "$ledger" ] || { if [ "$count_only" -eq 1 ]; then echo '{"count":0,"skipped":0}'; else echo '[]'; fi; exit 0; }
+    node -e '
+      const fs = require("fs");
+      const lines = fs.readFileSync(process.argv[1], "utf8").split("\n").filter(l => l.trim() !== "");
+      let skipped = 0; const events = [];
+      for (const l of lines) { try { events.push(JSON.parse(l)); } catch (e) { skipped++; } }
+      const sweptRefs = new Set(events.filter(e => e.event === "swept").map(e => e.ref));
+      const pending = events.filter(e => e.event === "ungated" && e.sweepable === true && !sweptRefs.has(e.id));
+      if (process.argv[2] === "count") {
+        process.stdout.write(JSON.stringify({ count: pending.length, skipped }) + "\n");
+      } else {
+        process.stdout.write(JSON.stringify(pending) + "\n");
+      }
+    ' "$ledger" "$([ "$count_only" -eq 1 ] && echo count || echo list)"
+    ;;
+  mark-swept)
+    [ -n "$ref" ] || { echo "ungated-ledger: --ref is required" >&2; exit 2; }
+    case "$verdict" in approved|blocking|incomplete|unsweepable) : ;; *)
+      echo "ungated-ledger: --verdict must be approved|blocking|incomplete|unsweepable" >&2; exit 2 ;; esac
+    mkdir -p "$root"
+    acquire_lock
+    trap release_lock EXIT
+    node -e '
+      const [ref, ts, verdict, note] = process.argv.slice(1);
+      process.stdout.write(JSON.stringify({ v: 1, event: "swept", ref, ts, verdict, note }) + "\n");
+    ' "$ref" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$verdict" "${note}${LOCK_NOTE}" >> "$ledger" \
+      || { echo "ungated-ledger: write failed" >&2; exit 2; }
+    release_lock; trap - EXIT
+    echo '{"ok":true}'
+    ;;
+  *)
+    echo "ungated-ledger: unknown subcommand '$sub'" >&2; exit 2 ;;
+esac

@@ -60,11 +60,12 @@ node -e '
 
   // 2) Document-gate text path.
   function parseText(t, source) {
-    // Take the LAST verdict line: findings bodies may quote example verdict lines.
+    // Fail-closed precedence across ALL matched verdict lines: any
+    // needs-attention wins regardless of position — a quoted line can only
+    // make the result MORE conservative, never an approval.
     const ms = Array.from(t.matchAll(/^\s*Verdict:\s*(approve|needs-attention)\s*$/gim));
-    const m = ms.length ? ms[ms.length - 1] : null;
-    if (!m) out("incomplete", "none", 0, source + ": no terminal Verdict line");
-    const verdict = m[1].toLowerCase();
+    if (!ms.length) out("incomplete", "none", 0, source + ": no terminal Verdict line");
+    const verdict = ms.some(m => m[1].toLowerCase() === "needs-attention") ? "needs-attention" : "approve";
     // Count critical/high entries inside the Blocking Findings section only.
     let blocking = 0;
     const sec = t.split(/^\s*Blocking Findings:\s*$/im)[1];

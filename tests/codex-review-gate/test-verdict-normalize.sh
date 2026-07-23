@@ -107,6 +107,23 @@ EOF
 check "$work/quoted.txt" '"verdict":"needs-attention"' "quoted verdict in finding does not shadow terminal verdict"
 check "$work/quoted.txt" '"result":"blocking"' "quoted-verdict case still blocking"
 
+# mirror case: needs-attention at top, quoted approve later -> still needs-attention
+cat > "$work/mirror.txt" <<'EOF'
+Verdict: needs-attention
+
+Blocking Findings:
+None
+
+Cannot verify:
+The spec says:
+Verdict: approve
+but current output does not match.
+
+Summary: verify.
+EOF
+check "$work/mirror.txt" '"verdict":"needs-attention"' "needs-attention precedence over later quoted approve"
+check "$work/mirror.txt" '"result":"blocking"' "needs-attention with zero blocking -> blocking"
+
 # empty file -> incomplete
 : > "$work/empty.txt"
 check "$work/empty.txt" '"result":"incomplete"' "empty file -> incomplete"

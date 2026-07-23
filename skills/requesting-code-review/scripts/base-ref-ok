@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# base-ref-ok <base-ref> [repo-dir] — validate a review base BEFORE launching
+# adversarial-review. A bad base (notably the empty-tree hash) makes the
+# companion's merge-base fatal mid-job and orphans the review as "running"
+# forever; the only place to stop that is before launch (spec 4.4).
+#
+# Check order matters: the raw object is compared against the empty-tree hash
+# BEFORE ^{commit} peeling, because peeling rejects the empty tree and would
+# misreport it as merely unresolvable.
+#
+# stdout: {"ok":true,"resolvedBase":"<sha>"}
+#      or {"ok":false,"reason":"unresolvable|empty-tree|no-merge-base|empty-range"}
+# Exit 0 for both; exit 2 on usage error.
+set -uo pipefail
+
+EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+base="${1:-}"
+repo="${2:-.}"
+[ -n "$base" ] || { echo "usage: base-ref-ok <base-ref> [repo-dir]" >&2; exit 2; }
+
+ok()   { printf '{"ok":true,"resolvedBase":"%s"}\n' "$1"; exit 0; }
+nope() { printf '{"ok":false,"reason":"%s"}\n' "$1"; exit 0; }
+
+raw="$(git -C "$repo" rev-parse --verify --quiet "$base" 2>/dev/null)" || nope unresolvable
+[ "$raw" != "$EMPTY_TREE" ] || nope empty-tree
+commit="$(git -C "$repo" rev-parse --verify --quiet "${base}^{commit}" 2>/dev/null)" || nope unresolvable
+git -C "$repo" merge-base "$commit" HEAD >/dev/null 2>&1 || nope no-merge-base
+head="$(git -C "$repo" rev-parse HEAD 2>/dev/null)" || nope unresolvable
+[ "$commit" != "$head" ] || nope empty-range
+ok "$commit"

@@ -59,6 +59,25 @@ fi
 using_hyperpowers_escaped=$(escape_for_json "$using_hyperpowers_content")
 session_context="<EXTREMELY_IMPORTANT>\nYou have superpowers.\n\n**Below is the full content of your 'hyperpowers:using-hyperpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_hyperpowers_escaped}\n</EXTREMELY_IMPORTANT>"
 
+# --- Ungated-work notice (spec 4.3) ----------------------------------------
+# One cheap read: if this repo's ungated ledger has pending entries, add a
+# single line to the injected context. Never breaks the hook, never speaks
+# at zero, instant no-op outside a repo or when the root is absent.
+ungated_notice="$(
+  ( set +e
+    ul="${PLUGIN_ROOT}/skills/requesting-code-review/scripts/ungated-ledger"
+    [ -x "$ul" ] || exit 0
+    out="$(bash "$ul" pending --count . 2>/dev/null)" || exit 0
+    n="$(printf '%s' "$out" | node -e 'try{console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).count||0)}catch(e){console.log(0)}' 2>/dev/null)"
+    [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null || exit 0
+    printf '%s ungated review item(s) pending sweep in this repo — say \\"run the review sweep\\" to clear them.' "$n"
+  ) 2>/dev/null
+)" || ungated_notice=""
+if [ -n "$ungated_notice" ]; then
+  session_context="${session_context}\n\n${ungated_notice}"
+fi
+# ---------------------------------------------------------------------------
+
 # Output context injection as JSON.
 # Cursor hooks expect additional_context (snake_case).
 # Claude Code hooks expect hookSpecificOutput.additionalContext (nested).

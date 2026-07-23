@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# gate-round GATE_DIR --ceiling N [--peek] — mechanical round counter for
+# one gate invocation (spec 4.2). The counter lives in GATE_DIR beside the
+# round ledger, so concurrent gates never share state. Counting is the ONLY
+# job: the ledger append on backstop belongs to the gate doc's backstop
+# procedure — the "reminder" field carries the exact command template so it
+# cannot be forgotten. Exit 0 for proceed AND backstop; exit 2 for usage.
+set -uo pipefail
+
+gd="${1:-}"; shift || true
+[ -n "$gd" ] && [ -d "$gd" ] || { echo "usage: gate-round GATE_DIR --ceiling N [--gate T] [--peek]" >&2; exit 2; }
+ceiling=""; peek=0; gate=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --ceiling) ceiling="$2"; shift 2 ;;
+    --gate) gate="$2"; shift 2 ;;
+    --peek) peek=1; shift ;;
+    *) echo "gate-round: unknown arg $1" >&2; exit 2 ;;
+  esac
+done
+
+state="$gd/gate-round.json"
+round=0; prev_ceiling=""; prev_gate=""
+if [ -f "$state" ]; then
+  round="$(node -e 'try{console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).round||0)}catch(e){console.log(0)}' "$state")"
+  prev_ceiling="$(node -e 'try{const c=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).ceiling;console.log(c==null?"":c)}catch(e){console.log("")}' "$state")"
+  prev_gate="$(node -e 'try{console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).gate||"")}catch(e){console.log("")}' "$state")"
+fi
+
+if [ "$peek" -eq 1 ]; then
+  # Peek answers with what the NEXT advance would return; enum stays
+  # proceed|backstop only.
+  c="${prev_ceiling:-${ceiling:-0}}"
+  next=$((round + 1))
+  verdict=$([ -n "$c" ] && [ "$c" -gt 0 ] && [ "$next" -gt "$c" ] && echo backstop || echo proceed)
+  printf '{"round":%s,"ceiling":%s,"verdict":"%s"}\n' "$round" "${c:-0}" "$verdict"
+  exit 0
+fi
+
+[ -n "$ceiling" ] || { echo "gate-round: --ceiling N is required to advance" >&2; exit 2; }
+round=$((round + 1))
+g="${gate:-${prev_gate:-unknown}}"
+case "$g" in spec|plan|task|final|adhoc|unknown) : ;; *) g="unknown" ;; esac
+printf '{"round":%s,"ceiling":%s,"gate":"%s"}\n' "$round" "$ceiling" "$g" > "$state"
+
+if [ "$round" -gt "$ceiling" ]; then
+  printf '{"round":%s,"ceiling":%s,"verdict":"backstop","reminder":"If fixes ship in this backstop exit, record them: ungated-ledger append --class backstop-fix --gate <task|final|adhoc> --base <task base sha> --head <head sha> --gate-dir %s --note <one line> <repo-dir>"}\n' "$round" "$ceiling" "$gd"
+else
+  printf '{"round":%s,"ceiling":%s,"verdict":"proceed"}\n' "$round" "$ceiling"
+fi

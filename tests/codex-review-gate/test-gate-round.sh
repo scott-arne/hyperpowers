@@ -31,6 +31,20 @@ expect "$out" 'ungated-ledger append --class backstop-fix' "backstop carries app
 expect "$(cat "$gd/gate-round.json")" '"ceiling":3' "state file records ceiling"
 expect "$(cat "$gd/gate-round.json")" '"gate":"task"' "state file records gate type"
 
+# damaged state fails closed (exit 2), never resets the counter
+gd2="$work/gate2"; mkdir -p "$gd2"
+printf 'not json' > "$gd2/gate-round.json"
+bash "$GR" "$gd2" --ceiling 3 >/dev/null 2>&1 && fail "corrupt state exits 2" || pass "corrupt state exits 2"
+bash "$GR" "$gd2" --peek >/dev/null 2>&1 && fail "corrupt state peek exits 2" || pass "corrupt state peek exits 2"
+rm -f "$gd2/gate-round.json"
+
+# unwritable GATE_DIR -> exit 2, no verdict emitted
+ro="$work/ro"; mkdir -p "$ro"; chmod 555 "$ro"
+out="$(bash "$GR" "$ro" --ceiling 3 2>/dev/null)"; rc=$?
+chmod 755 "$ro"
+[ "$rc" -ne 0 ] && pass "unwritable dir exits 2" || fail "unwritable dir exits 2 (rc=$rc out=$out)"
+[ -z "$out" ] && pass "no verdict on failed write" || fail "no verdict on failed write (got $out)"
+
 # determinate answers exit 0, missing dir exits 2
 bash "$GR" "$gd" --ceiling 3 >/dev/null; [ $? -eq 0 ] && pass "backstop exits 0" || fail "backstop exits 0"
 bash "$GR" "$work/nope" --ceiling 3 >/dev/null 2>&1 && fail "missing dir exits 2" || pass "missing dir exits 2"

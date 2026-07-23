@@ -126,11 +126,11 @@ assert_not_contains "$GATE" "adversarial-review --base <MERGE_BASE_SHA> --wait" 
   "final whole-branch recipe drops the ignored --wait flag"
 assert_contains "$GATE" "600000 ms (10 minutes)" \
   "document reviews pin a concrete explicit timeout"
-assert_contains "$GATE" ".storedJob.result.result" \
-  "completion check pins the concrete result JSON field"
+assert_contains "$GATE" "Write the captured result" \
+  "verdict read via capture + verdict-normalize"
 assert_contains "$GATE" "CODEX_VERSION" \
   "probe contract captures the companion version"
-assert_contains "$GATE" "verified against codex-plugin-cc **1.0.5**" \
+assert_contains "$GATE" "codex-plugin-cc **1.0.5–1.0.6**" \
   "§4b field paths are pinned to a verified companion version"
 
 assert_contains "$BRAINSTORMING" "using the spec recipe" \
@@ -217,6 +217,15 @@ assert_contains "$WRITING_PLANS" "Algorithm Assessment" \
 echo "Reviewer bootstrap suppression (prompt-level):"
 assert_contains "$GATE" "stateless reviewer for this request only" "gate prompts suppress reviewer bootstrap"
 assert_contains "$APPROACH_GATE" "stateless reviewer for this request only" "approach gate prompt suppresses reviewer bootstrap"
+
+echo "Gate reliability hardening (6.3.0):"
+assert_contains "$GATE" "scripts/codex-preflight" "gate uses codex-preflight"
+assert_contains "$GATE" '"stale-broker"' "gate handles stale-broker status"
+assert_contains "$GATE" '"not-ready"' "gate handles not-ready status"
+assert_contains "$GATE" "base-ref-ok" "gate requires base-ref-ok before launch"
+assert_contains "$GATE" "verdict-normalize" "gate uses verdict-normalize"
+assert_contains "$GATE" 'launch `adversarial-review` without a passing `base-ref-ok`' "red flag: base validation"
+assert_contains "$GATE" 'a `verdict-normalize` result of `approved` counts as approval' "red flag: verdict authority"
 
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"

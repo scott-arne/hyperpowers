@@ -6,37 +6,58 @@ is re-engaged or the work is declared complete. Referenced by brainstorming,
 writing-plans, subagent-driven-development, and requesting-code-review.
 
 **Claude Code only.** Run this gate only under Claude Code. In any other harness,
-skip it silently — do not run the probe, do not emit the notice.
+skip it silently — do not run the preflight, do not emit the notice.
 
-## 1. Probe availability
+## 1. Preflight availability
 
-Run the probe by its absolute path inside the installed plugin (`$CLAUDE_PLUGIN_ROOT`
-is set by Claude Code to this plugin's install directory):
+Run the preflight by its absolute path inside the installed plugin
+(`$CLAUDE_PLUGIN_ROOT` is set by Claude Code to this plugin's install
+directory):
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/skills/requesting-code-review/scripts/codex-available.sh"
+bash "${CLAUDE_PLUGIN_ROOT}/skills/requesting-code-review/scripts/codex-preflight"
 ```
 
-(When working inside a hyperpowers dev checkout rather than an installed plugin,
-`$CLAUDE_PLUGIN_ROOT` is unset; run `bash skills/requesting-code-review/scripts/codex-available.sh`
-from the repo root instead. If it is unset in an *installed-plugin* session —
-some shells do not inherit it — resolve the newest install and run the probe
-from there: `ls -d ~/.claude/plugins/cache/hyperpowers/hyperpowers/*/ | sort -V | tail -1`.)
+(When working inside a hyperpowers dev checkout rather than an installed
+plugin, `$CLAUDE_PLUGIN_ROOT` is unset; run
+`bash skills/requesting-code-review/scripts/codex-preflight` from the repo
+root instead. If it is unset in an *installed-plugin* session, resolve the
+newest install: `ls -d ~/.claude/plugins/cache/hyperpowers/hyperpowers/*/ | sort -V | tail -1`.)
 
-- **Exit 0:** a Codex review can run. stdout line 1 is the Codex install path —
-  capture it as `CODEX_PATH` for the invocation step. stdout line 2 is the
-  installed codex-plugin-cc version — capture it as `CODEX_VERSION` and report
-  it in the §6 hand-back. The JSON field paths in §4b are verified against
-  codex-plugin-cc **1.0.5**; on another version, confirm a field exists in the
-  actual payload before relying on it (fall back to `.storedJob.result.rawOutput`).
-- **Non-zero exit:** Codex is unavailable. Emit the **No-Codex notice** (below) at
-  this point and continue the skill unchanged. Do not treat this as an error.
+It prints one JSON line. Branch on `.status`:
 
-Probe at most once per skill run and reuse the result for every gate in that run.
+- **`"ok"`** — a Codex review can run. Capture `.codexPath` as `CODEX_PATH`
+  and `.codexVersion` as `CODEX_VERSION` (report it in the §6 hand-back).
+  The JSON field paths in §4b's payloads are verified against codex-plugin-cc
+  **1.0.5–1.0.6**; on another version, confirm a field exists in the actual
+  payload before relying on it.
+- **`"not-installed"`** — emit the **No-Codex notice** (§2) and continue the
+  skill unchanged. Do not treat this as an error.
+- **`"not-ready"`** — the plugin is installed but Codex is not ready
+  (`.reason` says why: not authenticated, CLI missing, transient handshake
+  failure that outlasted retries). Tell the user once:
+  "Note: codex-plugin-cc is installed but not ready (<.reason>), so this
+  review will run without an additional Codex review." Then continue exactly
+  as the §2 degrade path.
+- **`"stale-broker"`** — the plugin is installed but this repo's companion
+  broker is dead (its temp dir was likely purged mid-session; the session-
+  start janitor clears these at startup/compact, so this means it died
+  since). Tell the user once, quoting `.recovery` verbatim:
+  "Note: the Codex companion broker for this repo is stale, so this review
+  will run without a Codex review. To restore Codex for the next gate, run
+  this in a terminal: <.recovery>" — then continue as the §2 degrade path.
+  The next gate re-runs preflight and picks the recovery up automatically.
+- **Non-zero exit** (internal failure) — treat exactly as `not-installed`:
+  §2 notice, degrade, never an error.
+
+Preflight at most once per skill run and reuse the result for every gate in
+that run. Every degrade notice must name its status (`not-installed`,
+`not-ready`, or `stale-broker`) so the §6 hand-back — and future transcript
+mining — can attribute exactly why a gate ran without Codex.
 
 ## 2. No-Codex notice (degrade path)
 
-When the probe exits non-zero, tell the user once, at this gate:
+When preflight returns `not-installed`, tell the user once, at this gate:
 
 ```
 Note: codex-plugin-cc is not available, so this review will run without an
@@ -170,15 +191,26 @@ unrecoverable except by a full re-run. Instead:
    This keeps the session visibly working in harness UIs and the wait
    interruptible, while the review itself is immune to any single call being
    killed.
-4. **Read the verdict.** Once `.job.status` is terminal, run
-   `node "$CODEX_PATH/scripts/codex-companion.mjs" result <job-id> --json`:
-   the parsed verdict/findings are at `.storedJob.result.result`, the raw
-   review text at `.storedJob.result.rawOutput`.
+4. **Read the verdict.** Once `.job.status` is terminal, run `node "$CODEX_PATH/scripts/codex-companion.mjs" result <job-id> --json`: write the full `result <job-id> --json` output to a file inside `GATE_DIR` and run `verdict-normalize` on it; the raw review text for reading findings remains at `.storedJob.result.rawOutput`.
 
 Cap the watch at **4 consecutive wait cycles** (~16 minutes). If the job is
 still not terminal, treat the result as incomplete per §4b — optionally
 `cancel <job-id>` to stop a stalled worker — and never read the absence of a
 verdict as approval.
+
+**Base validation — required before every `adversarial-review` launch.** Run:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/base-ref-ok" <BASE_SHA>
+```
+
+If it prints `"ok":true`, use `.resolvedBase` as the launch base. If
+`"ok":false`, do NOT launch: an invalid base (empty-tree hash, no merge-base,
+base==HEAD, unresolvable ref) makes the companion's merge-base fatal mid-job
+and orphans the review as `running` forever. Fix the base (common causes:
+wrong branch name, an unborn branch, a recorded SHA from a different
+worktree) and re-validate; if it cannot be fixed, degrade with the reason —
+"Codex review skipped: invalid review base (<reason>)."
 
 **Per-task code** — use `adversarial-review` so Codex sees the diff and the
 task-scoped context:
@@ -261,6 +293,22 @@ A Codex result has three outcomes, not two: *approve*, *blocking findings*, and
 **incomplete**. An incomplete result carries no verdict and must never be read as
 approval or as "no findings."
 
+**Mechanical normalization — the only approval authority.** Write the
+captured result (the foreground `task` stdout, or `result <job-id> --json`
+output) to a file inside `GATE_DIR`, then run:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/verdict-normalize" "$GATE_DIR/<captured-output-file>"
+```
+
+Its tri-state `.result` is the review outcome: `approved`, `blocking`, or
+`incomplete`. Only a `verdict-normalize` result of `approved` counts as
+approval — never your own reading of the raw output, and never the absence
+of output. On `blocking`, read the raw findings text as usual to do the
+fixing; normalization gates only the decision. On `incomplete`, follow the
+recovery steps below, re-capture, and re-normalize; if it remains
+`incomplete`, surface "Codex review did not complete — not an approval."
+
 **Why this matters (grounding).** Within the companion, `adversarial-review` is
 **foreground-only**: `handleReviewCommand` always calls `runForegroundCommand`,
 and the review command's own `--wait`/`--background` flags are parsed but
@@ -289,8 +337,7 @@ hitting it is not a review failure, just the cue to issue the next watch call.
 
 **Required handling:**
 
-1. Do not interpret an incomplete result as approval, and do not interpret it as
-   findings. Treat it as "review not yet known."
+1. Do not interpret an incomplete result as approval, and do not interpret it as findings — `verdict-normalize` returns `incomplete` for exactly this case, and only `approved` exits the gate.
 2. Recover best-effort, bounded:
    - **Code gates:** the §3 watch loop *is* the recovery path — the job id is
      known from launch, and `status <job-id> --wait --json` / `result <job-id>
@@ -308,14 +355,7 @@ hitting it is not a review failure, just the cue to issue the next watch call.
      (`result <job-id> --json`); if none, re-run the document review once with
      the §3 explicit 600000 ms (10 minutes) timeout if the failure looked
      transient, otherwise surface it.
-   - The authoritative signals everywhere are `.job.status`
-     (`queued`/`running` = not done; `completed`/`failed`/`cancelled` =
-     terminal) and the `.storedJob.result.result` payload, with the raw review
-     text at `.storedJob.result.rawOutput` or `.storedJob.result.codex.stdout`.
-     Do not hand-roll a `sleep`-then-re-query loop; `status <job-id> --wait
-     --json` is the condition-based primitive (2 s interval, 240 s deadline)
-     and returns as soon as Codex is done. A wait cycle is not a review round —
-     it does not consume the §5 convergence/backstop budget.
+   - The authoritative signals everywhere are `.job.status` (`queued`/`running` = not done; `completed`/`failed`/`cancelled` = terminal) for job lifecycle, and the captured result file + `verdict-normalize` for the review outcome. The raw review text for reading findings remains at `.storedJob.result.rawOutput` or `.storedJob.result.codex.stdout`. Do not hand-roll a `sleep`-then-re-query loop; `status <job-id> --wait --json` is the condition-based primitive (2 s interval, 240 s deadline) and returns as soon as Codex is done. A wait cycle is not a review round — it does not consume the §5 convergence/backstop budget.
 3. If still incomplete after the bounded recovery, hand back to the user as
    "Codex review did not complete (still running / aborted before verdict)" —
    never silently pass. Like every other gate failure this degrades to "no Codex
@@ -349,6 +389,15 @@ clean blocking call with a detached worker you then have to chase through
 > runs. The §3 watch loop keeps a blocking `status <job-id> --wait` call in the
 > foreground for the whole review — launch-and-forget hides that work is in
 > flight and risks acting before the verdict exists.
+
+> **Red Flag — Never** launch `adversarial-review` without a passing `base-ref-ok`
+> on the exact base you pass. A bad base does not fail fast — it orphans the
+> review as `running` forever with no verdict.
+
+> **Red Flag — Never** derive approval yourself from raw companion output:
+> only a `verdict-normalize` result of `approved` counts as approval. If the
+> script says `incomplete`, there is no verdict, no matter how finished the
+> raw text looks.
 
 ## 5. Fix-and-re-review loop (converge, then stop)
 
@@ -425,6 +474,11 @@ the Algorithm Assessment section from the prompt:
 
 ### The loop
 
+The loop's exit rule is mechanical: a round converges only when
+`verdict-normalize` returns `"result":"approved"` for that round's captured
+output. `blocking` continues the fix loop; `incomplete` follows §4b recovery
+and never converges the loop by itself.
+
 1. If verdict is `approve` and there are no blocking findings → done; go to step 6.
 2. Otherwise address each blocking finding: for a document, edit the spec/plan; for
    code, dispatch a fix through the skill's existing fix path (e.g. SDD's fix
@@ -479,7 +533,7 @@ Summarize concisely before returning to the skill's normal next step:
 - whether an incomplete result occurred and how it was resolved (recovered via
   `status`/`result`, or surfaced to the user),
 - the review runtime: the codex-plugin-cc version (`CODEX_VERSION` from the §1
-  probe) and the Codex model and reasoning effort the reviews ran with — read
+  preflight) and the Codex model and reasoning effort the reviews ran with — read
   `model` and `model_reasoning_effort` from
   `${CODEX_HOME:-$HOME/.codex}/config.toml`; the companion runs reviews at
   these config defaults.

@@ -6,9 +6,9 @@ A conditional, **one-shot** Codex consultation during brainstorming's approach e
 
 Fire when, while formulating approaches after the clarifying questions are answered, there are **≥2 genuinely different viable architectures, algorithms, or data models with materially different tradeoffs** — not variations of one shape. Fire when your human partner **explicitly requests Codex input** on approaches (any phrasing), even for a task that looks straightforward. Skip silently when the task is trivial or mechanical: a single obvious implementation, a config change, a small fix — the existing flow proceeds unchanged.
 
-## Probe and Degrade
+## Preflight and Degrade
 
-Run the §1 probe from [../requesting-code-review/codex-review-gate.md](../requesting-code-review/codex-review-gate.md) (at most once per skill run; reuse the result). If Codex is unavailable, tell your human partner once — "Note: codex-plugin-cc is not available, so this brainstorm proceeds without independent Codex approaches." — followed by the same four install lines §2 uses, then continue exactly as brainstorming works today. An incomplete or failed call is handled the same way: no Codex input, noted once, never blocking, never retried into a loop.
+Run the §1 preflight from [../requesting-code-review/codex-review-gate.md](../requesting-code-review/codex-review-gate.md) (at most once per skill run; reuse the result). If Codex is unavailable, tell your human partner once — "Note: codex-plugin-cc is not available, so this brainstorm proceeds without independent Codex approaches." — followed by the same four install lines §2 uses, then continue exactly as brainstorming works today. An incomplete or failed call is handled the same way: no Codex input, noted once, never blocking, never retried into a loop.
 
 The §2 install instructions from [../requesting-code-review/codex-review-gate.md](../requesting-code-review/codex-review-gate.md):
 

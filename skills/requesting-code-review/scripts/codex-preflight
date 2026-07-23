@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# codex-preflight [repo-dir] — attributed availability check for the Codex gate.
+#
+# Strictly extends codex-available.sh's readiness semantics (spec 4.3): "ok"
+# still requires the companion's `setup --json` to report ready. Adds broker
+# staleness attribution, checked BEFORE setup because a dead broker makes the
+# setup call itself fail with connect ENOENT.
+#
+# stdout (single line):
+#   {"status":"ok|not-installed|not-ready|stale-broker",
+#    "codexPath":"...","codexVersion":"...","reason":"...","recovery":"..."}
+# Exit 0 for every determinate status; non-zero only on internal failure.
+#
+# Test overrides: HYPERPOWERS_PLUGINS_FILE, HYPERPOWERS_CODEX_SETUP_JSON,
+# HYPERPOWERS_PROBE_MAX_RETRIES, HYPERPOWERS_PROBE_RETRY_DELAY,
+# HYPERPOWERS_CODEX_STATE_ROOT (consumed by broker-state-dir), and
+# HYPERPOWERS_BROKER_STATE_DIR_BIN / HYPERPOWERS_BROKER_HEALTH_BIN
+# (fault-injection: point at a failing/garbage stub).
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+repo="${1:-.}"
+
+command -v node >/dev/null 2>&1 || { echo "codex-preflight: node not found" >&2; exit 2; }
+
+json_escape() { node -e 'process.stdout.write(JSON.stringify(process.argv[1]).slice(1,-1))' "$1"; }
+emit() { # status codexPath codexVersion reason recovery
+  printf '{"status":"%s","codexPath":"%s","codexVersion":"%s","reason":"%s","recovery":"%s"}\n' \
+    "$1" "$(json_escape "$2")" "$(json_escape "$3")" "$(json_escape "$4")" "$(json_escape "$5")"
+  exit 0
+}
+
+# --- 1. Resolve the install (moved verbatim from codex-available.sh) ---
+registry="${HYPERPOWERS_PLUGINS_FILE:-${HOME:-}/.claude/plugins/installed_plugins.json}"
+[ -f "$registry" ] || emit not-installed "" "" "plugin registry not found" ""
+
+install_path="$(node -e '
+  const fs = require("fs");
+  const path = require("path");
+  try {
+    const reg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const recs = reg && reg.plugins && reg.plugins["codex@openai-codex"];
+    if (!Array.isArray(recs)) process.exit(0);
+    for (let i = recs.length - 1; i >= 0; i--) {
+      const p = recs[i] && recs[i].installPath;
+      if (typeof p !== "string" || !p) continue;
+      if (fs.existsSync(path.join(p, "scripts", "codex-companion.mjs"))) {
+        process.stdout.write(p);
+        break;
+      }
+    }
+  } catch (e) { /* degrade */ }
+' "$registry" 2>/dev/null)"
+[ -n "$install_path" ] || emit not-installed "" "" "no live codex-plugin-cc install in registry" ""
+companion="$install_path/scripts/codex-companion.mjs"
+
+# --- 2. Broker health for the current repo (BEFORE setup; spec 4.3) ---
+# Fail-closed (spec 4 error discipline): a helper that fails or prints an
+# unrecognizable answer is a preflight INTERNAL failure (exit 2, which §1
+# maps to the degrade path) — never silently downgraded to absent/unknown,
+# which could let a broken helper produce a spurious "ok".
+bsd_bin="${HYPERPOWERS_BROKER_STATE_DIR_BIN:-$SCRIPT_DIR/broker-state-dir}"
+bh_bin="${HYPERPOWERS_BROKER_HEALTH_BIN:-$SCRIPT_DIR/broker-health}"
+sd_json="$(bash "$bsd_bin" "$repo" 2>/dev/null)" \
+  || { echo "codex-preflight: broker-state-dir failed" >&2; exit 2; }
+case "$sd_json" in
+  '{"status":"'*) : ;;
+  *) echo "codex-preflight: unexpected broker-state-dir output" >&2; exit 2 ;;
+esac
+case "$sd_json" in
+  '{"status":"found"'*)
+    sd="$(printf '%s' "$sd_json" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write(d.dir||"")')"
+    health="$(bash "$bh_bin" "$sd" 2>/dev/null)" \
+      || { echo "codex-preflight: broker-health failed" >&2; exit 2; }
+    case "$health" in
+      '{"status":"'*) : ;;
+      *) echo "codex-preflight: unexpected broker-health output" >&2; exit 2 ;;
+    esac
+    case "$health" in
+      '{"status":"dead"'*)
+        emit stale-broker "$install_path" "" \
+          "this repo's companion broker is dead (its temp dir was likely purged); every companion call will fail until the record is cleared" \
+          "mv '$sd/broker.json' '$sd/broker.json.stale-'\$(date +%s)"
+        ;;
+    esac
+    ;;
+esac
+# healthy / absent / unknown all fall through (spec 4.3 step 4).
+
+# --- 3. Setup readiness (moved verbatim from codex-available.sh) ---
+max_retries="${HYPERPOWERS_PROBE_MAX_RETRIES:-2}"
+retry_delay="${HYPERPOWERS_PROBE_RETRY_DELAY:-0.5}"
+
+classify() {
+  printf '%s' "$1" | node -e '
+    const fs = require("fs");
+    let verdict = "no"; let detail = "";
+    try {
+      const d = JSON.parse(fs.readFileSync(0, "utf8"));
+      if (d && d.ready === true) {
+        verdict = "yes";
+      } else {
+        // Name the first failing setup dimension (spec 4.3: CLI missing,
+        // not authenticated, ...), not just auth.detail.
+        for (const k of ["node", "codex", "auth"]) {
+          const dim = d && d[k];
+          if (dim && dim.ok === false) {
+            detail = (typeof dim.detail === "string" && dim.detail) ? k + ": " + dim.detail : k + ": not ready";
+            break;
+          }
+        }
+        if (!detail) detail = (d && d.auth && typeof d.auth.detail === "string") ? d.auth.detail : "";
+        const transient = /exited unexpectedly|connection closed|app-server (?:client )?is closed|stdin is not available|broker connection is not connected|Failed to parse codex app-server/i;
+        verdict = transient.test(detail) ? "retry" : "no";
+      }
+    } catch (e) { verdict = "no"; }
+    process.stdout.write(verdict + "\t" + detail);
+  ' 2>/dev/null
+}
+
+attempt=0
+while :; do
+  if [ -n "${HYPERPOWERS_CODEX_SETUP_JSON:-}" ]; then
+    setup_json="$HYPERPOWERS_CODEX_SETUP_JSON"
+  else
+    setup_json="$(node "$companion" setup --json 2>/dev/null)" || setup_json=""
+  fi
+  out="$(classify "$setup_json")"
+  verdict="${out%%$'\t'*}"; detail="${out#*$'\t'}"
+  case "$verdict" in
+    yes) break ;;
+    retry)
+      if [ "$attempt" -lt "$max_retries" ]; then
+        attempt=$((attempt + 1)); sleep "$retry_delay"; continue
+      fi
+      emit not-ready "$install_path" "" "setup not ready after retries: ${detail:-transient handshake failure}" ""
+      ;;
+    *) emit not-ready "$install_path" "" "setup not ready: ${detail:-no detail from setup --json}" "" ;;
+  esac
+done
+
+# --- 4. ok, with version (moved verbatim from codex-available.sh) ---
+version="$(node -e '
+  try {
+    const v = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version;
+    if (typeof v === "string" && v) process.stdout.write(v);
+  } catch (e) { /* degrade */ }
+' "$install_path/.claude-plugin/plugin.json" 2>/dev/null)"
+emit ok "$install_path" "${version:-unknown}" "ready" ""

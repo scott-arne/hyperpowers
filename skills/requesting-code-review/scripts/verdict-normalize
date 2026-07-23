@@ -73,6 +73,16 @@ node -e '
       const body = sec.split(/^\s*(?:Non-blocking Findings|Cannot verify|Summary):\s*/im)[0] || "";
       blocking = (body.match(/^\s*-\s*severity:\s*(critical|high)\b/gim) || []).length;
     }
+    // An approve verdict counts only in a structurally complete document:
+    // the required shape always carries a Blocking Findings section and a
+    // terminal Summary line. Their absence means the output was truncated
+    // or malformed - fail closed to incomplete. needs-attention stays
+    // blocking regardless (already conservative).
+    const hasBlockingSection = /^\s*Blocking Findings:\s*$/im.test(t);
+    const hasSummary = /^\s*Summary:/im.test(t);
+    if (verdict === "approve" && (!hasBlockingSection || !hasSummary)) {
+      out("incomplete", "approve", 0, source + ": approve verdict but required sections missing/truncated");
+    }
     if (verdict === "approve" && blocking === 0) out("approved", "approve", 0, source + ": approve, no blocking findings");
     if (verdict === "approve") out("blocking", "approve", blocking, source + ": contradictory approve with blocking findings");
     out("blocking", "needs-attention", blocking, source + ": needs-attention");

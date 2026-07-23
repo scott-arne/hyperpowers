@@ -235,6 +235,7 @@ assert_contains "$GATE" "ungated-ledger append --class backstop-fix" "backstop p
 assert_contains "$GATE" 'gate-round" "$GATE_DIR" --ceiling' "round composition requires gate-round"
 assert_contains "$GATE" 'without a `proceed` from `gate-round`' "red flag: no round without proceed"
 assert_contains "$GATE" "pending sweep" "healthy preflight re-surfaces pending notice"
+assert_contains "$GATE" 'A non-zero `gate-round` exit is an internal failure' "gate-round internal failure maps to backstop"
 
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"

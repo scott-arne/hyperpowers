@@ -38,6 +38,12 @@ bash "$GR" "$gd2" --ceiling 3 >/dev/null 2>&1 && fail "corrupt state exits 2" ||
 bash "$GR" "$gd2" --peek >/dev/null 2>&1 && fail "corrupt state peek exits 2" || pass "corrupt state peek exits 2"
 rm -f "$gd2/gate-round.json"
 
+# non-numeric ceiling in persisted state fails closed on both advance and peek
+gd3="$work/gate3"; mkdir -p "$gd3"
+printf '{"round":3,"ceiling":"x","gate":"task"}' > "$gd3/gate-round.json"
+bash "$GR" "$gd3" --ceiling 3 >/dev/null 2>&1 && fail "non-numeric ceiling advance exits 2" || pass "non-numeric ceiling advance exits 2"
+bash "$GR" "$gd3" --peek >/dev/null 2>&1 && fail "non-numeric ceiling peek exits 2" || pass "non-numeric ceiling peek exits 2"
+
 # unwritable GATE_DIR -> exit 2, no verdict emitted
 ro="$work/ro"; mkdir -p "$ro"; chmod 555 "$ro"
 out="$(bash "$GR" "$ro" --ceiling 3 2>/dev/null)"; rc=$?

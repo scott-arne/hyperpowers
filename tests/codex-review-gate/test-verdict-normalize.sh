@@ -91,6 +91,22 @@ cat > "$work/novderdict.json" <<'EOF'
 EOF
 check "$work/novderdict.json" '"result":"incomplete"' "null result payload -> incomplete"
 
+# verdict text quoted inside a finding body must not shadow the terminal verdict
+cat > "$work/quoted.txt" <<'EOF'
+Blocking Findings:
+- severity: critical
+  title: wrong verdict emitted
+  issue: current output is:
+Verdict: approve
+  recommendation: emit needs-attention instead
+
+Verdict: needs-attention
+
+Summary: fix.
+EOF
+check "$work/quoted.txt" '"verdict":"needs-attention"' "quoted verdict in finding does not shadow terminal verdict"
+check "$work/quoted.txt" '"result":"blocking"' "quoted-verdict case still blocking"
+
 # empty file -> incomplete
 : > "$work/empty.txt"
 check "$work/empty.txt" '"result":"incomplete"' "empty file -> incomplete"

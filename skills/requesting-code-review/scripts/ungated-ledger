@@ -91,8 +91,8 @@ case "$sub" in
     esac
     mkdir -p "$root"
     reporoot="$(cd "$(git -C "$repo" rev-parse --show-toplevel)" && pwd -P)"
-    acquire_lock
     trap release_lock EXIT
+    acquire_lock
     id="$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
     node -e '
       const [id, cls, gate, ts, repo, base, head, status, sweepable, gateDir, note] = process.argv.slice(1);
@@ -127,8 +127,8 @@ case "$sub" in
     case "$verdict" in approved|blocking|incomplete|unsweepable) : ;; *)
       echo "ungated-ledger: --verdict must be approved|blocking|incomplete|unsweepable" >&2; exit 2 ;; esac
     mkdir -p "$root"
-    acquire_lock
     trap release_lock EXIT
+    acquire_lock
     node -e '
       const [ref, ts, verdict, note] = process.argv.slice(1);
       process.stdout.write(JSON.stringify({ v: 1, event: "swept", ref, ts, verdict, note }) + "\n");

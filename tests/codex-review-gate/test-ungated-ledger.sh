@@ -30,6 +30,7 @@ id1="$(printf '%s' "$out" | node -e 'console.log(JSON.parse(require("fs").readFi
 # ledger file exists under the sdd-dir-compatible key
 key="$(printf '%s' "$(git -C "$repo" rev-parse --absolute-git-dir)" | git -C "$repo" hash-object --stdin)"
 [ -f "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl" ] && pass "ledger at derived key path" || fail "ledger at derived key path"
+[ ! -d "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.lock" ] && pass "lock released after append" || fail "lock released after append"
 
 # doc-gate append: sweepable false, no base/head required
 out="$(bash "$UL" append --class degraded-gate --gate spec --status not-ready --note 'doc gate degraded' "$repo")"
@@ -52,6 +53,7 @@ out="$(bash "$UL" mark-swept --ref "$id1" --verdict approved --note 'sweep clean
 expect "$out" '"ok":true' "mark-swept ok"
 out="$(bash "$UL" pending --count "$repo")"
 expect "$out" '"count":0' "pending zero after sweep"
+[ ! -d "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.lock" ] && pass "lock released after mark-swept" || fail "lock released after mark-swept"
 
 # corrupt line tolerance: skipped counted, count still right
 out="$(bash "$UL" append --class incomplete-review --gate final --base "$base_sha" --head "$head_sha" --note 'incomplete' "$repo")"

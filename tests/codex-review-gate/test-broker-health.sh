@@ -9,6 +9,9 @@ FAILURES=0
 pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
 
+# Export pattern for healthy case using pid $$ (bash command)
+export HYPERPOWERS_BROKER_CMD_PATTERN='bash|test-broker-health'
+
 # status <json> <expected> <description>
 expect_status() {
   local out="$1" want="$2" desc="$3"
@@ -20,7 +23,8 @@ expect_status() {
 }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/bh-test.XXXXXX")"
-trap 'rm -rf "$work"' EXIT
+sleep_pid=""
+trap 'rm -rf "$work"; [ -n "$sleep_pid" ] && kill "$sleep_pid" 2>/dev/null || true' EXIT
 
 mk_broker() { # <dir> <socket-path> <pid> <session-dir>
   mkdir -p "$1"
@@ -69,6 +73,21 @@ expect_status "$(bash "$BH" "$work/mal")" unknown "malformed json -> unknown"
 mkdir -p "$work/drift"
 printf '{"endpoint":"unix:/tmp/x.sock","sessionDir":"/tmp"}\n' > "$work/drift/broker.json"
 expect_status "$(bash "$BH" "$work/drift")" unknown "missing fields -> unknown"
+
+# pid reused by non-broker process -> dead
+# Spawn a background sleep, use its pid, set pattern that won't match
+# Skip if ps is unavailable (sandboxed env)
+if ps -p $$ -o command= >/dev/null 2>&1; then
+  sleep 30 & sleep_pid=$!
+  sdir4="$work/s4"; mkdir -p "$sdir4"; touch "$sdir4/broker.sock"
+  mk_broker "$work/reused" "$sdir4/broker.sock" "$sleep_pid" "$sdir4"
+  HYPERPOWERS_BROKER_CMD_PATTERN='will-never-match-xyzzy' \
+    expect_status "$(bash "$BH" "$work/reused")" dead "pid reused by non-broker -> dead"
+  kill "$sleep_pid" 2>/dev/null || true
+  sleep_pid=""
+else
+  pass "pid reused by non-broker -> dead (skipped: ps unavailable)"
+fi
 
 # determinate answers exit 0
 bash "$BH" "$work/absent" >/dev/null; [ $? -eq 0 ] && pass "absent exits 0" || fail "absent exits 0"

@@ -24,12 +24,13 @@ round=0; prev_ceiling=""; prev_gate=""
 if [ -f "$state" ]; then
   # Damaged state file: parse error on existing file is fail-closed (exit 2).
   # Use a sentinel to validate parseability AND that both round and ceiling are integers.
-  parse_ok="$(node -e 'try{const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const r=d.round||0;const c=d.ceiling;if(typeof r!=="number"||r!==Math.floor(r)){throw new Error("invalid round")}if(typeof c!=="number"||c!==Math.floor(c)){throw new Error("invalid ceiling")}console.log(1)}catch(e){console.log(0)}' "$state")"
+  # Validate raw fields with no fallback: the file is valid only if both properties exist and are integers.
+  parse_ok="$(node -e 'try{const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(!Number.isInteger(d.round)||!Number.isInteger(d.ceiling)){throw new Error("invalid state")}console.log(1)}catch(e){console.log(0)}' "$state")"
   if [ "$parse_ok" -ne 1 ]; then
     echo "gate-round: state file exists but is unreadable: $state" >&2
     exit 2
   fi
-  round="$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const r=d.round||0;if(typeof r!=="number"||r!==Math.floor(r)){throw new Error("invalid round")}console.log(r)' "$state")" || {
+  round="$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(!Number.isInteger(d.round)){throw new Error("invalid round")}console.log(d.round)' "$state")" || {
     echo "gate-round: state file exists but is unreadable: $state" >&2
     exit 2
   }

@@ -36,16 +36,13 @@ It prints one JSON line. Branch on `.status`:
 - **`"not-ready"`** — the plugin is installed but Codex is not ready
   (`.reason` says why: not authenticated, CLI missing, transient handshake
   failure that outlasted retries). Tell the user once:
-  "Note: codex-plugin-cc is installed but not ready (<.reason>), so this
-  review will run without an additional Codex review." Then continue exactly
+  "Note [status: not-ready]: codex-plugin-cc is installed but not ready (<.reason>), so this review will run without an additional Codex review." Then continue exactly
   as the §2 degrade path.
 - **`"stale-broker"`** — the plugin is installed but this repo's companion
   broker is dead (its temp dir was likely purged mid-session; the session-
   start janitor clears these at startup/compact, so this means it died
   since). Tell the user once, quoting `.recovery` verbatim:
-  "Note: the Codex companion broker for this repo is stale, so this review
-  will run without a Codex review. To restore Codex for the next gate, run
-  this in a terminal: <.recovery>" — then continue as the §2 degrade path.
+  "Note [status: stale-broker]: the Codex companion broker for this repo is stale, so this review will run without a Codex review. To restore Codex for the next gate, run this in a terminal: <.recovery>" — then continue as the §2 degrade path.
   The next gate re-runs preflight and picks the recovery up automatically.
 - **Non-zero exit** (internal failure) — treat exactly as `not-installed`:
   §2 notice, degrade, never an error.
@@ -60,8 +57,7 @@ mining — can attribute exactly why a gate ran without Codex.
 When preflight returns `not-installed`, tell the user once, at this gate:
 
 ```
-Note: codex-plugin-cc is not available, so this review will run without an
-additional Codex review. Install it for an extra review gate:
+Note [status: not-installed]: codex-plugin-cc is not available, so this review will run without an additional Codex review. Install it for an extra review gate:
   /plugin marketplace add openai/codex-plugin-cc
   /plugin install codex@openai-codex
   /reload-plugins

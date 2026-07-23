@@ -140,6 +140,8 @@ blocking call an explicit command timeout of **600000 ms (10 minutes)**:
 document reviews typically finish in 2–5 minutes, but default tool timeouts are
 far shorter and an aborted call loses the verdict.
 
+**Count every round — the first included.** Before ANY companion review invocation in this section (document `task` calls and `adversarial-review` launches alike), run §5 step-0's `gate-round` counter for this `GATE_DIR` with the gate's ceiling and type; only a `"verdict":"proceed"` may launch. Round 1 is a round: a gate that skips the counter on its first launch gets four code rounds instead of three.
+
 **Spec documents** — use `task`, read-only (no `--write`):
 
 ```bash
@@ -531,7 +533,7 @@ and never converges the loop by itself.
    path) over the updated artifact once the relevant Claude review gate is clean.
 4. **Stop when any holds:**
    - **Approved (converged):** `verdict-normalize` returned `"result":"approved"` for the latest round's captured output, this round raised no blocking findings, **and** the round ledger has no still-open blocking findings. A round that normalizes to `approved` while the ledger shows an unresolved blocker has not converged (the blocker may predate this round); a round that normalizes to `blocking` has not converged regardless of ledger state — do not exit without a normalized approval.
-   - **Backstop hit** — the per-gate round ceiling below is reached. Stop and hand back with any unresolved blocking findings listed; do not loop indefinitely. Fixes applied in the backstop round ship without a confirming Codex pass — flag them in the §6 hand-back as verified by the Claude reviewer and tests only, not re-reviewed by Codex. When backstop-round fixes ship, also record them durably using the `reminder` template from `gate-round`'s backstop output: `ungated-ledger append --class backstop-fix --gate <task|final|adhoc> --base <task BASE sha> --head <head sha> --gate-dir "$GATE_DIR" --note "<one line>"` — and name the returned event id in the §6 hand-back.
+   - **Backstop hit** — the per-gate round ceiling below is reached. Stop and hand back with any unresolved blocking findings listed; do not loop indefinitely. Fixes applied in the backstop round ship without a confirming Codex pass — flag them in the §6 hand-back as verified by the Claude reviewer and tests only, not re-reviewed by Codex. When backstop-round fixes ship, also record them durably using the `reminder` template from `gate-round`'s backstop output: `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class backstop-fix --gate <task|final|adhoc> --base <task BASE sha> --head <head sha> --gate-dir "$GATE_DIR" --note "<one line>"` — and name the returned event id in the §6 hand-back.
 If any stop condition conflicts with the mechanical exit rule, the mechanical rule governs: no normalized approved, no converged exit.
 
 ### Per-gate round backstops

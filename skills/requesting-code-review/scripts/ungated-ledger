@@ -71,10 +71,13 @@ acquire_lock() { # sets LOCK_NOTE on takeover
       if mkdir "$lock" 2>/dev/null; then LOCK_NOTE=" [lock takeover after ${age}s]"; return 0; fi
     fi
     waited=$((waited + 1))
-    [ "$waited" -ge 70 ] && { echo "ungated-ledger: could not acquire lock" >&2; exit 2; }
+    # Timeout: we never acquired the lock — clear the cleanup trap so this
+    # exit cannot rmdir another process's live lockdir.
+    [ "$waited" -ge 70 ] && { trap - EXIT; echo "ungated-ledger: could not acquire lock" >&2; exit 2; }
     sleep 0.5
   done
 }
+# Only reached while we own the lock: acquire_lock clears the trap before its non-owning exit.
 release_lock() { rmdir "$root/ledger.lock" 2>/dev/null || true; }
 
 case "$sub" in

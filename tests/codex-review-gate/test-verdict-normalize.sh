@@ -149,6 +149,17 @@ Summary: looks good.
 EOF
 check "$work/no-blocking-section.txt" '"result":"incomplete"' "approve without Blocking Findings section -> incomplete"
 
+# structural completeness: Summary header must have content
+cat > "$work/empty-summary.txt" <<'EOF'
+Verdict: approve
+
+Blocking Findings:
+None
+
+Summary:
+EOF
+check "$work/empty-summary.txt" '"result":"incomplete"' "approve with empty Summary header -> incomplete"
+
 # missing file -> internal error (exit 2)
 bash "$VN" "$work/nope.txt" >/dev/null 2>&1 && fail "missing file exits non-zero" || pass "missing file exits non-zero"
 

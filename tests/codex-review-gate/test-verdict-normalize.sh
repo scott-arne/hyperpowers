@@ -128,6 +128,27 @@ check "$work/mirror.txt" '"result":"blocking"' "needs-attention with zero blocki
 : > "$work/empty.txt"
 check "$work/empty.txt" '"result":"incomplete"' "empty file -> incomplete"
 
+# structural completeness: approve requires Blocking Findings section + Summary
+cat > "$work/verdict-only.txt" <<'EOF'
+Verdict: approve
+EOF
+check "$work/verdict-only.txt" '"result":"incomplete"' "approve without structure -> incomplete"
+
+cat > "$work/no-summary.txt" <<'EOF'
+Verdict: approve
+
+Blocking Findings:
+None
+EOF
+check "$work/no-summary.txt" '"result":"incomplete"' "approve without Summary -> incomplete"
+
+cat > "$work/no-blocking-section.txt" <<'EOF'
+Verdict: approve
+
+Summary: looks good.
+EOF
+check "$work/no-blocking-section.txt" '"result":"incomplete"' "approve without Blocking Findings section -> incomplete"
+
 # missing file -> internal error (exit 2)
 bash "$VN" "$work/nope.txt" >/dev/null 2>&1 && fail "missing file exits non-zero" || pass "missing file exits non-zero"
 

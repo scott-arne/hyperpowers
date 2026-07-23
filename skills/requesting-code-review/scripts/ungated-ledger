@@ -52,16 +52,26 @@ key=$(printf '%s' "$(git -C "$repo" rev-parse --absolute-git-dir)" | git -C "$re
 root="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/ungated/${key}"
 ledger="$root/ledger.jsonl"
 
+# Acquisition is complete only when the owner file provably carries our
+# token: a failed write, or a lockdir swept away in the mkdir-to-write
+# window, must read as NOT acquired so the caller keeps looping.
+own_lock() { # -> 0 if we now verifiably own $lock
+  OWNER_TOKEN="$$-$(date +%s)-$RANDOM"
+  printf '%s' "$OWNER_TOKEN" > "$lock/owner" 2>/dev/null || { OWNER_TOKEN=""; return 1; }
+  [ "$(cat "$lock/owner" 2>/dev/null)" = "$OWNER_TOKEN" ] || { OWNER_TOKEN=""; return 1; }
+  return 0
+}
+
 acquire_lock() { # sets LOCK_NOTE on takeover
   OWNER_TOKEN=""
   LOCK_NOTE=""
   local lock="$root/ledger.lock" waited=0
-  if mkdir "$lock" 2>/dev/null; then
-    OWNER_TOKEN="$$-$(date +%s)-$RANDOM"
-    printf '%s' "$OWNER_TOKEN" > "$lock/owner"
-    return 0
-  fi
-  while ! mkdir "$lock" 2>/dev/null; do
+  while :; do
+    if mkdir "$lock" 2>/dev/null; then
+      if own_lock; then
+        return 0
+      fi
+    fi
     # Stale takeover: lockdir older than 30s. Portability trap: GNU stat
     # treats -f as filesystem mode (%m = mount point, non-numeric, exit 0),
     # so probe GNU -c %Y FIRST and numerically validate every result; an
@@ -81,10 +91,10 @@ acquire_lock() { # sets LOCK_NOTE on takeover
       if mv "$lock" "$lock.reaped.$$" 2>/dev/null; then
         rm -rf "$lock.reaped.$$" 2>/dev/null || true
         if mkdir "$lock" 2>/dev/null; then
-          OWNER_TOKEN="$$-$(date +%s)-$RANDOM"
-          printf '%s' "$OWNER_TOKEN" > "$lock/owner"
-          LOCK_NOTE=" [lock takeover after ${age}s]"
-          return 0
+          if own_lock; then
+            LOCK_NOTE=" [lock takeover after ${age}s]"
+            return 0
+          fi
         fi
       fi
     fi
@@ -94,10 +104,6 @@ acquire_lock() { # sets LOCK_NOTE on takeover
     [ "$waited" -ge 70 ] && { trap - EXIT; echo "ungated-ledger: could not acquire lock" >&2; exit 2; }
     sleep 0.5
   done
-  # Loop-exit acquisition (normal contention): the while-condition's mkdir
-  # succeeded, so we own the lock here too — token it like every other path.
-  OWNER_TOKEN="$$-$(date +%s)-$RANDOM"
-  printf '%s' "$OWNER_TOKEN" > "$lock/owner"
 }
 # Only removes a lock this process still owns: after a stale takeover by
 # another writer, the owner file no longer matches and we must not touch it.

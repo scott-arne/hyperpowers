@@ -520,9 +520,7 @@ and never converges the loop by itself.
    bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-round" "$GATE_DIR" --ceiling <4 for document gates, 3 for code gates> --gate <spec|plan|task|final|adhoc>
    ```
 
-   `"verdict":"proceed"` composes the round. `"verdict":"backstop"` means
-   the ceiling is already spent: do NOT invoke Codex again for this gate —
-   follow the backstop stop-condition below.
+   `"verdict":"proceed"` composes the round. `"verdict":"backstop"` means the ceiling is already spent: do NOT invoke Codex again for this gate — follow the backstop stop-condition below. A non-zero `gate-round` exit is an internal failure: treat it as `backstop` — do not invoke Codex for this round.
 1. If `verdict-normalize` returned `"result":"approved"` for the latest round's captured output, this round raised no blocking findings, and the round ledger has no still-open blocking findings → done; go to step 6.
 2. Otherwise address each blocking finding: for a document, edit the spec/plan; for
    code, dispatch a fix through the skill's existing fix path (e.g. SDD's fix

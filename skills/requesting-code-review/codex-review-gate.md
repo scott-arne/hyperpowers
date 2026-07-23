@@ -475,7 +475,7 @@ The loop's exit rule is mechanical: a round converges only when
 output. `blocking` continues the fix loop; `incomplete` follows §4b recovery
 and never converges the loop by itself.
 
-1. If verdict is `approve` and there are no blocking findings → done; go to step 6.
+1. If `verdict-normalize` returned `"result":"approved"` for the latest round's captured output and there are no blocking findings → done; go to step 6.
 2. Otherwise address each blocking finding: for a document, edit the spec/plan; for
    code, dispatch a fix through the skill's existing fix path (e.g. SDD's fix
    subagent). You MAY decline a finding with explicit reasoning instead of fixing it.
@@ -484,21 +484,10 @@ and never converges the loop by itself.
 3. Re-run the same Codex invocation (with the round-aware preamble and ledger
    path) over the updated artifact once the relevant Claude review gate is clean.
 4. **Stop when any holds:**
-   - **Approved** — `approve` with no blocking findings.
-   - **Converged** — the round produced **no new blocking findings** (everything
-     it raised is already-resolved, confirmed via the ledger, or a
-     previously-declined item with no new argument) **and** the round ledger has
-     no still-open blocking findings. Converge only if the round ledger has no
-     still-open blocking findings — a blocker the latest round merely failed to
-     re-mention is still open and still blocks. This is a fixed point; stop even
-     if the backstop is not reached. If a still-open blocker remains, do not
-     converge: keep looping (fix it or explicitly decline it with reasoning) or
-     stop only via the backstop and hand back the unresolved finding.
-   - **Backstop hit** — the per-gate round ceiling below is reached. Stop and
-     hand back with any unresolved blocking findings listed; do not loop
-     indefinitely. Fixes applied in the backstop round ship without a
-     confirming Codex pass — flag them in the §6 hand-back as verified by the
-     Claude reviewer and tests only, not re-reviewed by Codex.
+   - **Approved** — `verdict-normalize` returned `"result":"approved"` for the latest round's captured output **and** there are no blocking findings.
+   - **Converged** — `verdict-normalize` returned `"result":"approved"` for the latest round's captured output **and** the round ledger has no still-open blocking findings. A round that normalizes to `approved` but where the ledger shows unresolved blockers has not converged (the blocker might predate this round); keep looping or stop via the backstop. A round that normalizes to `blocking` (e.g., it re-lists findings already marked resolved in the ledger) has not converged, regardless of ledger state; do not exit without a normalized approval.
+   - **Backstop hit** — the per-gate round ceiling below is reached. Stop and hand back with any unresolved blocking findings listed; do not loop indefinitely. Fixes applied in the backstop round ship without a confirming Codex pass — flag them in the §6 hand-back as verified by the Claude reviewer and tests only, not re-reviewed by Codex.
+If any stop condition conflicts with the mechanical exit rule, the mechanical rule governs: no normalized approved, no converged exit.
 
 ### Per-gate round backstops
 

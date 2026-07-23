@@ -60,7 +60,9 @@ node -e '
 
   // 2) Document-gate text path.
   function parseText(t, source) {
-    const m = t.match(/^\s*Verdict:\s*(approve|needs-attention)\s*$/im);
+    // Take the LAST verdict line: findings bodies may quote example verdict lines.
+    const ms = Array.from(t.matchAll(/^\s*Verdict:\s*(approve|needs-attention)\s*$/gim));
+    const m = ms.length ? ms[ms.length - 1] : null;
     if (!m) out("incomplete", "none", 0, source + ": no terminal Verdict line");
     const verdict = m[1].toLowerCase();
     // Count critical/high entries inside the Blocking Findings section only.

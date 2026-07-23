@@ -23,8 +23,8 @@ state="$gd/gate-round.json"
 round=0; prev_ceiling=""; prev_gate=""
 if [ -f "$state" ]; then
   # Damaged state file: parse error on existing file is fail-closed (exit 2).
-  # Use a sentinel to distinguish "parse succeeded and got nothing" from "parse failed".
-  parse_ok="$(node -e 'try{JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log(1)}catch(e){console.log(0)}' "$state")"
+  # Use a sentinel to validate parseability AND that both round and ceiling are integers.
+  parse_ok="$(node -e 'try{const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const r=d.round||0;const c=d.ceiling;if(typeof r!=="number"||r!==Math.floor(r)){throw new Error("invalid round")}if(typeof c!=="number"||c!==Math.floor(c)){throw new Error("invalid ceiling")}console.log(1)}catch(e){console.log(0)}' "$state")"
   if [ "$parse_ok" -ne 1 ]; then
     echo "gate-round: state file exists but is unreadable: $state" >&2
     exit 2
@@ -43,6 +43,12 @@ if [ "$peek" -eq 1 ]; then
   # Peek answers with what the NEXT advance would return; enum stays
   # proceed|backstop only.
   c="${prev_ceiling:-${ceiling:-0}}"
+  # Defend against non-numeric ceiling in fallback (should not happen given sentinel,
+  # but fail closed if it does).
+  if ! expr "$c" + 0 >/dev/null 2>&1; then
+    echo "gate-round: state file exists but is unreadable: $state" >&2
+    exit 2
+  fi
   next=$((round + 1))
   verdict=$([ -n "$c" ] && [ "$c" -gt 0 ] && [ "$next" -gt "$c" ] && echo backstop || echo proceed)
   printf '{"round":%s,"ceiling":%s,"verdict":"%s"}\n' "$round" "${c:-0}" "$verdict"

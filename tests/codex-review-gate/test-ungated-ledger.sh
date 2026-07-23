@@ -70,13 +70,24 @@ wait
 out="$(bash "$UL" pending --count "$repo")"
 expect "$out" '"count":3' "concurrent appends both recorded"
 
-# stale lock takeover: pre-create an old lockdir, append must still succeed
+# stale lock takeover: pre-create an old lockdir with a foreign owner, append must still succeed
 lock="$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.lock"
 mkdir -p "$lock"
+printf 'foreign-token' > "$lock/owner"
 touch -t "$(date -v-1H +%Y%m%d%H%M 2>/dev/null || date -d '1 hour ago' +%Y%m%d%H%M)" "$lock"
 out="$(bash "$UL" append --class degraded-gate --gate plan --status not-installed --note stale-lock-case "$repo")"
 expect "$out" '"ok":true' "append succeeds via stale-lock takeover"
 grep -q 'lock takeover' "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl" && pass "takeover noted in event" || fail "takeover noted in event"
+
+# paused-owner release guard: create a foreign-owned lock, run a reader, verify lock untouched
+lockpath="$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.lock"
+mkdir -p "$lockpath"
+printf 'other-writer' > "$lockpath/owner"
+out="$(bash "$UL" pending --count "$repo")"
+expect "$out" '"count":' "reader succeeds despite foreign lock"
+[ -d "$lockpath" ] && pass "foreign lock untouched by reader" || fail "foreign lock untouched by reader"
+[ "$(cat "$lockpath/owner" 2>/dev/null)" = "other-writer" ] && pass "foreign owner token intact" || fail "foreign owner token intact"
+rm -rf "$lockpath"
 
 # worktree anchoring (spec 4.4 / acceptance 4 substrate): a linked worktree
 # derives a DIFFERENT key, so sweep closures must pass the source repo

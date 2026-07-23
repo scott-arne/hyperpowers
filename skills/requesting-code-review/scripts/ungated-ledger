@@ -53,8 +53,14 @@ root="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/ungated/${key}"
 ledger="$root/ledger.jsonl"
 
 acquire_lock() { # sets LOCK_NOTE on takeover
+  OWNER_TOKEN=""
   LOCK_NOTE=""
   local lock="$root/ledger.lock" waited=0
+  if mkdir "$lock" 2>/dev/null; then
+    OWNER_TOKEN="$$-$(date +%s)-$RANDOM"
+    printf '%s' "$OWNER_TOKEN" > "$lock/owner"
+    return 0
+  fi
   while ! mkdir "$lock" 2>/dev/null; do
     # Stale takeover: lockdir older than 30s. Portability trap: GNU stat
     # treats -f as filesystem mode (%m = mount point, non-numeric, exit 0),
@@ -67,8 +73,18 @@ acquire_lock() { # sets LOCK_NOTE on takeover
     case "$lockts" in ''|*[!0-9]*) lockts="$now" ;; esac
     age=$((now - lockts))
     if [ "$age" -ge 30 ]; then
-      rmdir "$lock" 2>/dev/null || true
-      if mkdir "$lock" 2>/dev/null; then LOCK_NOTE=" [lock takeover after ${age}s]"; return 0; fi
+      # Atomic reap: exactly one waiter wins the rename; the reaped dir is
+      # then ours to discard. A just-recreated live lock has a fresh mtime,
+      # so the age gate re-checked on this iteration's stat keeps it safe.
+      if mv "$lock" "$lock.reaped.$$" 2>/dev/null; then
+        rm -rf "$lock.reaped.$$" 2>/dev/null || true
+        if mkdir "$lock" 2>/dev/null; then
+          OWNER_TOKEN="$$-$(date +%s)-$RANDOM"
+          printf '%s' "$OWNER_TOKEN" > "$lock/owner"
+          LOCK_NOTE=" [lock takeover after ${age}s]"
+          return 0
+        fi
+      fi
     fi
     waited=$((waited + 1))
     # Timeout: we never acquired the lock — clear the cleanup trap so this
@@ -77,8 +93,14 @@ acquire_lock() { # sets LOCK_NOTE on takeover
     sleep 0.5
   done
 }
-# Only reached while we own the lock: acquire_lock clears the trap before its non-owning exit.
-release_lock() { rmdir "$root/ledger.lock" 2>/dev/null || true; }
+# Only removes a lock this process still owns: after a stale takeover by
+# another writer, the owner file no longer matches and we must not touch it.
+release_lock() {
+  [ -n "${OWNER_TOKEN:-}" ] || return 0
+  [ "$(cat "$root/ledger.lock/owner" 2>/dev/null)" = "$OWNER_TOKEN" ] || return 0
+  rm -f "$root/ledger.lock/owner" 2>/dev/null
+  rmdir "$root/ledger.lock" 2>/dev/null || true
+}
 
 case "$sub" in
   append)

@@ -89,7 +89,7 @@ assert_contains "$GATE" "After any code fix, re-run the same Claude reviewer gat
 # --- Task 1: convergence loop + per-gate backstops + round ledger ---
 assert_contains "$GATE" "### Round ledger (re-review memory)" \
   "gate defines a round ledger for re-review memory"
-assert_contains "$GATE" "no new blocking findings" \
+assert_contains "$GATE" "\`verdict-normalize\` returned \`\"result\":\"approved\"\` for the latest round's captured output" \
   "gate defines a convergence stop-rule"
 assert_contains "$GATE" "Document gates get 4 rounds" \
   "gate sets the document-gate backstop to 4 rounds"
@@ -178,7 +178,7 @@ assert_contains "$REQUESTING_REVIEW" "Incomplete Codex results are never treated
   "requesting-code-review names the completion contract"
 
 # --- Final-review fix: convergence forbidden while a blocker is still open ---
-assert_contains "$GATE" "only if the round ledger has no still-open blocking findings" \
+assert_contains "$GATE" "the round ledger has no still-open blocking findings" \
   "convergence requires the ledger to have no still-open blockers"
 
 # --- Approach gate: brainstorming companion doc contract ---

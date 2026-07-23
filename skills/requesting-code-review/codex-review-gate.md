@@ -608,7 +608,7 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-led
    `base-ref-ok` judges merge-base and empty-range against the checkout's
    own HEAD, so it must run where HEAD is the recorded head:
    - Current `HEAD` equals the recorded head → `base-ref-ok <base>` in
-     place; on ok, run the ordinary per-task code recipe (§3) with
+     place; on ok, route by the event's recorded gate type and run the appropriate §3 recipe with
      `--base <base>` from here.
    - Otherwise → throwaway detached worktree:
 
@@ -617,9 +617,10 @@ SWEEP_WT="$(mktemp -d "${TMPDIR:-/tmp}/sweep-wt.XXXXXX")" && git worktree add --
 bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/base-ref-ok" <base> "$SWEEP_WT"
 ```
 
-     On ok, run the §3 recipe from `"$SWEEP_WT"` with the same `--base`.
+     On ok, route by the event's recorded gate type and run the appropriate §3 recipe from `"$SWEEP_WT"` with the same `--base`.
      Afterwards — success, failed validation, or failed review alike:
      `git worktree remove --force "$SWEEP_WT"; git worktree prune`.
+   Route by the event's recorded gate type: `task` and `adhoc` events run §3's per-task code recipe; `final` events run §3's final whole-branch recipe with its full inputs (branch review package over the recorded range, plan or requirements path, and the Minor findings ledger if one exists).
    The review is always of exactly the recorded `base..head`, never `base..current-HEAD`.
    A failed `base-ref-ok` closes the event `unsweepable` with the checker's
    reason (same `mark-swept` shape as step 2).

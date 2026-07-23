@@ -27,14 +27,22 @@ escape_for_json() {
 # Quarantine provably-dead codex-plugin-cc broker records so the companion
 # re-provisions instead of failing every call against a purged socket. Runs
 # unsandboxed (hooks are ordinary user processes). Best-effort by contract:
-# it must never fail, slow, or pollute this hook's stdout JSON.
+# it must never fail, slow, or pollute this hook's stdout JSON. Bounded to at
+# most 12 records and ~2s per run; stragglers are picked up on the next
+# startup/clear/compact.
 codex_state_root="${HYPERPOWERS_CODEX_STATE_ROOT:-${HOME:-}/.claude/plugins/data/codex-openai-codex/state}"
 if [ -d "$codex_state_root" ]; then
   (
     set +e
+    SECONDS=0
+    swept=0
     broker_health="${PLUGIN_ROOT}/skills/requesting-code-review/scripts/broker-health"
     for state_dir in "$codex_state_root"/*/; do
       [ -f "${state_dir}broker.json" ] || continue
+      # Bounded sweep: stragglers are picked up by the next startup/compact run.
+      [ "$swept" -lt 12 ] || break
+      [ "$SECONDS" -lt 2 ] || break
+      swept=$((swept + 1))
       health="$(bash "$broker_health" "${state_dir%/}" 2>/dev/null)"
       case "$health" in
         '{"status":"dead"'*)

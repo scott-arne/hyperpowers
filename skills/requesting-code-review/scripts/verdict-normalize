@@ -75,11 +75,11 @@ node -e '
     }
     // An approve verdict counts only in a structurally complete document:
     // the required shape always carries a Blocking Findings section and a
-    // terminal Summary line. Their absence means the output was truncated
-    // or malformed - fail closed to incomplete. needs-attention stays
+    // terminal Summary line with content. Their absence means the output was
+    // truncated or malformed - fail closed to incomplete. needs-attention stays
     // blocking regardless (already conservative).
     const hasBlockingSection = /^\s*Blocking Findings:\s*$/im.test(t);
-    const hasSummary = /^\s*Summary:/im.test(t);
+    const hasSummary = /^\s*Summary:\s*\S/im.test(t);
     if (verdict === "approve" && (!hasBlockingSection || !hasSummary)) {
       out("incomplete", "approve", 0, source + ": approve verdict but required sections missing/truncated");
     }

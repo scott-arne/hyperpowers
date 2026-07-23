@@ -2,12 +2,19 @@
 # broker-health <state-dir> — classify one repo's codex-plugin-cc broker record.
 #
 # stdout: {"status":"healthy|dead|absent|unknown","reason":"..."}
-#   healthy - socket path exists AND recorded pid is alive AND verified as a broker
-#             process (or identity unverifiable where ps is denied)
+#   healthy - live listener on the broker socket (definitive, record-specific probe)
+#             OR socket exists + pid alive + verified broker identity (fallback)
 #   dead    - positive evidence of death: sessionDir gone, socket gone, pid not alive,
-#             or pid reused by a non-broker process (safe to quarantine)
+#             connection refused on existing socket, or pid reused by non-broker process
 #   absent  - no broker.json (normal before first companion call)
 #   unknown - unparseable/unexpected schema (hands-off: never quarantined)
+#
+# Primary check: unix-socket connect probe (record-specific, pid-independent).
+#   - Connection succeeds = healthy (live listener on THIS socket).
+#   - Connection refused on existing socket = dead (positive death evidence).
+#   - Sandbox denial / timeout = unverifiable -> fall back to pid checks.
+#
+# Fallback: pid alive + process identity via ps (when probe is unverifiable).
 #
 # Exit 0 for every determinate answer; exit 2 for usage/internal errors.
 # Socket presence is an existence check (-e), not -S: a purged or missing
@@ -46,6 +53,31 @@ sdir="$(printf '%s\n' "$parsed" | sed -n 3p)"
 
 [ -d "$sdir" ] || emit dead "sessionDir missing"
 [ -e "$sock" ] || emit dead "socket missing"
+
+# Definitive, record-specific probe: a live listener on THIS record's
+# endpoint is health no matter which pid owns it; connection refused on an
+# existing socket file is positive evidence of death. Sandbox contexts may
+# deny unix-socket connects (EPERM/EACCES) — then fall back to pid checks.
+probe="$(node -e '
+  const net = require("net");
+  const sock = process.argv[1];
+  const done = (v) => { process.stdout.write(v); process.exit(0); };
+  const c = net.connect(sock);
+  const t = setTimeout(() => { c.destroy(); done("unverifiable"); }, 500);
+  c.on("connect", () => { clearTimeout(t); c.destroy(); done("live"); });
+  c.on("error", (e) => {
+    clearTimeout(t);
+    if (e && (e.code === "ECONNREFUSED" || e.code === "ENOENT")) done("refused");
+    else done("unverifiable");
+  });
+' "$sock" 2>/dev/null)" || probe="unverifiable"
+
+case "$probe" in
+  live)    emit healthy "live listener on broker socket" ;;
+  refused) emit dead "socket file present but no listener" ;;
+esac
+# unverifiable (sandbox denial, timeout) -> fall through to pid checks
+
 kill -0 "$pid" 2>/dev/null || emit dead "pid $pid not alive"
 
 # Verify process identity: pid must belong to a broker process, not a reused PID.

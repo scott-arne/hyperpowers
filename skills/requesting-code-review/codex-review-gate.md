@@ -102,11 +102,7 @@ Required document-review output block below into the prompt so Codex has the
 schema in its own context.
 
 ```markdown
-Review the spec document at <SPEC_ABSOLUTE_PATH> for completeness, internal
-consistency, ambiguity, and scope. If original user requirements or approved
-design notes are available, use them as context: <APPROVED_DESIGN_CONTEXT_PATH>.
-Do not edit anything. Return exactly the Required document-review output from
-the output shape included below.
+Review the spec document at <SPEC_ABSOLUTE_PATH> for completeness, internal consistency, ambiguity, and scope. If original user requirements or approved design notes are available, use them as context: <APPROVED_DESIGN_CONTEXT_PATH>. You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills. Do not edit anything. Return exactly the Required document-review output from the output shape included below.
 ```
 
 **Plan documents** — use `task`, read-only (no `--write`), and provide both the
@@ -121,10 +117,7 @@ Required document-review output block below into the prompt so Codex has the
 schema in its own context.
 
 ```markdown
-Review the implementation plan at <PLAN_ABSOLUTE_PATH> against the source spec at
-<SPEC_ABSOLUTE_PATH>. Check feasibility, task sizing, missing steps, ordering,
-type/signature consistency, and spec coverage. Do not edit anything. Return
-exactly the Required document-review output from the output shape included below.
+Review the implementation plan at <PLAN_ABSOLUTE_PATH> against the source spec at <SPEC_ABSOLUTE_PATH>. Check feasibility, task sizing, missing steps, ordering, type/signature consistency, and spec coverage. You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills. Do not edit anything. Return exactly the Required document-review output from the output shape included below.
 ```
 
 **Round-1 Algorithm Assessment (plan gate only).** When BOTH hold — this is
@@ -191,7 +184,7 @@ verdict as approval.
 task-scoped context:
 
 ```bash
-node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <BASE_SHA> --json "Task-scoped review. Requirements: <TASK_BRIEF_PATH>. Implementer report: <IMPLEMENTER_REPORT_PATH>. Review package: <REVIEW_PACKAGE_PATH>. Global constraints: <GLOBAL_CONSTRAINTS_PATH>. Review for task compliance and code quality. Do not edit anything."
+node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <BASE_SHA> --json "Task-scoped review. Requirements: <TASK_BRIEF_PATH>. Implementer report: <IMPLEMENTER_REPORT_PATH>. Review package: <REVIEW_PACKAGE_PATH>. Global constraints: <GLOBAL_CONSTRAINTS_PATH>. Review for task compliance and code quality. You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills. Do not edit anything."
 ```
 
 `<BASE_SHA>` is the recorded task base from before the implementer was
@@ -202,7 +195,7 @@ report, review package, and global constraints carry the real context.
 point Codex at the final-review inputs:
 
 ```bash
-node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <MERGE_BASE_SHA> --json "Final whole-branch review. Branch review package: <BRANCH_REVIEW_PACKAGE_PATH>. Plan or requirements: <PLAN_OR_REQUIREMENTS_PATH>. Minor findings ledger, if present: <MINOR_LEDGER_PATH>. Review for correctness, requirements coverage, integration risk, and code quality. Do not edit anything."
+node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <MERGE_BASE_SHA> --json "Final whole-branch review. Branch review package: <BRANCH_REVIEW_PACKAGE_PATH>. Plan or requirements: <PLAN_OR_REQUIREMENTS_PATH>. Minor findings ledger, if present: <MINOR_LEDGER_PATH>. Review for correctness, requirements coverage, integration risk, and code quality. You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills. Do not edit anything."
 ```
 
 **Code-review requests** — use `adversarial-review` over the same range the
@@ -210,7 +203,7 @@ Claude reviewer used. If the requirements are a file, pass the file path; if
 they are short text, include that text in the focus string.
 
 ```bash
-node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <BASE_SHA> --json "Code review. Requirements or review context: <PLAN_OR_REQUIREMENTS_CONTEXT>. Review for correctness, requirements alignment, integration risk, and code quality. Do not edit anything."
+node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <BASE_SHA> --json "Code review. Requirements or review context: <PLAN_OR_REQUIREMENTS_CONTEXT>. Review for correctness, requirements alignment, integration risk, and code quality. You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills. Do not edit anything."
 ```
 
 ### Required document-review output

@@ -39,7 +39,7 @@ One foreground call, read-only, with the explicit 600000 ms (10-minute) timeout:
 node "$CODEX_PATH/scripts/codex-companion.mjs" task --fresh --prompt-file <APPROACH_PROMPT_PATH>
 ```
 
-The prompt file points Codex at `approach-context.md` and requires this output shape (copy it into the prompt so Codex has the schema in its own context):
+The prompt file points Codex at `approach-context.md` and requires this output shape (copy it into the prompt so Codex has the schema in its own context). The prompt file also carries, on one line: "You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills."
 
 ```markdown
 Approaches (2-3, each genuinely different):

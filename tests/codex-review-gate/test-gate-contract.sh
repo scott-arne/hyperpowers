@@ -8,6 +8,7 @@ BRAINSTORMING="$REPO_ROOT/skills/brainstorming/SKILL.md"
 WRITING_PLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
 SDD="$REPO_ROOT/skills/subagent-driven-development/SKILL.md"
 REQUESTING_REVIEW="$REPO_ROOT/skills/requesting-code-review/SKILL.md"
+APPROACH_GATE="$REPO_ROOT/skills/brainstorming/codex-approach-gate.md"
 
 FAILURES=0
 
@@ -212,6 +213,10 @@ assert_contains "$GATE" "Advisory preference" \
   "lock explicitly keeps advisory preference/optimization alternatives locked"
 assert_contains "$WRITING_PLANS" "Algorithm Assessment" \
   "writing-plans points at the round-1 algorithm assessment"
+
+echo "Reviewer bootstrap suppression (prompt-level):"
+assert_contains "$GATE" "stateless reviewer for this request only" "gate prompts suppress reviewer bootstrap"
+assert_contains "$APPROACH_GATE" "stateless reviewer for this request only" "approach gate prompt suppresses reviewer bootstrap"
 
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"

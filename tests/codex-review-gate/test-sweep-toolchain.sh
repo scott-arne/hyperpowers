@@ -74,8 +74,7 @@ git -C "$SWEEP_REPO" worktree remove --force "$wt" >/dev/null 2>&1; git -C "$SWE
 # All three closed under the SOURCE key; nothing under any other key.
 out="$(bash "$S/ungated-ledger" pending --count "$SWEEP_REPO")"
 printf '%s' "$out" | grep -Fq '"count":0' && pass "all pending closed under source key" || fail "all pending closed (got $out)"
-n_keys="$(ls "$XDG_CACHE_HOME/hyperpowers/ungated" | wc -l | tr -d ' ')"
-[ "$n_keys" = "1" ] && pass "exactly one ledger key exists (the source repo's)" || fail "exactly one ledger key (found $n_keys)"
+[ "$(ls "$XDG_CACHE_HOME/hyperpowers/ungated")" = "$key" ] && pass "the only ledger key is the source repo's" || fail "the only ledger key is the source repo's (found: $(ls "$XDG_CACHE_HOME/hyperpowers/ungated" | tr '\n' ' '))"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

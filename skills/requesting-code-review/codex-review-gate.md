@@ -54,13 +54,13 @@ branch (`not-installed`, `not-ready`, `stale-broker`, `preflight-error`),
 append a ledger event before continuing — document gates:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class degraded-gate --gate <spec|plan> --status <token> --note "<one line>"
+bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class degraded-gate --gate <spec|plan> --status <token> --note "<one line; include the task brief / plan path if one exists — the sweep uses it as a breadcrumb>"
 ```
 
 Code gates additionally record the exact range that will ship unreviewed:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class degraded-gate --gate <task|final|adhoc> --base <the gate's BASE sha> --head "$(git rev-parse HEAD)" --status <token> --note "<one line>"
+bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class degraded-gate --gate <task|final|adhoc> --base <the gate's BASE sha> --head "$(git rev-parse HEAD)" --status <token> --note "<one line; include the task brief / plan path if one exists — the sweep uses it as a breadcrumb>"
 ```
 
 `--gate-dir` is omitted here on purpose: preflight runs BEFORE §3 creates
@@ -620,7 +620,7 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/base-ref-ok
      On ok, route by the event's recorded gate type and run the appropriate §3 recipe from `"$SWEEP_WT"` with the same `--base`.
      Afterwards — success, failed validation, or failed review alike:
      `git worktree remove --force "$SWEEP_WT"; git worktree prune`.
-   Route by the event's recorded gate type: `task` events run §3's per-task code recipe; `adhoc` events run §3's code-review-requests recipe; `final` events run §3's final whole-branch recipe with its full inputs (branch review package over the recorded range, plan or requirements path, and the Minor findings ledger if one exists).
+   Route by the event's recorded gate type: `task` events run §3's per-task code recipe; `adhoc` events run §3's code-review-requests recipe; `final` events run §3's final whole-branch recipe with its full inputs (branch review package over the recorded range, plan or requirements path, and the Minor findings ledger if one exists). When an event's original inputs are gone (scratch GC'd, brief paths stale), do not skip the sweep: run the range through §3's code-review-requests recipe with a focus string quoting the event's gate, class, status, and note — a correctness review of the recorded range never depends on the original briefs.
    The review is always of exactly the recorded `base..head`, never `base..current-HEAD`.
    A failed `base-ref-ok` closes the event `unsweepable` with the checker's
    reason (same `mark-swept` shape as step 2).

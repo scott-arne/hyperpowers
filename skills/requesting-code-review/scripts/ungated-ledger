@@ -105,6 +105,12 @@ acquire_lock() { # sets LOCK_NOTE on takeover
     sleep 0.5
   done
 }
+# Revalidate immediately before the write: a >=30s stall after acquisition
+# lets a reaper displace us; a displaced owner must not write. The residual
+# check-to-write window is microseconds, and each write is a single-line
+# O_APPEND append, so even that residual cannot interleave or tear lines.
+still_owner() { [ "$(cat "$root/ledger.lock/owner" 2>/dev/null)" = "$OWNER_TOKEN" ]; }
+
 # Only removes a lock this process still owns: after a stale takeover by
 # another writer, the owner file no longer matches and we must not touch it.
 release_lock() {
@@ -131,6 +137,7 @@ case "$sub" in
     trap release_lock EXIT
     acquire_lock
     id="$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
+    still_owner || { echo "ungated-ledger: lock ownership lost before write (stale takeover?)" >&2; exit 2; }
     node -e '
       const [id, cls, gate, ts, repo, base, head, status, sweepable, gateDir, note] = process.argv.slice(1);
       const e = { v: 1, id, event: "ungated", class: cls, gate, ts, repo,
@@ -166,6 +173,7 @@ case "$sub" in
     mkdir -p "$root"
     trap release_lock EXIT
     acquire_lock
+    still_owner || { echo "ungated-ledger: lock ownership lost before write (stale takeover?)" >&2; exit 2; }
     node -e '
       const [ref, ts, verdict, note] = process.argv.slice(1);
       process.stdout.write(JSON.stringify({ v: 1, event: "swept", ref, ts, verdict, note }) + "\n");

@@ -29,6 +29,7 @@ key="$(printf '%s' "$(git -C "$repo" rev-parse --absolute-git-dir)" | git -C "$r
 sdd="$XDG_CACHE_HOME/hyperpowers/sdd/$key"; mkdir -p "$sdd"
 for n in 1 2 3; do echo brief > "$sdd/task-$n-brief.md"; echo report > "$sdd/task-$n-report.md"; done
 echo fix > "$sdd/task-2-codex-fix-brief.md"
+echo fix2 > "$sdd/task-2-codex-fix-brief-2.md"
 cr="$XDG_CACHE_HOME/hyperpowers/codex-review/$key"
 mkdir -p "$cr/run-aaa" "$cr/run-bbb" "$cr/run-old" "$cr/run-noformat"
 printf '{"round":2,"ceiling":3,"gate":"task"}\n' > "$cr/run-aaa/gate-round.json"

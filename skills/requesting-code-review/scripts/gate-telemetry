@@ -43,10 +43,13 @@ node -e '
       oldestPendingDays: null, swept: {}, unsweepableClass: 0, skipped: 0 };
     // SDD: fix-cycle rate
     const sdd = path.join(base, "sdd", key);
+    const fixTasks = new Set();
     if (fs.existsSync(sdd)) for (const f of fs.readdirSync(sdd)) {
       if (/^task-\d+-brief\.md$/.test(f)) r.tasks++;
-      if (/codex-fix-brief/.test(f)) r.fixBriefs++;
+      const m = f.match(/^task-(\d+)-.*codex-fix-brief/);
+      if (m) fixTasks.add(m[1]);
     }
+    r.fixBriefs = fixTasks.size;
     // Gate runs: rounds + backstops from gate-round.json, bucketed by gate
     // type; run dirs WITHOUT round data are counted, never silently ignored.
     const cr = path.join(base, "codex-review", key);

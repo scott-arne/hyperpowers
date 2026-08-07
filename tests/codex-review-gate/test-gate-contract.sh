@@ -246,6 +246,7 @@ assert_contains "$GATE" "only on explicit consent" "sweep is consent-gated"
 assert_contains "$GATE" 'SWEEP_REPO' "sweep anchors to the source repo"
 assert_contains "$GATE" 'never `base..current-HEAD`' "sweep reviews the recorded range"
 assert_contains "$GATE" "Route by the event's recorded gate type" "sweep routes by gate type"
+assert_contains "$GATE" "never depends on the original briefs" "sweep has a lost-inputs fallback"
 
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"

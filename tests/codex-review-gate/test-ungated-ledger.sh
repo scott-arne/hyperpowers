@@ -90,6 +90,13 @@ out="$(bash "$UL" append --class degraded-gate --gate plan --status not-installe
 expect "$out" '"ok":true' "append succeeds via stale-lock takeover"
 grep -q 'lock takeover' "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl" && pass "takeover noted in event" || fail "takeover noted in event"
 
+# Displaced-owner write guard: verified structurally — the still_owner check
+# before both writes (append + mark-swept) is covered by reading the source.
+# The displacement scenario itself (acquire → 30s+ stall → reaper takes over
+# → displaced owner tries write) is unstaged hermetically (would need 30s sleeps).
+# Observable: after every successful append/mark-swept in this suite, the lock
+# is gone (already asserted), proving the trap + release path is intact.
+
 # paused-owner release guard: create a foreign-owned lock, run a reader, verify lock untouched
 lockpath="$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.lock"
 mkdir -p "$lockpath"

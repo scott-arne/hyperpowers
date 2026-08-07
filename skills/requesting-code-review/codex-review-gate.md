@@ -633,7 +633,7 @@ GATE_DIR="$(bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts
 
    (Run from `"$SWEEP_REPO"` — the `codex-review-dir` helper captures it internally.)
 
-   The sweep review runs the §5 loop inside the §5 loop with THIS EVENT's `GATE_DIR` and `gate-round` at the code-gate ceiling — a shared sweep-wide dir would let the first event's rounds spend the ceiling for every later event. `verdict-normalize` is the only approval authority. Close the event with the loop's outcome:
+   The sweep review runs the §5 loop with THIS EVENT's `GATE_DIR` and `gate-round` at the code-gate ceiling — a shared sweep-wide dir would let the first event's rounds spend the ceiling for every later event. `verdict-normalize` is the only approval authority. Close the event with the loop's outcome:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" mark-swept --ref <id> --verdict <approved|blocking|incomplete> --note "<one line>" "$SWEEP_REPO"

@@ -108,5 +108,14 @@ printf '%s' "$allmd" | grep -Fq 'Dossiers: 1/2' && pass "fleet dossier count pre
 
 bash "$GT" "$work" >/dev/null 2>&1 && fail "non-repo without --all exits 2" || pass "non-repo without --all exits 2"
 
+# --- 6.6.0: swept counts exclude tier-skip refs ---
+cat >> "$LEDGER" <<'EOFEV'
+{"v":1,"id":"sw-ts","event":"swept","ref":"ts-1","verdict":"approved","ts":"2026-08-09T00:00:01Z"}
+EOFEV
+out="$( (cd "$repo" && bash "$GT") )"
+expect "$out" "Tier skips: 1" "tier-skip count unchanged by swept ref"
+json="$( (cd "$repo" && bash "$GT" --json) )"
+node -e 'const d=JSON.parse(process.argv[1]);const r=d.repos[0];process.exit(Object.values(r.swept||{}).reduce((a,b)=>a+b,0)===1?0:1)' "$json" && pass "swept counts exclude tier-skip refs" || fail "swept counts exclude tier-skip refs"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

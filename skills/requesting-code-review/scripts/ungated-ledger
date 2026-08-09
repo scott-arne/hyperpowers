@@ -137,6 +137,8 @@ case "$sub" in
         echo "ungated-ledger: class tier-skip requires --gate task" >&2; exit 2; }
       [ -n "$tierdec" ] && [ -n "$tiereff" ] || {
         echo "ungated-ledger: --tier-declared and --tier-effective are required for class tier-skip" >&2; exit 2; }
+      case "$note" in "Task "[0-9]*) : ;; *)
+        echo "ungated-ledger: tier-skip notes must begin with the task identifier (Task N: <rationale>)" >&2; exit 2 ;; esac
     fi
     case "$gate" in
       spec|plan) sweepable=false ;;

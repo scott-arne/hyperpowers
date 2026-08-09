@@ -153,6 +153,9 @@ bash "$UL" append --class tier-skip --gate task --base "$base_sha" --head "$head
   && fail "tier-skip without tier flags exits 2" || pass "tier-skip without tier flags exits 2"
 bash "$UL" append --class tier-skip --gate spec --tier-declared low --tier-effective low --note x "$repo" >/dev/null 2>&1 \
   && fail "tier-skip on a non-task gate exits 2" || pass "tier-skip on a non-task gate exits 2"
+bash "$UL" append --class tier-skip --gate task --base "$base_sha" --head "$head_sha" \
+  --tier-declared low --tier-effective low --note "mechanical change" "$repo" >/dev/null 2>&1 \
+  && fail "tier-skip note must begin with Task N" || pass "tier-skip note must begin with Task N"
 out="$(bash "$UL" append --class degraded-gate --gate task --base "$base_sha" --head "$head_sha" --status not-ready --note bi-check "$repo")"
 last="$(tail -1 "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl")"
 expect "$last" '"sweepable":true' "existing classes keep gate-derived sweepability"

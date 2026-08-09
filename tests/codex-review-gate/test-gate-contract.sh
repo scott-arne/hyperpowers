@@ -89,8 +89,8 @@ assert_contains "$GATE" "After any code fix, re-run the same Claude reviewer gat
 # --- Task 1: convergence loop + per-gate backstops + round ledger ---
 assert_contains "$GATE" "### Round ledger (re-review memory)" \
   "gate defines a round ledger for re-review memory"
-assert_contains "$GATE" "\`verdict-normalize\` returned \`\"result\":\"approved\"\` for the latest round's captured output" \
-  "gate defines a convergence stop-rule"
+assert_contains "$GATE" "every capture required for the latest round" \
+  "approval set covers fan-out and re-review alike"
 assert_contains "$GATE" "Document gates get 4 rounds" \
   "gate sets the document-gate backstop to 4 rounds"
 assert_contains "$GATE" "Code gates get 3 rounds" \
@@ -260,6 +260,9 @@ assert_contains "$GATE" "falls back to the path-based prompts" "dossier degrade 
 assert_not_contains "$GATE" "Before ANY companion review invocation in this section" "per-invocation counting is gone"
 assert_contains "$GATE" 'add `--require-coverage` to this command' "§4b canonical command carries the round-1 flag"
 assert_contains "$GATE" "Never capture a job id after a subsequent launch has occurred" "lens job ids bound at launch"
+assert_contains "$GATE" "verdict-normalize --require-coverage" "round-1 captures normalized with the coverage floor"
+assert_contains "$GATE" "An empty capture set never approves" "empty set fails closed"
+assert_contains "$GATE" '[lens:' "ledger entries carry lens tags"
 
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"

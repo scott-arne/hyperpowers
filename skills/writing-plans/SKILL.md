@@ -77,10 +77,31 @@ include this section.]
 ---
 ```
 
+## Risk Tier Rubric
+
+Assign every task a risk tier on the line under its heading (rationale
+mandatory for `low`):
+
+- **high** — touches approval-authority code (verdict-normalize,
+  gate-round, ungated-ledger, or any script whose output other machinery
+  trusts), concurrency/locking, security surfaces, destructive git
+  operations, or durable-record writers.
+- **standard** — multi-file integration, new scripts, behavior-shaping
+  skill/doc surgery, anything not clearly low or high. The default.
+- **low** — single-file mechanical transcription where the plan contains
+  the complete content to write; doc-reference or typo fixes; test-needle
+  additions whose strings appear verbatim in the plan.
+
+The tier dials ONLY the per-task Codex gate at execution time (low skips
+it, recorded durably); the Claude task reviewer and the final whole-branch
+train never tier off.
+
 ## Task Structure
 
 ````markdown
 ### Task N: [Component Name]
+
+**Risk tier:** low|standard|high — <one-line rationale>
 
 **Files:**
 - Create: `exact/path/to/file.py`
@@ -164,7 +185,7 @@ probe availability; if Codex is present, provide the source spec path and the pl
 path, have it review the plan (feasibility, task sizing, missing steps, ordering,
 type/signature consistency, and spec coverage), and resolve blocking findings in
 the convergence fix loop (document-gate backstop of 4 rounds) before the execution
-handoff; if Codex is absent, emit the no-Codex notice and proceed. On round 1 the
+handoff; if Codex is absent, emit the no-Codex notice and proceed. The plan review also checks each task's declared risk tier against the rubric above — a mis-tiered task is a blocking-eligible finding. On round 1 the
 gate also runs the Round-1 Algorithm Assessment when the plan has material
 algorithmic or data-structure choices (advisory; adjudicated before the loop's
 exit rule and locked in the round ledger — see the gate doc's §3 and §5). This gate never blocks the

@@ -252,6 +252,8 @@ echo "Review fidelity (6.5.0):"
 assert_contains "$GATE" "scripts/review-dossier" "gate assembles a dossier"
 assert_contains "$GATE" "Report every blocking finding you can identify this round; do not reserve findings for later rounds." "exhaustiveness demand"
 assert_contains "$GATE" '[out-of-lane]' "out-of-lane findings are reported, never suppressed"
+assert_contains "$GATE" "never one entry per lens" \
+  "dedup merges to one multi-credited entry"
 assert_contains "$GATE" "The lens batch consumes a single logical round" "one gate-round per logical round"
 assert_contains "$GATE" 'one `gate-round` call covers composing and launching every lens prompt in the batch' "§5 step-0 counts per logical round"
 assert_contains "$GATE" "sequentially in the foreground" "doc lenses stay foreground"

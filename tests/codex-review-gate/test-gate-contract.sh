@@ -271,6 +271,8 @@ assert_not_contains "$GATE" "The first round uses the prompt as-is." \
   "single-prompt round 1 is gone"
 assert_contains "$GATE" "composes the per-lens prompts from the lens fan-out block below" \
   "doc-gate round 1 routes to the fan-out"
+assert_contains "$GATE" 'put the Coverage section inside the `summary` field' \
+  "structured payloads carry coverage in summary"
 
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"

@@ -196,6 +196,8 @@ Do not edit anything. Return exactly the Required document-review output below, 
 <the existing Required document-review output block, verbatim>
 ```
 
+When your output is the structured review JSON (code and final gates), the schema has no room for extra sections: put the Coverage section inside the `summary` field as a single `Coverage: <axis> — <answer>; …` run — the coverage floor reads it there.
+
 Lens charters:
 
 | Lens | Charter |

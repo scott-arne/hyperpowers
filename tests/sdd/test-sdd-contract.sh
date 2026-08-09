@@ -75,6 +75,8 @@ assert_contains "$FIXP" "no covering command:" "fixer no-test path"
 assert_contains "$FIXP" "APPEND your fix note" "fixer appends to the task report"
 assert_contains "$FIXP" "the controller re-runs your covering command" "fixer rerun warning"
 assert_contains "$FIXP" "the final whole-branch review wave" "fixer template serves final waves"
+assert_contains "$FIXP" "the exact covering command(s) run with their final output lines" \
+  "fix reports carry command plus output"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

@@ -274,6 +274,14 @@ assert_contains "$GATE" "composes the per-lens prompts from the lens fan-out blo
 assert_contains "$GATE" 'put the Coverage section inside the `summary` field' \
   "structured payloads carry coverage in summary"
 
+echo "Risk tiering (6.6.0):"
+assert_contains "$GATE" "the Claude task reviewer and the final whole-branch gates never tier off" \
+  "tier relaxation is scoped to the per-task gate"
+assert_contains "$GATE" 'record the skip with `ungated-ledger append --class tier-skip' \
+  "skips are durably recorded"
+assert_contains "$GATE" "<TIER_SKIPS_PATH>" \
+  "final recipes deliver the tier-skip summary"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

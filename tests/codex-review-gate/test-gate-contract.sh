@@ -248,6 +248,16 @@ assert_contains "$GATE" 'never `base..current-HEAD`' "sweep reviews the recorded
 assert_contains "$GATE" "Route by the event's recorded gate type" "sweep routes by gate type"
 assert_contains "$GATE" "never depends on the original briefs" "sweep has a lost-inputs fallback"
 
+echo "Review fidelity (6.5.0):"
+assert_contains "$GATE" "scripts/review-dossier" "gate assembles a dossier"
+assert_contains "$GATE" "Report every blocking finding you can identify this round; do not reserve findings for later rounds." "exhaustiveness demand"
+assert_contains "$GATE" '[out-of-lane]' "out-of-lane findings are reported, never suppressed"
+assert_contains "$GATE" "The lens batch consumes a single logical round" "one gate-round per logical round"
+assert_contains "$GATE" "sequentially in the foreground" "doc lenses stay foreground"
+assert_contains "$GATE" "Algorithm Assessment attaches to the feasibility-and-contracts lens" "assessment pinned to one lens"
+assert_contains "$GATE" "falls back to the path-based prompts" "dossier degrade attributed"
+assert_not_contains "$GATE" "Before ANY companion review invocation in this section" "per-invocation counting is gone"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

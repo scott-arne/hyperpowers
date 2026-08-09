@@ -162,12 +162,12 @@ review — send it back to the implementer and re-review.
 
 ## Subagent Reports Are Claims
 
-Subagent reports are claims, not evidence. Before acting on a DONE report
-or a fix report — dispatching the reviewer, re-running a gate, marking a
-task complete — the controller re-runs the named covering test command
-directly and compares the output against the report. A misreported result
-is a failed task: re-dispatch with the discrepancy named, not a
-bookkeeping correction.
+Subagent reports are claims, not evidence. Before acting on any
+completed-status report (DONE or DONE_WITH_CONCERNS) or a fix report —
+dispatching the reviewer, re-running a gate, marking a task complete — the
+controller re-runs the named covering test command directly and compares
+the output against the report. A misreported result is a failed task:
+re-dispatch with the discrepancy named, not a bookkeeping correction.
 
 Every implementer and fix dispatch names either its covering test
 command(s) or an explicit `no covering command: <rationale>` line plus the

@@ -6,7 +6,6 @@ SDD="$REPO_ROOT/skills/subagent-driven-development/SKILL.md"
 IMPL="$REPO_ROOT/skills/subagent-driven-development/implementer-prompt.md"
 REVW="$REPO_ROOT/skills/subagent-driven-development/task-reviewer-prompt.md"
 FIXP="$REPO_ROOT/skills/subagent-driven-development/fix-subagent-prompt.md"
-WPLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
 
 FAILURES=0
 
@@ -56,6 +55,7 @@ assert_contains "$SDD" "Subagent reports are claims, not evidence" "verify rule 
 assert_contains "$SDD" "re-runs the named covering test command directly" "controller re-runs covering tests"
 assert_contains "$SDD" "no covering command:" "no-test path exists"
 assert_contains "$SDD" "fix-subagent-prompt.md" "fix dispatches use the template"
+assert_contains "$SDD" "DONE or DONE_WITH_CONCERNS" "concerns status does not bypass the verify rule"
 # implementer template
 assert_contains "$IMPL" "DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT" "four statuses"
 assert_contains "$IMPL" "RED: command run" "TDD red evidence"
@@ -63,6 +63,7 @@ assert_contains "$IMPL" "GREEN: command run" "TDD green evidence"
 assert_contains "$IMPL" "under 15 lines" "terse return contract"
 assert_contains "$IMPL" "Write your full report to" "report-file contract"
 assert_contains "$IMPL" "the controller re-runs your covering command" "implementer rerun warning"
+assert_contains "$IMPL" "Covering command(s):" "implementer dispatches carry the covering-command slot"
 # reviewer template
 assert_contains "$REVW" "## Part 1: Spec Compliance" "reviewer spec part"
 assert_contains "$REVW" "## Part 2: Code Quality" "reviewer quality part"
@@ -73,6 +74,7 @@ assert_contains "$FIXP" 'NEVER `git add -A`' "fixer never adds all"
 assert_contains "$FIXP" "no covering command:" "fixer no-test path"
 assert_contains "$FIXP" "APPEND your fix note" "fixer appends to the task report"
 assert_contains "$FIXP" "the controller re-runs your covering command" "fixer rerun warning"
+assert_contains "$FIXP" "the final whole-branch review wave" "fixer template serves final waves"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

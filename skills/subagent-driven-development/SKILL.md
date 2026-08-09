@@ -238,6 +238,35 @@ final whole-branch review. When you fill a reviewer template:
   Per-finding fixers each rebuild context and re-run suites; a real
   session's final-review fix wave cost more than all its tasks combined.
 
+## Risk Tiers (per-task Codex gate applicability)
+
+Each plan task declares `**Risk tier:** low|standard|high — <rationale>`
+under its heading; the task brief carries it. The effective tier starts as
+the declared tier. You may raise a tier at any point — never lower a
+declared tier, whatever the schedule pressure. Escalation triggers (any
+one): DONE_WITH_CONCERNS with correctness doubts; any fix cycle (a
+reviewer-driven fix that changes files — including a ⚠️-item resolution —
+is a fix cycle); files touched outside the plan's Files list; anything on
+the high rubric surfacing mid-task. Raise to high iff the trigger itself
+is a high-rubric criterion; otherwise standard. Record every escalation or
+fallback as one progress-ledger line:
+`Task N: tier declared <low|standard|high|none> -> effective <standard|high> (<trigger phrase>)`.
+A missing or unparseable tier line is `declared none -> effective standard
+(missing tier line)` — full train, fail-closed.
+
+The tier changes exactly one thing: an EFFECTIVE-LOW task — no escalation
+trigger fired at any point — skips the per-task Codex gate after the task
+reviewer approves. Record the skip immediately:
+`bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class tier-skip --gate task --base <TASK_BASE> --head <HEAD> --tier-declared low --tier-effective low --note "Task N: <rationale>"`.
+Standard and high tiers run today's full train unchanged; so does every
+non-SDD review. The Claude task reviewer always runs.
+
+When any task skipped, write `tier-skips.md` in the SDD scratch dir — one
+line per skip: `Task N: <rationale> (<base>..<head>)` — and hand its path
+to the final code-reviewer dispatch (beside the Minor-findings list) and
+to the final Codex gate as `<TIER_SKIPS_PATH>` plus a dossier
+`--adjudications` input, per the gate doc's final recipe.
+
 ## Codex Review Gate (Claude Code only)
 
 When running under Claude Code, add a Codex **code** review gate at two points,
@@ -246,7 +275,7 @@ Probe once per skill run and reuse the result; if Codex is absent, emit the
 no-Codex notice once and run both gates as no-ops.
 
 - **Per task:** after the task reviewer approves (spec ✅ and quality approved) and
-  before marking the task complete, run the gate using the per-task code recipe
+  before marking the task complete, run the gate (standard/high effective tiers; an effective-low task skips it per Risk Tiers above, recording the tier-skip event instead) using the per-task code recipe
   with `--base <the task BASE you recorded before dispatching the implementer>`.
   Provide the task brief path, implementer report path, review-package path, and
   a file containing the global constraints that bind the task. Route blocking

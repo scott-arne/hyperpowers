@@ -57,8 +57,14 @@ node -e '
     const findings = Array.isArray(v.findings) ? v.findings : [];
     const blocking = findings.filter(f => f && /^(critical|high)$/i.test(String(f.severity || ""))).length;
     if (v.verdict === "approve" && blocking === 0) {
-      if (requireCoverage && !coverageOk(raw || ""))
-        out("incomplete", "approve", 0, source + ": approve without coverage evidence");
+      if (requireCoverage) {
+        // Coverage is satisfied if EITHER the raw markdown has a Coverage heading (text path),
+        // OR the structured payload summary field contains a Coverage: run (structured path).
+        const rawCoverageOk = coverageOk(raw || "");
+        const summaryCoverageOk = typeof v.summary === "string" && /(?:^|[\s;.…)\-—"\x27(])Coverage:\s*\S/.test(v.summary);
+        if (!rawCoverageOk && !summaryCoverageOk)
+          out("incomplete", "approve", 0, source + ": approve without coverage evidence");
+      }
       out("approved", "approve", 0, source + ": approve, no blocking findings");
     }
     if (v.verdict === "approve") out("blocking", "approve", blocking, source + ": contradictory approve with blocking findings");

@@ -43,7 +43,7 @@ case "$gate" in spec|plan|task|final|adhoc) : ;; *)
 changed=""
 if [ -n "$base" ] && [ -n "$head" ]; then
   err="$( { git -C "$repo" diff --stat "$base..$head" 2>&1 && git -C "$repo" diff --name-status "$base..$head" 2>&1; } 2>&1 )" \
-    && changed="$err" \
+    && { [ -n "$err" ] && changed="$err" || changed="(no textual changes in $base..$head)"; } \
     || changed="GIT ERROR: could not compute $base..$head: $(echo "$err" | head -1)"
 fi
 

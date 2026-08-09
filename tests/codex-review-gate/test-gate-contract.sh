@@ -265,6 +265,12 @@ assert_contains "$GATE" "Never capture a job id after a subsequent launch has oc
 assert_contains "$GATE" "verdict-normalize --require-coverage" "round-1 captures normalized with the coverage floor"
 assert_contains "$GATE" "An empty capture set never approves" "empty set fails closed"
 assert_contains "$GATE" '[lens:' "ledger entries carry lens tags"
+assert_contains "$GATE" "delivers its lens prompt as the review focus" \
+  "code-gate lens prompts reach adversarial-review"
+assert_not_contains "$GATE" "The first round uses the prompt as-is." \
+  "single-prompt round 1 is gone"
+assert_contains "$GATE" "composes the per-lens prompts from the lens fan-out block below" \
+  "doc-gate round 1 routes to the fan-out"
 
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"

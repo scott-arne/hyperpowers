@@ -97,6 +97,8 @@ assert_contains "$SDD" "unreviewed low tiers execute as standard" \
   "plan-gate skip demotes low tiers (dispatch side)"
 assert_contains "$SDD" "Record tier-skip (ungated-ledger), skip Codex task gate" \
   "process diagram carries the skip path"
+assert_contains "$WPLANS" "no escalation trigger fired at any point during execution" \
+  "authoring rubric carries the strong escalation window"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

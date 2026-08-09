@@ -93,7 +93,7 @@ mandatory for `low`):
   additions whose strings appear verbatim in the plan.
 
 The tier dials ONLY the per-task Codex gate at execution time (an
-EFFECTIVE-low task — declared low, no escalation trigger fired at dispatch
+EFFECTIVE-low task — declared low, no escalation trigger fired at any point during execution
 — skips it, recorded durably); the Claude task reviewer and the final
 whole-branch train never tier off.
 

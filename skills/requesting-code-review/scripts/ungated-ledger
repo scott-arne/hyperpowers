@@ -137,12 +137,16 @@ case "$sub" in
         echo "ungated-ledger: class tier-skip requires --gate task" >&2; exit 2; }
       [ -n "$tierdec" ] && [ -n "$tiereff" ] || {
         echo "ungated-ledger: --tier-declared and --tier-effective are required for class tier-skip" >&2; exit 2; }
+      [ "$tierdec" = "low" ] && [ "$tiereff" = "low" ] || {
+        echo "ungated-ledger: tier-skip requires --tier-declared low and --tier-effective low (an escalated task runs the gate instead)" >&2; exit 2; }
       # Validate note begins with "Task N:" (digits then colon)
       prefix="${note#Task }"
       [ "$prefix" != "$note" ] || {
         echo "ungated-ledger: tier-skip notes must begin with the task identifier (Task N: <rationale>)" >&2; exit 2; }
       task_token="${prefix%%:*}"
       [ "$task_token" != "$prefix" ] || {
+        echo "ungated-ledger: tier-skip notes must begin with the task identifier (Task N: <rationale>)" >&2; exit 2; }
+      [ -n "$task_token" ] || {
         echo "ungated-ledger: tier-skip notes must begin with the task identifier (Task N: <rationale>)" >&2; exit 2; }
       case "$task_token" in *[!0-9]*)
         echo "ungated-ledger: tier-skip notes must begin with the task identifier (Task N: <rationale>)" >&2; exit 2 ;; esac

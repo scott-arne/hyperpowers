@@ -592,8 +592,10 @@ The loop's exit rule is mechanical: a round converges only when
 output. `blocking` continues the fix loop; `incomplete` follows §4b recovery
 and never converges the loop by itself.
 
-0. Before composing ANY round's prompt (round 1 included), advance the
-   mechanical counter with this gate's ceiling from the backstop table:
+0. Before composing ANY LOGICAL round (round 1 included), advance the
+   mechanical counter ONCE with this gate's ceiling from the backstop
+   table — a round-1 lens batch is one logical round: one `gate-round`
+   call covers composing and launching every lens prompt in the batch:
 
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-round" "$GATE_DIR" --ceiling <4 for document gates, 3 for code gates> --gate <spec|plan|task|final|adhoc>

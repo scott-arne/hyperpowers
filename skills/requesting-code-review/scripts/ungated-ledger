@@ -6,19 +6,21 @@
 # deliberately OUTSIDE sdd/ — no GC touches it.
 #
 # Subcommands:
-#   append --class degraded-gate|backstop-fix|incomplete-review
+#   append --class degraded-gate|backstop-fix|incomplete-review|tier-skip
 #          --gate spec|plan|task|final|adhoc
 #          [--base SHA --head SHA] [--status TOKEN] [--gate-dir P]
+#          [--tier-declared low|standard|high] [--tier-effective low|standard|high]
 #          [--note S] [repo-dir]              -> {"ok":true,"id":"..."}
 #   pending [--count] [repo-dir]              -> array | {"count":N,"skipped":M}
 #   mark-swept --ref ID --verdict approved|blocking|incomplete|unsweepable
 #          [--note S] [repo-dir]              -> {"ok":true}
 #
 # sweepable derives from --gate: spec|plan -> false (base/head not needed);
-# task|final|adhoc -> true, --base/--head required. swept events append —
-# nothing is ever mutated. Writers take a mkdir lockdir (ledger.lock/) with
-# a 30s stale takeover recorded in the event note; readers never lock.
-# Exit 0 for determinate answers; exit 2 for usage/internal errors.
+# task|final|adhoc -> true, --base/--head required. class tier-skip overrides
+# to sweepable=false regardless of gate (approved skip, informational). swept
+# events append — nothing is ever mutated. Writers take a mkdir lockdir
+# (ledger.lock/) with a 30s stale takeover recorded in the event note; readers
+# never lock. Exit 0 for determinate answers; exit 2 for usage/internal errors.
 set -uo pipefail
 
 command -v node >/dev/null 2>&1 || { echo "ungated-ledger: node not found" >&2; exit 2; }
@@ -27,7 +29,7 @@ sub="${1:-}"; shift || true
 
 # Parse trailing repo-dir (last non-flag arg) and flags.
 repo="."
-class=""; gate=""; base=""; head=""; status=""; gatedir=""; note=""; ref=""; verdict=""; count_only=0
+class=""; gate=""; base=""; head=""; status=""; gatedir=""; note=""; ref=""; verdict=""; count_only=0; tierdec=""; tiereff=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --class) class="$2"; shift 2 ;;
@@ -40,6 +42,8 @@ while [ $# -gt 0 ]; do
     --ref) ref="$2"; shift 2 ;;
     --verdict) verdict="$2"; shift 2 ;;
     --count) count_only=1; shift ;;
+    --tier-declared) tierdec="$2"; shift 2 ;;
+    --tier-effective) tiereff="$2"; shift 2 ;;
     -*) echo "ungated-ledger: unknown flag $1" >&2; exit 2 ;;
     *) repo="$1"; shift ;;
   esac
@@ -122,8 +126,12 @@ release_lock() {
 
 case "$sub" in
   append)
-    case "$class" in degraded-gate|backstop-fix|incomplete-review) : ;; *)
-      echo "ungated-ledger: --class must be degraded-gate|backstop-fix|incomplete-review" >&2; exit 2 ;; esac
+    case "$class" in degraded-gate|backstop-fix|incomplete-review|tier-skip) : ;; *)
+      echo "ungated-ledger: --class must be degraded-gate|backstop-fix|incomplete-review|tier-skip" >&2; exit 2 ;; esac
+    for tv in "$tierdec" "$tiereff"; do
+      case "$tv" in ''|low|standard|high) : ;; *)
+        echo "ungated-ledger: tier values must be low|standard|high" >&2; exit 2 ;; esac
+    done
     case "$gate" in
       spec|plan) sweepable=false ;;
       task|final|adhoc)
@@ -132,6 +140,8 @@ case "$sub" in
           echo "ungated-ledger: --base and --head are required for gate '$gate'" >&2; exit 2; } ;;
       *) echo "ungated-ledger: --gate must be spec|plan|task|final|adhoc" >&2; exit 2 ;;
     esac
+    # Approved-skip records are informational: never pending, never swept.
+    [ "$class" = "tier-skip" ] && sweepable=false
     mkdir -p "$root"
     reporoot="$(cd "$(git -C "$repo" rev-parse --show-toplevel)" && pwd -P)"
     trap release_lock EXIT
@@ -139,13 +149,15 @@ case "$sub" in
     id="$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM"
     still_owner || { echo "ungated-ledger: lock ownership lost before write (stale takeover?)" >&2; exit 2; }
     node -e '
-      const [id, cls, gate, ts, repo, base, head, status, sweepable, gateDir, note] = process.argv.slice(1);
+      const [id, cls, gate, ts, repo, base, head, status, sweepable, gateDir, tierDeclared, tierEffective, note] = process.argv.slice(1);
       const e = { v: 1, id, event: "ungated", class: cls, gate, ts, repo,
         base: base || null, head: head || null, status: status || null,
         sweepable: sweepable === "true", gateDir: gateDir || null, note };
+      if (tierDeclared) e.tierDeclared = tierDeclared;
+      if (tierEffective) e.tierEffective = tierEffective;
       process.stdout.write(JSON.stringify(e) + "\n");
     ' "$id" "$class" "$gate" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$reporoot" \
-      "$base" "$head" "$status" "$sweepable" "$gatedir" "${note}${LOCK_NOTE}" >> "$ledger" \
+      "$base" "$head" "$status" "$sweepable" "$gatedir" "$tierdec" "$tiereff" "${note}${LOCK_NOTE}" >> "$ledger" \
       || { echo "ungated-ledger: write failed" >&2; exit 2; }
     release_lock; trap - EXIT
     printf '{"ok":true,"id":"%s"}\n' "$id"

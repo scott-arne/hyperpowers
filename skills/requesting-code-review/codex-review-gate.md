@@ -414,7 +414,15 @@ Round-1 captures (every lens, dossier-backed or fallback) add `--require-coverag
 bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/verdict-normalize" --require-coverage "$GATE_DIR/lens-<name>-capture"
 ```
 
-The round's verdict merges fail-closed: ALL lenses `approved` → the round is approved. ANY lens `incomplete` — after per-lens recovery (the bounded re-fetch above, plus at most one relaunch of THAT lens if the failure looked transient) — → the round is incomplete: surviving lenses' blocking findings still enter the round ledger as actionable work, but nothing approves. Otherwise → blocking. Deduplicate findings into the ONE round ledger (same file/section + same defect = one entry, all reporting lenses credited); every entry carries its source tag `[lens: <name>]` (plus `[out-of-lane]` where the lens said so). Re-review rounds normalize their single capture WITHOUT the flag, exactly as today.
+The round's verdict merges fail-closed: ALL lenses `approved` → the round is approved. ANY lens
+`incomplete` — after per-lens recovery (the bounded re-fetch above, plus at most one relaunch of
+THAT lens if the failure looked transient) — → the round is incomplete: surviving lenses' blocking
+findings still enter the round ledger as actionable work, but nothing approves. Otherwise → blocking.
+Deduplicate findings into the ONE round ledger: same file/section + same defect = ONE merged entry
+— never one entry per lens — written once with every reporting lens's tag appended, e.g. `[lens:
+correctness] [lens: contracts-and-integration]`; every entry carries its source tag `[lens: <name>]`
+(plus `[out-of-lane]` where the lens said so). Re-review rounds normalize their single capture
+WITHOUT the flag, exactly as today.
 
 Its tri-state `.result` is the review outcome: `approved`, `blocking`, or
 `incomplete`. Only a `verdict-normalize` result of `approved` counts as

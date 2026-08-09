@@ -170,7 +170,6 @@ The Pi package loads the skills and a small extension that injects the `using-hy
 
 **Debugging**
 - **systematic-debugging** - 4-phase root cause process (includes root-cause-tracing, defense-in-depth, condition-based-waiting techniques)
-- **verification-before-completion** - Ensure it's actually fixed
 
 **Collaboration**
 - **brainstorming** - Socratic design refinement

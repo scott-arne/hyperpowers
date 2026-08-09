@@ -133,6 +133,8 @@ case "$sub" in
         echo "ungated-ledger: tier values must be low|standard|high" >&2; exit 2 ;; esac
     done
     if [ "$class" = "tier-skip" ]; then
+      [ "$gate" = "task" ] || {
+        echo "ungated-ledger: class tier-skip requires --gate task" >&2; exit 2; }
       [ -n "$tierdec" ] && [ -n "$tiereff" ] || {
         echo "ungated-ledger: --tier-declared and --tier-effective are required for class tier-skip" >&2; exit 2; }
     fi

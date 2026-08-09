@@ -76,6 +76,7 @@ node -e '
         try { events.push(JSON.parse(l)); } catch (e) { r.skipped++; }
       }
       const sweptRefs = new Set(events.filter(e => e.event === "swept").map(e => e.ref));
+      const tierSkipIds = new Set(events.filter(e => e.event === "ungated" && e.class === "tier-skip").map(e => e.id));
       let oldestTs = null;
       for (const e of events) {
         if (e.event === "ungated") {
@@ -93,7 +94,7 @@ node -e '
             }
           }
         } else if (e.event === "swept") {
-          r.swept[e.verdict] = (r.swept[e.verdict] || 0) + 1;
+          if (!tierSkipIds.has(e.ref)) r.swept[e.verdict] = (r.swept[e.verdict] || 0) + 1;
         }
       }
       if (oldestTs !== null) r.oldestPendingDays = Math.floor((Date.now() - oldestTs) / 86400000);

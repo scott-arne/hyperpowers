@@ -408,6 +408,14 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/verdict-nor
 
 Round-1 captures (every lens, dossier-backed or fallback) add `--require-coverage` to this command; re-review rounds run it without the flag.
 
+**Round-1 lens captures.** Normalize every round-1 capture with `verdict-normalize --require-coverage` — the coverage floor is part of the approval authority. Capture each lens's output to its own file in `GATE_DIR` and normalize each:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/verdict-normalize" --require-coverage "$GATE_DIR/lens-<name>-capture"
+```
+
+The round's verdict merges fail-closed: ALL lenses `approved` → the round is approved. ANY lens `incomplete` — after per-lens recovery (the bounded re-fetch above, plus at most one relaunch of THAT lens if the failure looked transient) — → the round is incomplete: surviving lenses' blocking findings still enter the round ledger as actionable work, but nothing approves. Otherwise → blocking. Deduplicate findings into the ONE round ledger (same file/section + same defect = one entry, all reporting lenses credited); every entry carries its source tag `[lens: <name>]` (plus `[out-of-lane]` where the lens said so). Re-review rounds normalize their single capture WITHOUT the flag, exactly as today.
+
 Its tri-state `.result` is the review outcome: `approved`, `blocking`, or
 `incomplete`. Only a `verdict-normalize` result of `approved` counts as
 approval — never your own reading of the raw output, and never the absence
@@ -602,7 +610,7 @@ and never converges the loop by itself.
    ```
 
    `"verdict":"proceed"` composes the round. `"verdict":"backstop"` means the ceiling is already spent: do NOT invoke Codex again for this gate — follow the backstop stop-condition below. A non-zero `gate-round` exit is an internal failure: treat it as `backstop` — do not invoke Codex for this round, and if backstop-round fixes ship, use the full append command written in the Backstop-hit stop-condition below (no `reminder` JSON exists on this path).
-1. If `verdict-normalize` returned `"result":"approved"` for the latest round's captured output, this round raised no blocking findings, and the round ledger has no still-open blocking findings → done; go to step 6.
+1. The approval set is every capture required for the latest round: round 1's set is every lens capture; a re-review round's set is its single capture. An empty capture set never approves. The round converges only when EVERY capture in the set normalized `"result":"approved"`, this round raised no blocking findings, and the round ledger has no still-open blocking findings. If converged → done; go to step 6.
 2. Otherwise address each blocking finding: for a document, edit the spec/plan; for
    code, dispatch a fix through the skill's existing fix path (e.g. SDD's fix
    subagent). You MAY decline a finding with explicit reasoning instead of fixing it.
@@ -611,7 +619,7 @@ and never converges the loop by itself.
 3. Re-run the same Codex invocation (with the round-aware preamble and ledger
    path) over the updated artifact once the relevant Claude review gate is clean.
 4. **Stop when any holds:**
-   - **Approved (converged):** `verdict-normalize` returned `"result":"approved"` for the latest round's captured output, this round raised no blocking findings, **and** the round ledger has no still-open blocking findings. A round that normalizes to `approved` while the ledger shows an unresolved blocker has not converged (the blocker may predate this round); a round that normalizes to `blocking` has not converged regardless of ledger state — do not exit without a normalized approval.
+   - **Approved (converged):** EVERY capture required for the latest round normalized `"result":"approved"`, this round raised no blocking findings, **and** the round ledger has no still-open blocking findings. A round that normalizes to `approved` while the ledger shows an unresolved blocker has not converged (the blocker may predate this round); a round that normalizes to `blocking` has not converged regardless of ledger state — do not exit without a normalized approval.
    - **Backstop hit** — the per-gate round ceiling below is reached. Stop and hand back with any unresolved blocking findings listed; do not loop indefinitely. Fixes applied in the backstop round ship without a confirming Codex pass — flag them in the §6 hand-back as verified by the Claude reviewer and tests only, not re-reviewed by Codex. When backstop-round fixes ship, also record them durably using the `reminder` template from `gate-round`'s backstop output: `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class backstop-fix --gate <task|final|adhoc> --base <task BASE sha> --head <head sha> --gate-dir "$GATE_DIR" --note "<one line>"` — and name the returned event id in the §6 hand-back.
 If any stop condition conflicts with the mechanical exit rule, the mechanical rule governs: no normalized approved, no converged exit.
 

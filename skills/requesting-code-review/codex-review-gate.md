@@ -140,7 +140,82 @@ blocking call an explicit command timeout of **600000 ms (10 minutes)**:
 document reviews typically finish in 2–5 minutes, but default tool timeouts are
 far shorter and an aborted call loses the verdict.
 
-**Count every round — the first included.** Before ANY companion review invocation in this section (document `task` calls and `adversarial-review` launches alike), run §5 step-0's `gate-round` counter for this `GATE_DIR` with the gate's ceiling and type; only a `"verdict":"proceed"` may launch. Round 1 is a round: a gate that skips the counter on its first launch gets four code rounds instead of three.
+**Count every round — the first included.** Before composing ANY LOGICAL round (round 1 included), run §5 step-0's `gate-round` counter once for this `GATE_DIR`; a round-1 lens batch counts as ONE round — individual lens launches within the batch do NOT advance the counter; only a `"verdict":"proceed"` may launch the batch (or the single re-review).
+
+**Assemble the dossier — reviewers receive, rather than fetch.** Only a
+`"verdict":"proceed"` from the logical round's `gate-round` call reaches
+this step: on `backstop` or a non-zero exit, stop before assembling
+anything (a stopped round leaves no `dossier.md`, keeping the
+dossier-presence telemetry signal clean). On proceed, build the gate's
+context artifact:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/review-dossier" --gate <spec|plan|task|final|adhoc> --out "$GATE_DIR" <inputs per the table below>
+```
+
+| Gate | Inputs to pass |
+|------|----------------|
+| spec | `--spec <spec path>` plus `--adjudications <path>` for any approved-design/decision context |
+| plan | `--doc <plan path> --doc <spec path>` plus `--adjudications <spec-gate round ledger path>` |
+| task/adhoc | `--adjudications <spec decision excerpts / spec-gate ledger> --test-evidence <implementer report path> --base <task BASE> --head <head sha>` |
+| final | all of the above: plan/spec docs, ledgers, Minor ledger, branch `--base <merge-base> --head <head>` |
+
+The dossier renders every expected-but-missing input as `NOT PROVIDED`
+(reviewers treat that axis as cannot-verify) and gate-type-inapplicable
+inputs as `NOT APPLICABLE`. If the dossier build itself fails, the gate
+falls back to the path-based prompts with the failure named in the §6 hand-back — never blocked,
+always attributed. **The fallback keeps the SAME approval contract:**
+compose the same lens prompts with the dossier line replaced by the
+original path-based context lines (the artifact/brief/report paths the
+recipes name), so every fallback lens still carries the lens charter, the
+exhaustiveness demand, and the required `Coverage:` section — its axes
+answered from what the reviewer fetched — and round-1 fallback captures
+are normalized with `verdict-normalize --require-coverage` exactly like
+dossier-backed ones. One approval rule everywhere; the only thing a
+fallback loses is delivered context.
+
+**Round 1 is a lens fan-out.** The lens batch consumes a single logical round: run `gate-round` once, then launch EVERY lens for this gate type over the same dossier. Per-gate lenses:
+
+| Gate | Lenses |
+|------|--------|
+| spec | completeness-and-consistency; feasibility-and-scope |
+| plan | coverage-and-ordering; feasibility-and-contracts |
+| task/adhoc | correctness; contracts-and-integration; tests-and-evidence |
+| final | correctness; integration-and-requirements-coverage; tests-and-evidence |
+
+Each lens prompt file is composed from this skeleton (one prompt file per lens, `$GATE_DIR/lens-<name>-prompt.md`):
+
+```markdown
+Read the review dossier first — it is your delivered context: <GATE_DIR>/dossier.md
+Where a dossier section says NOT PROVIDED, treat that axis as cannot-verify; where it says NOT APPLICABLE, answer that Coverage axis as such without hedging.
+Your lens for this review: <one charter sentence from the table below>.
+Report every blocking finding you can identify this round; do not reserve findings for later rounds.
+Findings outside your lens are still reported, labeled [out-of-lane] — never suppressed.
+You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills.
+Do not edit anything. Return exactly the Required document-review output below, adding a Coverage: section before Summary with these axes, each answered concretely or marked not applicable: documents read; adjudicated decisions considered; changed surfaces reviewed; test evidence inspected.
+<the existing Required document-review output block, verbatim>
+```
+
+Lens charters:
+
+| Lens | Charter |
+|------|---------|
+| completeness-and-consistency | Every requirement present, unambiguous, and internally consistent; contradictions and gaps between sections. |
+| feasibility-and-scope | Buildable as specified; scope fits one plan; hidden dependencies and unstated assumptions. |
+| coverage-and-ordering | Every spec requirement maps to a task; task sizing and sequencing; nothing implemented before its dependency. |
+| feasibility-and-contracts | Types, signatures, and interfaces consistent across tasks; each step executable as written. |
+| correctness | Does the change do what its requirements say, and only that; logic, edge cases, failure paths. |
+| contracts-and-integration | Interfaces honored; call sites, shared state, and cross-component effects of the diff. |
+| tests-and-evidence | Do the tests prove the claims; is the executed evidence in the dossier consistent with the diff; gaps between claim and proof. |
+| integration-and-requirements-coverage | Whole-branch: requirements coverage against the plan/spec, integration risk across tasks, Minor-ledger triage. |
+
+**Document gates run their lenses sequentially in the foreground** (two `task --fresh` calls, each with the explicit 600000 ms timeout) — the existing Red Flag against backgrounding document reviews stands. **Code and final gates launch each lens as its own detached `adversarial-review`** (same recipe lines as below, with the lens prompt content as the focus context via the dossier + charter sentence appended to the focus string) and watch each via the §3 watch loop; concurrent where the companion permits, pipelined where it serializes — correctness is independent of interleaving.
+
+**Plan gate only:** the Round-1 Algorithm Assessment attaches to the feasibility-and-contracts lens and ONLY that lens — append the existing assessment block (verbatim, unchanged trigger and output shape) to that lens's prompt; the coverage-and-ordering lens never emits an Assessment, and any algorithm opinion it volunteers is an ordinary finding. Adjudication and lock run at their existing point, before the approval set is evaluated.
+
+**Re-review rounds (2+) use no lenses**: the existing single-reviewer round-aware preamble and ledger contract apply verbatim. The ORIGINAL single-review spec and plan prompt templates are retained below, textually unchanged, and rounds 2+ compose from them exactly as today.
+
+**Re-review prompt (rounds 2+):**
 
 **Spec documents** — use `task`, read-only (no `--write`):
 

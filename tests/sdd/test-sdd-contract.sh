@@ -6,6 +6,7 @@ SDD="$REPO_ROOT/skills/subagent-driven-development/SKILL.md"
 IMPL="$REPO_ROOT/skills/subagent-driven-development/implementer-prompt.md"
 REVW="$REPO_ROOT/skills/subagent-driven-development/task-reviewer-prompt.md"
 FIXP="$REPO_ROOT/skills/subagent-driven-development/fix-subagent-prompt.md"
+WPLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
 
 FAILURES=0
 
@@ -77,6 +78,17 @@ assert_contains "$FIXP" "the controller re-runs your covering command" "fixer re
 assert_contains "$FIXP" "the final whole-branch review wave" "fixer template serves final waves"
 assert_contains "$FIXP" "the exact covering command(s) run with their final output lines" \
   "fix reports carry command plus output"
+# tier system (6.6.0)
+assert_contains "$WPLANS" '**Risk tier:** low|standard|high — <one-line rationale>' "plans declare a tier per task"
+assert_contains "$WPLANS" "approval-authority code" "rubric names the high surface"
+assert_contains "$WPLANS" "declared risk tier against the rubric" "plan gate reviews tiers"
+assert_contains "$SDD" "may raise a tier" "escalation is expressible"
+assert_contains "$SDD" "never lower a declared tier" "lowering is not expressible"
+assert_contains "$SDD" "tier declared" "escalation record line format"
+assert_contains "$SDD" "--class tier-skip" "skip appends the durable record"
+assert_contains "$SDD" "tier-skips.md" "final review receives the skip list"
+assert_contains "$SDD" "no escalation trigger fired" "skip precondition is explicit"
+assert_contains "$SDD" "missing tier line" "fail-closed default is pinned"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

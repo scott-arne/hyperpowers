@@ -160,6 +160,21 @@ complete: you hold the plan and cross-task context the reviewer
 lacks. If you confirm an item is a real gap, treat it as a failed spec
 review — send it back to the implementer and re-review.
 
+## Subagent Reports Are Claims
+
+Subagent reports are claims, not evidence. Before acting on a DONE report
+or a fix report — dispatching the reviewer, re-running a gate, marking a
+task complete — the controller re-runs the named covering test command
+directly and compares the output against the report. A misreported result
+is a failed task: re-dispatch with the discrepancy named, not a
+bookkeeping correction.
+
+Every implementer and fix dispatch names either its covering test
+command(s) or an explicit `no covering command: <rationale>` line plus the
+controller's substitute verification (read the diff against the brief;
+render or grep the changed doc). A dispatch naming neither is malformed —
+fix the dispatch, not the rule.
+
 ## Constructing Reviewer Prompts
 
 Per-task reviews are task-scoped gates. The broad review happens once, at the
@@ -195,7 +210,8 @@ final whole-branch review. When you fill a reviewer template:
   later dispatches — a real session's dispatch hit 42k chars of which 99%
   was pasted history. A fresh subagent needs its task, the interfaces it
   touches, and the global constraints. Nothing else.
-- Dispatch fix subagents for Critical and Important findings. Record Minor
+- Dispatch fix subagents for Critical and Important findings. Compose the
+  dispatch from [fix-subagent-prompt.md](fix-subagent-prompt.md). Record Minor
   findings in the progress ledger as you go, and point the final
   whole-branch review at that list so it can triage which must be fixed
   before merge. A roll-up nobody reads is a silent discard.
@@ -210,13 +226,15 @@ final whole-branch review. When you fill a reviewer template:
   printed path in the final review dispatch, so the final reviewer reads
   one file instead of re-deriving the branch diff with git commands.
 - Every fix dispatch carries the implementer contract: the fix subagent
-  re-runs the tests covering its change and reports the results. Name the
+  re-runs the tests covering its change and reports the results. The template
+  fix-subagent-prompt.md carries this contract — use it. Name the
   covering test files in the dispatch — a one-line fix does not need the
   whole suite. Before re-dispatching the reviewer, confirm the fix report
   contains the covering tests, the command run, and the output; dispatch
   the re-review once all three are present.
 - If the final whole-branch review returns findings, dispatch ONE fix
   subagent with the complete findings list — not one fixer per finding.
+  Use fix-subagent-prompt.md for the wave dispatch.
   Per-finding fixers each rebuild context and re-run suites; a real
   session's final-review fix wave cost more than all its tasks combined.
 

@@ -128,7 +128,7 @@ transient scratch goes in `GATE_DIR`.
 
 On a re-review (round 2+), prepend the round-aware preamble from §5 (Round
 ledger) to the prompt below and pass the ledger path, so Codex confirms prior
-resolutions instead of re-reviewing cold. The first round uses the prompt as-is.
+resolutions instead of re-reviewing cold. The first round composes the per-lens prompts from the lens fan-out block below instead of this single prompt.
 
 Run `task` in the **foreground** — as written below, with no `--background`. The
 default `task` mode blocks and returns Codex's result inline when the review
@@ -209,7 +209,7 @@ Lens charters:
 | tests-and-evidence | Do the tests prove the claims; is the executed evidence in the dossier consistent with the diff; gaps between claim and proof. |
 | integration-and-requirements-coverage | Whole-branch: requirements coverage against the plan/spec, integration risk across tasks, Minor-ledger triage. |
 
-**Document gates run their lenses sequentially in the foreground** (two `task --fresh` calls, each with the explicit 600000 ms timeout) — the existing Red Flag against backgrounding document reviews stands. **Code and final gates launch lenses ONE AT A TIME**: launch lens A detached, immediately capture its job id from `status --json` (newest running review — unambiguous because no other lens launch has happened yet), record the id-to-lens binding, and only then launch lens B, capture, and so on. Never capture a job id after a subsequent launch has occurred. Once every lens has a recorded id, watch them in any order or concurrently via `status <job-id> --wait --json` — the ids, not recency, bind results to lenses.
+**Document gates run their lenses sequentially in the foreground** (two `task --fresh` calls, each with the explicit 600000 ms timeout) — the existing Red Flag against backgrounding document reviews stands. **Code and final gates launch lenses ONE AT A TIME**: launch lens A detached, immediately capture its job id from `status --json` (newest running review — unambiguous because no other lens launch has happened yet), record the id-to-lens binding, and only then launch lens B, capture, and so on. Never capture a job id after a subsequent launch has occurred. Once every lens has a recorded id, watch them in any order or concurrently via `status <job-id> --wait --json` — the ids, not recency, bind results to lenses. Each lens's detached launch delivers its lens prompt as the review focus: the `adversarial-review` focus argument composes that lens's `lens-<name>-prompt.md` content (dossier line, charter, exhaustiveness demand, required `Coverage:` section) together with the context paths the code recipes already require — one launch per lens, each carrying its own lens prompt.
 
 **Plan gate only:** the Round-1 Algorithm Assessment attaches to the feasibility-and-contracts lens and ONLY that lens — append the existing assessment block (verbatim, unchanged trigger and output shape) to that lens's prompt; the coverage-and-ordering lens never emits an Assessment, and any algorithm opinion it volunteers is an ordinary finding. Adjudication and lock run at their existing point, before the approval set is evaluated.
 
@@ -415,7 +415,7 @@ bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/verdict-nor
 ```
 
 The round's verdict merges fail-closed: ALL lenses `approved` → the round is approved. ANY lens
-`incomplete` — after per-lens recovery (the bounded re-fetch above, plus at most one relaunch of
+`incomplete` — after per-lens recovery (the bounded re-fetch below, plus at most one relaunch of
 THAT lens if the failure looked transient) — → the round is incomplete: surviving lenses' blocking
 findings still enter the round ledger as actionable work, but nothing approves. Otherwise → blocking.
 Deduplicate findings into the ONE round ledger: same file/section + same defect = ONE merged entry

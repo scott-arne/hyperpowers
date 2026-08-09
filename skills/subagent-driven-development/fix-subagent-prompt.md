@@ -46,7 +46,7 @@ Subagent (general-purpose):
     ## Report
 
     APPEND your fix note to [REPORT_FILE]: what changed per finding, why,
-    and the exact covering command(s) run with their final output lines. For final-review waves, [REPORT_FILE] is
+    and the exact covering command(s) run with their final output lines (or the dispatch's `no covering command:` line restated). For final-review waves, [REPORT_FILE] is
     the final-review findings file named in the dispatch. Then return ONLY:
     Status (DONE|BLOCKED), commit SHA + subject, one-line test summary.
 ```

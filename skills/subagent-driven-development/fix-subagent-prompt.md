@@ -10,7 +10,7 @@ Subagent (general-purpose):
   model: [MODEL — REQUIRED: match the smallest model the fix demands;
          single-file mechanical fixes take the cheapest tier]
   prompt: |
-    You are fixing review findings for Task N: [task name].
+    You are fixing review findings for [Task N: task name | the final whole-branch review wave].
 
     ## Findings (complete list for this wave)
 
@@ -25,7 +25,8 @@ Subagent (general-purpose):
 
     ## Context
 
-    Task brief: [BRIEF_FILE]   Implementer report so far: [REPORT_FILE]
+    Task brief (per-task waves) or plan/branch context (final waves): [BRIEF_OR_BRANCH_CONTEXT]
+    Implementer report so far: [REPORT_FILE]
 
     ## Tests
 
@@ -45,6 +46,7 @@ Subagent (general-purpose):
     ## Report
 
     APPEND your fix note to [REPORT_FILE]: what changed per finding, why,
-    and the covering-test output. Then return ONLY: Status
-    (DONE|BLOCKED), commit SHA + subject, one-line test summary.
+    and the covering-test output. For final-review waves, [REPORT_FILE] is
+    the final-review findings file named in the dispatch. Then return ONLY:
+    Status (DONE|BLOCKED), commit SHA + subject, one-line test summary.
 ```

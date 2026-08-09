@@ -47,6 +47,13 @@ Subagent (general-purpose):
     While iterating, run the focused test for what you're changing; run the
     full suite once before committing, not after every edit.
 
+    ## Tests
+
+    Covering command(s): [exact command(s) the controller will re-run — OR
+    the line `no covering command: <rationale>` plus what the controller
+    will do instead]. Run the focused covering command while iterating and
+    include its final output in your report.
+
     ## Code Organization
 
     You reason best about code you can hold in context at once, and your edits are more
@@ -114,7 +121,7 @@ Subagent (general-purpose):
 
     Write your full report to [REPORT_FILE]:
     - What you implemented (or what you attempted, if blocked)
-    - What you tested and test results
+    - What you tested: the exact covering command(s) run and their final output lines
     - **TDD Evidence** (if TDD was required for this task):
       - RED: command run, relevant failing output before implementation, and why the failure was expected
       - GREEN: command run and relevant passing output after implementation

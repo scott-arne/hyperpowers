@@ -42,8 +42,9 @@ case "$gate" in spec|plan|task|final|adhoc) : ;; *)
 # Changed surfaces are computed here (bash owns git) and handed to node.
 changed=""
 if [ -n "$base" ] && [ -n "$head" ]; then
-  changed="$( { git -C "$repo" diff --stat "$base..$head" 2>&1 && git -C "$repo" diff --name-status "$base..$head" 2>&1; } )" \
-    || changed="GIT ERROR: could not compute $base..$head"
+  err="$( { git -C "$repo" diff --stat "$base..$head" 2>&1 && git -C "$repo" diff --name-status "$base..$head" 2>&1; } 2>&1 )" \
+    && changed="$err" \
+    || changed="GIT ERROR: could not compute $base..$head: $(echo "$err" | head -1)"
 fi
 
 node -e '
@@ -95,8 +96,10 @@ node -e '
   md += "\n## Test evidence\n\n";
   md += inlineFiles(evs, expects.evidence, "document gates carry no executed-test evidence");
   md += "\n## Changed surfaces\n\n";
-  if (changed !== "") md += changed + "\n";
-  else md += expects.range ? notProvided("flag not passed (--base/--head)") : notApplicable("document gates have no commit range");
+  if (changed !== "") {
+    if (changed.startsWith("GIT ERROR:")) md += notProvided(changed);
+    else md += changed + "\n";
+  } else md += expects.range ? notProvided("flag not passed (--base/--head)") : notApplicable("document gates have no commit range");
   md += "\n## Review package\n\n";
   md += (gate === "spec" || gate === "plan")
     ? "not applicable (document gate; the documents above ARE the artifact)\n"

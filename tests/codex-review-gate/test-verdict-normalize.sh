@@ -160,6 +160,74 @@ Summary:
 EOF
 check "$work/empty-summary.txt" '"result":"incomplete"' "approve with empty Summary header -> incomplete"
 
+# --- coverage floor (--require-coverage) ---
+checkc() { # with --require-coverage: <file> <fragment> <desc>
+  local out; out="$(bash "$VN" --require-coverage "$1")"
+  printf '%s' "$out" | grep -Fq "$2" && pass "$3" || fail "$3 (got: $out)"
+}
+
+cat > "$work/cov-ok.txt" <<'EOF'
+Verdict: approve
+
+Blocking Findings:
+None
+
+Coverage:
+- documents read: spec.md in full
+- adjudications considered: 2 declined items
+- changed surfaces reviewed: not applicable: document gate
+- test evidence inspected: not applicable: document gate
+
+Summary: fine.
+EOF
+checkc "$work/cov-ok.txt" '"result":"approved"' "flag: approve WITH coverage stays approved"
+
+cat > "$work/cov-missing.txt" <<'EOF'
+Verdict: approve
+
+Blocking Findings:
+None
+
+Summary: fine.
+EOF
+checkc "$work/cov-missing.txt" '"result":"incomplete"' "flag: approve without Coverage -> incomplete"
+checkc "$work/cov-missing.txt" 'approve without coverage evidence' "flag: reason names the floor"
+check  "$work/cov-missing.txt" '"result":"approved"' "no flag: byte-identical (still approved)"
+
+cat > "$work/cov-bare.txt" <<'EOF'
+Verdict: approve
+
+Blocking Findings:
+None
+
+Coverage:
+
+Summary: fine.
+EOF
+checkc "$work/cov-bare.txt" '"result":"incomplete"' "flag: bare Coverage heading -> incomplete"
+
+# needs-attention unaffected by the flag
+checkc "$work/needs.txt" '"result":"blocking"' "flag: needs-attention unaffected"
+
+# JSON path: structured approve honored ONLY with coverage in raw text
+cat > "$work/cov-json-ok.json" <<'EOF'
+{ "storedJob": { "result": { "parseError": null,
+  "result": { "verdict": "approve", "findings": [] },
+  "rawOutput": "Verdict: approve\n\nCoverage:\n- changed surfaces reviewed: all 3 files\n\nSummary: ok" } } }
+EOF
+checkc "$work/cov-json-ok.json" '"result":"approved"' "flag: JSON approve with coverage in rawOutput -> approved"
+
+cat > "$work/cov-json-none.json" <<'EOF'
+{ "storedJob": { "result": { "parseError": null,
+  "result": { "verdict": "approve", "findings": [] },
+  "rawOutput": "Verdict: approve\n\nSummary: ok" } } }
+EOF
+checkc "$work/cov-json-none.json" '"result":"incomplete"' "flag: JSON approve without coverage -> incomplete"
+check  "$work/cov-json-none.json" '"result":"approved"' "no flag: JSON path byte-identical"
+
+# JSON blocking unaffected by the flag
+checkc "$work/blocking.json" '"result":"blocking"' "flag: JSON needs-attention unaffected"
+
 # missing file -> internal error (exit 2)
 bash "$VN" "$work/nope.txt" >/dev/null 2>&1 && fail "missing file exits non-zero" || pass "missing file exits non-zero"
 

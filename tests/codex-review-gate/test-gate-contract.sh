@@ -277,10 +277,12 @@ assert_contains "$GATE" 'put the Coverage section inside the `summary` field' \
 echo "Risk tiering (6.6.0):"
 assert_contains "$GATE" "the Claude task reviewer and the final whole-branch gates never tier off" \
   "tier relaxation is scoped to the per-task gate"
-assert_contains "$GATE" 'record the skip with `ungated-ledger append --class tier-skip' \
+assert_contains "$GATE" 'scripts/ungated-ledger" append --class tier-skip' \
   "skips are durably recorded"
 assert_contains "$GATE" "<TIER_SKIPS_PATH>" \
   "final recipes deliver the tier-skip summary"
+assert_contains "$GATE" "include it among the final dossier's --adjudications inputs" \
+  "tier-skip summary reaches the final dossier"
 
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"

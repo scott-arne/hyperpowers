@@ -40,7 +40,7 @@ node -e '
   for (const key of keys) {
     const r = { key, tasks: 0, fixBriefs: 0, runs: 0, backstops: 0,
       byGate: {}, oldFormatRuns: 0, degrades: {}, pending: 0,
-      oldestPendingDays: null, swept: {}, unsweepableClass: 0, skipped: 0 };
+      oldestPendingDays: null, swept: {}, unsweepableClass: 0, skipped: 0, dossiers: 0 };
     // SDD: fix-cycle rate
     const sdd = path.join(base, "sdd", key);
     const fixTasks = new Set();
@@ -64,6 +64,7 @@ node -e '
         r.byGate[g].runs++; r.byGate[g].rounds.push(d.round);
         r.runs++;
         if (d.round > d.ceiling) { r.backstops++; r.byGate[g].backstops++; }
+        if (fs.existsSync(path.join(cr, run, "dossier.md"))) r.dossiers++;
       } catch (e) { r.skipped++; }
     }
     // Ungated ledger
@@ -99,11 +100,11 @@ node -e '
   // Fleet aggregate (spec 4.5: every per-repo metric class, aggregated).
   const agg = { repos: repos.length, tasks: 0, fixBriefs: 0, runs: 0,
     backstops: 0, oldFormatRuns: 0, pending: 0, oldestPendingDays: null,
-    sweptTotal: 0, swept: {}, skipped: 0, degrades: {}, byGate: {} };
+    sweptTotal: 0, swept: {}, skipped: 0, degrades: {}, byGate: {}, dossiers: 0 };
   for (const r of repos) {
     agg.tasks += r.tasks; agg.fixBriefs += r.fixBriefs; agg.runs += r.runs;
     agg.backstops += r.backstops; agg.oldFormatRuns += r.oldFormatRuns;
-    agg.pending += r.pending; agg.skipped += r.skipped;
+    agg.pending += r.pending; agg.skipped += r.skipped; agg.dossiers += r.dossiers;
     if (r.oldestPendingDays !== null &&
         (agg.oldestPendingDays === null || r.oldestPendingDays > agg.oldestPendingDays))
       agg.oldestPendingDays = r.oldestPendingDays;
@@ -128,6 +129,7 @@ node -e '
     const byg = Object.entries(r.byGate).map(([g, v]) => `${g}: [${v.rounds.join(", ")}] (backstops ${v.backstops}/${v.runs})`).join("; ") || "none";
     console.log(`- Rounds by gate — ${byg}`);
     console.log(`- Backstop rate: ${r.backstops}/${r.runs}`);
+    console.log(`- Dossiers: ${r.dossiers}/${r.runs}`);
     console.log(`- Fix-cycle rate: ${r.fixBriefs}/${r.tasks} tasks`);
     const deg = Object.entries(r.degrades).map(([k, v]) => `${k}: ${v}`).join("; ") || "none";
     console.log(`- Degrades by status — ${deg}`);
@@ -138,6 +140,7 @@ node -e '
   if (repos.length > 1) {
     console.log(`# Fleet aggregate (${agg.repos} repos)`);
     console.log(`- Runs: ${agg.runs}; Backstop rate: ${agg.backstops}/${agg.runs}; old-format runs: ${agg.oldFormatRuns}`);
+    console.log(`- Dossiers: ${agg.dossiers}/${agg.runs}`);
     const abyg = Object.entries(agg.byGate).map(([g, v]) => `${g}: [${v.rounds.join(", ")}] (backstops ${v.backstops}/${v.runs})`).join("; ") || "none";
     console.log(`- Rounds by gate — ${abyg}`);
     console.log(`- Fix-cycle rate: ${agg.fixBriefs}/${agg.tasks} tasks`);

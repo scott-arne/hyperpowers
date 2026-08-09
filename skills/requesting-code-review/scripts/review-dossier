@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# review-dossier — assemble one structured context artifact per gate
+# (spec 4.1). Reviewers receive, rather than fetch: documents (inlined,
+# line-numbered), adjudicated decisions, executed test evidence, and the
+# changed-surfaces map, in five fixed sections that are ALWAYS present.
+#
+# Absence is two distinct markers driven by a per-gate expected-inputs
+# map: NOT APPLICABLE (the gate type does not expect that input — quiet)
+# vs NOT PROVIDED (an expected input is missing/unreadable — reviewers
+# treat as cannot-verify). Inlines are capped at 4000 lines per file with
+# an explicit TRUNCATED marker; no silent cuts.
+#
+# Usage:
+#   review-dossier --gate spec|plan|task|final|adhoc --out GATE_DIR
+#     [--doc PATH]... [--spec PATH] [--adjudications PATH]...
+#     [--test-evidence PATH]... [--base SHA --head SHA] [repo-dir]
+# stdout: {"ok":true,"dossier":"...","sections":5,"missing":M}
+# Exit 0 determinate; exit 2 usage/internal.
+set -uo pipefail
+
+command -v node >/dev/null 2>&1 || { echo "review-dossier: node not found" >&2; exit 2; }
+
+gate=""; out=""; repo="."
+docs=(); adjs=(); evs=(); base=""; head=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --gate) gate="$2"; shift 2 ;;
+    --out) out="$2"; shift 2 ;;
+    --doc|--spec) docs+=("$2"); shift 2 ;;
+    --adjudications) adjs+=("$2"); shift 2 ;;
+    --test-evidence) evs+=("$2"); shift 2 ;;
+    --base) base="$2"; shift 2 ;;
+    --head) head="$2"; shift 2 ;;
+    -*) echo "review-dossier: unknown flag $1" >&2; exit 2 ;;
+    *) repo="$1"; shift ;;
+  esac
+done
+case "$gate" in spec|plan|task|final|adhoc) : ;; *)
+  echo "review-dossier: --gate must be spec|plan|task|final|adhoc" >&2; exit 2 ;; esac
+[ -n "$out" ] && [ -d "$out" ] || { echo "review-dossier: --out GATE_DIR required and must exist" >&2; exit 2; }
+
+# Changed surfaces are computed here (bash owns git) and handed to node.
+changed=""
+if [ -n "$base" ] && [ -n "$head" ]; then
+  changed="$( { git -C "$repo" diff --stat "$base..$head" 2>&1 && git -C "$repo" diff --name-status "$base..$head" 2>&1; } )" \
+    || changed="GIT ERROR: could not compute $base..$head"
+fi
+
+node -e '
+  const fs = require("fs");
+  const [gate, outDir, base, head, changed, docsCsv, adjsCsv, evsCsv] = process.argv.slice(1);
+  const split = (s) => (s === "" ? [] : s.split("\x1f"));
+  const docs = split(docsCsv), adjs = split(adjsCsv), evs = split(evsCsv);
+  const CAP = 4000;
+
+  // Per-gate expected-inputs map (spec 4.1).
+  const expects = {
+    spec:  { documents: true,  adjudications: true,  evidence: false, range: false },
+    plan:  { documents: true,  adjudications: true,  evidence: false, range: false },
+    task:  { documents: false, adjudications: true,  evidence: true,  range: true },
+    adhoc: { documents: false, adjudications: true,  evidence: true,  range: true },
+    final: { documents: true,  adjudications: true,  evidence: true,  range: true },
+  }[gate];
+
+  let missing = 0;
+  const notProvided = (why) => { missing++; return `NOT PROVIDED: ${why}\n`; };
+  const notApplicable = (why) => `NOT APPLICABLE: ${why}\n`;
+
+  const inlineFiles = (paths, expected, kindWhy) => {
+    if (paths.length === 0) {
+      return expected ? notProvided("flag not passed") : notApplicable(kindWhy);
+    }
+    let outText = "";
+    for (const p of paths) {
+      let body;
+      try { body = fs.readFileSync(p, "utf8"); }
+      catch (e) { outText += notProvided(`file unreadable: ${p}`); continue; }
+      const lines = body.split("\n");
+      const total = lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
+      const shown = Math.min(total, CAP);
+      outText += `### ${p}\n\n`;
+      for (let i = 0; i < shown; i++) outText += `\t${i + 1}\t${lines[i]}\n`;
+      if (total > CAP) outText += `TRUNCATED at line ${CAP} of ${total}\n`;
+      outText += "\n";
+    }
+    return outText;
+  };
+
+  let md = "# Review dossier\n\n";
+  md += `Gate: ${gate}\n\n`;
+  md += "## Documents under review\n\n";
+  md += inlineFiles(docs, expects.documents, "this gate type reviews a diff, not documents");
+  md += "\n## Adjudicated decisions\n\n";
+  md += inlineFiles(adjs, expects.adjudications, "no adjudications for this gate type");
+  md += "\n## Test evidence\n\n";
+  md += inlineFiles(evs, expects.evidence, "document gates carry no executed-test evidence");
+  md += "\n## Changed surfaces\n\n";
+  if (changed !== "") md += changed + "\n";
+  else md += expects.range ? notProvided("flag not passed (--base/--head)") : notApplicable("document gates have no commit range");
+  md += "\n## Review package\n\n";
+  md += (gate === "spec" || gate === "plan")
+    ? "not applicable (document gate; the documents above ARE the artifact)\n"
+    : "the companion-assembled diff for --base above is the review package; this dossier supplements it\n";
+
+  fs.writeFileSync(`${outDir}/dossier.md`, md);
+  process.stdout.write(JSON.stringify({ ok: true, dossier: `${outDir}/dossier.md`, sections: 5, missing }) + "\n");
+' "$gate" "$out" "$base" "$head" "$changed" \
+  "$(IFS=$'\x1f'; echo "${docs[*]-}")" \
+  "$(IFS=$'\x1f'; echo "${adjs[*]-}")" \
+  "$(IFS=$'\x1f'; echo "${evs[*]-}")" \
+  || { echo "review-dossier: assembly failed" >&2; exit 2; }

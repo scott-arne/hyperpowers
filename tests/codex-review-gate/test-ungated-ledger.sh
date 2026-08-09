@@ -156,6 +156,12 @@ bash "$UL" append --class tier-skip --gate spec --tier-declared low --tier-effec
 bash "$UL" append --class tier-skip --gate task --base "$base_sha" --head "$head_sha" \
   --tier-declared low --tier-effective low --note "mechanical change" "$repo" >/dev/null 2>&1 \
   && fail "tier-skip note must begin with Task N" || pass "tier-skip note must begin with Task N"
+bash "$UL" append --class tier-skip --gate task --base "$base_sha" --head "$head_sha" \
+  --tier-declared low --tier-effective low --note "Task 7 no colon" "$repo" >/dev/null 2>&1 \
+  && fail "tier-skip note requires colon after number" || pass "tier-skip note requires colon after number"
+bash "$UL" append --class tier-skip --gate task --base "$base_sha" --head "$head_sha" \
+  --tier-declared low --tier-effective low --note "Task 7x: bad" "$repo" >/dev/null 2>&1 \
+  && fail "tier-skip note digits-only before colon" || pass "tier-skip note digits-only before colon"
 out="$(bash "$UL" append --class degraded-gate --gate task --base "$base_sha" --head "$head_sha" --status not-ready --note bi-check "$repo")"
 last="$(tail -1 "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl")"
 expect "$last" '"sweepable":true' "existing classes keep gate-derived sweepability"

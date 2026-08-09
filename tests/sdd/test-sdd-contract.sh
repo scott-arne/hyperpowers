@@ -82,6 +82,8 @@ assert_contains "$FIXP" "the exact covering command(s) run with their final outp
 assert_contains "$WPLANS" '**Risk tier:** low|standard|high — <one-line rationale>' "plans declare a tier per task"
 assert_contains "$WPLANS" "approval-authority code" "rubric names the high surface"
 assert_contains "$WPLANS" "declared risk tier against the rubric" "plan gate reviews tiers"
+assert_contains "$WPLANS" "the reviewer is stateless and cannot load this skill" \
+  "rubric is delivered to the plan gate"
 assert_contains "$SDD" "may raise a tier" "escalation is expressible"
 assert_contains "$SDD" "never lower a declared tier" "lowering is not expressible"
 assert_contains "$SDD" "tier declared" "escalation record line format"

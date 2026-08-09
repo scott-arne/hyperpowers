@@ -257,6 +257,8 @@ assert_contains "$GATE" "sequentially in the foreground" "doc lenses stay foregr
 assert_contains "$GATE" "Algorithm Assessment attaches to the feasibility-and-contracts lens" "assessment pinned to one lens"
 assert_contains "$GATE" "falls back to the path-based prompts" "dossier degrade attributed"
 assert_not_contains "$GATE" "Before ANY companion review invocation in this section" "per-invocation counting is gone"
+assert_contains "$GATE" 'add `--require-coverage` to this command' "§4b canonical command carries the round-1 flag"
+assert_contains "$GATE" "Never capture a job id after a subsequent launch has occurred" "lens job ids bound at launch"
 
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"

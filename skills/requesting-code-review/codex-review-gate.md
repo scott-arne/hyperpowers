@@ -209,7 +209,7 @@ Lens charters:
 | tests-and-evidence | Do the tests prove the claims; is the executed evidence in the dossier consistent with the diff; gaps between claim and proof. |
 | integration-and-requirements-coverage | Whole-branch: requirements coverage against the plan/spec, integration risk across tasks, Minor-ledger triage. |
 
-**Document gates run their lenses sequentially in the foreground** (two `task --fresh` calls, each with the explicit 600000 ms timeout) — the existing Red Flag against backgrounding document reviews stands. **Code and final gates launch each lens as its own detached `adversarial-review`** (same recipe lines as below, with the lens prompt content as the focus context via the dossier + charter sentence appended to the focus string) and watch each via the §3 watch loop; concurrent where the companion permits, pipelined where it serializes — correctness is independent of interleaving.
+**Document gates run their lenses sequentially in the foreground** (two `task --fresh` calls, each with the explicit 600000 ms timeout) — the existing Red Flag against backgrounding document reviews stands. **Code and final gates launch lenses ONE AT A TIME**: launch lens A detached, immediately capture its job id from `status --json` (newest running review — unambiguous because no other lens launch has happened yet), record the id-to-lens binding, and only then launch lens B, capture, and so on. Never capture a job id after a subsequent launch has occurred. Once every lens has a recorded id, watch them in any order or concurrently via `status <job-id> --wait --json` — the ids, not recency, bind results to lenses.
 
 **Plan gate only:** the Round-1 Algorithm Assessment attaches to the feasibility-and-contracts lens and ONLY that lens — append the existing assessment block (verbatim, unchanged trigger and output shape) to that lens's prompt; the coverage-and-ordering lens never emits an Assessment, and any algorithm opinion it volunteers is an ordinary finding. Adjudication and lock run at their existing point, before the approval set is evaluated.
 
@@ -405,6 +405,8 @@ output) to a file inside `GATE_DIR`, then run:
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/verdict-normalize" "$GATE_DIR/<captured-output-file>"
 ```
+
+Round-1 captures (every lens, dossier-backed or fallback) add `--require-coverage` to this command; re-review rounds run it without the flag.
 
 Its tri-state `.result` is the review outcome: `approved`, `blocking`, or
 `incomplete`. Only a `verdict-normalize` result of `approved` counts as

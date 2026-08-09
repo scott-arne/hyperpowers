@@ -126,5 +126,32 @@ git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || true
 # not a git repo -> exit 2
 bash "$UL" pending --count "$work" >/dev/null 2>&1 && fail "non-repo exits 2" || pass "non-repo exits 2"
 
+# --- 6.6.0: tier-skip class + tier flags (spec 3.3) ---
+before_ts="$(bash "$UL" pending --count "$repo" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).count)')"
+out="$(bash "$UL" append --class tier-skip --gate task --base "$base_sha" --head "$head_sha" \
+  --tier-declared low --tier-effective low --note "Task 7: needle-only additions" "$repo")"
+expect "$out" '"ok":true' "tier-skip append succeeds"
+last="$(tail -1 "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl")"
+expect "$last" '"class":"tier-skip"' "event carries the tier-skip class"
+expect "$last" '"sweepable":false' "tier-skip is non-sweepable despite gate task"
+expect "$last" '"tierDeclared":"low"' "declared tier round-trips"
+expect "$last" '"tierEffective":"low"' "effective tier round-trips"
+expect "$last" '"note":"Task 7:' "note begins with the task identifier"
+expect "$last" '"base":"' "tier-skip records the task base"
+expect "$last" '"head":"' "tier-skip records the task head"
+expect "$last" '"gate":"task"' "tier-skip records the gate"
+expect "$last" '"id":"' "tier-skip carries the event id"
+expect "$last" '"ts":"' "tier-skip carries the timestamp"
+expect "$last" '"repo":"' "tier-skip carries the repo root"
+after_ts="$(bash "$UL" pending --count "$repo" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).count)')"
+[ "$after_ts" -eq "$before_ts" ] && pass "tier-skip never enters pending" || fail "tier-skip never enters pending (before=$before_ts after=$after_ts)"
+bash "$UL" append --class tier-skip --gate task --base "$base_sha" --head "$head_sha" \
+  --tier-declared bogus --note x "$repo" >/dev/null 2>&1 && fail "invalid tier value exits 2" || pass "invalid tier value exits 2"
+bash "$UL" append --class tier-skip --gate task --tier-declared low --tier-effective low --note x "$repo" >/dev/null 2>&1 \
+  && fail "tier-skip without base/head exits 2" || pass "tier-skip without base/head exits 2"
+out="$(bash "$UL" append --class degraded-gate --gate task --base "$base_sha" --head "$head_sha" --status not-ready --note bi-check "$repo")"
+last="$(tail -1 "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl")"
+expect "$last" '"sweepable":true' "existing classes keep gate-derived sweepability"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

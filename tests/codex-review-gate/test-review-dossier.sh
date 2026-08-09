@@ -72,6 +72,16 @@ out="$(bash "$RD" --gate task --out "$gd5" --adjudications "$adj" --test-evidenc
 printf '%s' "$out" | grep -Fq '"missing":1' && pass "failed git range counted as missing" || fail "failed git range counted as missing (got $out)"
 grep -Fq 'NOT PROVIDED: GIT ERROR' "$gd5/dossier.md" && pass "failed range renders NOT PROVIDED" || fail "failed range renders NOT PROVIDED"
 
+# valid range with zero changes -> content, not missing
+git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m e1
+e1="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m e2
+e2="$(git -C "$repo" rev-parse HEAD)"
+gd6="$work/gate6"; mkdir -p "$gd6"
+out="$(bash "$RD" --gate task --out "$gd6" --adjudications "$adj" --test-evidence "$ev" --base "$e1" --head "$e2" "$repo")"
+printf '%s' "$out" | grep -Fq '"missing":0' && pass "empty valid range is not missing" || fail "empty valid range is not missing (got $out)"
+grep -Fq 'no textual changes in' "$gd6/dossier.md" && pass "empty range renders as determinate content" || fail "empty range renders as determinate content"
+
 # usage errors -> exit 2
 bash "$RD" --gate bogus --out "$gd" "$repo" >/dev/null 2>&1 && fail "bad gate exits 2" || pass "bad gate exits 2"
 bash "$RD" --gate spec "$repo" >/dev/null 2>&1 && fail "missing --out exits 2" || pass "missing --out exits 2"

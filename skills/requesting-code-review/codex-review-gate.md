@@ -334,7 +334,7 @@ report, review package, and global constraints carry the real context.
 standard- and high-tier tasks. An SDD task whose EFFECTIVE tier is low —
 declared at plan time, reviewed by the plan gate, never lowered at
 dispatch, with no escalation trigger fired — skips this gate entirely:
-record the skip with `ungated-ledger append --class tier-skip --gate task --base <TASK_BASE> --head <HEAD> --tier-declared low --tier-effective low --note "Task N: <rationale>"` and move on; the Claude task reviewer and the final whole-branch gates never tier off. Ad-hoc code-review requests have no tier and always run.
+record the skip with `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class tier-skip --gate task --base <TASK_BASE> --head <HEAD> --tier-declared low --tier-effective low --note "Task N: <rationale>"` and move on; the Claude task reviewer and the final whole-branch gates never tier off. Ad-hoc code-review requests have no tier and always run.
 
 **Final whole-branch code** — use `adversarial-review` over the branch range and
 point Codex at the final-review inputs:

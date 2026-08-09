@@ -89,6 +89,12 @@ assert_contains "$SDD" "--class tier-skip" "skip appends the durable record"
 assert_contains "$SDD" "tier-skips.md" "final review receives the skip list"
 assert_contains "$SDD" "no escalation trigger fired" "skip precondition is explicit"
 assert_contains "$SDD" "missing tier line" "fail-closed default is pinned"
+assert_contains "$WPLANS" "unreviewed low tiers execute as standard" \
+  "plan-gate skip demotes low tiers (authoring side)"
+assert_contains "$SDD" "unreviewed low tiers execute as standard" \
+  "plan-gate skip demotes low tiers (dispatch side)"
+assert_contains "$SDD" "Record tier-skip (ungated-ledger), skip Codex task gate" \
+  "process diagram carries the skip path"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

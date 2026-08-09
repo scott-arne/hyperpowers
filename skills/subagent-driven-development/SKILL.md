@@ -57,6 +57,8 @@ digraph process {
         "Write diff file, dispatch task reviewer subagent (./task-reviewer-prompt.md)" [shape=box];
         "Task reviewer reports spec ✅ and quality approved?" [shape=diamond];
         "Dispatch fix subagent for Critical/Important findings" [shape=box];
+        "Effective tier low (no escalation trigger fired)?" [shape=diamond];
+        "Record tier-skip (ungated-ledger), skip Codex task gate" [shape=box];
         "Mark task complete in todo list and progress ledger" [shape=box];
         "Codex task code gate\n(Claude Code; degrade if absent)" [shape=box];
     }
@@ -76,7 +78,10 @@ digraph process {
     "Write diff file, dispatch task reviewer subagent (./task-reviewer-prompt.md)" -> "Task reviewer reports spec ✅ and quality approved?";
     "Task reviewer reports spec ✅ and quality approved?" -> "Dispatch fix subagent for Critical/Important findings" [label="no"];
     "Dispatch fix subagent for Critical/Important findings" -> "Write diff file, dispatch task reviewer subagent (./task-reviewer-prompt.md)" [label="re-review"];
-    "Task reviewer reports spec ✅ and quality approved?" -> "Codex task code gate\n(Claude Code; degrade if absent)" [label="yes"];
+    "Task reviewer reports spec ✅ and quality approved?" -> "Effective tier low (no escalation trigger fired)?" [label="yes"];
+    "Effective tier low (no escalation trigger fired)?" -> "Record tier-skip (ungated-ledger), skip Codex task gate" [label="yes"];
+    "Record tier-skip (ungated-ledger), skip Codex task gate" -> "Mark task complete in todo list and progress ledger";
+    "Effective tier low (no escalation trigger fired)?" -> "Codex task code gate\n(Claude Code; degrade if absent)" [label="no"];
     "Codex task code gate\n(Claude Code; degrade if absent)" -> "Mark task complete in todo list and progress ledger";
     "Mark task complete in todo list and progress ledger" -> "More tasks remain?";
     "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
@@ -247,16 +252,23 @@ declared tier, whatever the schedule pressure. Escalation triggers (any
 one): DONE_WITH_CONCERNS with correctness doubts; any fix cycle (a
 reviewer-driven fix that changes files — including a ⚠️-item resolution —
 is a fix cycle); files touched outside the plan's Files list; anything on
-the high rubric surfacing mid-task. Raise to high iff the trigger itself
-is a high-rubric criterion; otherwise standard. Record every escalation or
-fallback as one progress-ledger line:
+the high rubric surfacing mid-task (approval-authority code —
+verdict-normalize, gate-round, ungated-ledger, or any script whose output
+other machinery trusts — concurrency/locking, security surfaces,
+destructive git operations, durable-record writers; writing-plans' Risk
+Tier Rubric is the authoritative list). Raise to high iff the trigger
+itself is a high-rubric criterion; otherwise standard. Record every
+escalation or fallback as one progress-ledger line:
 `Task N: tier declared <low|standard|high|none> -> effective <standard|high> (<trigger phrase>)`.
 A missing or unparseable tier line is `declared none -> effective standard
 (missing tier line)` — full train, fail-closed.
 
 The tier changes exactly one thing: an EFFECTIVE-LOW task — no escalation
 trigger fired at any point — skips the per-task Codex gate after the task
-reviewer approves. Record the skip immediately:
+reviewer approves. A low tier is honored only if the plan's Codex gate
+actually reviewed the plan; when that gate was skipped or degraded,
+unreviewed low tiers execute as standard (full train), recorded with the
+ledger line shape as `(unreviewed low tier)`. Record the skip immediately:
 `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class tier-skip --gate task --base <TASK_BASE> --head <HEAD> --tier-declared low --tier-effective low --note "Task N: <rationale>"`.
 Standard and high tiers run today's full train unchanged; so does every
 non-SDD review. The Claude task reviewer always runs.

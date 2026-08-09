@@ -132,6 +132,10 @@ case "$sub" in
       case "$tv" in ''|low|standard|high) : ;; *)
         echo "ungated-ledger: tier values must be low|standard|high" >&2; exit 2 ;; esac
     done
+    if [ "$class" = "tier-skip" ]; then
+      [ -n "$tierdec" ] && [ -n "$tiereff" ] || {
+        echo "ungated-ledger: --tier-declared and --tier-effective are required for class tier-skip" >&2; exit 2; }
+    fi
     case "$gate" in
       spec|plan) sweepable=false ;;
       task|final|adhoc)

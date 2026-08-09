@@ -66,6 +66,12 @@ bash "$RD" --gate spec --out "$gd4" --spec "$big" --adjudications "$adj" "$repo"
 dossier_has "$gd4/dossier.md" 'TRUNCATED at line 4000 of 4005' "explicit truncation marker"
 grep -Fq $'\t4001\t' "$gd4/dossier.md" && fail "no lines beyond the cap" || pass "no lines beyond the cap"
 
+# expected range that git cannot compute -> NOT PROVIDED, missing counted
+gd5="$work/gate5"; mkdir -p "$gd5"
+out="$(bash "$RD" --gate task --out "$gd5" --adjudications "$adj" --test-evidence "$ev" --base deadbeef --head "$h" "$repo")"
+printf '%s' "$out" | grep -Fq '"missing":1' && pass "failed git range counted as missing" || fail "failed git range counted as missing (got $out)"
+grep -Fq 'NOT PROVIDED: GIT ERROR' "$gd5/dossier.md" && pass "failed range renders NOT PROVIDED" || fail "failed range renders NOT PROVIDED"
+
 # usage errors -> exit 2
 bash "$RD" --gate bogus --out "$gd" "$repo" >/dev/null 2>&1 && fail "bad gate exits 2" || pass "bad gate exits 2"
 bash "$RD" --gate spec "$repo" >/dev/null 2>&1 && fail "missing --out exits 2" || pass "missing --out exits 2"

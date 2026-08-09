@@ -187,7 +187,7 @@ Each lens prompt file is composed from this skeleton (one prompt file per lens, 
 
 ```markdown
 Read the review dossier first — it is your delivered context: <GATE_DIR>/dossier.md
-Where a dossier section says NOT PROVIDED, treat that axis as cannot-verify; where it says NOT APPLICABLE, answer that Coverage axis as such without hedging.
+Where a dossier section says NOT PROVIDED, answer that Coverage axis exactly `cannot-verify: <reason>` — never `not applicable`; where it says NOT APPLICABLE, answer it `not applicable: <why>` without hedging.
 Your lens for this review: <one charter sentence from the table below>.
 Report every blocking finding you can identify this round; do not reserve findings for later rounds.
 Findings outside your lens are still reported, labeled [out-of-lane] — never suppressed.

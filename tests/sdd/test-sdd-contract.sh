@@ -96,6 +96,8 @@ assert_contains "$WPLANS" "unreviewed low tiers execute as standard" \
   "plan-gate skip demotes low tiers (authoring side)"
 assert_contains "$SDD" "unreviewed low tiers execute as standard" \
   "plan-gate skip demotes low tiers (dispatch side)"
+assert_contains "$SDD" "a demoted task runs the full train and records NO tier-skip event" \
+  "demote path never writes a skip record"
 assert_contains "$SDD" "Record tier-skip (ungated-ledger), skip Codex task gate" \
   "process diagram carries the skip path"
 assert_contains "$WPLANS" "no escalation trigger fired at any point during execution" \

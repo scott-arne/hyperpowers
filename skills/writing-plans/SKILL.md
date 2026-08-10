@@ -190,7 +190,7 @@ handoff; if Codex is absent, emit the no-Codex notice and proceed. The plan revi
 gate also runs the Round-1 Algorithm Assessment when the plan has material
 algorithmic or data-structure choices (advisory; adjudicated before the loop's
 exit rule and locked in the round ledger — see the gate doc's §3 and §5). This gate never blocks the
-handoff — at worst it is skipped. When this gate is skipped or degraded (Codex absent, preflight failure), the plan's low tiers are UNREVIEWED — note that in the handoff; unreviewed low tiers execute as standard.
+handoff — at worst it is skipped. When this gate is skipped or degraded (Codex absent, preflight failure), or its outcome is unknown, the plan's low tiers are UNREVIEWED — note that in the handoff; unreviewed low tiers execute as standard.
 
 ## Execution Handoff
 

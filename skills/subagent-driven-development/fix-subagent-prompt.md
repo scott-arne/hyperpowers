@@ -22,6 +22,7 @@ Subagent (general-purpose):
     Files you may touch: [exact paths]. If the fix genuinely requires
     another file, STOP and report BLOCKED with the reason — do not expand
     scope on your own.
+    Never execute fixture or scenario scripts against a real checkout — run them in a scratch directory.
 
     ## Context
 
@@ -48,5 +49,6 @@ Subagent (general-purpose):
     APPEND your fix note to [REPORT_FILE]: what changed per finding, why,
     and the exact covering command(s) run with their final output lines (or the dispatch's `no covering command:` line restated). For final-review waves, [REPORT_FILE] is
     the final-review findings file named in the dispatch. Then return ONLY:
-    Status (DONE|BLOCKED), commit SHA + subject, one-line test summary.
+    Status (DONE|BLOCKED), commit SHA + subject, one-line test summary. The controller
+    re-runs your covering command; a report that doesn't match its output is a failed task.
 ```

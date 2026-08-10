@@ -63,7 +63,7 @@ assert_contains "$IMPL" "RED: command run" "TDD red evidence"
 assert_contains "$IMPL" "GREEN: command run" "TDD green evidence"
 assert_contains "$IMPL" "under 15 lines" "terse return contract"
 assert_contains "$IMPL" "Write your full report to" "report-file contract"
-assert_contains "$IMPL" "the controller re-runs your covering command" "implementer rerun warning"
+assert_contains "$IMPL" "The controller re-runs your covering command" "implementer rerun warning"
 assert_contains "$IMPL" "Covering command(s):" "implementer dispatches carry the covering-command slot"
 # reviewer template
 assert_contains "$REVW" "## Part 1: Spec Compliance" "reviewer spec part"
@@ -74,10 +74,11 @@ assert_contains "$FIXP" "stage ONLY the files named in this dispatch" "fixer sta
 assert_contains "$FIXP" 'NEVER `git add -A`' "fixer never adds all"
 assert_contains "$FIXP" "no covering command:" "fixer no-test path"
 assert_contains "$FIXP" "APPEND your fix note" "fixer appends to the task report"
-assert_contains "$FIXP" "the controller re-runs your covering command" "fixer rerun warning"
+assert_contains "$FIXP" "The controller re-runs your covering command" "fixer rerun warning"
 assert_contains "$FIXP" "the final whole-branch review wave" "fixer template serves final waves"
 assert_contains "$FIXP" "the exact covering command(s) run with their final output lines" \
   "fix reports carry command plus output"
+assert_contains "$FIXP" "run them in a scratch directory" "fixture scripts stay out of real checkouts"
 # tier system (6.6.0)
 assert_contains "$WPLANS" '**Risk tier:** low|standard|high — <one-line rationale>' "plans declare a tier per task"
 assert_contains "$WPLANS" "approval-authority code" "rubric names the high surface"

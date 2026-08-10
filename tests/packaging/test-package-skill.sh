@@ -172,5 +172,23 @@ else
   fail "relative DIST_DIR did not create zip at <caller cwd>/relout/"
 fi
 
+# Test 14 (regression wave 2): untracked files NOT staged
+CANARY="$REPO_ROOT/skills/.tmp-untracked-canary"
+# shellcheck disable=SC2064
+trap "rm -f $CANARY" EXIT
+touch "$CANARY"
+TEST_DIST_CANARY=$(mktemp -d)
+# shellcheck disable=SC2064
+trap "rm -rf $TEST_DIST_CANARY $CANARY" EXIT
+export DIST_DIR="$TEST_DIST_CANARY"
+bash "$PACKAGE_SCRIPT" > /dev/null 2>&1
+CANARY_ZIP="$TEST_DIST_CANARY/hyperpowers-$VERSION.zip"
+if unzip -l "$CANARY_ZIP" | grep -q ".tmp-untracked-canary"; then
+  fail "untracked canary file was included in zip"
+else
+  pass "untracked files NOT staged (canary absent)"
+fi
+rm -f "$CANARY"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

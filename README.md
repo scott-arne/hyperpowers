@@ -143,6 +143,18 @@ pi -e /path/to/hyperpowers
 
 The Pi package loads the skills and a small extension that injects the `using-hyperpowers` bootstrap at session startup and again after compaction. Pi has native skills, so no compatibility `Skill` tool is required. Subagent and task-list tools remain optional Pi companion packages.
 
+### Claude Desktop / claude.ai
+
+Build a single uploadable skill bundle from this repository:
+
+```bash
+bash scripts/package-claude-skill.sh
+```
+
+The zip is written to `dist/hyperpowers-<version>.zip`. Upload it via Claude Desktop or claude.ai Settings → Customize → Skills → upload zip (requires code execution enabled).
+
+The bundle includes all skills with a router `SKILL.md` that guides skill selection and loading. Codex review gates self-disable in this environment (skills emit a one-line notice and proceed without Codex).
+
 ## The Basic Workflow
 
 1. **brainstorming** - Activates before writing code. Refines rough ideas through questions, explores alternatives, presents design in sections for validation. Saves design document.

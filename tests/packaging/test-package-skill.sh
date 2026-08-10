@@ -59,8 +59,8 @@ unzip -q "$EXPECTED_ZIP" -d "$EXTRACT_DIR"
 
 SKILL_MD="$EXTRACT_DIR/hyperpowers/SKILL.md"
 
-# Test 3: frontmatter has exactly name+description, name==hyperpowers
-frontmatter_keys=$(sed -n '/^---$/,/^---$/p' "$SKILL_MD" | grep -E '^[a-z]+:' | cut -d: -f1 | sort)
+# Test 3: frontmatter has exactly name+description, name==hyperpowers (fix finding 2)
+frontmatter_keys=$(sed -n '/^---$/,/^---$/p' "$SKILL_MD" | grep -E '^[^ :#]+:' | cut -d: -f1 | sort)
 expected_keys=$(printf "description\nname")
 if [[ "$frontmatter_keys" == "$expected_keys" ]]; then
   pass "frontmatter contains exactly name and description keys"
@@ -128,6 +128,48 @@ if grep -Fq "$red_flag_row_last" "$SKILL_MD"; then
   pass "Red Flags table last row verified (verbatim)"
 else
   fail "Red Flags table last row not found or text differs"
+fi
+
+# Test 11 (regression finding 1): rebuild removes stale zip entries
+TEST_DIST_STALE=$(mktemp -d)
+# shellcheck disable=SC2064
+trap "rm -rf $TEST_DIST_STALE" EXIT
+STALE_ZIP="$TEST_DIST_STALE/hyperpowers-$VERSION.zip"
+(cd "$TEST_DIST_STALE" && mkdir -p hyperpowers && echo "stale" > hyperpowers/STALE.md && zip -qr "hyperpowers-$VERSION.zip" hyperpowers)
+export DIST_DIR="$TEST_DIST_STALE"
+bash "$PACKAGE_SCRIPT" > /dev/null 2>&1
+if unzip -l "$STALE_ZIP" | grep -q "hyperpowers/STALE.md"; then
+  fail "rebuild did not remove stale zip entry (hyperpowers/STALE.md still present)"
+else
+  pass "rebuild removes stale zip entries"
+fi
+
+# Test 12 (regression finding 2): frontmatter guard rejects non-lowercase/drifted keys
+TEST_TEMPLATE=$(mktemp)
+cat "$REPO_ROOT/scripts/claude-skill-root.md" > "$TEST_TEMPLATE"
+sed -i.bak '/^---$/,/^---$/ s/^description:/allowed-tools: read\ndescription:/' "$TEST_TEMPLATE"
+TEST_DIST_GUARD=$(mktemp -d)
+# shellcheck disable=SC2064
+trap "rm -rf $TEST_DIST_GUARD $TEST_TEMPLATE ${TEST_TEMPLATE}.bak" EXIT
+export DIST_DIR="$TEST_DIST_GUARD"
+export SKILL_TEMPLATE="$TEST_TEMPLATE"
+if bash "$PACKAGE_SCRIPT" > /dev/null 2>&1; then
+  fail "frontmatter guard did not reject added allowed-tools key"
+else
+  pass "frontmatter guard rejects drifted template keys"
+fi
+unset SKILL_TEMPLATE
+
+# Test 13 (regression finding 3): relative DIST_DIR resolves from caller cwd
+TEST_CWD=$(mktemp -d)
+# shellcheck disable=SC2064
+trap "rm -rf $TEST_CWD" EXIT
+(cd "$TEST_CWD" && DIST_DIR=relout bash "$PACKAGE_SCRIPT" > /dev/null 2>&1)
+RELOUT_ZIP="$TEST_CWD/relout/hyperpowers-$VERSION.zip"
+if [[ -f "$RELOUT_ZIP" ]]; then
+  pass "relative DIST_DIR resolves from caller cwd"
+else
+  fail "relative DIST_DIR did not create zip at <caller cwd>/relout/"
 fi
 
 echo

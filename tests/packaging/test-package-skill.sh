@@ -91,13 +91,14 @@ else
   fail "version string $VERSION not found in SKILL.md body"
 fi
 
-# Test 6: skill count in zip equals repo skill count
+# Test 6: skill count in zip equals repo skill count minus 1 (using-hyperpowers excluded)
 repo_skill_count=$(find "$REPO_ROOT/skills" -mindepth 2 -maxdepth 2 -name "SKILL.md" | wc -l | tr -d ' ')
+expected_zip_count=$((repo_skill_count - 1))
 zip_skill_count=$(find "$EXTRACT_DIR/hyperpowers/skills" -mindepth 2 -maxdepth 2 -name "SKILL.md" | wc -l | tr -d ' ')
-if [[ "$repo_skill_count" -eq "$zip_skill_count" ]]; then
-  pass "skill count matches repo ($repo_skill_count)"
+if [[ "$expected_zip_count" -eq "$zip_skill_count" ]]; then
+  pass "skill count = repo - 1 (router supersedes using-hyperpowers, $zip_skill_count skills)"
 else
-  fail "skill count mismatch: repo=$repo_skill_count, zip=$zip_skill_count"
+  fail "skill count mismatch: expected $expected_zip_count (repo $repo_skill_count - 1), got $zip_skill_count"
 fi
 
 # Test 7: LICENSE present
@@ -189,6 +190,35 @@ else
   pass "untracked files NOT staged (canary absent)"
 fi
 rm -f "$CANARY"
+
+# Test 15: using-hyperpowers/SKILL.md excluded but references/ kept
+if unzip -l "$EXPECTED_ZIP" | grep -q "hyperpowers/skills/using-hyperpowers/SKILL.md"; then
+  fail "using-hyperpowers/SKILL.md present (should be excluded, router supersedes it)"
+else
+  pass "using-hyperpowers/SKILL.md excluded (router supersedes)"
+fi
+
+# Test 16: using-hyperpowers/references/ kept (cross-skill dependencies)
+ref_count=$(unzip -l "$EXPECTED_ZIP" | grep -c "hyperpowers/skills/using-hyperpowers/references/.*\.md" || true)
+if [[ "$ref_count" -gt 0 ]]; then
+  pass "using-hyperpowers/references/ present ($ref_count files, cross-skill dependencies)"
+else
+  fail "using-hyperpowers/references/ not found (needed for skill cross-refs)"
+fi
+
+# Test 17: router precedence sentence present
+if grep -q "Where a bundled skill's platform mechanics.*this document governs" "$SKILL_MD"; then
+  pass "router precedence sentence present"
+else
+  fail "router precedence sentence not found in Environment Adaptations"
+fi
+
+# Test 18: router does NOT reference skills/using-hyperpowers/SKILL.md
+if grep -q "skills/using-hyperpowers/SKILL.md" "$SKILL_MD"; then
+  fail "router still references skills/using-hyperpowers/SKILL.md (should be removed)"
+else
+  pass "router no longer references skills/using-hyperpowers/SKILL.md"
+fi
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

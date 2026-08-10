@@ -39,8 +39,10 @@ echo ""
 # Generate SKILL.md from template with version substitution
 sed "s/{{VERSION}}/$VERSION/g" "$SKILL_TEMPLATE" > "$STAGE/SKILL.md"
 
-# Stage ONLY git-tracked files from skills/ tree
+# Stage ONLY git-tracked files from skills/ tree, EXCEPT skills/using-hyperpowers/SKILL.md
+# (the router supersedes that file; references/ kept for cross-skill dependencies)
 git -C "$REPO_ROOT" ls-files -z -- skills/ | while IFS= read -r -d '' f; do
+  [[ "$f" == "skills/using-hyperpowers/SKILL.md" ]] && continue
   mkdir -p "$STAGE/$(dirname "$f")"
   cp "$REPO_ROOT/$f" "$STAGE/$f"
 done
@@ -80,11 +82,12 @@ if [[ $desc_len -gt 200 ]]; then
   exit 1
 fi
 
-# Validation 4: every tracked skills/*/SKILL.md in repo is in the stage
+# Validation 4: staged skill count = tracked count minus using-hyperpowers (router supersedes it)
 repo_skill_count=$(git -C "$REPO_ROOT" ls-files -- 'skills/*/SKILL.md' | wc -l | tr -d ' ')
+expected_stage_count=$((repo_skill_count - 1))
 stage_skill_count=$(find "$STAGE/skills" -mindepth 2 -maxdepth 2 -name "SKILL.md" | wc -l | tr -d ' ')
-if [[ "$repo_skill_count" -ne "$stage_skill_count" ]]; then
-  echo "error: skill count mismatch: repo=$repo_skill_count, stage=$stage_skill_count" >&2
+if [[ "$expected_stage_count" -ne "$stage_skill_count" ]]; then
+  echo "error: skill count mismatch: expected $expected_stage_count (repo $repo_skill_count - 1), got $stage_skill_count" >&2
   exit 1
 fi
 

@@ -114,6 +114,8 @@ echo ""
 # Create the zip with hyperpowers/ as root entry, atomic write-then-rename
 OUTPUT="$DIST_DIR/hyperpowers-$VERSION.zip"
 OUTPUT_TMP="$OUTPUT.tmp.$$"
+# Fresh temp even under PID reuse: zip updates existing archives in place.
+rm -f "$OUTPUT_TMP"
 (cd "$TMP_STAGE" && zip -qr "$OUTPUT_TMP" hyperpowers)
 
 echo "Verifying zip structure..."

@@ -23,7 +23,7 @@ The skills bundled in this package:
 - **systematic-debugging** — Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes. → `skills/systematic-debugging/SKILL.md`
 - **test-driven-development** — Use when implementing any feature or bugfix, before writing implementation code. → `skills/test-driven-development/SKILL.md`
 - **using-git-worktrees** — Use when starting feature work that needs isolation from current workspace or before executing implementation plans. Ensures an isolated workspace exists via native tools or git worktree fallback. → `skills/using-git-worktrees/SKILL.md`
-- **using-hyperpowers** — Use when starting any conversation. Establishes how to find and use skills, requiring skill invocation before ANY response including clarifying questions. → `skills/using-hyperpowers/SKILL.md`
+- **(using-hyperpowers is this router document itself in the bundled environment)**
 - **writing-plans** — Use when you have a spec or requirements for a multi-step task, before touching code. → `skills/writing-plans/SKILL.md`
 - **writing-skills** — Use when creating new skills, editing existing skills, or verifying skills work before deployment. → `skills/writing-skills/SKILL.md`
 
@@ -69,6 +69,8 @@ This bundle runs in Claude Desktop / claude.ai, where some Claude Code-specific 
 
 - **Subagent dispatches:** Skills that dispatch subagents assume a dispatch tool is available. When no dispatch tool exists in this environment, execute the work sequentially in the current conversation instead. Treat each "dispatch" instruction as "do this work now, in-conversation."
 
+- **Platform mechanics precedence:** Where a bundled skill's platform mechanics (Skill tool invocation, subagent dispatch, plugin-cache paths, session hooks) contradict this document, this document governs in this environment; the skill's substantive process is unchanged.
+
 ## Red Flags
 
 These thoughts mean STOP—you're rationalizing:
@@ -92,4 +94,4 @@ These thoughts mean STOP—you're rationalizing:
 
 ## Getting Started
 
-Read `skills/using-hyperpowers/SKILL.md` now to understand the full skill-invocation discipline, then check the catalog above for the skill that matches your current task.
+Re-read "The Rule" section above to reinforce the skill-invocation discipline, then check the catalog for the skill that matches your current task.

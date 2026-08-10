@@ -11,7 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
-TEMPLATE="$REPO_ROOT/scripts/claude-skill-root.md"
+SKILL_TEMPLATE="${SKILL_TEMPLATE:-$REPO_ROOT/scripts/claude-skill-root.md}"
 PACKAGE_JSON="$REPO_ROOT/package.json"
 
 # Read version from package.json
@@ -21,8 +21,9 @@ if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
   exit 1
 fi
 
-# Create dist directory if needed
+# Create dist directory if needed and canonicalize path (fix finding 3)
 mkdir -p "$DIST_DIR"
+DIST_DIR="$(cd "$DIST_DIR" && pwd)"
 
 # Create temporary staging directory
 TMP_STAGE=$(mktemp -d)
@@ -35,7 +36,7 @@ echo "Packaging hyperpowers $VERSION for Claude Desktop / claude.ai..."
 echo ""
 
 # Generate SKILL.md from template with version substitution
-sed "s/{{VERSION}}/$VERSION/g" "$TEMPLATE" > "$STAGE/SKILL.md"
+sed "s/{{VERSION}}/$VERSION/g" "$SKILL_TEMPLATE" > "$STAGE/SKILL.md"
 
 # Copy skills tree verbatim
 cp -R "$REPO_ROOT/skills" "$STAGE/"
@@ -45,8 +46,8 @@ cp "$REPO_ROOT/LICENSE" "$STAGE/"
 
 echo "Validating package structure..."
 
-# Validation 1: frontmatter contains ONLY name and description keys
-frontmatter_keys=$(sed -n '/^---$/,/^---$/p' "$STAGE/SKILL.md" | grep -E '^[a-z]+:' | cut -d: -f1 | sort)
+# Validation 1: frontmatter contains ONLY name and description keys (fix finding 2)
+frontmatter_keys=$(sed -n '/^---$/,/^---$/p' "$STAGE/SKILL.md" | grep -E '^[^ :#]+:' | cut -d: -f1 | sort)
 expected_keys=$(printf "description\nname")
 if [[ "$frontmatter_keys" != "$expected_keys" ]]; then
   echo "error: SKILL.md frontmatter contains unexpected keys" >&2
@@ -96,8 +97,9 @@ echo "  ✓ Skill count: $stage_skill_count"
 echo "  ✓ Version substitution complete"
 echo ""
 
-# Create the zip with hyperpowers/ as root entry
+# Create the zip with hyperpowers/ as root entry (fix finding 1)
 OUTPUT="$DIST_DIR/hyperpowers-$VERSION.zip"
+rm -f "$OUTPUT"
 (cd "$TMP_STAGE" && zip -qr "$OUTPUT" hyperpowers)
 
 echo "Verifying zip structure..."

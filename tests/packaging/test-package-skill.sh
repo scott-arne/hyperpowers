@@ -15,7 +15,7 @@ echo "Claude skill packaging tests"
 TEST_DIST=$(mktemp -d)
 trap 'rm -rf "$TEST_DIST"' EXIT
 
-# Run the packaging script
+# Run the packaging script (stdout = artifact path, stderr = progress messages)
 export DIST_DIR="$TEST_DIST"
 if ! bash "$PACKAGE_SCRIPT" > /dev/null 2>&1; then
   fail "package-claude-skill.sh exited non-zero"
@@ -139,7 +139,7 @@ trap "rm -rf $TEST_DIST_STALE" EXIT
 STALE_ZIP="$TEST_DIST_STALE/hyperpowers-$VERSION.zip"
 (cd "$TEST_DIST_STALE" && mkdir -p hyperpowers && echo "stale" > hyperpowers/STALE.md && zip -qr "hyperpowers-$VERSION.zip" hyperpowers)
 export DIST_DIR="$TEST_DIST_STALE"
-bash "$PACKAGE_SCRIPT" > /dev/null 2>&1
+bash "$PACKAGE_SCRIPT" > /dev/null 2>&1 || true
 if unzip -l "$STALE_ZIP" | grep -q "hyperpowers/STALE.md"; then
   fail "rebuild did not remove stale zip entry (hyperpowers/STALE.md still present)"
 else
@@ -160,13 +160,13 @@ if bash "$PACKAGE_SCRIPT" > /dev/null 2>&1; then
 else
   pass "frontmatter guard rejects drifted template keys"
 fi
-unset SKILL_TEMPLATE
+unset SKILL_TEMPLATE DIST_DIR
 
 # Test 13 (regression finding 3): relative DIST_DIR resolves from caller cwd
 TEST_CWD=$(mktemp -d)
 # shellcheck disable=SC2064
 trap "rm -rf $TEST_CWD" EXIT
-(cd "$TEST_CWD" && DIST_DIR=relout bash "$PACKAGE_SCRIPT" > /dev/null 2>&1)
+(cd "$TEST_CWD" && DIST_DIR=relout bash "$PACKAGE_SCRIPT" > /dev/null 2>&1 || true)
 RELOUT_ZIP="$TEST_CWD/relout/hyperpowers-$VERSION.zip"
 if [[ -f "$RELOUT_ZIP" ]]; then
   pass "relative DIST_DIR resolves from caller cwd"
@@ -183,7 +183,7 @@ TEST_DIST_CANARY=$(mktemp -d)
 # shellcheck disable=SC2064
 trap "rm -rf $TEST_DIST_CANARY $CANARY" EXIT
 export DIST_DIR="$TEST_DIST_CANARY"
-bash "$PACKAGE_SCRIPT" > /dev/null 2>&1
+bash "$PACKAGE_SCRIPT" > /dev/null 2>&1 || true
 CANARY_ZIP="$TEST_DIST_CANARY/hyperpowers-$VERSION.zip"
 if unzip -l "$CANARY_ZIP" | grep -q ".tmp-untracked-canary"; then
   fail "untracked canary file was included in zip"
@@ -261,6 +261,24 @@ if [[ "$bundled_skill_md_count" -eq 0 ]]; then
 else
   fail "zip contains $bundled_skill_md_count skills/*/SKILL.md files (should be 0, renamed to INSTRUCTIONS.md)"
 fi
+
+# Test 27 (NEW): early pipe closure doesn't kill the build
+# Verify that piping output to head (which closes stdout early) still produces a valid artifact
+TEST_DIST_PIPE=$(mktemp -d)
+# shellcheck disable=SC2064
+trap "rm -rf $TEST_DIST_PIPE" EXIT
+export DIST_DIR="$TEST_DIST_PIPE"
+if bash "$PACKAGE_SCRIPT" | head -1 > /dev/null 2>&1; then
+  PIPE_ZIP="$TEST_DIST_PIPE/hyperpowers-$VERSION.zip"
+  if [[ -f "$PIPE_ZIP" ]]; then
+    pass "early pipe closure does not kill build (head -1 artifact exists)"
+  else
+    fail "early pipe closure resulted in missing artifact"
+  fi
+else
+  fail "early pipe closure caused script to exit non-zero"
+fi
+unset DIST_DIR
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

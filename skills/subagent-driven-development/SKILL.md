@@ -57,6 +57,8 @@ digraph process {
         "Write diff file, dispatch task reviewer subagent (./task-reviewer-prompt.md)" [shape=box];
         "Task reviewer reports spec ✅ and quality approved?" [shape=diamond];
         "Dispatch fix subagent for Critical/Important findings" [shape=box];
+        "Effective tier low (no escalation trigger fired)?" [shape=diamond];
+        "Record tier-skip (ungated-ledger), skip Codex task gate" [shape=box];
         "Mark task complete in todo list and progress ledger" [shape=box];
         "Codex task code gate\n(Claude Code; degrade if absent)" [shape=box];
     }
@@ -76,7 +78,10 @@ digraph process {
     "Write diff file, dispatch task reviewer subagent (./task-reviewer-prompt.md)" -> "Task reviewer reports spec ✅ and quality approved?";
     "Task reviewer reports spec ✅ and quality approved?" -> "Dispatch fix subagent for Critical/Important findings" [label="no"];
     "Dispatch fix subagent for Critical/Important findings" -> "Write diff file, dispatch task reviewer subagent (./task-reviewer-prompt.md)" [label="re-review"];
-    "Task reviewer reports spec ✅ and quality approved?" -> "Codex task code gate\n(Claude Code; degrade if absent)" [label="yes"];
+    "Task reviewer reports spec ✅ and quality approved?" -> "Effective tier low (no escalation trigger fired)?" [label="yes"];
+    "Effective tier low (no escalation trigger fired)?" -> "Record tier-skip (ungated-ledger), skip Codex task gate" [label="yes"];
+    "Record tier-skip (ungated-ledger), skip Codex task gate" -> "Mark task complete in todo list and progress ledger";
+    "Effective tier low (no escalation trigger fired)?" -> "Codex task code gate\n(Claude Code; degrade if absent)" [label="no"];
     "Codex task code gate\n(Claude Code; degrade if absent)" -> "Mark task complete in todo list and progress ledger";
     "Mark task complete in todo list and progress ledger" -> "More tasks remain?";
     "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
@@ -160,6 +165,21 @@ complete: you hold the plan and cross-task context the reviewer
 lacks. If you confirm an item is a real gap, treat it as a failed spec
 review — send it back to the implementer and re-review.
 
+## Subagent Reports Are Claims
+
+Subagent reports are claims, not evidence. Before acting on any
+completed-status report (DONE or DONE_WITH_CONCERNS) or a fix report —
+dispatching the reviewer, re-running a gate, marking a task complete — the
+controller re-runs the named covering test command directly and compares
+the output against the report. A misreported result is a failed task:
+re-dispatch with the discrepancy named, not a bookkeeping correction.
+
+Every implementer and fix dispatch names either its covering test
+command(s) or an explicit `no covering command: <rationale>` line plus the
+controller's substitute verification (read the diff against the brief;
+render or grep the changed doc). A dispatch naming neither is malformed —
+fix the dispatch, not the rule.
+
 ## Constructing Reviewer Prompts
 
 Per-task reviews are task-scoped gates. The broad review happens once, at the
@@ -195,7 +215,8 @@ final whole-branch review. When you fill a reviewer template:
   later dispatches — a real session's dispatch hit 42k chars of which 99%
   was pasted history. A fresh subagent needs its task, the interfaces it
   touches, and the global constraints. Nothing else.
-- Dispatch fix subagents for Critical and Important findings. Record Minor
+- Dispatch fix subagents for Critical and Important findings. Compose the
+  dispatch from [fix-subagent-prompt.md](fix-subagent-prompt.md). Record Minor
   findings in the progress ledger as you go, and point the final
   whole-branch review at that list so it can triage which must be fixed
   before merge. A roll-up nobody reads is a silent discard.
@@ -210,15 +231,53 @@ final whole-branch review. When you fill a reviewer template:
   printed path in the final review dispatch, so the final reviewer reads
   one file instead of re-deriving the branch diff with git commands.
 - Every fix dispatch carries the implementer contract: the fix subagent
-  re-runs the tests covering its change and reports the results. Name the
+  re-runs the tests covering its change and reports the results. The template
+  fix-subagent-prompt.md carries this contract — use it. Name the
   covering test files in the dispatch — a one-line fix does not need the
   whole suite. Before re-dispatching the reviewer, confirm the fix report
   contains the covering tests, the command run, and the output; dispatch
   the re-review once all three are present.
 - If the final whole-branch review returns findings, dispatch ONE fix
   subagent with the complete findings list — not one fixer per finding.
+  Use fix-subagent-prompt.md for the wave dispatch.
   Per-finding fixers each rebuild context and re-run suites; a real
   session's final-review fix wave cost more than all its tasks combined.
+
+## Risk Tiers (per-task Codex gate applicability)
+
+Each plan task declares `**Risk tier:** low|standard|high — <rationale>`
+under its heading; the task brief carries it. The effective tier starts as
+the declared tier. You may raise a tier at any point — never lower a
+declared tier, whatever the schedule pressure. Escalation triggers (any
+one): DONE_WITH_CONCERNS with correctness doubts; any fix cycle (a
+reviewer-driven fix that changes files — including a ⚠️-item resolution —
+is a fix cycle); files touched outside the plan's Files list; anything on
+the high rubric surfacing mid-task (approval-authority code —
+verdict-normalize, gate-round, ungated-ledger, or any script whose output
+other machinery trusts — concurrency/locking, security surfaces,
+destructive git operations, durable-record writers; writing-plans' Risk
+Tier Rubric is the authoritative list). Raise to high iff the trigger
+itself is a high-rubric criterion; otherwise standard. Record every
+escalation or fallback as one progress-ledger line:
+`Task N: tier declared <low|standard|high|none> -> effective <standard|high> (<trigger phrase>)`.
+A missing or unparseable tier line is `declared none -> effective standard
+(missing tier line)` — full train, fail-closed.
+
+The tier changes exactly one thing: an EFFECTIVE-LOW task — no escalation
+trigger fired at any point — skips the per-task Codex gate after the task
+reviewer approves. A low tier is honored only if the plan's Codex gate
+actually reviewed the plan; when that gate was skipped or degraded,
+unreviewed low tiers execute as standard (full train), recorded with the
+ledger line shape as `(unreviewed low tier)`. Record the skip immediately:
+`bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class tier-skip --gate task --base <TASK_BASE> --head <HEAD> --tier-declared low --tier-effective low --note "Task N: <rationale>"`.
+Standard and high tiers run today's full train unchanged; so does every
+non-SDD review. The Claude task reviewer always runs.
+
+When any task skipped, write `tier-skips.md` in the SDD scratch dir — one
+line per skip: `Task N: <rationale> (<base>..<head>)` — and hand its path
+to the final code-reviewer dispatch (beside the Minor-findings list) and
+to the final Codex gate as `<TIER_SKIPS_PATH>` plus a dossier
+`--adjudications` input, per the gate doc's final recipe.
 
 ## Codex Review Gate (Claude Code only)
 
@@ -228,7 +287,7 @@ Probe once per skill run and reuse the result; if Codex is absent, emit the
 no-Codex notice once and run both gates as no-ops.
 
 - **Per task:** after the task reviewer approves (spec ✅ and quality approved) and
-  before marking the task complete, run the gate using the per-task code recipe
+  before marking the task complete, run the gate (standard/high effective tiers; an effective-low task skips it per Risk Tiers above, recording the tier-skip event instead) using the per-task code recipe
   with `--base <the task BASE you recorded before dispatching the implementer>`.
   Provide the task brief path, implementer report path, review-package path, and
   a file containing the global constraints that bind the task. Route blocking

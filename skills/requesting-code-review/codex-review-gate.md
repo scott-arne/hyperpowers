@@ -330,12 +330,20 @@ node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <BASE_S
 dispatched. The focus text stays short because the task brief, implementer
 report, review package, and global constraints carry the real context.
 
+**Tier applicability (SDD tasks only).** Per-task code gates run for
+standard- and high-tier tasks. An SDD task whose EFFECTIVE tier is low —
+declared at plan time, reviewed by the plan gate, never lowered at
+dispatch, with no escalation trigger fired — skips this gate entirely:
+record the skip with `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class tier-skip --gate task --base <TASK_BASE> --head <HEAD> --tier-declared low --tier-effective low --note "Task N: <rationale>"` and move on; the Claude task reviewer and the final whole-branch gates never tier off. Ad-hoc code-review requests have no tier and always run.
+
 **Final whole-branch code** — use `adversarial-review` over the branch range and
 point Codex at the final-review inputs:
 
 ```bash
-node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <MERGE_BASE_SHA> --json "Final whole-branch review. Branch review package: <BRANCH_REVIEW_PACKAGE_PATH>. Plan or requirements: <PLAN_OR_REQUIREMENTS_PATH>. Minor findings ledger, if present: <MINOR_LEDGER_PATH>. Review for correctness, requirements coverage, integration risk, and code quality. You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills. Do not edit anything."
+node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <MERGE_BASE_SHA> --json "Final whole-branch review. Branch review package: <BRANCH_REVIEW_PACKAGE_PATH>. Plan or requirements: <PLAN_OR_REQUIREMENTS_PATH>. Minor findings ledger, if present: <MINOR_LEDGER_PATH>. Tier-skip summary, if any: <TIER_SKIPS_PATH>. Review for correctness, requirements coverage, integration risk, and code quality. You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills. Do not edit anything."
 ```
+
+When any task skipped its per-task gate, pass the tier-skip summary file as <TIER_SKIPS_PATH> AND include it among the final dossier's --adjudications inputs, so both the prompt and the delivered dossier carry it.
 
 **Code-review requests** — use `adversarial-review` over the same range the
 Claude reviewer used. If the requirements are a file, pass the file path; if

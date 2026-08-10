@@ -92,13 +92,14 @@ else
 fi
 
 # Test 6: skill count in zip equals repo skill count minus 1 (using-hyperpowers excluded)
+# Skills are renamed to INSTRUCTIONS.md during packaging
 repo_skill_count=$(find "$REPO_ROOT/skills" -mindepth 2 -maxdepth 2 -name "SKILL.md" | wc -l | tr -d ' ')
 expected_zip_count=$((repo_skill_count - 1))
-zip_skill_count=$(find "$EXTRACT_DIR/hyperpowers/skills" -mindepth 2 -maxdepth 2 -name "SKILL.md" | wc -l | tr -d ' ')
+zip_skill_count=$(find "$EXTRACT_DIR/hyperpowers/skills" -mindepth 2 -maxdepth 2 -name "INSTRUCTIONS.md" | wc -l | tr -d ' ')
 if [[ "$expected_zip_count" -eq "$zip_skill_count" ]]; then
-  pass "skill count = repo - 1 (router supersedes using-hyperpowers, $zip_skill_count skills)"
+  pass "skill count = repo - 1 (router supersedes using-hyperpowers, $zip_skill_count INSTRUCTIONS.md files)"
 else
-  fail "skill count mismatch: expected $expected_zip_count (repo $repo_skill_count - 1), got $zip_skill_count"
+  fail "skill count mismatch: expected $expected_zip_count (repo $repo_skill_count - 1), got $zip_skill_count INSTRUCTIONS.md files"
 fi
 
 # Test 7: LICENSE present
@@ -218,6 +219,47 @@ if grep -q "skills/using-hyperpowers/SKILL.md" "$SKILL_MD"; then
   fail "router still references skills/using-hyperpowers/SKILL.md (should be removed)"
 else
   pass "router no longer references skills/using-hyperpowers/SKILL.md"
+fi
+
+# Test 18a: router catalog references INSTRUCTIONS.md (not SKILL.md)
+catalog_instructions_count=$(grep -cE 'skills/[^/]+/INSTRUCTIONS\.md' "$SKILL_MD" || true)
+if [[ "$catalog_instructions_count" -ge 14 ]]; then
+  pass "router catalog references INSTRUCTIONS.md paths ($catalog_instructions_count occurrences)"
+else
+  fail "router catalog missing INSTRUCTIONS.md references (expected ≥14, got $catalog_instructions_count)"
+fi
+
+# Test 18b: router does NOT reference skills/*/SKILL.md paths (except prose mentions)
+# Exclude the using-hyperpowers check (test 18) and allow writing-skills to mention it as prose
+catalog_skill_md_refs=$(grep -E 'skills/[^/]+/SKILL\.md' "$SKILL_MD" | grep -v 'skills/using-hyperpowers/SKILL.md' || true)
+if [[ -z "$catalog_skill_md_refs" ]]; then
+  pass "router does not reference skills/*/SKILL.md paths (renamed to INSTRUCTIONS.md)"
+else
+  fail "router still references skills/*/SKILL.md paths: $catalog_skill_md_refs"
+fi
+
+# Test 19: exactly one SKILL.md basename in zip (upload format restriction)
+skill_md_count=$(unzip -l "$EXPECTED_ZIP" | grep -E '^ *[0-9]+ .*/SKILL\.md$' | wc -l | tr -d ' ')
+if [[ "$skill_md_count" -eq 1 ]]; then
+  pass "exactly one SKILL.md basename in zip (upload format requirement)"
+else
+  fail "zip contains $skill_md_count files with basename SKILL.md (upload requires exactly 1)"
+fi
+
+# Test 20: at least one skills/*/INSTRUCTIONS.md present (bundled skills)
+instructions_count=$(unzip -l "$EXPECTED_ZIP" | grep -cE 'hyperpowers/skills/[^/]+/INSTRUCTIONS\.md$' || true)
+if [[ "$instructions_count" -gt 0 ]]; then
+  pass "bundled skills present ($instructions_count INSTRUCTIONS.md files)"
+else
+  fail "no skills/*/INSTRUCTIONS.md files found in zip"
+fi
+
+# Test 21: NO skills/*/SKILL.md in zip (all renamed to INSTRUCTIONS.md)
+bundled_skill_md_count=$(unzip -l "$EXPECTED_ZIP" | grep -cE 'hyperpowers/skills/[^/]+/SKILL\.md$' || true)
+if [[ "$bundled_skill_md_count" -eq 0 ]]; then
+  pass "no skills/*/SKILL.md in zip (all renamed to INSTRUCTIONS.md)"
+else
+  fail "zip contains $bundled_skill_md_count skills/*/SKILL.md files (should be 0, renamed to INSTRUCTIONS.md)"
 fi
 
 echo

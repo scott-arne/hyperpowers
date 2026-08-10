@@ -41,10 +41,16 @@ sed "s/{{VERSION}}/$VERSION/g" "$SKILL_TEMPLATE" > "$STAGE/SKILL.md"
 
 # Stage ONLY git-tracked files from skills/ tree, EXCEPT skills/using-hyperpowers/SKILL.md
 # (the router supersedes that file; references/ kept for cross-skill dependencies)
+# Rename skills/*/SKILL.md → skills/*/INSTRUCTIONS.md at stage time (upload format allows only one SKILL.md)
 git -C "$REPO_ROOT" ls-files -z -- skills/ | while IFS= read -r -d '' f; do
   [[ "$f" == "skills/using-hyperpowers/SKILL.md" ]] && continue
   mkdir -p "$STAGE/$(dirname "$f")"
-  cp "$REPO_ROOT/$f" "$STAGE/$f"
+  if [[ "$f" =~ ^skills/[^/]+/SKILL\.md$ ]]; then
+    # Rename per-skill SKILL.md to INSTRUCTIONS.md
+    cp "$REPO_ROOT/$f" "$STAGE/$(dirname "$f")/INSTRUCTIONS.md"
+  else
+    cp "$REPO_ROOT/$f" "$STAGE/$f"
+  fi
 done
 
 # Copy LICENSE
@@ -83,11 +89,12 @@ if [[ $desc_len -gt 200 ]]; then
 fi
 
 # Validation 4: staged skill count = tracked count minus using-hyperpowers (router supersedes it)
+# Skills are renamed to INSTRUCTIONS.md during staging
 repo_skill_count=$(git -C "$REPO_ROOT" ls-files -- 'skills/*/SKILL.md' | wc -l | tr -d ' ')
 expected_stage_count=$((repo_skill_count - 1))
-stage_skill_count=$(find "$STAGE/skills" -mindepth 2 -maxdepth 2 -name "SKILL.md" | wc -l | tr -d ' ')
+stage_skill_count=$(find "$STAGE/skills" -mindepth 2 -maxdepth 2 -name "INSTRUCTIONS.md" | wc -l | tr -d ' ')
 if [[ "$expected_stage_count" -ne "$stage_skill_count" ]]; then
-  echo "error: skill count mismatch: expected $expected_stage_count (repo $repo_skill_count - 1), got $stage_skill_count" >&2
+  echo "error: skill count mismatch: expected $expected_stage_count (repo $repo_skill_count - 1), got $stage_skill_count INSTRUCTIONS.md files" >&2
   exit 1
 fi
 
@@ -123,8 +130,16 @@ if echo "$zip_listing" | grep -vE '(Archive:|Length|----| files$)' | grep -vE '^
   exit 1
 fi
 
+# Fail-closed check: upload format allows EXACTLY ONE file named SKILL.md in the entire bundle
+skill_md_count=$(echo "$zip_listing" | grep -cE '^ *[0-9]+ .*/SKILL\.md$' || true)
+if [[ "$skill_md_count" -ne 1 ]]; then
+  echo "error: zip contains $skill_md_count files with basename SKILL.md (upload format requires exactly 1)" >&2
+  exit 1
+fi
+
 echo "  ✓ Zip root entry: hyperpowers/"
 echo "  ✓ SKILL.md present"
+echo "  ✓ Exactly one SKILL.md basename (upload format requirement)"
 echo ""
 
 # Atomically move validated zip to final path

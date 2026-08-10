@@ -45,6 +45,20 @@ id2="$(printf '%s' "$out" | node -e 'console.log(JSON.parse(require("fs").readFi
 bash "$UL" mark-swept --ref "$id2" --verdict approved --note done "$repo" >/dev/null
 bash "$UL" append --class degraded-gate --gate spec --status not-ready --note z "$repo" >/dev/null
 
+# --- 6.6.0: tierSkips is exclusive (spec 3.4) ---
+LEDGER="$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl"
+mkdir -p "$(dirname "$LEDGER")"
+cat >> "$LEDGER" <<'EOFEV'
+{"v":1,"id":"ts-1","event":"ungated","class":"tier-skip","gate":"task","ts":"2026-08-09T00:00:00Z","repo":"/tmp/r","base":"a","head":"b","status":null,"sweepable":false,"gateDir":null,"note":"Task 1: mech","tierDeclared":"low","tierEffective":"low"}
+EOFEV
+out="$( (cd "$repo" && bash "$GT") )"
+expect "$out" "Tier skips: 1" "markdown reports the tier-skip count"
+json="$( (cd "$repo" && bash "$GT" --json) )"
+expect "$json" '"tierSkips":1' "json carries tierSkips"
+# Exclusivity: the tier-skip event must not raise doc-recorded or pending.
+docrec_before_note="doc-recorded count must equal the non-tier-skip sweepable=false events only"
+expect "$out" "doc-recorded: 1" "$docrec_before_note"
+
 echo "gate-telemetry:"
 
 md="$( (cd "$repo" && bash "$GT") )"
@@ -93,6 +107,15 @@ printf '%s' "$allmd" | grep -Fq '(approved:1)' && pass "fleet swept-by-verdict p
 printf '%s' "$allmd" | grep -Fq 'Dossiers: 1/2' && pass "fleet dossier count present" || fail "fleet dossier count present"
 
 bash "$GT" "$work" >/dev/null 2>&1 && fail "non-repo without --all exits 2" || pass "non-repo without --all exits 2"
+
+# --- 6.6.0: swept counts exclude tier-skip refs ---
+cat >> "$LEDGER" <<'EOFEV'
+{"v":1,"id":"sw-ts","event":"swept","ref":"ts-1","verdict":"approved","ts":"2026-08-09T00:00:01Z"}
+EOFEV
+out="$( (cd "$repo" && bash "$GT") )"
+expect "$out" "Tier skips: 1" "tier-skip count unchanged by swept ref"
+json="$( (cd "$repo" && bash "$GT" --json) )"
+node -e 'const d=JSON.parse(process.argv[1]);const r=d.repos[0];process.exit(Object.values(r.swept||{}).reduce((a,b)=>a+b,0)===1?0:1)' "$json" && pass "swept counts exclude tier-skip refs" || fail "swept counts exclude tier-skip refs"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

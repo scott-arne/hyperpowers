@@ -285,7 +285,9 @@ These techniques are part of systematic debugging and available in this director
 
 **Related skills:**
 - **hyperpowers:test-driven-development** - For creating failing test case (Phase 4, Step 1)
-- **hyperpowers:verification-before-completion** - Verify fix worked before claiming success
+- Verify the fix by re-running the original failing command and reading its
+  output before claiming success (hyperpowers:test-driven-development
+  covers the red-green regression discipline)
 
 ## Real-World Impact
 

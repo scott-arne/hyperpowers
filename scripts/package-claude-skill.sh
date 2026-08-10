@@ -27,7 +27,8 @@ DIST_DIR="$(cd "$DIST_DIR" && pwd)"
 
 # Create temporary staging directory
 TMP_STAGE=$(mktemp -d)
-trap 'rm -rf "$TMP_STAGE"' EXIT
+OUTPUT_TMP=""
+trap 'rm -rf "$TMP_STAGE" "$OUTPUT_TMP"' EXIT
 
 STAGE="$TMP_STAGE/hyperpowers"
 mkdir -p "$STAGE"
@@ -38,8 +39,11 @@ echo ""
 # Generate SKILL.md from template with version substitution
 sed "s/{{VERSION}}/$VERSION/g" "$SKILL_TEMPLATE" > "$STAGE/SKILL.md"
 
-# Copy skills tree verbatim
-cp -R "$REPO_ROOT/skills" "$STAGE/"
+# Stage ONLY git-tracked files from skills/ tree
+git -C "$REPO_ROOT" ls-files -z -- skills/ | while IFS= read -r -d '' f; do
+  mkdir -p "$STAGE/$(dirname "$f")"
+  cp "$REPO_ROOT/$f" "$STAGE/$f"
+done
 
 # Copy LICENSE
 cp "$REPO_ROOT/LICENSE" "$STAGE/"
@@ -76,8 +80,8 @@ if [[ $desc_len -gt 200 ]]; then
   exit 1
 fi
 
-# Validation 4: every skills/*/SKILL.md in repo is in the stage
-repo_skill_count=$(find "$REPO_ROOT/skills" -mindepth 2 -maxdepth 2 -name "SKILL.md" | wc -l | tr -d ' ')
+# Validation 4: every tracked skills/*/SKILL.md in repo is in the stage
+repo_skill_count=$(git -C "$REPO_ROOT" ls-files -- 'skills/*/SKILL.md' | wc -l | tr -d ' ')
 stage_skill_count=$(find "$STAGE/skills" -mindepth 2 -maxdepth 2 -name "SKILL.md" | wc -l | tr -d ' ')
 if [[ "$repo_skill_count" -ne "$stage_skill_count" ]]; then
   echo "error: skill count mismatch: repo=$repo_skill_count, stage=$stage_skill_count" >&2
@@ -97,16 +101,16 @@ echo "  ✓ Skill count: $stage_skill_count"
 echo "  ✓ Version substitution complete"
 echo ""
 
-# Create the zip with hyperpowers/ as root entry (fix finding 1)
+# Create the zip with hyperpowers/ as root entry, atomic write-then-rename
 OUTPUT="$DIST_DIR/hyperpowers-$VERSION.zip"
-rm -f "$OUTPUT"
-(cd "$TMP_STAGE" && zip -qr "$OUTPUT" hyperpowers)
+OUTPUT_TMP="$OUTPUT.tmp.$$"
+(cd "$TMP_STAGE" && zip -qr "$OUTPUT_TMP" hyperpowers)
 
 echo "Verifying zip structure..."
 
 # Verify zip structure: folder at root, SKILL.md present
 # Note: capture listing to avoid SIGPIPE from grep -q closing the pipe early
-zip_listing=$(unzip -l "$OUTPUT")
+zip_listing=$(unzip -l "$OUTPUT_TMP")
 if ! echo "$zip_listing" | grep -q "hyperpowers/SKILL.md"; then
   echo "error: hyperpowers/SKILL.md not found in zip" >&2
   exit 1
@@ -119,6 +123,10 @@ fi
 echo "  ✓ Zip root entry: hyperpowers/"
 echo "  ✓ SKILL.md present"
 echo ""
+
+# Atomically move validated zip to final path
+mv -f "$OUTPUT_TMP" "$OUTPUT"
+OUTPUT_TMP=""
 
 echo "Package created: $OUTPUT"
 echo ""

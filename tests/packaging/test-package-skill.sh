@@ -75,13 +75,13 @@ else
   fail "frontmatter name is '$name', expected 'hyperpowers'"
 fi
 
-# Test 4: description length ≤200
+# Test 4: description length ≤195
 description=$(sed -n 's/^description: *//p' "$SKILL_MD")
 desc_len=${#description}
-if [[ $desc_len -le 200 ]]; then
-  pass "description length $desc_len ≤ 200"
+if [[ $desc_len -le 195 ]]; then
+  pass "description length $desc_len ≤ 195"
 else
-  fail "description length $desc_len > 200"
+  fail "description length $desc_len > 195"
 fi
 
 # Test 5: version string appears in body
@@ -114,12 +114,20 @@ else
   pass "no hooks/, tests/, docs/, or .claude-plugin/ in zip"
 fi
 
-# Test 9: Red Flags table line present (pick one verbatim row)
-red_flag_row='"This is just a simple question" | Questions are tasks. Check for skills.'
-if grep -Fq "$red_flag_row" "$SKILL_MD"; then
-  pass "Red Flags table present (verified verbatim row)"
+# Test 9: Red Flags table first row present (verbatim check)
+red_flag_row_first='"This is just a simple question" | Questions are tasks. Check for skills.'
+if grep -Fq "$red_flag_row_first" "$SKILL_MD"; then
+  pass "Red Flags table present (verified first row)"
 else
-  fail "Red Flags table row not found"
+  fail "Red Flags table first row not found"
+fi
+
+# Test 10: Red Flags table last row present (verbatim check)
+red_flag_row_last='"I know what that means" | Knowing the concept ≠ using the skill. Invoke it.'
+if grep -Fq "$red_flag_row_last" "$SKILL_MD"; then
+  pass "Red Flags table last row verified (verbatim)"
+else
+  fail "Red Flags table last row not found or text differs"
 fi
 
 echo

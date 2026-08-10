@@ -40,7 +40,7 @@ node -e '
   for (const key of keys) {
     const r = { key, tasks: 0, fixBriefs: 0, runs: 0, backstops: 0,
       byGate: {}, oldFormatRuns: 0, degrades: {}, pending: 0,
-      oldestPendingDays: null, swept: {}, unsweepableClass: 0, skipped: 0, dossiers: 0 };
+      oldestPendingDays: null, swept: {}, unsweepableClass: 0, tierSkips: 0, skipped: 0, dossiers: 0 };
     // SDD: fix-cycle rate
     const sdd = path.join(base, "sdd", key);
     const fixTasks = new Set();
@@ -76,21 +76,25 @@ node -e '
         try { events.push(JSON.parse(l)); } catch (e) { r.skipped++; }
       }
       const sweptRefs = new Set(events.filter(e => e.event === "swept").map(e => e.ref));
+      const tierSkipIds = new Set(events.filter(e => e.event === "ungated" && e.class === "tier-skip").map(e => e.id));
       let oldestTs = null;
       for (const e of events) {
         if (e.event === "ungated") {
-          // Degrades = preflight-degrade events ONLY; class-3
-          // incomplete-review events carry status "incomplete" but are a
-          // different metric (they appear in pending/swept, not here).
-          if (e.class === "degraded-gate" && e.status) r.degrades[e.status] = (r.degrades[e.status] || 0) + 1;
-          if (e.sweepable === false) r.unsweepableClass++;
-          else if (!sweptRefs.has(e.id)) {
-            r.pending++;
-            const t = Date.parse(e.ts);
-            if (!Number.isNaN(t) && (oldestTs === null || t < oldestTs)) oldestTs = t;
+          if (e.class === "tier-skip") {
+            // Exclusive metric: approved skips never count as degraded,
+            // doc-recorded, or pending (spec 3.4).
+            r.tierSkips++;
+          } else {
+            if (e.class === "degraded-gate" && e.status) r.degrades[e.status] = (r.degrades[e.status] || 0) + 1;
+            if (e.sweepable === false) r.unsweepableClass++;
+            else if (!sweptRefs.has(e.id)) {
+              r.pending++;
+              const t = Date.parse(e.ts);
+              if (!Number.isNaN(t) && (oldestTs === null || t < oldestTs)) oldestTs = t;
+            }
           }
         } else if (e.event === "swept") {
-          r.swept[e.verdict] = (r.swept[e.verdict] || 0) + 1;
+          if (!tierSkipIds.has(e.ref)) r.swept[e.verdict] = (r.swept[e.verdict] || 0) + 1;
         }
       }
       if (oldestTs !== null) r.oldestPendingDays = Math.floor((Date.now() - oldestTs) / 86400000);
@@ -100,11 +104,11 @@ node -e '
   // Fleet aggregate (spec 4.5: every per-repo metric class, aggregated).
   const agg = { repos: repos.length, tasks: 0, fixBriefs: 0, runs: 0,
     backstops: 0, oldFormatRuns: 0, pending: 0, oldestPendingDays: null,
-    sweptTotal: 0, swept: {}, skipped: 0, degrades: {}, byGate: {}, dossiers: 0 };
+    sweptTotal: 0, swept: {}, tierSkips: 0, skipped: 0, degrades: {}, byGate: {}, dossiers: 0 };
   for (const r of repos) {
     agg.tasks += r.tasks; agg.fixBriefs += r.fixBriefs; agg.runs += r.runs;
     agg.backstops += r.backstops; agg.oldFormatRuns += r.oldFormatRuns;
-    agg.pending += r.pending; agg.skipped += r.skipped; agg.dossiers += r.dossiers;
+    agg.pending += r.pending; agg.tierSkips += r.tierSkips; agg.skipped += r.skipped; agg.dossiers += r.dossiers;
     if (r.oldestPendingDays !== null &&
         (agg.oldestPendingDays === null || r.oldestPendingDays > agg.oldestPendingDays))
       agg.oldestPendingDays = r.oldestPendingDays;
@@ -131,6 +135,7 @@ node -e '
     console.log(`- Backstop rate: ${r.backstops}/${r.runs}`);
     console.log(`- Dossiers: ${r.dossiers}/${r.runs}`);
     console.log(`- Fix-cycle rate: ${r.fixBriefs}/${r.tasks} tasks`);
+    console.log(`- Tier skips: ${r.tierSkips}`);
     const deg = Object.entries(r.degrades).map(([k, v]) => `${k}: ${v}`).join("; ") || "none";
     console.log(`- Degrades by status — ${deg}`);
     console.log(`- Ungated backlog — Pending: ${r.pending}${r.oldestPendingDays === null ? "" : `; Oldest pending: ${r.oldestPendingDays} day(s)`}; Swept: ${sweptTotal} (${Object.entries(r.swept).map(([k,v])=>`${k}:${v}`).join(", ") || "-"}); doc-recorded: ${r.unsweepableClass}`);
@@ -144,6 +149,7 @@ node -e '
     const abyg = Object.entries(agg.byGate).map(([g, v]) => `${g}: [${v.rounds.join(", ")}] (backstops ${v.backstops}/${v.runs})`).join("; ") || "none";
     console.log(`- Rounds by gate — ${abyg}`);
     console.log(`- Fix-cycle rate: ${agg.fixBriefs}/${agg.tasks} tasks`);
+    console.log(`- Tier skips: ${agg.tierSkips}`);
     console.log(`- Degrades by status — ` + (Object.entries(agg.degrades).map(([k, v]) => `${k}: ${v}`).join("; ") || "none"));
     console.log(`- Total pending: ${agg.pending}${agg.oldestPendingDays === null ? "" : `; Oldest pending: ${agg.oldestPendingDays} day(s)`}; Total swept: ${agg.sweptTotal} (${Object.entries(agg.swept).map(([k,v])=>`${k}:${v}`).join(", ") || "-"}); Artifacts skipped: ${agg.skipped}`);
   }

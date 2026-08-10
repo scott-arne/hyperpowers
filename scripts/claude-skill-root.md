@@ -1,6 +1,6 @@
 ---
 name: hyperpowers
-description: Software-engineering workflow skills - brainstorm designs, write specs and plans, TDD, systematic debugging, and code review. Use when starting any coding, design, planning, debugging, or review task.
+description: Software-engineering workflow skills: brainstorming, specs, plans, TDD, debugging, code review. Use for any coding, design, planning, debugging, or review task.
 ---
 
 # Hyperpowers {{VERSION}} (bundled for Claude Desktop / claude.ai)
@@ -73,6 +73,8 @@ This bundle runs in Claude Desktop / claude.ai, where some Claude Code-specific 
 
 These thoughts mean STOP—you're rationalizing:
 
+*In this bundle, "invoke the skill" means: read that skill's `skills/<name>/SKILL.md` in full and follow it.*
+
 | Thought | Reality |
 |---------|---------|
 | "This is just a simple question" | Questions are tasks. Check for skills. |
@@ -86,7 +88,7 @@ These thoughts mean STOP—you're rationalizing:
 | "The skill is overkill" | Simple things become complex. Use it. |
 | "I'll just do this one thing first" | Check BEFORE doing anything. |
 | "This feels productive" | Undisciplined action wastes time. Skills prevent this. |
-| "I know what that means" | Knowing the concept ≠ using the skill. Read it. |
+| "I know what that means" | Knowing the concept ≠ using the skill. Invoke it. |
 
 ## Getting Started
 

@@ -137,7 +137,7 @@ Subagent (general-purpose):
     - Your concerns, if any
     - The report file path
 
-    the controller re-runs your covering command; a report that doesn't match its output is a failed task.
+    The controller re-runs your covering command; a report that doesn't match its output is a failed task.
 
     If BLOCKED or NEEDS_CONTEXT, put the specifics in the final message
     itself — the controller acts on it directly.

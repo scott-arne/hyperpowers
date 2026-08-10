@@ -266,9 +266,10 @@ A missing or unparseable tier line is `declared none -> effective standard
 The tier changes exactly one thing: an EFFECTIVE-LOW task — no escalation
 trigger fired at any point — skips the per-task Codex gate after the task
 reviewer approves. A low tier is honored only if the plan's Codex gate
-actually reviewed the plan; when that gate was skipped or degraded,
-unreviewed low tiers execute as standard (full train), recorded with the
-ledger line shape as `(unreviewed low tier)`. Record the skip immediately:
+actually reviewed the plan; when that gate was skipped or degraded, or its
+outcome is unknown (no plan-gate evidence available), unreviewed low tiers
+execute as standard (full train), recorded with the ledger line shape as
+`(unreviewed low tier)`. Record the skip immediately:
 `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class tier-skip --gate task --base <TASK_BASE> --head <HEAD> --tier-declared low --tier-effective low --note "Task N: <rationale>"`.
 Standard and high tiers run today's full train unchanged; so does every
 non-SDD review. The Claude task reviewer always runs.

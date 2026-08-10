@@ -15,7 +15,7 @@ echo "Claude skill packaging tests"
 TEST_DIST=$(mktemp -d)
 trap 'rm -rf "$TEST_DIST"' EXIT
 
-# Run the packaging script
+# Run the packaging script (stdout = artifact path, stderr = progress messages)
 export DIST_DIR="$TEST_DIST"
 if ! bash "$PACKAGE_SCRIPT" > /dev/null 2>&1; then
   fail "package-claude-skill.sh exited non-zero"
@@ -92,13 +92,14 @@ else
 fi
 
 # Test 6: skill count in zip equals repo skill count minus 1 (using-hyperpowers excluded)
+# Skills are renamed to INSTRUCTIONS.md during packaging
 repo_skill_count=$(find "$REPO_ROOT/skills" -mindepth 2 -maxdepth 2 -name "SKILL.md" | wc -l | tr -d ' ')
 expected_zip_count=$((repo_skill_count - 1))
-zip_skill_count=$(find "$EXTRACT_DIR/hyperpowers/skills" -mindepth 2 -maxdepth 2 -name "SKILL.md" | wc -l | tr -d ' ')
+zip_skill_count=$(find "$EXTRACT_DIR/hyperpowers/skills" -mindepth 2 -maxdepth 2 -name "INSTRUCTIONS.md" | wc -l | tr -d ' ')
 if [[ "$expected_zip_count" -eq "$zip_skill_count" ]]; then
-  pass "skill count = repo - 1 (router supersedes using-hyperpowers, $zip_skill_count skills)"
+  pass "skill count = repo - 1 (router supersedes using-hyperpowers, $zip_skill_count INSTRUCTIONS.md files)"
 else
-  fail "skill count mismatch: expected $expected_zip_count (repo $repo_skill_count - 1), got $zip_skill_count"
+  fail "skill count mismatch: expected $expected_zip_count (repo $repo_skill_count - 1), got $zip_skill_count INSTRUCTIONS.md files"
 fi
 
 # Test 7: LICENSE present
@@ -138,7 +139,7 @@ trap "rm -rf $TEST_DIST_STALE" EXIT
 STALE_ZIP="$TEST_DIST_STALE/hyperpowers-$VERSION.zip"
 (cd "$TEST_DIST_STALE" && mkdir -p hyperpowers && echo "stale" > hyperpowers/STALE.md && zip -qr "hyperpowers-$VERSION.zip" hyperpowers)
 export DIST_DIR="$TEST_DIST_STALE"
-bash "$PACKAGE_SCRIPT" > /dev/null 2>&1
+bash "$PACKAGE_SCRIPT" > /dev/null 2>&1 || true
 if unzip -l "$STALE_ZIP" | grep -q "hyperpowers/STALE.md"; then
   fail "rebuild did not remove stale zip entry (hyperpowers/STALE.md still present)"
 else
@@ -159,13 +160,13 @@ if bash "$PACKAGE_SCRIPT" > /dev/null 2>&1; then
 else
   pass "frontmatter guard rejects drifted template keys"
 fi
-unset SKILL_TEMPLATE
+unset SKILL_TEMPLATE DIST_DIR
 
 # Test 13 (regression finding 3): relative DIST_DIR resolves from caller cwd
 TEST_CWD=$(mktemp -d)
 # shellcheck disable=SC2064
 trap "rm -rf $TEST_CWD" EXIT
-(cd "$TEST_CWD" && DIST_DIR=relout bash "$PACKAGE_SCRIPT" > /dev/null 2>&1)
+(cd "$TEST_CWD" && DIST_DIR=relout bash "$PACKAGE_SCRIPT" > /dev/null 2>&1 || true)
 RELOUT_ZIP="$TEST_CWD/relout/hyperpowers-$VERSION.zip"
 if [[ -f "$RELOUT_ZIP" ]]; then
   pass "relative DIST_DIR resolves from caller cwd"
@@ -182,7 +183,7 @@ TEST_DIST_CANARY=$(mktemp -d)
 # shellcheck disable=SC2064
 trap "rm -rf $TEST_DIST_CANARY $CANARY" EXIT
 export DIST_DIR="$TEST_DIST_CANARY"
-bash "$PACKAGE_SCRIPT" > /dev/null 2>&1
+bash "$PACKAGE_SCRIPT" > /dev/null 2>&1 || true
 CANARY_ZIP="$TEST_DIST_CANARY/hyperpowers-$VERSION.zip"
 if unzip -l "$CANARY_ZIP" | grep -q ".tmp-untracked-canary"; then
   fail "untracked canary file was included in zip"
@@ -219,6 +220,65 @@ if grep -q "skills/using-hyperpowers/SKILL.md" "$SKILL_MD"; then
 else
   pass "router no longer references skills/using-hyperpowers/SKILL.md"
 fi
+
+# Test 18a: router catalog references INSTRUCTIONS.md (not SKILL.md)
+catalog_instructions_count=$(grep -cE 'skills/[^/]+/INSTRUCTIONS\.md' "$SKILL_MD" || true)
+if [[ "$catalog_instructions_count" -ge 14 ]]; then
+  pass "router catalog references INSTRUCTIONS.md paths ($catalog_instructions_count occurrences)"
+else
+  fail "router catalog missing INSTRUCTIONS.md references (expected ≥14, got $catalog_instructions_count)"
+fi
+
+# Test 18b: router does NOT reference skills/*/SKILL.md paths (except prose mentions)
+# Exclude the using-hyperpowers check (test 18) and allow writing-skills to mention it as prose
+catalog_skill_md_refs=$(grep -E 'skills/[^/]+/SKILL\.md' "$SKILL_MD" | grep -v 'skills/using-hyperpowers/SKILL.md' || true)
+if [[ -z "$catalog_skill_md_refs" ]]; then
+  pass "router does not reference skills/*/SKILL.md paths (renamed to INSTRUCTIONS.md)"
+else
+  fail "router still references skills/*/SKILL.md paths: $catalog_skill_md_refs"
+fi
+
+# Test 19: exactly one SKILL.md basename in zip (upload format restriction)
+skill_md_count=$(unzip -l "$EXPECTED_ZIP" | grep -E '^ *[0-9]+ .*/SKILL\.md$' | wc -l | tr -d ' ')
+if [[ "$skill_md_count" -eq 1 ]]; then
+  pass "exactly one SKILL.md basename in zip (upload format requirement)"
+else
+  fail "zip contains $skill_md_count files with basename SKILL.md (upload requires exactly 1)"
+fi
+
+# Test 20: at least one skills/*/INSTRUCTIONS.md present (bundled skills)
+instructions_count=$(unzip -l "$EXPECTED_ZIP" | grep -cE 'hyperpowers/skills/[^/]+/INSTRUCTIONS\.md$' || true)
+if [[ "$instructions_count" -gt 0 ]]; then
+  pass "bundled skills present ($instructions_count INSTRUCTIONS.md files)"
+else
+  fail "no skills/*/INSTRUCTIONS.md files found in zip"
+fi
+
+# Test 21: NO skills/*/SKILL.md in zip (all renamed to INSTRUCTIONS.md)
+bundled_skill_md_count=$(unzip -l "$EXPECTED_ZIP" | grep -cE 'hyperpowers/skills/[^/]+/SKILL\.md$' || true)
+if [[ "$bundled_skill_md_count" -eq 0 ]]; then
+  pass "no skills/*/SKILL.md in zip (all renamed to INSTRUCTIONS.md)"
+else
+  fail "zip contains $bundled_skill_md_count skills/*/SKILL.md files (should be 0, renamed to INSTRUCTIONS.md)"
+fi
+
+# Test 27 (NEW): early pipe closure doesn't kill the build
+# Verify that piping output to head (which closes stdout early) still produces a valid artifact
+TEST_DIST_PIPE=$(mktemp -d)
+# shellcheck disable=SC2064
+trap "rm -rf $TEST_DIST_PIPE" EXIT
+export DIST_DIR="$TEST_DIST_PIPE"
+if bash "$PACKAGE_SCRIPT" | head -1 > /dev/null 2>&1; then
+  PIPE_ZIP="$TEST_DIST_PIPE/hyperpowers-$VERSION.zip"
+  if [[ -f "$PIPE_ZIP" ]]; then
+    pass "early pipe closure does not kill build (head -1 artifact exists)"
+  else
+    fail "early pipe closure resulted in missing artifact"
+  fi
+else
+  fail "early pipe closure caused script to exit non-zero"
+fi
+unset DIST_DIR
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

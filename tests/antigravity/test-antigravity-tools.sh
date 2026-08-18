@@ -24,7 +24,7 @@ echo "test-antigravity-tools: checking Antigravity tool mapping"
 [ -f "$MAPPING" ] || fail "tool mapping missing at $MAPPING"
 
 # --- Core action→tool mappings are documented -------------------------------
-for tool in write_to_file replace_file_content invoke_subagent; do
+for tool in write_to_file replace_file_content invoke_subagent view_file; do
   grep -q "$tool" "$MAPPING" \
     || fail "mapping does not document the '$tool' tool"
 done
@@ -39,8 +39,14 @@ grep -q '`research`' "$MAPPING" \
 grep -qE 'ArtifactType.*task|task. artifact' "$MAPPING" \
   || fail "mapping does not document task tracking as a 'task' artifact"
 
+# --- Skill-load path: view_file with IsSkillFile ---------------------------
+grep -q 'view_file.*IsSkillFile' "$MAPPING" \
+  || fail "mapping does not document the view_file + IsSkillFile skill-load path"
+grep -q 'SKILL\.md' "$MAPPING" \
+  || fail "mapping does not document reading SKILL.md as the skill-load mechanism"
+
 # --- SKILL.md Platform Adaptation links the mapping -------------------------
 grep -q "antigravity-tools.md" "$SKILL" \
   || fail "SKILL.md Platform Adaptation does not reference antigravity-tools.md"
 
-echo "PASS: Antigravity tool mapping valid (subagent dispatch, task artifact, SKILL.md link)"
+echo "PASS: Antigravity tool mapping valid (subagent dispatch, task artifact, skill-load path, SKILL.md link)"

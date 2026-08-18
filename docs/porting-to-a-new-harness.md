@@ -237,10 +237,10 @@ nesting differ per harness**.
 - Manifests: `.cursor-plugin/plugin.json` is the Shape A manifest example that
   points the harness at `./skills/` and the right `hooks-*.json`. Claude Code's
   `.claude-plugin/plugin.json` sets neither field — it auto-discovers `skills/`
-  and `hooks/hooks.json` by convention. Do **not** copy Codex's
-  `.codex-plugin/plugin.json` for Shape A: it declares an empty `hooks` object
-  specifically to suppress Codex's `hooks/hooks.json` auto-discovery, because
-  Codex surfaces skills natively and runs no session-start hook.
+  and `hooks/hooks.json` by convention. Codex's `.codex-plugin/plugin.json`
+  declares `"hooks": "./hooks/hooks-codex.json"` which runs a session-start hook
+  (`hooks/session-start-codex`) — this is a fork-specific divergence from
+  upstream Superpowers where Codex has no session-start hook.
 
 > **A hook *system* is not a session-start *event*.** A harness can have a
 > `hooks.json` mechanism — and even contain the literal string `SessionStart` in
@@ -256,8 +256,8 @@ The harness loads a JS/TS module that exposes lifecycle callbacks. You register
 the skills directory through the harness's API and inject the bootstrap by
 mutating the message array in code.
 
-- Reference: `.opencode/plugins/superpowers.js` (JavaScript) and
-  `.pi/extensions/superpowers.ts` (TypeScript). pi is the closest reference for
+- Reference: `.opencode/plugins/hyperpowers.js` (JavaScript) and
+  `.pi/extensions/hyperpowers.ts` (TypeScript). pi is the closest reference for
   any harness that has **no native skill tool**.
 
 ### Shape C — Instructions-file
@@ -271,12 +271,12 @@ harness loads the referenced content as-is. **This works only because the file i
 part of the installed extension** — never substitute "edit the user's global
 `GEMINI.md`/`AGENTS.md`" for shipping your own (rule 2).
 
-- Reference: `gemini-extension.json` (manifest, with `contextFileName`),
-  `GEMINI.md` (two `@`-includes — the bootstrap skill and the tool-mapping
-  reference), `skills/using-hyperpowers/references/gemini-tools.md`.
-- Note: `@`-include is a Gemini feature. If your harness loads an instructions
-  file but has no include syntax, you must inline the bootstrap content into the
-  file instead.
+- Note: Upstream Superpowers included a Gemini CLI integration as the Shape C
+  reference (`gemini-extension.json`, `GEMINI.md`, `gemini-tools.md`); this fork
+  removed Gemini support. If porting to a harness that uses Shape C, refer to
+  upstream's Gemini integration as the pattern. `@`-include is a Gemini feature;
+  if your harness loads an instructions file but has no include syntax, you must
+  inline the bootstrap content into the file instead.
 - **Don't trust that an `@`-include is actually expanded — prove it.** A
   Gemini-*derived* harness can accept `@./path` syntax yet treat it as a *hint
   the model may choose to read* (it emits a file-read tool call) rather than a
@@ -291,8 +291,8 @@ part of the installed extension** — never substitute "edit the user's global
 |---|---|---|
 | runs a shell command at session start and reads its stdout | A (shell-hook) | Cursor (`hooks/session-start` + `hooks/hooks-cursor.json` + `.cursor-plugin/`) |
 | is a JS/TS plugin host with session/message lifecycle callbacks | B (in-process) | OpenCode (`.opencode/`) — or pi (`.pi/`) if it has no native skill tool |
-| ships an extension-declared context file it always loads | C (instructions-file) | Gemini (`gemini-extension.json` + `GEMINI.md` + `references/gemini-tools.md`) |
-| has a plugin install command and a manifest `contextFileName` (or equivalent) the installer keeps | C via the plugin installer | Antigravity (`.antigravity-plugin/` — `agy plugin install` ships a generated context file; verify the installer preserves it — Part 6) |
+| ships an extension-declared context file it always loads | C (instructions-file) | (upstream Superpowers Gemini integration; removed from this fork) |
+| has a plugin install command and a reference file the installer delivers | C via the plugin installer | Antigravity (`skills/using-hyperpowers/references/antigravity-tools.md`) |
 
 Most real harnesses fit one row cleanly; the last is the hybrid case (rule 2 still
 holds — the bootstrap rides the install mechanism, never a user-config edit).
@@ -337,15 +337,15 @@ ones in spirit:
     harnesses, not dev/type packages. If you hit this, confirm the approach with
     the maintainer rather than quietly adding a dependency. Keep any build output
     out of git and document the command.
-- **Shape C (instructions-file):** a small manifest (see `gemini-extension.json`:
-  `name`, `description`, `version`, `contextFileName`) plus the context file
-  itself (`GEMINI.md` is just two `@`-includes: the bootstrap skill and the
-  tool-mapping reference). The Gemini manifest has no `skills` field — Gemini
-  auto-discovers the `skills/` directory bundled in the installed extension. If
-  your harness has a native skill tool but no manifest field to register the
-  directory, you must find its discovery convention (read its extension docs),
-  then verify empirically: after wiring, ask the model to list its available
-  skills — if the bundled skills don't appear, discovery isn't working yet.
+- **Shape C (instructions-file):** a small manifest (e.g. upstream Superpowers'
+  removed Gemini integration used `name`, `description`, `version`,
+  `contextFileName`) plus the context file itself. If the harness supports
+  includes, the context file can be minimal (just include directives for the
+  bootstrap skill and tool-mapping reference). If your harness has a native skill
+  tool but no manifest field to register the directory, you must find its
+  discovery convention (read its extension docs), then verify empirically: after
+  wiring, ask the model to list its available skills — if the bundled skills
+  don't appear, discovery isn't working yet.
 
 ### Step 3 — Wire the bootstrap injection
 
@@ -442,8 +442,9 @@ messages break some models (#894). Three things you must replicate:
 nothing.** There is no injector, so you do *not* strip frontmatter or build a
 wrapped string. The context file your extension ships (declared by the manifest —
 *not* the user's own global file) pulls in two things: the `using-hyperpowers`
-skill and the harness's tool-mapping reference. `GEMINI.md`
-does this with two `@`-includes (`@./skills/using-hyperpowers/SKILL.md` and
+skill and the harness's tool-mapping reference. Upstream Superpowers' removed
+Gemini integration did this with two `@`-includes
+(`@./skills/using-hyperpowers/SKILL.md` and
 `@./skills/using-hyperpowers/references/<harness>-tools.md`); the harness loads
 them raw, frontmatter and all, and `SKILL.md` already carries its own
 `<EXTREMELY-IMPORTANT>` block internally. If your harness has no include syntax,
@@ -491,12 +492,12 @@ Where the mapping lives depends on shape:
   section links the per-harness references files. (Shape A harnesses have no
   instructions file; the mapping is *not* inlined into the hook output.)
 - **Shape B:** the mapping is typically inlined into the bootstrap string you
-  inject (see the `toolMapping` constant in `superpowers.js`). pi keeps it in
+  inject (see the `toolMapping` constant in `hyperpowers.js`). pi keeps it in
   *both* places — `piToolMapping()` inline **and** `references/pi-tools.md`. If
   you maintain it in two places, update both, or the port is half-done.
 - **Shape C:** put it in `references/<harness>-tools.md` and pull it into the
-  always-loaded instructions file (e.g. `GEMINI.md` `@`-includes
-  `gemini-tools.md`).
+  always-loaded instructions file (e.g. upstream's removed Gemini integration used
+  `@`-includes in `GEMINI.md` to include `gemini-tools.md`).
 
 You may also add a one-line pointer to your harness in `SKILL.md`'s "Platform
 Adaptation" section so an agent reading the bootstrap knows where its mapping
@@ -694,11 +695,11 @@ Then:
     session), that is the strongest clean bootstrap: declare it, and the installer
     preserves it *and* the harness loads it. Generate it at install time from the
     live `using-hyperpowers/SKILL.md` + the tool mapping (wrapped in
-    `<EXTREMELY_IMPORTANT>`) so the installed bootstrap never drifts. This is what
-    `.antigravity-plugin/install.sh` does — `agy plugin install` reports
-    `✔ context : ANTIGRAVITY.md`, and a clean session reads `using-hyperpowers`'s
-    SKILL.md, loads `brainstorming`, and enters the brainstorming flow before any
-    code. **Verify with a marker** that the installer keeps the file and the
+    `<EXTREMELY_IMPORTANT>`) so the installed bootstrap never drifts. (Upstream
+    Superpowers' Antigravity integration used this approach via
+    `.antigravity-plugin/install.sh`, generating `ANTIGRAVITY.md` at install time;
+    this fork documents only the tool-mapping reference file). **Verify with a
+    marker** that the installer keeps the file and the
     harness loads it: one porter wrongly concluded it couldn't, because they
     shipped the file *without* declaring `contextFileName` and it was stripped as
     unrecognized.
@@ -791,7 +792,7 @@ Use this as the live index; when in doubt, read the files, not this table.
 | Kimi Code | `.kimi-plugin/plugin.json` | manifest `sessionStart.skill` loads `using-hyperpowers` | inline `skillInstructions` in manifest | `tests/kimi/` | marketplace or `/plugins install` GitHub URL |
 | OpenCode | `.opencode/plugins/hyperpowers.js` (declared via root `package.json` `main`) | in-process: `config` hook registers skills dir; `experimental.chat.messages.transform` injects user message | inline in `hyperpowers.js` | `tests/opencode/` | `opencode.json` plugin git URL |
 | pi | `.pi/extensions/hyperpowers.ts` | in-process: `resources_discover` registers skills; `context` event injects user message; lifecycle-flag + compaction-aware | `piToolMapping()` inline **and** `references/pi-tools.md` | `tests/pi/` | repo-root `package.json` fields |
-| Antigravity | `.antigravity-plugin/` | plugin installer generates context file | `references/antigravity-tools.md` | `tests/antigravity/` | `agy plugin install` |
+| Antigravity | (mapping reference only) | tool-mapping reference (no skill-tool harness) | `references/antigravity-tools.md` | `tests/antigravity/` | (upstream only) |
 
 ## Appendix B — Gotchas that have bitten porters
 

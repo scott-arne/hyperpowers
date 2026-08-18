@@ -188,6 +188,7 @@ You MUST complete each phase before proceeding to the next.
    - Test passes now?
    - No other tests broken?
    - Issue actually resolved?
+   - Verification: re-run the original failing command and confirm the failure is gone before claiming the fix.
 
 4. **If Fix Doesn't Work**
    - STOP
@@ -283,16 +284,3 @@ These techniques are part of systematic debugging and available in this director
 - **`defense-in-depth.md`** - Add validation at multiple layers after finding root cause
 - **`condition-based-waiting.md`** - Replace arbitrary timeouts with condition polling
 
-**Related skills:**
-- **hyperpowers:test-driven-development** - For creating failing test case (Phase 4, Step 1)
-- Verify the fix by re-running the original failing command and reading its
-  output before claiming success (hyperpowers:test-driven-development
-  covers the red-green regression discipline)
-
-## Real-World Impact
-
-From debugging sessions:
-- Systematic approach: 15-30 minutes to fix
-- Random fixes approach: 2-3 hours of thrashing
-- First-time fix rate: 95% vs 40%
-- New bugs introduced: Near zero vs common

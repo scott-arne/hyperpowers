@@ -194,20 +194,13 @@ handoff — at worst it is skipped. When this gate is skipped or degraded (Codex
 
 ## Execution Handoff
 
-After saving the plan, offer execution choice:
+After saving the plan, hand off to execution. **Subagent-Driven Development is the default** — do not ask your human partner to pick an execution method. Announce the handoff and proceed:
 
-**"Plan complete and saved to `docs/hyperpowers/plans/<filename>.md`. Two execution options:**
+**"Plan complete and saved to `docs/hyperpowers/plans/<filename>.md`. Executing with Subagent-Driven Development (fresh subagent per task, review between tasks)."**
 
-**1. Subagent-Driven (recommended)** - I dispatch a fresh subagent per task, review between tasks, fast iteration
-
-**2. Inline Execution** - Execute tasks in this session using executing-plans, batch execution with checkpoints
-
-**Which approach?"**
-
-**If Subagent-Driven chosen:**
 - **REQUIRED SUB-SKILL:** Use hyperpowers:subagent-driven-development
 - Fresh subagent per task + two-stage review
 
-**If Inline Execution chosen:**
+**If your human partner explicitly requested inline execution** (execute in this session, no subagents):
 - **REQUIRED SUB-SKILL:** Use hyperpowers:executing-plans
 - Batch execution with checkpoints for review

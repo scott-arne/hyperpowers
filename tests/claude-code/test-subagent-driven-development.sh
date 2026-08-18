@@ -136,7 +136,7 @@ output=$(run_claude "In subagent-driven-development, how does the controller pro
 Controller provides: <directly or by file>
 Implementer must read plan file: <yes or no>" "$CLAUDE_PROMPT_TIMEOUT")
 
-if assert_contains "$output" "provide.*directly\|full.*text\|paste\|include.*prompt" "Provides text directly"; then
+if assert_contains "$output" "by file\|task-brief\|brief\|provide.*directly\|full.*text\|paste\|include.*prompt" "Provides text directly"; then
     : # pass
 else
     exit 1

@@ -28,9 +28,24 @@ function sleep(ms) {
 
 function startServer({ port, dir, env = {}, serverPath = SERVER_PATH }) {
   cleanup(dir);
+  // Filter out telemetry-disable env vars from the parent process unless explicitly
+  // set in the `env` parameter, so tests can control telemetry state independently
+  // of the global environment.
+  const filteredEnv = { ...process.env };
+  const telemetryVars = [
+    'SUPERPOWERS_DISABLE_TELEMETRY',
+    'DISABLE_TELEMETRY',
+    'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'
+  ];
+  for (const varName of telemetryVars) {
+    if (!(varName in env)) {
+      delete filteredEnv[varName];
+    }
+  }
+
   return spawn('node', [serverPath], {
     env: {
-      ...process.env,
+      ...filteredEnv,
       BRAINSTORM_PORT: String(port),
       BRAINSTORM_DIR: dir,
       BRAINSTORM_TOKEN: TOKEN,

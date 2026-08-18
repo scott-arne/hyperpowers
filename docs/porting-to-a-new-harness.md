@@ -90,7 +90,7 @@ every session, with no per-session opt-in by your human partner.** This is the
 one non-negotiable capability. It can take any form:
 
 - a **hook/event system** that runs a shell command at session start and reads
-  its stdout (Claude Code, Codex, Cursor, Copilot CLI), or
+  its stdout (Claude Code, Cursor, Copilot CLI), or
 - an **in-process plugin/extension** with a session-start or message lifecycle
   callback that can mutate the message array (OpenCode, pi), or
 - an **instructions-file** convention where the harness loads a context file that
@@ -158,7 +158,7 @@ A port is finished when **all** of these are true:
 A quick smoke check before the full acceptance test: start a session and ask the
 model to describe its superpowers. If the bootstrap injected, it knows it has
 them. (OpenCode's install doc uses `opencode run --print-logs "hello" 2>&1 |
-grep -i hyperpowers` for the same goal via a different mechanism — log-grep
+grep -i superpowers` for the same goal via a different mechanism — log-grep
 rather than asking the model; the `2>&1` matters because logs go to stderr. Find
 your harness's equivalent.)
 
@@ -227,18 +227,20 @@ you may **not** do is bridge a gap by editing the user's global config.
 The harness has a hook system that runs a shell command at session start and
 reads JSON from its stdout. The configured command runs `run-hook.cmd`, a
 polyglot wrapper that just locates bash and dispatches the named script; the
-script (`hooks/session-start`, or a harness-specific variant like
-`hooks/session-start-codex`) is what reads `using-hyperpowers/SKILL.md` and
-prints a JSON object whose **field name and nesting differ per harness**.
+script (`hooks/session-start`, or a harness-specific variant) is what reads
+`using-hyperpowers/SKILL.md` and prints a JSON object whose **field name and
+nesting differ per harness**.
 
-- Reference: `hooks/session-start` (and `hooks/session-start-codex`),
-  `hooks/run-hook.cmd`, and the per-harness hook config `hooks/hooks.json`
-  (Claude Code), `hooks/hooks-codex.json` (Codex), `hooks/hooks-cursor.json`
+- Reference: `hooks/session-start`, `hooks/run-hook.cmd`, and the per-harness
+  hook config `hooks/hooks.json` (Claude Code) and `hooks/hooks-cursor.json`
   (Cursor).
-- Manifests: `.codex-plugin/plugin.json`, `.cursor-plugin/plugin.json` point the
-  harness at `./skills/` and the right `hooks-*.json`. (Claude Code's
+- Manifests: `.cursor-plugin/plugin.json` is the Shape A manifest example that
+  points the harness at `./skills/` and the right `hooks-*.json`. Claude Code's
   `.claude-plugin/plugin.json` sets neither field — it auto-discovers `skills/`
-  and `hooks/hooks.json` by convention.)
+  and `hooks/hooks.json` by convention. Do **not** copy Codex's
+  `.codex-plugin/plugin.json` for Shape A: it declares an empty `hooks` object
+  specifically to suppress Codex's `hooks/hooks.json` auto-discovery, because
+  Codex surfaces skills natively and runs no session-start hook.
 
 > **A hook *system* is not a session-start *event*.** A harness can have a
 > `hooks.json` mechanism — and even contain the literal string `SessionStart` in
@@ -254,18 +256,11 @@ The harness loads a JS/TS module that exposes lifecycle callbacks. You register
 the skills directory through the harness's API and inject the bootstrap by
 mutating the message array in code.
 
-- Reference: `.opencode/plugins/hyperpowers.js` (JavaScript) and
-  `.pi/extensions/hyperpowers.ts` (TypeScript). pi is the closest reference for
+- Reference: `.opencode/plugins/superpowers.js` (JavaScript) and
+  `.pi/extensions/superpowers.ts` (TypeScript). pi is the closest reference for
   any harness that has **no native skill tool**.
 
 ### Shape C — Instructions-file
-
-> **Note:** Gemini CLI itself is EOL as of 2026-06-18 and is no longer shipped by
-> this fork — `gemini-extension.json`, `GEMINI.md`, and `references/gemini-tools.md`
-> have been removed. It remains the clearest worked example of the instructions-file
-> shape, so it is kept here for illustration; the file names below refer to those
-> deleted references. When porting a live Shape C harness, apply the same pattern
-> with your own manifest and context file.
 
 The harness has neither a shell hook nor a code plugin — its session-start
 surface is a context file that *your installed extension ships and the manifest
@@ -294,7 +289,7 @@ part of the installed extension** — never substitute "edit the user's global
 
 | If the harness… | Use shape | Copy from |
 |---|---|---|
-| runs a shell command at session start and reads its stdout | A (shell-hook) | Codex (`hooks/session-start-codex` + `hooks/hooks-codex.json` + `.codex-plugin/`) |
+| runs a shell command at session start and reads its stdout | A (shell-hook) | Cursor (`hooks/session-start` + `hooks/hooks-cursor.json` + `.cursor-plugin/`) |
 | is a JS/TS plugin host with session/message lifecycle callbacks | B (in-process) | OpenCode (`.opencode/`) — or pi (`.pi/`) if it has no native skill tool |
 | ships an extension-declared context file it always loads | C (instructions-file) | Gemini (`gemini-extension.json` + `GEMINI.md` + `references/gemini-tools.md`) |
 | has a plugin install command and a manifest `contextFileName` (or equivalent) the installer keeps | C via the plugin installer | Antigravity (`.antigravity-plugin/` — `agy plugin install` ships a generated context file; verify the installer preserves it — Part 6) |
@@ -316,7 +311,7 @@ patterns below are summaries; the code is the spec.
 Create whatever the harness uses to recognize the plugin. Match the existing
 ones in spirit:
 
-- **Shape A:** a `*-plugin/plugin.json` (see `.codex-plugin/plugin.json`) with
+- **Shape A:** a `*-plugin/plugin.json` (see `.cursor-plugin/plugin.json`) with
   `name`, `version`, `description`, author/license/keywords, `"skills":
   "./skills/"`, and `"hooks": "./hooks/hooks-<harness>.json"`. Plus the
   `hooks-<harness>.json` itself, registering a session-start hook whose command
@@ -382,25 +377,24 @@ both double-injects). Find the
 exact field, nesting, and event-matcher values your harness expects. Then
 decide: add a fourth branch to `hooks/session-start`, or — if the harness needs
 a different bootstrap message or env contract — add a dedicated
-`hooks/session-start-<harness>` script, the way Codex did. If you add a branch
+`hooks/session-start-<harness>` script. If you add a branch
 and your harness *also* sets an env var an earlier branch keys on (some harnesses
 set `CLAUDE_PLUGIN_ROOT` too), order your branch before the one that would
 otherwise shadow it. Match the harness's
-own event-matcher strings (Claude Code uses `startup|clear|compact`, Codex
-`startup|resume|clear`, Cursor `sessionStart`); wrong matchers mean the hook
-silently never fires.
+own event-matcher strings (Claude Code uses `startup|clear|compact`, Cursor
+`sessionStart`); wrong matchers mean the hook silently never fires.
 
 The **hook-config schema itself varies per harness** — don't assume the
-Claude/Codex shape is universal. Compare `hooks/hooks.json`,
-`hooks/hooks-codex.json`, and `hooks/hooks-cursor.json`: Cursor's uses
+Claude Code shape is universal. Compare `hooks/hooks.json` and
+`hooks/hooks-cursor.json`: Cursor's uses
 `"version": 1`, a lowercase `sessionStart` key, a relative
-`./hooks/run-hook.cmd` command, and omits the `matcher`/`type`/`async` fields the
-others use. Match your `hooks-<harness>.json` to whichever existing file is
+`./hooks/run-hook.cmd` command, and omits the `matcher`/`type`/`async` fields
+Claude Code uses. Match your `hooks-<harness>.json` to whichever existing file is
 closest, not to a single canonical template.
 
 The hook **command string references a harness-provided plugin-root variable**,
 and its name differs per harness: `hooks.json` uses `${CLAUDE_PLUGIN_ROOT}`,
-`hooks-codex.json` uses `${PLUGIN_ROOT}`, Cursor uses a relative path. Use
+`hooks-cursor.json` uses a relative path. Use
 whatever your harness exports. (The `session-start` script re-derives the root
 itself via `dirname`, so the script body doesn't depend on this — but the
 command in the manifest does.)
@@ -497,7 +491,7 @@ Where the mapping lives depends on shape:
   section links the per-harness references files. (Shape A harnesses have no
   instructions file; the mapping is *not* inlined into the hook output.)
 - **Shape B:** the mapping is typically inlined into the bootstrap string you
-  inject (see the `toolMapping` constant in `hyperpowers.js`). pi keeps it in
+  inject (see the `toolMapping` constant in `superpowers.js`). pi keeps it in
   *both* places — `piToolMapping()` inline **and** `references/pi-tools.md`. If
   you maintain it in two places, update both, or the port is half-done.
 - **Shape C:** put it in `references/<harness>-tools.md` and pull it into the
@@ -518,4 +512,316 @@ harness is listed.)
 with file tools — always use your platform's skill-loading mechanism.* The point
 is "don't bypass the mechanism," not "never use file-read." What counts as "your
 platform's mechanism" depends on the harness — and for a harness with no skill
-tool, the documented mechanism *is* reading `SKILL.md`. So r
+tool, the documented mechanism *is* reading `SKILL.md`. So reading it there
+honors the rule rather than breaking it. Distinguish three cases:
+
+1. **Native `Skill`-style tool** (Claude Code, Copilot CLI, Gemini's
+   `activate_skill`): point the mapping at that tool.
+2. **Native skill *discovery* but no `Skill` tool** (pi, Antigravity): the harness
+   can find and list skills, but the model can't call a tool to load one. Get the
+   skills installed where the harness scans (pi registers via `resources_discover`
+   → `skillPaths`; OpenCode via its `config` hook; `agy plugin install` copies
+   them in), and tell the model to load a skill by **reading its `SKILL.md` with
+   the file-read tool when the skill applies** — the sanctioned mechanism here,
+   the way `references/pi-tools.md` states it.
+
+   **For the bootstrap itself, prefer a declared context file (Part 6).** If the
+   harness has a `contextFileName`-style manifest field — as Antigravity does —
+   ship a generated context file through the installer: it's guaranteed-loaded and
+   carries both the `using-hyperpowers` content and the tool mapping. That is the
+   strong, preferred path.
+
+   **Fallback — the surfaced skill index.** If there's no context-file field but
+   the harness surfaces each installed skill's name + description at session start,
+   you need *neither* a built index nor a runtime-list instruction — the harness
+   is the index, and `using-hyperpowers`'s own surfaced description can be what
+   triggers the model to load it. This is softer than a declared context file;
+   two things it does **not** give you, versus a context file / hook / in-process
+   injector — account for both:
+   - **It bootstraps *triggering*, not the *tool mapping*.** An injector prepends
+     `<harness>-tools.md` alongside `using-hyperpowers` every session. Here nothing
+     injects the mapping — the model only sees skill *descriptions* and must *read*
+     your `references/<harness>-tools.md` when it needs tool names. It works
+     because skills name actions (the model reads the mapping when it acts), but
+     it's softer than injection. Make sure the mapping is reachable from what the
+     model loads — e.g. linked from `SKILL.md`'s Platform Adaptation section and
+     installed alongside the skills — not just sitting in the repo.
+   - **There's no structural guarantee the trigger fires.** No `<EXTREMELY_IMPORTANT>`
+     wrapper, no dedup, no re-injection after compaction — firing depends on the
+     model choosing to act on a description it sees in the index. This is exactly
+     why the acceptance test is mandatory here: it is the *only* guarantee, so run
+     it on the model(s) your users will actually use, not just the strongest one.
+3. **No skill system at all:** there is nothing to register, and the *only*
+   mechanism is the model reading `SKILL.md` on demand. But the model can't read
+   what it can't find: `using-hyperpowers/SKILL.md` does **not** enumerate the
+   available skills, so on its own the model won't know which skills exist or
+   their triggers. You must supply a discovery path. Two options, and they differ
+   in durability: (a) generate a skill index (each `skills/*/SKILL.md`'s `name` +
+   `description` frontmatter) and place it *inside* the `<EXTREMELY_IMPORTANT>`
+   wrapper alongside the tool mapping (Shape B recipe above) so it's covered by
+   the dedup guard — but a build-time index goes stale as skills are added; or
+   (b) instruct the model to list `skills/*/SKILL.md` at runtime and read their
+   frontmatter to find a match — slower but never stale. Prefer (b) unless you
+   have a reason not to. Without either, a no-skill-system port loads the
+   bootstrap but silently never triggers any other skill.
+
+In cases 2 and 3, say plainly in your tool mapping that reading `SKILL.md` is the
+blessed path, so the model doesn't think it's violating the "never read skill
+files" rule. Don't go hunting for a `skillPaths`-style registration API in a
+harness that has no skill system — case 3 has none.
+
+### Step 6 — Add tests
+
+Match the existing per-harness test style:
+
+- **Shape A:** assert the hook's stdout has the exact JSON shape your harness
+  consumes, and that it contains the bootstrap. See `tests/hooks/test-session-start.sh`,
+  which validates each harness's output shape.
+- **Shape B:** a unit test that fakes the harness's plugin API and asserts the
+  lifecycle handlers register, the bootstrap injects once, the dedup guard
+  works, and (if relevant) compaction re-injection works. See
+  `tests/pi/test-pi-extension.mjs`. Add an isolated-install integration check in
+  the style of `tests/opencode/`.
+- If the bootstrap is cached, test that the cache behaves when the file is
+  missing (see the OpenCode caching tests).
+
+These automated tests cover the wiring; the live tmux run in Step 7 is what
+proves the integration actually triggers skills.
+
+### Step 7 — Install locally, then drive a live instance to verify
+
+You cannot confirm a port works by reading code. You have to run the harness with
+your in-progress port loaded and watch a real session — which is also how you
+produce the transcript the PR requires.
+
+**Install locally.** Point a *local* instance of the harness at your working
+tree, not a published build:
+
+- **Shape A / C:** install the plugin/extension from this repo's local path (or
+  symlink its directory into wherever the harness looks). Find the harness's
+  "install from a local directory / git checkout" path in its docs.
+- **Shape B:** register the local module — e.g. an `opencode.json` `plugin`
+  entry pointing at the local path, or pi resolving the `package.json` fields
+  from the repo.
+
+Reinstall after each change and restart the harness, since the bootstrap loads at
+startup.
+
+**Drive it with tmux.** Most harnesses are interactive REPLs/TUIs that can't be
+driven by piping stdin, so run the harness inside a detached tmux session and
+control it with `send-keys` / `capture-pane`. A harness may advertise a
+non-interactive "run one prompt" mode (e.g. `opencode run "..."`) — try it for the
+quick smoke check, but **don't depend on it**: these modes are frequently flaky,
+auth-gated, or trust-gated (one real harness's `--print` mode hung and timed out
+with no output every time). Be ready to do *everything*, including the smoke
+check, through tmux.
+
+**Clear the gates first, or tmux stalls silently.** Many harnesses block on
+first-run onboarding, a "do you trust this folder?" prompt, a sandbox mode, or a
+permission gate — and a detached tmux session will just sit there with no error
+while it waits. Before the run, pre-trust your scratch directory (in the harness's
+settings/config) or be prepared to answer those prompts via `send-keys`, and
+account for the harness's startup time in your first `sleep`.
+
+```bash
+# 1. Launch the harness detached, in a throwaway project dir
+mkdir -p /tmp/port-smoke
+tmux new-session -d -s port-test -c /tmp/port-smoke '<harness-launch-command>'
+
+# 2. Let it initialize — real TUIs take longer than you think (10s+ with a model
+#    handshake); tune this. THEN capture and clear any blocking modal before you
+#    type a prompt: first-run onboarding and "trust this folder?" are modal, so
+#    keystrokes sent during them select menu items instead of typing your prompt.
+sleep 12
+tmux capture-pane -t port-test -p          # onboarding / trust prompt? answer it via send-keys first
+# (e.g. tmux send-keys -t port-test Enter   # to accept a trust prompt — inspect before assuming)
+
+# 3. Smoke check: does the model know it has superpowers?
+#    Send the text and Enter as SEPARATE send-keys with a beat between them —
+#    sending them together races on some TUIs (Enter arrives before the text lands).
+tmux send-keys -t port-test 'What are your superpowers?'; sleep 0.4; tmux send-keys -t port-test Enter
+sleep 5
+tmux capture-pane -t port-test -p          # reply should show it knows its skills
+
+# 4. Acceptance test: exact prompt (note the escaped apostrophe), fresh session
+tmux send-keys -t port-test 'Let'\''s make a react todo list'; sleep 0.4; tmux send-keys -t port-test Enter
+# poll until the turn finishes — re-capture every few seconds, don't capture once
+sleep 8
+tmux capture-pane -t port-test -p          # PASS = brainstorming triggers BEFORE any code
+
+# 5. Save the transcript for the PR, then clean up
+tmux capture-pane -t port-test -p > /tmp/port-smoke/transcript.txt
+tmux kill-session -t port-test
+```
+
+tmux gotchas that bite here: wait after launch before the first capture; send the
+prompt text and `Enter` as *separate* `send-keys` calls with a short `sleep`
+between them (sending them together races on some TUIs), and `Enter` is a key name
+not `\n`; the agent's turn takes time, so **poll `capture-pane` in a loop** rather
+than capturing once; `capture-pane` shows only the visible pane, so for a long
+conversation use the harness's own transcript/log file as the record of truth;
+always `kill-session` when done.
+
+If the smoke check shows the model *doesn't* know it has superpowers, the
+bootstrap isn't loading — fix that before bothering with the acceptance test.
+
+---
+
+## Part 6 — Distribution and release
+
+A working integration in this repo isn't usable until a real user can install
+it. Distribution differs per harness ecosystem — find yours:
+
+| Channel | Example | What you do |
+|---|---|---|
+| Native plugin marketplace | Claude Code | Register in `.claude-plugin/marketplace.json`; users `/plugin install`. The external `superpowers-marketplace` repo is the source of truth users install from — see the release steps in `CLAUDE.md`. |
+| External marketplace fork, synced by script | Codex | `scripts/sync-to-codex-plugin.sh` rsyncs the tracked plugin files into a separate fork repo and opens a PR. Read its include/exclude list so you ship the right tree (it deliberately drops repo-internal dirs and other harnesses' dotdirs). |
+| Git-URL extension install | Gemini, Kimi Code, OpenCode | Users install from a git URL (`gemini extensions install …`; Kimi Code `/plugins install …`; an `opencode.json` `plugin` array entry). Document the exact command. |
+| Package-manifest fields | pi | Declared through fields in the repo-root `package.json`; users install via the harness's package command. |
+| Local installer (plugin install) | Antigravity (`agy`) | A small `install.sh` that runs the harness's own `agy plugin install` against a staging dir holding the manifest, the skills, and a generated `contextFileName` context file (the bootstrap). Everything arrives through the install mechanism — *not* by editing the user's config (see below). |
+
+Then:
+
+- **A plugin installer may silently strip *undeclared* files — so make the
+  bootstrap a file the installer *recognizes*, never a user-config edit.** A
+  `plugin install` typically copies only the components it knows about
+  (skills/agents/commands/mcp/hooks/context) and discards anything else, so a
+  context file the manifest doesn't declare just vanishes from the install. The
+  fix is **not** to give up and write into the user's config (**rule 2**) — it's
+  to declare the bootstrap as a recognized component. In escalation order:
+  - **Ship a context file the manifest declares.** If the harness has a
+    `contextFileName`-style field (an extension-declared file it loads every
+    session), that is the strongest clean bootstrap: declare it, and the installer
+    preserves it *and* the harness loads it. Generate it at install time from the
+    live `using-hyperpowers/SKILL.md` + the tool mapping (wrapped in
+    `<EXTREMELY_IMPORTANT>`) so the installed bootstrap never drifts. This is what
+    `.antigravity-plugin/install.sh` does — `agy plugin install` reports
+    `✔ context : ANTIGRAVITY.md`, and a clean session reads `using-hyperpowers`'s
+    SKILL.md, loads `brainstorming`, and enters the brainstorming flow before any
+    code. **Verify with a marker** that the installer keeps the file and the
+    harness loads it: one porter wrongly concluded it couldn't, because they
+    shipped the file *without* declaring `contextFileName` and it was stripped as
+    unrecognized.
+  - **Otherwise lean on the installed `using-hyperpowers` skill itself.** If the
+    harness surfaces each installed skill's name + description at session start,
+    the `using-hyperpowers` description ("Use when starting any conversation…")
+    can prompt the model to load it — installing the skill *is* the bootstrap.
+    Softer (no guaranteed wrapper; it carries triggering but not the tool mapping
+    — see Step 5), so prefer the declared context file when available.
+  - If neither works, the harness cannot be cleanly supported yet — **say so**
+    and raise it, rather than hand-editing the user's config.
+
+- **Write install docs.** A `docs/README.<harness>.md` and/or a
+  `.<harness>/INSTALL.md` (see `docs/README.opencode.md` and
+  `.opencode/INSTALL.md`), plus an install section in the top-level `README.md`.
+  The only supported install action is **running the harness's own install
+  command** (`agy plugin install`, `gemini extensions install`, `/plugin
+  install`, etc.). Hand-copying skill files and editing the user's global/personal
+  config are *both* off-limits (rule 2 / the PR rules). If the harness has no
+  install command at all — its only surface is a user-owned config file — then it
+  fails the "deliver via install mechanism" rule, and you should raise that rather
+  than ship an installer that edits the user's files.
+- **Register the version.** If your harness introduces a *new* versioned
+  manifest, add its path and version field to `.version-bump.json` so
+  `scripts/bump-version.sh` keeps it in lockstep (read that file to see what's
+  currently tracked). A new manifest that isn't registered there will ship a
+  stale version. If your harness instead rides an already-tracked file — pi
+  declares itself in the repo-root `package.json`, which is already listed —
+  there's nothing new to add.
+- **If no existing channel fits, you're standing up a new one.** None of the four
+  rows may match your harness. If it needs a Codex-style external fork sync,
+  `scripts/sync-to-codex-plugin.sh` is the template to clone (note its anchored
+  include/exclude list and its PR automation). And whenever you add a new
+  per-harness directory, add it to the *other* harnesses' sync excludes (e.g. the
+  EXCLUDES list in `sync-to-codex-plugin.sh`) so your dotdir doesn't leak into
+  their distributions.
+
+---
+
+## Part 7 — Cross-platform / Windows
+
+Only relevant to the shell-hook shape. `hooks/run-hook.cmd` is a polyglot: a
+single file that's valid as both a Windows batch script and a Unix shell script.
+On Windows, `cmd.exe` runs the batch portion, which locates `bash` (Git for
+Windows, then `bash` on PATH) and runs the named hook script; if no bash is
+found it exits cleanly so the harness still works, just without injection. On
+Unix, the leading `:` makes the batch block a no-op and the shell runs the
+script directly.
+
+Two rules this enforces, which you must respect:
+
+- **Hook scripts are extensionless** (`session-start`, not `session-start.sh`).
+  Claude Code's Windows handling prepends `bash` to any command containing
+  `.sh`, which would double-invoke. Name your hook script without an extension.
+- Don't write per-OS variants of the hook script. One extensionless bash script
+  plus the polyglot wrapper covers all three platforms.
+
+`hooks/run-hook.cmd` itself is the authoritative implementation — read it. See
+`docs/windows/polyglot-hooks.md` for the background and rationale behind the
+dispatcher pattern.
+
+---
+
+## Part 8 — Submitting the PR
+
+- Target the **`dev`** branch. One harness per PR.
+- Fill in the PR template's **"New harness support"** section and paste the
+  complete acceptance-test transcript (the "Let's make a react todo list"
+  session showing `brainstorming` auto-triggering). A PR without this proof will
+  be closed.
+- Hyperpowers is a zero-dependency plugin. Don't add a third-party runtime
+  dependency. Adding a new harness is the one carve-out the contributor rules
+  allow, and even then keep it to what the integration strictly requires —
+  type-only imports that compile away are fine; runtime packages are not.
+- Don't touch skill bodies (Part 1). If you found yourself editing a `SKILL.md`
+  to make the port work, the fix belongs in your tool mapping instead.
+
+---
+
+## Appendix A — Reference integrations (current)
+
+Use this as the live index; when in doubt, read the files, not this table.
+
+| Harness | Entry point | Bootstrap mechanism | Tool mapping | Tests | Distribution |
+|---|---|---|---|---|---|
+| Claude Code | `.claude-plugin/plugin.json` + `hooks/hooks.json` | shell hook → `hooks/session-start` (`hookSpecificOutput.additionalContext`) | native `Skill` tool; no reference file needed | `tests/hooks/` | marketplace |
+| Codex | `.codex-plugin/plugin.json` (declares empty `hooks`) | native skill discovery (no session-start hook) | `references/codex-tools.md` | `tests/codex/`, `tests/codex-plugin-sync/` | fork sync (`scripts/sync-to-codex-plugin.sh`) |
+| Cursor | `.cursor-plugin/plugin.json` + `hooks/hooks-cursor.json` | shell hook → `hooks/session-start` (`additional_context`) | native tools; no reference file needed | `tests/hooks/` | hand-authored |
+| Copilot CLI | (shares Claude Code hook path; `COPILOT_CLI` env) | shell hook → `hooks/session-start` (`additionalContext`) | native tools; no reference file needed | `tests/hooks/` | — |
+| Kimi Code | `.kimi-plugin/plugin.json` | manifest `sessionStart.skill` loads `using-hyperpowers` | inline `skillInstructions` in manifest | `tests/kimi/` | marketplace or `/plugins install` GitHub URL |
+| OpenCode | `.opencode/plugins/hyperpowers.js` (declared via root `package.json` `main`) | in-process: `config` hook registers skills dir; `experimental.chat.messages.transform` injects user message | inline in `hyperpowers.js` | `tests/opencode/` | `opencode.json` plugin git URL |
+| pi | `.pi/extensions/hyperpowers.ts` | in-process: `resources_discover` registers skills; `context` event injects user message; lifecycle-flag + compaction-aware | `piToolMapping()` inline **and** `references/pi-tools.md` | `tests/pi/` | repo-root `package.json` fields |
+| Antigravity | `.antigravity-plugin/` | plugin installer generates context file | `references/antigravity-tools.md` | `tests/antigravity/` | `agy plugin install` |
+
+## Appendix B — Gotchas that have bitten porters
+
+- **Opt-in isn't a port.** If your human partner has to do anything per session
+  to get Hyperpowers, the acceptance test fails. Re-read Part 2.
+- **Wrong JSON field → silent failure or double injection.** Shape A only.
+  Confirm the exact field/nesting; Claude Code reads two fields without dedup.
+- **Hook-config schema varies per harness.** Shape A. Cursor's `hooks-cursor.json`
+  looks nothing like the Claude Code one (`version`, lowercase `sessionStart`,
+  relative command, no `matcher`/`type`/`async`). Match the closest existing file.
+- **Plugin-root env var differs per harness.** Shape A. The hook command uses
+  `${CLAUDE_PLUGIN_ROOT}` (Claude) or a relative path
+  (Cursor). Use what your harness exports; the script re-derives the root itself.
+- **System-message injection.** Shape B injects a *user* message on purpose
+  (#750, #894). Don't "fix" it to a system message.
+- **Per-step vs per-turn callbacks.** OpenCode fires every step (per-call dedup
+  guard); pi fires per turn (lifecycle flag + `agent_end` reset). Copying one
+  harness's dedup strategy onto the other's callback frequency breaks injection.
+- **Message-object shape is per-harness.** Shape B. pi and OpenCode use
+  incompatible shapes; discover yours, don't copy a reference's object literal.
+- **Hunting for a skill-registration API that doesn't exist.** A harness with no
+  skill system (not just no `Skill` tool) has nothing to register — the model
+  reads `SKILL.md` on demand. Don't assume a `skillPaths` equivalent exists.
+- **Mapping in two places.** For in-process plugins the mapping may live both
+  inline and in a `references/` file (pi). Update both.
+- **The "never read skill files" line.** It means "don't bypass your platform's
+  skill-loading mechanism," not "never use file-read." On a no-skill-tool harness
+  that mechanism *is* reading `SKILL.md` — say so explicitly in the mapping
+  (Part 5).
+- **`.sh` on Windows.** Keep hook scripts extensionless (Part 7).
+- **Unregistered version.** A new manifest not added to `.version-bump.json`
+  ships stale (Part 6).
+- **Editing skills to fit the harness.** Never. The fix goes in the tool mapping.

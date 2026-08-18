@@ -17,7 +17,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Save plans to:** `docs/hyperpowers/plans/YYYY-MM-DD-<feature-name>.md`
 - (User preferences for plan location override this default)
-- Do NOT commit the plan document. Leave it as an uncommitted working file unless the user explicitly asks you to commit it. (The "frequent commits" guidance below is about the implementation task steps the plan describes, not the plan file itself.)
+- Do NOT commit the plan document. Leave it as an uncommitted working file unless the user explicitly asks you to commit it. (Frequent commits applies to the implementation task steps the plan describes, not the plan file itself.)
 
 ## Scope Check
 
@@ -158,11 +158,6 @@ Every step must contain the actual content an engineer needs. These are **plan f
 - Steps that describe what to do without showing how (code blocks required for code steps)
 - References to types, functions, or methods not defined in any task
 
-## Remember
-- Exact file paths always
-- Complete code in every step — if a step changes code, show the code
-- Exact commands with expected output
-- DRY, YAGNI, TDD, frequent commits
 
 ## Self-Review
 

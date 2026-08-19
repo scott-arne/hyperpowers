@@ -459,6 +459,14 @@ no-Codex notice once and run both gates as no-ops.
      Codex re-round of this task — the gate doc's §3 contract, "Use one
      `GATE_DIR` for the whole gate." `gate-round`'s counter lives in that
      dir, so it counts exactly this task's gate rounds and nothing else.
+     When the `GATE_DIR` is first created, record it in the progress ledger
+     as one line `Task N gate dir: <path>`; on resume (or any later Codex
+     re-round), reuse the ledgered path instead of creating a new one; if
+     the ledgered dir no longer exists (cache purged), treat the task's
+     prior gate rounds as unknown and fail closed: do not assume zero —
+     reconstruct the consumed-round count from the ledger's fix-round
+     entries and, if gate rounds cannot be established, surface via BLOCKED
+     rather than restarting the count.
   2. **State the ceiling in the counter's own coordinates.** `gate-round`
      compares its LOCAL count — gate rounds only, monotonic within the
      `GATE_DIR` — against `--ceiling`, so the ceiling must leave gate rounds

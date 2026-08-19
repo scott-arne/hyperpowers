@@ -6,6 +6,7 @@ SDD="$REPO_ROOT/skills/subagent-driven-development/SKILL.md"
 IMPL="$REPO_ROOT/skills/subagent-driven-development/implementer-prompt.md"
 REVW="$REPO_ROOT/skills/subagent-driven-development/task-reviewer-prompt.md"
 FIXP="$REPO_ROOT/skills/subagent-driven-development/fix-subagent-prompt.md"
+REREVW="$REPO_ROOT/skills/subagent-driven-development/re-review-prompt.md"
 WPLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
 
 FAILURES=0
@@ -79,6 +80,11 @@ assert_contains "$FIXP" "the final whole-branch review wave" "fixer template ser
 assert_contains "$FIXP" "the exact covering command(s) run with their final output lines" \
   "fix reports carry command plus output"
 assert_contains "$FIXP" "run them in a scratch directory" "fixture scripts stay out of real checkouts"
+# re-reviewer template
+assert_contains "$REREVW" "ADDRESSED" "re-review verdict: addressed"
+assert_contains "$REREVW" "NOT ADDRESSED" "re-review verdict: not addressed"
+assert_contains "$REREVW" "review-package PLAN_FILE FIX_BASE HEAD" "re-review review-package handoff"
+assert_contains "$REREVW" "You Do Not Dispatch Subagents" "re-review no-dispatch discipline"
 # tier system (6.6.0)
 assert_contains "$WPLANS" '**Risk tier:** low|standard|high — <one-line rationale>' "plans declare a tier per task"
 assert_contains "$WPLANS" "approval-authority code" "rubric names the high surface"

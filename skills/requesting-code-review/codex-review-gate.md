@@ -625,7 +625,7 @@ and never converges the loop by itself.
    call covers composing and launching every lens prompt in the batch:
 
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-round" "$GATE_DIR" --ceiling <4 for document gates, 3 for code gates, the task's remaining shared-cap budget for SDD's per-task gate (see hyperpowers:subagent-driven-development)> --gate <spec|plan|task|final|adhoc>
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-round" "$GATE_DIR" --ceiling <4 for document gates, 3 for code gates, the task's remaining shared-cap budget for SDD's per-task gate (5 minus the task's non-gate fix rounds; see hyperpowers:subagent-driven-development)> --gate <spec|plan|task|final|adhoc>
    ```
 
    `"verdict":"proceed"` composes the round. `"verdict":"backstop"` means the ceiling is already spent: do NOT invoke Codex again for this gate — follow the backstop stop-condition below. A non-zero `gate-round` exit is an internal failure: treat it as `backstop` — do not invoke Codex for this round, and if backstop-round fixes ship, use the full append command written in the Backstop-hit stop-condition below (no `reminder` JSON exists on this path).

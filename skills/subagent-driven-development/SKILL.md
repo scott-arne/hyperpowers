@@ -451,17 +451,33 @@ no-Codex notice once and run both gates as no-ops.
 - **Rounds are shared, not stacked.** Blocking findings from this gate enter
   the same five-round loop above, at the next round number — the gate has no
   separate Codex ceiling of its own. The task's fix-round budget is five,
-  shared across Claude-reviewer rounds and Codex-gate rounds. The gate opens
-  a fresh `GATE_DIR` whose counter starts at zero, so it cannot know what the
-  loop already spent — you must hand it the balance. Before invoking the
-  gate, compute `remaining = 5 - <fix rounds this task has already
-  consumed>`. If `remaining` is 0, do NOT invoke the gate: the cap is spent,
-  so follow the breaker below and surface the task as BLOCKED. Otherwise
-  pass `--ceiling <remaining>` to `gate-round` for that fresh `GATE_DIR`, and
-  count every round the gate runs against the task's shared budget — each
-  gate round consumes one of the five, exactly like a reviewer round. After
-  a Codex-triggered fix, the scoped re-review verifies it; the gate re-runs
-  only once that re-review verdicts every finding ADDRESSED.
+  shared across Claude-reviewer rounds and Codex-gate rounds. Three mechanics
+  keep that single budget honest:
+
+  1. **One `GATE_DIR` for this task's whole gate lifecycle.** Create it at
+     the task's first gate invocation and reuse that same dir for every
+     Codex re-round of this task — the gate doc's §3 contract, "Use one
+     `GATE_DIR` for the whole gate." `gate-round`'s counter lives in that
+     dir, so it counts exactly this task's gate rounds and nothing else.
+  2. **State the ceiling in the counter's own coordinates.** `gate-round`
+     compares its LOCAL count — gate rounds only, monotonic within the
+     `GATE_DIR` — against `--ceiling`, so the ceiling must leave gate rounds
+     out; they are already in that count. Before EVERY `gate-round` call,
+     compute `ceiling = 5 - <NON-gate fix rounds this task has consumed so
+     far>` (Claude-reviewer fix/re-review rounds only) and pass that.
+     Recompute at each call: non-gate rounds may land between gate rounds.
+  3. **Check the shared cap before calling.** If `ceiling <= <gate rounds
+     already run>` — equivalently, the task's consumed rounds already total
+     five — do NOT call the gate: the cap is spent, so follow the breaker
+     below and surface the task as BLOCKED.
+
+  The invariant in one line: **local gate rounds + non-gate fix rounds ≤ 5**,
+  enforced because `gate-round` blocks (verdict `backstop`) the moment its
+  local count would exceed the ceiling you supplied. Count every round the
+  gate runs against the task's shared budget — each gate round consumes one
+  of the five, exactly like a reviewer round. After a Codex-triggered fix,
+  the scoped re-review verifies it; the gate re-runs only once that
+  re-review verdicts every finding ADDRESSED.
 
 **The breaker.** When round 5's re-review — or a per-task Codex gate at the
 spent cap — still leaves blocking findings open, stop dispatching. The task

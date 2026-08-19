@@ -125,7 +125,18 @@ else
     fail "task-brief honors an explicit OUTFILE override"
 fi
 
-# 10. Stale sibling scratch dirs (idle past the 14-day threshold) are
+# 10. review-package honors an explicit OUTFILE override.
+override_review="$TEST_ROOT/custom-review.diff"
+git -C "$repo_a" commit --allow-empty -m "initial commit" >/dev/null
+git -C "$repo_a" commit --allow-empty -m "second commit" >/dev/null
+( cd "$repo_a" && bash "$REVIEW_PACKAGE" plan.md HEAD~1 HEAD "$override_review" ) >/dev/null
+if [ -f "$override_review" ]; then
+    pass "review-package honors an explicit OUTFILE override"
+else
+    fail "review-package honors an explicit OUTFILE override"
+fi
+
+# 11. Stale sibling scratch dirs (idle past the 14-day threshold) are
 # reclaimed on invocation; fresh siblings survive.
 sdd_base="$XDG_CACHE_HOME/hyperpowers/sdd"
 stale_dir="$sdd_base/stale-run"
@@ -146,7 +157,7 @@ else
     fail "fresh sibling scratch dir survives pruning (missing: $fresh_dir)"
 fi
 
-# 11. The current repo's dir is never pruned, even when idle past the
+# 12. The current repo's dir is never pruned, even when idle past the
 # threshold — a resumed session must find its ledger.
 touch -t 202601010000 "$dir_a"
 dir_a3="$(run_sdd_dir "$repo_a")"

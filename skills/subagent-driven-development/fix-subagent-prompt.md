@@ -1,8 +1,9 @@
 # Fix Subagent Prompt Template
 
-Use this template for EVERY fix dispatch — per-task review findings, Codex
-gate findings, and final-review fix waves alike. One fixer per findings
-wave, never one per finding.
+You are dispatched for the FINAL-REVIEW fix wave only: the per-task fix loop
+resumes the original implementer (rounds 1-3) or dispatches a takeover
+implementer (rounds 4-5) — it never uses this prompt. You fix the final
+review's blocking findings in one wave; exactly one scoped re-review follows.
 
 ```
 Subagent (general-purpose):

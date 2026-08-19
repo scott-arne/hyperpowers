@@ -81,15 +81,16 @@ your path and complete them in order.
 1. **Explore project context** — enough to frame the probe
 2. **Present question + probe plan** — 2-3 sentences
 3. **Get approval** — a nod is enough
-4. **Investigate** — as cheaply as correctness allows
+4. **Investigate** — as cheaply as correctness allows (The approach gate's any-path trigger applies here too — explicit request or genuinely material alternatives fire it; feasibility probes rarely do.)
 5. **Report findings** — a recommendation; label anything built as throwaway
 
 **Bounded:**
 1. **Explore project context** — check files, docs, recent commits
 2. **Ask clarifying questions** — one at a time, the ones that matter
-3. **Present short design in chat** — approach, files touched, testing
-4. **Get approval** — STOP and wait for an explicit yes; presenting the design and starting in the same breath is skipping the gate
-5. **Implement** — proceed with the normal development workflow (TDD applies); no plan document
+3. **Codex approach gate (conditional)** — if the design space has real architectural, algorithmic, or data-model alternatives, or your human partner asks for Codex input, run [codex-approach-gate.md](codex-approach-gate.md) and fold its approaches into the short in-chat design with provenance tags. Ceremony does not escalate. Trivial/mechanical bounded tasks skip this silently.
+4. **Present short design in chat** — approach, files touched, testing
+5. **Get approval** — STOP and wait for an explicit yes; presenting the design and starting in the same breath is skipping the gate
+6. **Implement** — proceed with the normal development workflow (TDD applies); no plan document
 
 **Architectural:**
 1. **Explore project context** — check files, docs, recent commits

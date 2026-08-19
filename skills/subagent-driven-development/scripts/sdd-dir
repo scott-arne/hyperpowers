@@ -34,6 +34,7 @@ dir="${base}/${key}"
 # path: basename alone collides (two plans named plan.md in different
 # directories must not share a ledger). No-arg mode is unchanged — it is
 # the repo-instance dir other skills use as a generic cache root.
+repo_dir="$dir"
 if [ $# -ge 1 ] && [ -n "${1:-}" ]; then
   plan=$1
   plan_dir=$(cd "$(dirname "$plan")" 2>/dev/null && pwd) || {
@@ -51,10 +52,14 @@ if [ $# -ge 1 ] && [ -n "${1:-}" ]; then
 fi
 
 mkdir -p "$dir"
-# Refresh the current directory's mtime. Invariant: every sdd-dir invocation
-# freshens the CURRENT dir so an actively-resumed workspace never looks idle
-# to sibling invocations' GC; the by-name exclusion remains defense in depth.
+# Refresh the current workspace's mtime and, in plan mode, the repo cache root.
+# Invariant: every sdd-dir invocation freshens both the current workspace AND
+# its repo cache root, so neither leaf-level nor repo-level sibling GC can see
+# an active workspace as idle; the by-name exclusion remains defense in depth.
 touch "$dir"
+if [ "$dir" != "$repo_dir" ]; then
+  touch "$repo_dir"
+fi
 
 # Reclaim sibling scratch dirs idle for 14+ days. Left alone the cache grows
 # one dir per repo instance forever, and editors that follow agent-touched

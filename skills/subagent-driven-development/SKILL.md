@@ -590,11 +590,18 @@ looping.
 
 ## Finish
 
-When the final whole-branch review is clean and its fixes are merged,
-delete this plan's workspace (`rm -rf <workspace>`) — the git history is
-the record now. Sibling directories belong to other plans; leave them
-alone. The 14-day reclaim in `scripts/sdd-dir` is only the backstop for
-sessions that never got here.
+When the final whole-branch review is clean and its fixes are merged:
+
+1. **Delete this plan's workspace** with `rm -rf <workspace>` (the path
+   `scripts/sdd-dir <plan>` prints — the directory holding this plan's
+   ledger, briefs, reports, review packages, and tier-skip summary).
+2. **Verify deletion** with `ls <workspace parent>` to confirm it is gone.
+
+A clean finish that leaves the workspace behind is an INCOMPLETE finish —
+"keeping it for reference" is not an option; the ledger's completion
+entries are the durable record. Sibling directories belong to other plans;
+leave them alone. The 14-day reclaim in `scripts/sdd-dir` is only the
+backstop for sessions that never got here.
 
 Use hyperpowers:finishing-a-development-branch.
 
@@ -614,6 +621,7 @@ Use hyperpowers:finishing-a-development-branch.
 | "The Codex gate gets its own rounds" | One task, one five-round cap. Gate rounds are fix-loop rounds, and the scoped re-review — not a task-reviewer re-run — precedes each one. |
 | "Codex is still verifying, that's basically a pass" | Treat an unfinished or "still verifying" Codex result as approval and the gate never happened. Incomplete is not a pass: recover via `status`/`result`, or surface it. |
 | "Batching these small tasks lets the gate go" | A batch's tier is the MAX of its members' declared tiers. Batching never manufactures a gate skip. |
+| "I'll keep the workspace for reference" | The repo and ledger are the record. Delete it — an undeleted clean-finish workspace becomes a stale-forensics trap for the next plan. |
 
 ## Example Workflow
 

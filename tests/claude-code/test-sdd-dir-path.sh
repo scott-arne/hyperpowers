@@ -136,6 +136,35 @@ else
     fail "review-package honors an explicit OUTFILE override"
 fi
 
+# 10a. review-package uses default path through sdd-dir when OUTFILE omitted.
+base_commit=$(git -C "$repo_a" rev-parse HEAD~1)
+head_commit=$(git -C "$repo_a" rev-parse HEAD)
+default_review_output=$(cd "$repo_a" && bash "$REVIEW_PACKAGE" plan.md HEAD~1 HEAD 2>&1)
+expected_sdd_dir=$(cd "$repo_a" && bash "$SDD_DIR_SCRIPT" plan.md)
+base_short=$(git -C "$repo_a" rev-parse --short HEAD~1)
+head_short=$(git -C "$repo_a" rev-parse --short HEAD)
+expected_path="$expected_sdd_dir/review-${base_short}..${head_short}.diff"
+if echo "$default_review_output" | grep -q "$expected_path" && [ -f "$expected_path" ]; then
+    pass "review-package uses default path through sdd-dir when OUTFILE omitted"
+else
+    fail "review-package uses default path through sdd-dir (expected: $expected_path)"
+fi
+
+# 10b. review-package rejects nonexistent plan file.
+if ( cd "$repo_a" && bash "$REVIEW_PACKAGE" nonexistent.md HEAD~1 HEAD ) >/dev/null 2>&1; then
+    fail "review-package rejects nonexistent plan file"
+else
+    pass "review-package rejects nonexistent plan file"
+    # Verify it didn't create a workspace for the bad path.
+    nonexistent_workspace=$(cd "$repo_a" && bash "$SDD_DIR_SCRIPT" nonexistent.md 2>/dev/null || true)
+    if [ -n "$nonexistent_workspace" ] && [ -d "$nonexistent_workspace" ]; then
+        # If the dir exists, check if it was created by the failed call (would contain review-*.diff)
+        if find "$nonexistent_workspace" -name 'review-*.diff' 2>/dev/null | grep -q .; then
+            fail "review-package should not create workspace for nonexistent plan"
+        fi
+    fi
+fi
+
 # 11. Stale sibling scratch dirs (idle past the 14-day threshold) are
 # reclaimed on invocation; fresh siblings survive.
 sdd_base="$XDG_CACHE_HOME/hyperpowers/sdd"

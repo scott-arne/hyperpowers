@@ -450,10 +450,18 @@ no-Codex notice once and run both gates as no-ops.
   the global-constraints file you wrote in step 3. The gate's dossier `--adjudications` inputs carry the plan's `**Spec:**` file path beside any spec-gate ledger, so the reviewer is handed the binding authority instead of inferring it.
 - **Rounds are shared, not stacked.** Blocking findings from this gate enter
   the same five-round loop above, at the next round number — the gate has no
-  separate Codex ceiling of its own, so pass `--ceiling 5` to `gate-round`
-  and let the shared cap bound it. After a Codex-triggered fix, the scoped
-  re-review verifies it; the gate re-runs only once that re-review verdicts
-  every finding ADDRESSED.
+  separate Codex ceiling of its own. The task's fix-round budget is five,
+  shared across Claude-reviewer rounds and Codex-gate rounds. The gate opens
+  a fresh `GATE_DIR` whose counter starts at zero, so it cannot know what the
+  loop already spent — you must hand it the balance. Before invoking the
+  gate, compute `remaining = 5 - <fix rounds this task has already
+  consumed>`. If `remaining` is 0, do NOT invoke the gate: the cap is spent,
+  so follow the breaker below and surface the task as BLOCKED. Otherwise
+  pass `--ceiling <remaining>` to `gate-round` for that fresh `GATE_DIR`, and
+  count every round the gate runs against the task's shared budget — each
+  gate round consumes one of the five, exactly like a reviewer round. After
+  a Codex-triggered fix, the scoped re-review verifies it; the gate re-runs
+  only once that re-review verdicts every finding ADDRESSED.
 
 **The breaker.** When round 5's re-review — or a per-task Codex gate at the
 spent cap — still leaves blocking findings open, stop dispatching. The task

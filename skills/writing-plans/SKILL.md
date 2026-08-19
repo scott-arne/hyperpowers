@@ -61,6 +61,8 @@ independently testable deliverable.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use hyperpowers:subagent-driven-development (recommended) or hyperpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Spec:** [path to the spec/design doc this plan implements — SDD reads it as binding authority; write "none" only if no spec exists]
+
 **Goal:** [One sentence describing what this builds]
 
 **Architecture:** [2-3 sentences about approach]

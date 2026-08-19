@@ -98,8 +98,10 @@ assert_contains "$GATE" "Code gates get 3 rounds" \
 assert_not_contains "$GATE" "## 5. Fix-and-re-review loop (cap = 2 rounds)" \
   "gate no longer uses the single 2-round cap heading"
 
-assert_contains "$SDD" "After any Codex-triggered code fix, re-run the task reviewer before re-running the per-task Codex gate." \
-  "SDD per-task loop names Claude re-review order"
+assert_contains "$SDD" "the gate re-runs only once that re-review verdicts every finding ADDRESSED" \
+  "SDD per-task loop names Claude re-review order (scoped re-review, shared cap)"
+assert_not_contains "$SDD" "re-run the task reviewer before re-running the per-task Codex gate" \
+  "SDD per-task loop no longer re-runs the full task reviewer for Codex fixes"
 assert_contains "$SDD" "After any Codex-triggered final-review fix, re-run the final code-reviewer before re-running the final Codex gate." \
   "SDD final loop names Claude re-review order"
 assert_contains "$REQUESTING_REVIEW" "After any Codex-triggered code fix, re-run the Claude code-reviewer before re-running Codex." \

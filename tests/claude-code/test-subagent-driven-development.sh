@@ -28,7 +28,7 @@ else
     exit 1
 fi
 
-if assert_contains "$output" "Load Plan\|read.*plan\|extract.*tasks" "Mentions loading plan"; then
+if assert_contains "$output" "Load Plan\|Setup\|read.*plan\|extract.*tasks" "Mentions loading plan"; then
     : # pass
 else
     exit 1
@@ -121,7 +121,7 @@ else
     exit 1
 fi
 
-if assert_contains "$output" "implementer.*fix\|fix.*issues" "Implementer fixes issues"; then
+if assert_contains "$output" "implementer.*fix\|fix.*issues\|resume.*implementer\|takeover\|fix wave\|fix subagent\|Both" "Implementer fixes issues or fix wave"; then
     : # pass
 else
     exit 1

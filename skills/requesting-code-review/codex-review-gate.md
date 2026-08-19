@@ -625,18 +625,21 @@ and never converges the loop by itself.
    call covers composing and launching every lens prompt in the batch:
 
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-round" "$GATE_DIR" --ceiling <4 for document gates, 3 for code gates, 5 for SDD's per-task gate> --gate <spec|plan|task|final|adhoc>
+   bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-round" "$GATE_DIR" --ceiling <4 for document gates, 3 for code gates, the task's remaining shared-cap budget for SDD's per-task gate (see hyperpowers:subagent-driven-development)> --gate <spec|plan|task|final|adhoc>
    ```
 
    `"verdict":"proceed"` composes the round. `"verdict":"backstop"` means the ceiling is already spent: do NOT invoke Codex again for this gate — follow the backstop stop-condition below. A non-zero `gate-round` exit is an internal failure: treat it as `backstop` — do not invoke Codex for this round, and if backstop-round fixes ship, use the full append command written in the Backstop-hit stop-condition below (no `reminder` JSON exists on this path).
 1. The approval set is every capture required for the latest round: round 1's set is every lens capture; a re-review round's set is its single capture. An empty capture set never approves. The round converges only when EVERY capture in the set normalized `"result":"approved"`, this round raised no blocking findings, and the round ledger has no still-open blocking findings. If converged → done; go to step 6.
 2. Otherwise address each blocking finding: for a document, edit the spec/plan; for
-   code, dispatch a fix through the skill's existing fix path (e.g. SDD's fix
-   subagent). You MAY decline a finding with explicit reasoning instead of fixing it.
+   code, dispatch a fix through the skill's existing fix path (for SDD's per-task
+   gate that path resumes the implementer per SDD's fix loop, not a fix subagent).
+   You MAY decline a finding with explicit reasoning instead of fixing it.
    Record resolutions, declines, and still-open items in the round ledger.
    After any code fix, re-run the same Claude reviewer gate before re-running Codex.
+   For SDD per-task gates, that reviewer gate is SDD's scoped re-review.
 3. Re-run the same Codex invocation (with the round-aware preamble and ledger
-   path) over the updated artifact once the relevant Claude review gate is clean.
+   path) over the updated artifact once the relevant Claude review gate is clean
+   (for SDD per-task gates, once SDD's scoped re-review is clean).
 4. **Stop when any holds:**
    - **Approved (converged):** EVERY capture required for the latest round normalized `"result":"approved"`, this round raised no blocking findings, **and** the round ledger has no still-open blocking findings. A round that normalizes to `approved` while the ledger shows an unresolved blocker has not converged (the blocker may predate this round); a round that normalizes to `blocking` has not converged regardless of ledger state — do not exit without a normalized approval.
    - **Backstop hit** — the per-gate round ceiling below is reached. Stop and hand back with any unresolved blocking findings listed; do not loop indefinitely. Fixes applied in the backstop round ship without a confirming Codex pass — flag them in the §6 hand-back as verified by the Claude reviewer and tests only, not re-reviewed by Codex. When backstop-round fixes ship, also record them durably using the `reminder` template from `gate-round`'s backstop output: `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class backstop-fix --gate <task|final|adhoc> --base <task BASE sha> --head <head sha> --gate-dir "$GATE_DIR" --note "<one line>"` — and name the returned event id in the §6 hand-back.

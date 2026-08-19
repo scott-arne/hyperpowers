@@ -335,6 +335,7 @@ standard- and high-tier tasks. An SDD task whose EFFECTIVE tier is low —
 declared at plan time, reviewed by the plan gate, never lowered at
 dispatch, with no escalation trigger fired — skips this gate entirely:
 record the skip with `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class tier-skip --gate task --base <TASK_BASE> --head <HEAD> --tier-declared low --tier-effective low --note "Task N: <rationale>"` and move on; the Claude task reviewer and the final whole-branch gates never tier off. Ad-hoc code-review requests have no tier and always run.
+Within SDD's per-task loop, gate rounds count against the task's shared five-round fix cap; the scoped re-review (not a full task-reviewer re-run) precedes each Codex re-round.
 
 **Final whole-branch code** — use `adversarial-review` over the branch range and
 point Codex at the final-review inputs:
@@ -646,11 +647,14 @@ If any stop condition conflicts with the mechanical exit rule, the mechanical ru
 | Gate | Recipe | Backstop |
 |------|--------|----------|
 | Spec / Plan (document gates) | task | 4 |
-| Per-task / final / code-review (code gates) | adversarial-review | 3 |
+| SDD per-task (code gate) | adversarial-review | shares SDD's five-round per-task fix cap (see hyperpowers:subagent-driven-development) — no separate Codex ceiling |
+| Final / code-review requests (code gates) | adversarial-review | 3 |
 
 Document gates get 4 rounds (cheap: a text edit + a `task` re-run). Code gates
 get 3 rounds (expensive: fix subagent + Claude-reviewer re-run + a fresh
-`adversarial-review` per round). Convergence usually stops the loop earlier; the
+`adversarial-review` per round) — except SDD's per-task gate, which has no
+ceiling of its own: its rounds are fix-loop rounds and stop at the task's
+shared five-round cap. Convergence usually stops the loop earlier; the
 backstop is a true backstop, not the common exit.
 
 > **Red Flag — Never** invoke the companion for a review round without a `proceed` from `gate-round`

@@ -110,6 +110,10 @@ assert_contains "$SDD" "Record tier-skip (ungated-ledger), skip Codex task gate"
   "process diagram carries the skip path"
 assert_contains "$WPLANS" "no escalation trigger fired at any point during execution" \
   "authoring rubric carries the strong escalation window"
+# Finish section (6.6.0 deletion fix)
+assert_contains "$SDD" "INCOMPLETE finish" "finish section labels incomplete finish"
+assert_contains "$SDD" 'test ! -d' "real deletion assertion not vacuous ls"
+assert_contains "$SDD" "stale-forensics trap" "rationalization names forensics trap"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

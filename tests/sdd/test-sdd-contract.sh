@@ -99,6 +99,7 @@ assert_contains "$SDD" "tier-skips.md" "final review receives the skip list"
 assert_contains "$SDD" "no escalation trigger fired" "skip precondition is explicit"
 assert_contains "$SDD" "plan-gate-reviewed; no escalation trigger fired" "diagram skip path carries the full precondition"
 assert_contains "$SDD" "missing tier line" "fail-closed default is pinned"
+assert_contains "$SDD" "gate dir:" "GATE_DIR is persisted in ledger"
 assert_contains "$WPLANS" "unreviewed low tiers execute as standard" \
   "plan-gate skip demotes low tiers (authoring side)"
 assert_contains "$SDD" "unreviewed low tiers execute as standard" \

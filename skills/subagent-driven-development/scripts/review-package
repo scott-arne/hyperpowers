@@ -4,30 +4,31 @@
 # call. Using the recorded per-task BASE (not HEAD~1) keeps multi-commit
 # tasks intact.
 #
-# Usage: review-package BASE HEAD [OUTFILE]
-# Default OUTFILE: <sdd-dir>/review-<base7>..<head7>.diff — unique per repo
-# instance and per range, so concurrent sessions cannot collide and a
-# re-review after fixes always gets a distinctly named fresh file. The
-# scratch dir comes from the sdd-dir helper (off any protected path).
+# Usage: review-package PLAN_FILE BASE HEAD [OUTFILE]
+# Default OUTFILE: <sdd-dir PLAN_FILE>/review-<base7>..<head7>.diff — unique per
+# plan and per range, so concurrent sessions cannot collide and a re-review
+# after fixes always gets a distinctly named fresh file. The scratch dir comes
+# from the sdd-dir helper (off any protected path).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-if [ $# -lt 2 ] || [ $# -gt 3 ]; then
-  echo "usage: review-package BASE HEAD [OUTFILE]" >&2
+if [ $# -lt 3 ] || [ $# -gt 4 ]; then
+  echo "usage: review-package PLAN_FILE BASE HEAD [OUTFILE]" >&2
   exit 2
 fi
 
-base=$1
-head=$2
+plan=$1
+base=$2
+head=$3
 
 git rev-parse --verify --quiet "$base" >/dev/null || { echo "bad BASE: $base" >&2; exit 2; }
 git rev-parse --verify --quiet "$head" >/dev/null || { echo "bad HEAD: $head" >&2; exit 2; }
 
-if [ $# -eq 3 ]; then
-  out=$3
+if [ $# -eq 4 ]; then
+  out=$4
 else
-  dir=$("$SCRIPT_DIR/sdd-dir")
+  dir=$("$SCRIPT_DIR/sdd-dir" "$plan")
   out="$dir/review-$(git rev-parse --short "$base")..$(git rev-parse --short "$head").diff"
 fi
 

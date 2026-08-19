@@ -4,7 +4,7 @@
 # through the controller's context.
 #
 # Usage: task-brief PLAN_FILE TASK_NUMBER [OUTFILE]
-# Default OUTFILE: <sdd-dir>/task-<N>-brief.md — unique per repo instance,
+# Default OUTFILE: <sdd-dir PLAN_FILE>/task-<N>-brief.md — unique per plan,
 # so concurrent sessions cannot collide. The scratch dir comes from the
 # sdd-dir helper (off any protected path); see that script for why.
 set -euo pipefail
@@ -23,7 +23,7 @@ n=$2
 if [ $# -eq 3 ]; then
   out=$3
 else
-  dir=$("$SCRIPT_DIR/sdd-dir")
+  dir=$("$SCRIPT_DIR/sdd-dir" "$plan")
   out="$dir/task-${n}-brief.md"
 fi
 

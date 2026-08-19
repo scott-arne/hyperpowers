@@ -190,6 +190,17 @@ if [ "$(find "$planA_dir" -maxdepth 0 -mtime +14 | wc -l)" -eq 0 ]; then pass "r
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/b/plan.md)
 if [ -d "$planA_dir" ]; then pass "resumed plan A survives plan B's invocation"; else fail "plan A wrongly pruned by plan B GC"; fi
 
+echo "Test: plan mode refreshes parent repo cache dir to survive cross-repo GC"
+planA_dir=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+repo_plan_cache="$noarg"
+mkdir -p "$planA_dir"
+touch -mt "$OLDSTAMP" "$planA_dir" "$repo_plan_cache"
+_resume=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ "$(find "$repo_plan_cache" -maxdepth 0 -mtime +14 | wc -l)" -eq 0 ]; then pass "resume refreshes parent repo cache dir mtime"; else fail "parent repo cache dir still stale after plan resume"; fi
+make_repo "$TEST_ROOT/repo-gc-other"
+_other=$(cd "$TEST_ROOT/repo-gc-other" && "$SDD_DIR_SCRIPT")
+if [ -d "$repo_plan_cache" ]; then pass "active plan's parent repo cache dir survives cross-repo GC"; else fail "parent repo cache dir wrongly pruned by another repo's GC"; fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"

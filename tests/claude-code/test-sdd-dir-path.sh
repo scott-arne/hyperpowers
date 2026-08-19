@@ -156,6 +156,31 @@ else
     fail "current repo's dir survives pruning when idle (missing or moved: $dir_a)"
 fi
 
+echo "Test: plan-scoped workspaces are distinct for same-basename plans"
+make_repo "$TEST_ROOT/repo-plan"
+mkdir -p "$TEST_ROOT/repo-plan/docs/a" "$TEST_ROOT/repo-plan/docs/b"
+echo plan > "$TEST_ROOT/repo-plan/docs/a/plan.md"
+echo plan > "$TEST_ROOT/repo-plan/docs/b/plan.md"
+noarg=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT")
+da=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+db=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/b/plan.md)
+if [ "$da" != "$db" ]; then pass "same basename, different dirs -> distinct workspaces"; else fail "collision: $da == $db"; fi
+case "$da" in "$noarg"/plans/plan-*) pass "plan dir nests under repo plans/ subdir with slug prefix";; *) fail "unexpected plan dir shape: $da (repo dir: $noarg)";; esac
+dabs=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" "$TEST_ROOT/repo-plan/docs/a/plan.md")
+if [ "$da" = "$dabs" ]; then pass "relative and absolute plan paths agree"; else fail "path-form sensitivity: $da vs $dabs"; fi
+
+echo "Test: stale sibling plan workspaces pruned; fresh and non-plan content kept"
+stale="$noarg/plans/old-plan-deadbeef"
+freshdir="$noarg/plans/fresh-plan-cafef00d"
+nonplan="$noarg/perf-cache-notaplan"
+mkdir -p "$stale" "$freshdir" "$nonplan"
+OLDSTAMP="$(date -v-20d +%Y%m%d%H%M 2>/dev/null || date -d '20 days ago' +%Y%m%d%H%M)"
+touch -mt "$OLDSTAMP" "$stale" "$nonplan"
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ ! -d "$stale" ]; then pass "stale sibling plan dir pruned"; else fail "stale plan dir survived"; fi
+if [ -d "$freshdir" ]; then pass "fresh sibling plan dir kept"; else fail "fresh plan dir wrongly pruned"; fi
+if [ -d "$nonplan" ]; then pass "stale NON-plan sibling under repo root preserved"; else fail "GC deleted non-plan cache content"; fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"

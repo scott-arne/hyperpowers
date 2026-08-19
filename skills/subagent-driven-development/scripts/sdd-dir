@@ -28,6 +28,28 @@ git rev-parse --git-dir >/dev/null 2>&1 || {
 key=$(printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin)
 base="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/sdd"
 dir="${base}/${key}"
+
+# Optional PLAN_FILE argument scopes the workspace to one plan. The slug is
+# the plan basename plus an 8-char hash of the normalized repo-relative
+# path: basename alone collides (two plans named plan.md in different
+# directories must not share a ledger). No-arg mode is unchanged — it is
+# the repo-instance dir other skills use as a generic cache root.
+if [ $# -ge 1 ] && [ -n "${1:-}" ]; then
+  plan=$1
+  plan_dir=$(cd "$(dirname "$plan")" 2>/dev/null && pwd) || {
+    echo "sdd-dir: plan file directory does not exist: $plan" >&2
+    exit 2
+  }
+  abs="${plan_dir}/$(basename "$plan")"
+  toplevel=$(git rev-parse --show-toplevel)
+  rel=${abs#"$toplevel"/}
+  slug=$(basename "$plan")
+  slug=${slug%.*}
+  hash8=$(printf '%s' "$rel" | git hash-object --stdin | cut -c1-8)
+  plans_root="${dir}/plans"
+  dir="${plans_root}/${slug}-${hash8}"
+fi
+
 mkdir -p "$dir"
 
 # Reclaim sibling scratch dirs idle for 14+ days. Left alone the cache grows
@@ -41,5 +63,13 @@ mkdir -p "$dir"
 # pruning must never break the contract that stdout is exactly the dir path.
 find "$base" -mindepth 1 -maxdepth 1 -type d ! -name "$key" -mtime +14 \
   -exec rm -rf {} + 2>/dev/null || true
+
+# Plan-level GC backstop: stale sibling plan workspaces are pruned on the
+# same 14-idle-day rule. Scoped to the plans/ subdir only — never non-plan
+# cache content under the repo dir — and never the current plan's dir.
+if [ -n "${plans_root:-}" ]; then
+  find "$plans_root" -mindepth 1 -maxdepth 1 -type d ! -name "$(basename "$dir")" -mtime +14 \
+    -exec rm -rf {} + 2>/dev/null || true
+fi
 
 printf '%s\n' "$dir"

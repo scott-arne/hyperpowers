@@ -51,6 +51,10 @@ if [ $# -ge 1 ] && [ -n "${1:-}" ]; then
 fi
 
 mkdir -p "$dir"
+# Refresh the current directory's mtime. Invariant: every sdd-dir invocation
+# freshens the CURRENT dir so an actively-resumed workspace never looks idle
+# to sibling invocations' GC; the by-name exclusion remains defense in depth.
+touch "$dir"
 
 # Reclaim sibling scratch dirs idle for 14+ days. Left alone the cache grows
 # one dir per repo instance forever, and editors that follow agent-touched

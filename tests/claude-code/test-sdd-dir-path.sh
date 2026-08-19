@@ -181,6 +181,15 @@ if [ ! -d "$stale" ]; then pass "stale sibling plan dir pruned"; else fail "stal
 if [ -d "$freshdir" ]; then pass "fresh sibling plan dir kept"; else fail "fresh plan dir wrongly pruned"; fi
 if [ -d "$nonplan" ]; then pass "stale NON-plan sibling under repo root preserved"; else fail "GC deleted non-plan cache content"; fi
 
+echo "Test: resumed plan workspace survives sibling GC"
+planA_dir=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+mkdir -p "$planA_dir"
+touch -mt "$OLDSTAMP" "$planA_dir"
+_resume=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ "$(find "$planA_dir" -maxdepth 0 -mtime +14 | wc -l)" -eq 0 ]; then pass "resume refreshes plan dir mtime"; else fail "plan dir still stale after resume"; fi
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/b/plan.md)
+if [ -d "$planA_dir" ]; then pass "resumed plan A survives plan B's invocation"; else fail "plan A wrongly pruned by plan B GC"; fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"

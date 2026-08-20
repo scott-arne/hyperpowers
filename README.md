@@ -8,11 +8,13 @@ Like the original, it is a complete software development methodology for your co
 
 > **Attribution policy.** Package `author` fields and the visual companion's brand link credit the upstream author (Jesse Vincent / [`obra/superpowers`](https://github.com/obra/superpowers)). Fork maintainer identity — marketplace `owner` and each manifest's `interface.developerName` — is Scott Johnson. Keep these consistent when bumping versions or adding new manifests.
 
+Fork release history lives in [CHANGELOG.md](CHANGELOG.md); upstream's release notes are preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
+
 ## How it works
 
-It starts from the moment you fire up your coding agent. As soon as it sees that you're building something, it *doesn't* just jump into trying to write code. Instead, it steps back and asks you what you're really trying to do.
+It starts from the moment you fire up your coding agent. As soon as it sees that you're building something, it *doesn't* just jump into trying to write code. Instead, it steps back, classifies how much process the request needs — a quick feasibility spike, a bounded change to existing code, or genuinely architectural work — and asks you what you're really trying to do. The ceremony scales with the classification; the approval gate before implementation never does.
 
-Once it's teased a spec out of the conversation, it shows it to you in chunks short enough to actually read and digest.
+For architectural work, once it's teased a spec out of the conversation, it shows it to you in chunks short enough to actually read and digest. Bounded changes get a short design right in the chat instead of a spec document.
 
 After you've signed off on the design, your agent puts together an implementation plan that's clear enough for an enthusiastic junior engineer with poor taste, no judgement, no project context, and an aversion to testing to follow. It emphasizes true red/green TDD, YAGNI (You Aren't Gonna Need It), and DRY.
 
@@ -157,13 +159,13 @@ The bundle includes all skills with a router `SKILL.md` that guides skill select
 
 ## The Basic Workflow
 
-1. **brainstorming** - Activates before writing code. Refines rough ideas through questions, explores alternatives, presents design in sections for validation. Saves design document.
+1. **brainstorming** - Activates before writing code. Classifies the request (spike / bounded / architectural) and announces the path. Refines rough ideas through questions, explores alternatives, presents the design for validation — a short in-chat design for bounded changes, a sectioned design saved as a spec document for architectural work.
 
 2. **using-git-worktrees** - Activates after design approval. Creates isolated workspace on new branch, runs project setup, verifies clean test baseline.
 
 3. **writing-plans** - Activates with approved design. Breaks work into bite-sized tasks (2-5 minutes each). Every task has exact file paths, complete code, verification steps.
 
-4. **subagent-driven-development** or **executing-plans** - Activates with plan. Dispatches fresh subagent per task with two-stage review (spec compliance, then code quality), or executes in batches with human checkpoints.
+4. **subagent-driven-development** or **executing-plans** - Activates with plan. Dispatches a fresh subagent per task with a task review (spec-compliance and quality verdicts) after each, a broad whole-branch review at the end, and optional Codex gates throughout — or executes in batches with human checkpoints.
 
 5. **test-driven-development** - Activates during implementation. Enforces RED-GREEN-REFACTOR: write failing test, watch it fail, write minimal code, watch it pass, commit. Deletes code written before tests.
 
@@ -184,7 +186,7 @@ The bundle includes all skills with a router `SKILL.md` that guides skill select
 - **systematic-debugging** - 4-phase root cause process (includes root-cause-tracing, defense-in-depth, condition-based-waiting techniques)
 
 **Collaboration**
-- **brainstorming** - Socratic design refinement
+- **brainstorming** - Three-path (spike / bounded / architectural) design refinement
 - **writing-plans** - Detailed implementation plans
 - **executing-plans** - Batch execution with checkpoints
 - **dispatching-parallel-agents** - Concurrent subagent workflows
@@ -192,7 +194,7 @@ The bundle includes all skills with a router `SKILL.md` that guides skill select
 - **receiving-code-review** - Responding to feedback
 - **using-git-worktrees** - Parallel development branches
 - **finishing-a-development-branch** - Merge/PR decision workflow
-- **subagent-driven-development** - Fast iteration with two-stage review (spec compliance, then code quality)
+- **subagent-driven-development** - Fresh subagent per task, task review after each, final whole-branch review
 
 **Performance**
 - **profiling-performance** - Measure, find the bound, and rank bottlenecks before optimizing (language packs: C++, Python, JS)

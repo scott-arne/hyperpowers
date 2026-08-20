@@ -1,10 +1,10 @@
 {
   "upstream": "obra/superpowers",
   "upstreamUrl": "https://github.com/obra/superpowers",
-  "baseTag": "v6.0.2",
-  "baseCommit": "b62616fc12f6a007c6fd5118146821d748da0d33",
-  "baseReleasedAt": "2026-06-16",
-  "mergeCommit": "ab6cf86a2c641b4ad591365ad61b227010edc038",
-  "mergedAt": "2026-06-17",
-  "note": "Last upstream Superpowers release merged into this fork. To review what is new upstream before the next sync: `git fetch upstream && git log --oneline --no-merges v6.0.2..<next-tag>`. Update baseTag/baseCommit/mergeCommit/dates here whenever a new upstream release is merged. The fork's own version (package.json etc.) is independent of this and may collide numerically with an upstream tag — they are unrelated."
+  "baseTag": "v6.3.0",
+  "baseCommit": "b36e0829c6d0140e93cfef2ca599b1b07d4a7797",
+  "baseReleasedAt": "2026-08-12",
+  "mergeCommit": "aa60ca0709be08e1bb54d9324b01659cfe71c238",
+  "mergedAt": "2026-08-20",
+  "note": "Last upstream Superpowers release merged into this fork. v6.3.0 was incorporated by a port-based sync in three staged releases rather than a git merge; mergeCommit records the sync's final release commit. To review what is new upstream before the next sync: `git fetch upstream && git log --oneline --no-merges v6.3.0..<next-tag>`. Update baseTag/baseCommit/mergeCommit/dates here whenever a new upstream release is merged. The fork's own version (package.json etc.) is independent of this and may collide numerically with an upstream tag — they are unrelated."
 }

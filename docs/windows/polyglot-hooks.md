@@ -150,7 +150,7 @@ Check that the script filename is **extensionless** in `hooks.json`. A command l
 
 ### Hook doesn't fire at all
 
-Verify the `matcher` in `hooks.json` matches the event type your harness emits. Claude Code uses `startup|clear|compact`; Cursor uses `sessionStart`. Check `hooks-cursor.json` for the Cursor variant; this fork also ships `hooks-codex.json` with `startup|resume|clear` for the Codex integration.
+Verify the `matcher` in `hooks.json` matches the event type your harness emits. Claude Code uses `startup|clear|compact`; Cursor uses `sessionStart`. Check `hooks-cursor.json` for the Cursor variant; this fork also ships `hooks-codex.json` with `startup|clear|compact` for the Codex integration.
 
 ## Related Issues
 

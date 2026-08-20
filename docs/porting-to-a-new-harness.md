@@ -387,7 +387,7 @@ and your harness *also* sets an env var an earlier branch keys on (some harnesse
 set `CLAUDE_PLUGIN_ROOT` too), order your branch before the one that would
 otherwise shadow it. Match the harness's
 own event-matcher strings (Claude Code uses `startup|clear|compact`, Codex
-`startup|resume|clear`, Cursor `sessionStart`); wrong matchers mean the hook
+`startup|clear|compact`, Cursor `sessionStart`); wrong matchers mean the hook
 silently never fires.
 
 The **hook-config schema itself varies per harness** — don't assume the

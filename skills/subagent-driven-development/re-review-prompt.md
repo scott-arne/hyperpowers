@@ -111,5 +111,13 @@ Subagent (general-purpose):
 - `[HEAD_SHA]` — current commit
 - `[DIFF_FILE]` — the path `scripts/review-package PLAN_FILE FIX_BASE HEAD` printed
 
+**Final-wave usage:** this same template covers the fix wave of the FINAL
+whole-branch review, where the findings span tasks and no task brief exists.
+There `[BRIEF_FILE]` carries the plan file, `[FINDINGS]` carries the final
+review's findings list, and the description reads "Re-review final fix wave".
+The reviewer verdicts those branch-level findings against the fix diff exactly
+as the template above specifies — its "one task's fix round" framing does not
+narrow the scope in that usage.
+
 **Re-reviewer returns:** per-finding verdicts (ADDRESSED / NOT ADDRESSED),
 new breakage in the fix diff, out-of-scope observations, and a round verdict.

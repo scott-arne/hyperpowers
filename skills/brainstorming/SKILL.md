@@ -128,6 +128,8 @@ digraph brainstorming {
     "Classify: spike / bounded / architectural" [shape=diamond];
     "Present question + probe (2-3 sentences)" [shape=box];
     "Ask clarifying questions (bounded)" [shape=box];
+    "Real architecture/algorithm/data-model choices\nor partner requests Codex? (bounded)" [shape=diamond];
+    "Codex approach gate (one-shot); fold into\nshort design (no escalation)" [shape=box];
     "Present short design in chat" [shape=box];
     "Human approves?" [shape=diamond];
     "Investigate; report recommendation" [shape=doublecircle];
@@ -150,7 +152,10 @@ digraph brainstorming {
     "Classify: spike / bounded / architectural" -> "Ask clarifying questions (bounded)" [label="bounded"];
     "Classify: spike / bounded / architectural" -> "Explore project context" [label="architectural"];
     "Present question + probe (2-3 sentences)" -> "Human approves?";
-    "Ask clarifying questions (bounded)" -> "Present short design in chat";
+    "Ask clarifying questions (bounded)" -> "Real architecture/algorithm/data-model choices\nor partner requests Codex? (bounded)";
+    "Real architecture/algorithm/data-model choices\nor partner requests Codex? (bounded)" -> "Codex approach gate (one-shot); fold into\nshort design (no escalation)" [label="yes"];
+    "Real architecture/algorithm/data-model choices\nor partner requests Codex? (bounded)" -> "Present short design in chat" [label="no - trivial"];
+    "Codex approach gate (one-shot); fold into\nshort design (no escalation)" -> "Present short design in chat";
     "Present short design in chat" -> "Human approves?";
     "Human approves?" -> "Investigate; report recommendation" [label="spike: yes"];
     "Human approves?" -> "Implement via normal workflow (no plan doc)" [label="bounded: yes"];

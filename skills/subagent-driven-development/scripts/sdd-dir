@@ -37,7 +37,7 @@ dir="${base}/${key}"
 repo_dir="$dir"
 if [ $# -ge 1 ] && [ -n "${1:-}" ]; then
   plan=$1
-  plan_dir=$(cd "$(dirname "$plan")" 2>/dev/null && pwd) || {
+  plan_dir=$(cd "$(dirname "$plan")" 2>/dev/null && pwd -P) || {
     echo "sdd-dir: plan file directory does not exist: $plan" >&2
     exit 2
   }

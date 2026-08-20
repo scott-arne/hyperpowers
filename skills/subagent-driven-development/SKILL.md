@@ -134,12 +134,18 @@ a ledger file, not only in todos.
   working tree, so it can never be committed. Another plan's directory is
   never yours to read or write.
 - Check for this plan's ledger at `<workspace>/progress.md` — this plan's
-  workspace only, never a sibling's. If its first line names your plan
-  file, tasks with a `Task <N>: complete` line are DONE — do not
-  re-dispatch them; resume at the first task without one. A task whose last
-  line is a fix round is mid-loop: resume the loop at the next round. A
-  ledger whose first line names a different plan file is another plan's
-  progress: leave it in place and start your own, fresh.
+  workspace only, never a sibling's. The workspace is the plan's identity:
+  `scripts/sdd-dir` maps a plan to ONE directory whatever path form you
+  hand it, so a ledger sitting in YOUR workspace is this plan's progress
+  even when its first line records the path in another form (relative vs
+  absolute, or through a symlink). Resolve that line and compare the file
+  it points to, not the string. Tasks with a `Task <N>: complete` line are
+  DONE — do not re-dispatch them; resume at the first task without one. A
+  task whose last line is a fix round is mid-loop: resume the loop at the
+  next round. A first line that resolves to a genuinely different plan
+  file means this workspace is corrupt, not that you wandered into a
+  sibling's: stop and surface it to your human partner rather than
+  starting fresh on top of another plan's state.
 - Create the ledger with its identity as the first line:
   `# SDD ledger — plan: <plan file path>`.
 - The ledger is your recovery map: the commits it names exist in git even
@@ -568,7 +574,7 @@ Per-finding fixers each rebuild context and re-run suites; a real
 session's final-review fix wave cost more than all its tasks combined.
 Then run exactly one scoped re-review of the fix wave
 (`scripts/review-package PLAN_FILE FIX_BASE HEAD` over the fix range,
-[re-review-prompt.md](re-review-prompt.md)).
+[re-review-prompt.md](re-review-prompt.md) using its Final-wave usage note).
 There is no second fix wave: anything the re-review leaves open — and any
 finding that conflicts with the plan's text — goes to your human partner
 with the evidence, as BLOCKED, when finishing-a-development-branch presents

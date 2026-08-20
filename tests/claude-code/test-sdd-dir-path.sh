@@ -243,6 +243,15 @@ make_repo "$TEST_ROOT/repo-gc-other"
 _other=$(cd "$TEST_ROOT/repo-gc-other" && "$SDD_DIR_SCRIPT")
 if [ -d "$repo_plan_cache" ]; then pass "active plan's parent repo cache dir survives cross-repo GC"; else fail "parent repo cache dir wrongly pruned by another repo's GC"; fi
 
+echo "Test: symlinked cwd yields the same workspace as the physical path"
+make_repo "$TEST_ROOT/repo-symlink"
+mkdir -p "$TEST_ROOT/repo-symlink/docs"
+echo plan > "$TEST_ROOT/repo-symlink/docs/plan.md"
+ln -s "$TEST_ROOT/repo-symlink" "$TEST_ROOT/symlink-to-repo"
+physical_dir=$(cd "$TEST_ROOT/repo-symlink" && "$SDD_DIR_SCRIPT" docs/plan.md)
+symlink_dir=$(cd "$TEST_ROOT/symlink-to-repo" && "$SDD_DIR_SCRIPT" docs/plan.md)
+if [ "$physical_dir" = "$symlink_dir" ]; then pass "symlinked cwd and physical cwd yield identical workspace paths"; else fail "path-form sensitivity: physical=$physical_dir vs symlink=$symlink_dir"; fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"

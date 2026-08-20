@@ -480,8 +480,9 @@ no-Codex notice once and run both gates as no-ops.
      `GATE_DIR` — against `--ceiling`, so the ceiling must leave gate rounds
      out; they are already in that count. Before EVERY `gate-round` call,
      compute `ceiling = 5 - <NON-gate fix rounds this task has consumed so
-     far>` (fix/re-review rounds not triggered by a Codex gate, regardless of
-     which reviewer's findings prompted them) and pass that. Recompute at each
+     far>` (all fix/re-review rounds, whatever the finding's origin — the gate's
+     own invocation rounds are excluded only because `gate-round`'s counter
+     already holds them) and pass that. Recompute at each
      call: non-gate rounds may land between gate rounds.
   3. **Check the shared cap before calling.** If `ceiling <= <gate rounds
      already run>` — equivalently, the task's consumed rounds already total

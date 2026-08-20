@@ -79,6 +79,7 @@ artifact, never the approval.
 | "The spike works, so I'll keep the code" | A spike's output is an answer. Keeping the code is a new request — classify it. |
 | "It grew, but I'm almost done — no need to re-classify" | Hidden complexity upgrades the path mid-task. Stop and say so. |
 | "They approved the spike, so the follow-up change is approved too" | Each task gets its own classification and its own approval. |
+| "It's bounded, so the visual companion doesn't apply" | The companion keys on the question being visual, not on the path being heavy. Open it — the task stays bounded. |
 
 ## Checklist
 
@@ -94,11 +95,12 @@ your path and complete them in order.
 
 **Bounded:**
 1. **Explore project context** — check files, docs, recent commits
-2. **Ask clarifying questions** — one at a time, the ones that matter
-3. **Codex approach gate (conditional)** — if the design space has real architectural, algorithmic, or data-model alternatives, or your human partner asks for Codex input, run [codex-approach-gate.md](codex-approach-gate.md) and fold its approaches into the short in-chat design with provenance tags. Ceremony does not escalate. Trivial/mechanical bounded tasks skip this silently.
-4. **Present short design in chat** — approach, files touched, testing
-5. **Get approval** — STOP and wait for an explicit yes; presenting the design and starting in the same breath is skipping the gate
-6. **Implement** — proceed with the normal development workflow (TDD applies); no plan document
+2. **Visual companion (conditional)** — if a question here would genuinely be clearer shown than described (a layout, a diagram, side-by-side options), open it just-in-time. Ceremony does not escalate: the design still lands in chat. See the Visual Companion section below.
+3. **Ask clarifying questions** — one at a time, the ones that matter
+4. **Codex approach gate (conditional)** — if the design space has real architectural, algorithmic, or data-model alternatives, or your human partner asks for Codex input, run [codex-approach-gate.md](codex-approach-gate.md) and fold its approaches into the short in-chat design with provenance tags. Ceremony does not escalate. Trivial/mechanical bounded tasks skip this silently.
+5. **Present short design in chat** — approach, files touched, testing
+6. **Get approval** — STOP and wait for an explicit yes; presenting the design and starting in the same breath is skipping the gate
+7. **Implement** — proceed with the normal development workflow (TDD applies); no plan document
 
 **Architectural:**
 1. **Explore project context** — check files, docs, recent commits
@@ -120,6 +122,14 @@ ceremony does not escalate. On the spike path it does not normally fire
 (feasibility probes rarely present committed design alternatives), but an
 explicit request or genuinely material alternatives still fire it.
 Trivial/mechanical tasks skip it silently.
+
+**Visual companion (conditional, any path):** its trigger is path-independent
+too — the first time a question would genuinely be clearer shown than
+described, open it, whichever path you are on. Classification does not gate it:
+a bounded task that opens the companion is still bounded and still ends in a
+short in-chat design, and a spike that sketches one screen is still a spike.
+What fires it is the question being visual, not the path being heavy. If no
+visual question ever arises, never open it.
 
 ## Process Flow
 
@@ -231,6 +241,25 @@ is the whole process.
 - Where existing code has problems that affect the work (e.g., a file that's grown too large, unclear boundaries, tangled responsibilities), include targeted improvements as part of the design - the way a good developer improves code they're working in.
 - Don't propose unrelated refactoring. Stay focused on what serves the current goal.
 
+## Visual Companion
+
+A browser-based companion for showing mockups, diagrams, and visual options during brainstorming. Available as a tool — not a mode, and not a path. Having it open means it's available for questions that benefit from visual treatment; it does NOT mean every question goes through the browser.
+
+**Using the companion (just-in-time):** Do NOT open it upfront. Wait until a question would genuinely be clearer shown than told — a real mockup / layout / diagram question, not merely a UI *topic*. The first time that happens, just use it: start the server with `--open` so the user's browser opens to the first screen, and tell them what you're doing in the same message — no separate approval gate.
+> "I'll sketch this in a browser tab so it's easier to see — opening it now at <URL>. (It's token-intensive, so say the word if you'd rather keep things in the terminal.)"
+
+If a visual question never arises, never open it. If the user asks to stop using it, continue text-only and don't reopen it unless they raise it again.
+
+**Per-question decision:** Even with the companion open, decide FOR EACH QUESTION whether to use the browser or the terminal. The test: **would the user understand this better by seeing it than reading it?**
+
+- **Use the browser** for content that IS visual — mockups, wireframes, layout comparisons, architecture diagrams, side-by-side visual designs
+- **Use the terminal** for content that is text — requirements questions, conceptual choices, tradeoff lists, A/B/C/D text options, scope decisions
+
+A question about a UI topic is not automatically a visual question. "What does personality mean in this context?" is a conceptual question — use the terminal. "Which wizard layout works better?" is a visual question — use the browser.
+
+Before opening the companion for the first time, read the detailed guide:
+`skills/brainstorming/visual-companion.md`
+
 ## After the Design (architectural path)
 
 **Documentation:**
@@ -272,22 +301,3 @@ Wait for the user's response. If they request changes, make them and re-run the 
 
 - Invoke the writing-plans skill to create a detailed implementation plan
 - Do NOT invoke any other skill. writing-plans is the next step.
-
-## Visual Companion
-
-A browser-based companion for showing mockups, diagrams, and visual options during brainstorming. Available as a tool — not a mode. Having it open means it's available for questions that benefit from visual treatment; it does NOT mean every question goes through the browser.
-
-**Using the companion (just-in-time):** Do NOT open it upfront. Wait until a question would genuinely be clearer shown than told — a real mockup / layout / diagram question, not merely a UI *topic*. The first time that happens, just use it: start the server with `--open` so the user's browser opens to the first screen, and tell them what you're doing in the same message — no separate approval gate.
-> "I'll sketch this in a browser tab so it's easier to see — opening it now at <URL>. (It's token-intensive, so say the word if you'd rather keep things in the terminal.)"
-
-If a visual question never arises, never open it. If the user asks to stop using it, continue text-only and don't reopen it unless they raise it again.
-
-**Per-question decision:** Even with the companion open, decide FOR EACH QUESTION whether to use the browser or the terminal. The test: **would the user understand this better by seeing it than reading it?**
-
-- **Use the browser** for content that IS visual — mockups, wireframes, layout comparisons, architecture diagrams, side-by-side visual designs
-- **Use the terminal** for content that is text — requirements questions, conceptual choices, tradeoff lists, A/B/C/D text options, scope decisions
-
-A question about a UI topic is not automatically a visual question. "What does personality mean in this context?" is a conceptual question — use the terminal. "Which wizard layout works better?" is a visual question — use the browser.
-
-Before opening the companion for the first time, read the detailed guide:
-`skills/brainstorming/visual-companion.md`

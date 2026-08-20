@@ -2,6 +2,12 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
+## 6.9.2 (2026-08-20)
+
+- **Visual companion is no longer scoped to the architectural path.** The three-path router split (6.9.0) moved the companion's just-in-time step under the `**Architectural:**` checklist header — the line itself was never edited, but the new header landed above it — leaving spike and bounded brainstorms with no mention of the companion at all. Bounded is the modal classification for work in an existing repo, so in practice the companion stopped being offered. It now has a path-independent trigger paragraph (mirroring the Codex approach gate's, added in the same commit that caused the regression), a step on the bounded checklist, and a Red Flags row for "It's bounded, so the visual companion doesn't apply". The `## Visual Companion` section moved above `## After the Design (architectural path)` so it no longer reads as architectural-only. Ceremony still does not escalate: a bounded task that opens the companion stays bounded and still ends in a short in-chat design.
+- **New eval scenario** `brainstorming-bounded-fires-visual-companion` guards the bounded path (companion opened just-in-time, no spec file, no plan document).
+- **Evidence is inconclusive and recorded as such** (`evals/docs/experiments/2026-08-20-visual-companion-path-scoping.md`). The failure mode reproduced once pre-fix — an agent classified BOUNDED and then stated it would "stay in the terminal rather than opening the visual companion" — but post-fix 3/3 vs pre-fix 2/3 is not statistically distinguishable at that sample size. The change is kept on structural grounds, with no observed cost: across all six runs the bounded classification held, no spec file appeared, and writing-plans never fired.
+
 ## 6.9.1 (2026-08-20)
 
 Post-release fixes from the upstream-sync final review train (fable whole-branch review plus the final Codex gate, which surfaced four confirmed findings the earlier per-task reviews missed).

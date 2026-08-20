@@ -361,7 +361,9 @@ step 4's per-task Codex gate does.
   false positive, let the reviewer raise it and adjudicate it in the review
   loop. If the prompt you are writing contains "do not flag," "don't treat X
   as a defect," "at most Minor," or "the plan chose" — stop: you are
-  pre-judging, usually to spare yourself a review loop.
+  pre-judging, usually to spare yourself a review loop. When the plan supplies
+  example code, weaknesses in that code are fair review targets — the example
+  was a starting point, not evidence that its weaknesses were chosen.
 The task reviewer may report "⚠️ Cannot verify from diff" items — requirements
 that live in unchanged code or span tasks. These do not block the rest of the
 review, but you must resolve each one yourself before marking the task
@@ -472,8 +474,9 @@ no-Codex notice once and run both gates as no-ops.
      `GATE_DIR` — against `--ceiling`, so the ceiling must leave gate rounds
      out; they are already in that count. Before EVERY `gate-round` call,
      compute `ceiling = 5 - <NON-gate fix rounds this task has consumed so
-     far>` (Claude-reviewer fix/re-review rounds only) and pass that.
-     Recompute at each call: non-gate rounds may land between gate rounds.
+     far>` (fix/re-review rounds not triggered by a Codex gate, regardless of
+     which reviewer's findings prompted them) and pass that. Recompute at each
+     call: non-gate rounds may land between gate rounds.
   3. **Check the shared cap before calling.** If `ceiling <= <gate rounds
      already run>` — equivalently, the task's consumed rounds already total
      five — do NOT call the gate: the cap is spent, so follow the breaker

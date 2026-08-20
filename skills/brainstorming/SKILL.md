@@ -36,12 +36,19 @@ override it:
   this repo: a new flag, a small endpoint, a one-file fix.
   Understanding the kind of app is not enough — bounded means the flow
   you are changing is already here to read. If there is no existing
-  flow to change, the task is not bounded. Ask the clarifying
-  questions that matter, present a short design IN CHAT (a few
-  sentences to a few short paragraphs), and STOP. Implementation
-  starts only after your human partner says yes to that design — a
-  bounded task's approval is as hard a gate as an architectural
-  one. No spec file, no implementation plan document.
+  flow to change, the task is not bounded. Classify by the outcome the
+  request names, not by the code your first edit would touch: if the
+  request names structure this repo does not have — a new module or
+  layer, a new subsystem such as logging or storage, reuse across
+  components that do not exist yet — the flow you would be changing is
+  not already here, however small the first edit looks, and the task
+  is architectural. Choosing between algorithms or options inside a
+  function that already exists names no new structure and stays
+  bounded. Ask the clarifying questions that matter, present a short
+  design IN CHAT (a few sentences to a few short paragraphs), and
+  STOP. Implementation starts only after your human partner says yes
+  to that design — a bounded task's approval is as hard a gate as an
+  architectural one. No spec file, no implementation plan document.
 - **Architectural** — new projects, new subsystems, changes that
   restructure how components fit together or alter interfaces others
   depend on. Follow the full process: questions, approaches, sectioned
@@ -68,6 +75,7 @@ artifact, never the approval.
 | "I'll call it bounded and skip the spec" | Reaching for a label to skip work IS the doubt — take the heavier path. |
 | "It's bounded and the design is obvious — I'll start while they read it" | The gate is the approval, not the design's length. Present, then stop until you hear yes. |
 | "I understand this kind of app, so it's bounded" | Bounded measures the repo, not your familiarity. A new project has no existing flow — it is architectural. |
+| "The code I'd touch is right here, so it's bounded" | Bounded measures the outcome's shape, not the entry point. A request naming a new module, a new subsystem, or reuse across components is architectural even when the edit starts in one file. |
 | "The spike works, so I'll keep the code" | A spike's output is an answer. Keeping the code is a new request — classify it. |
 | "It grew, but I'm almost done — no need to re-classify" | Hidden complexity upgrades the path mid-task. Stop and say so. |
 | "They approved the spike, so the follow-up change is approved too" | Each task gets its own classification and its own approval. |

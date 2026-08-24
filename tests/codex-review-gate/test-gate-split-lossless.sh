@@ -28,7 +28,16 @@ UNTRACKED_BLANKS=(273 356)
 TAB="$(printf '\t')"
 
 failures=0
-pass() { echo "  [PASS] $1"; }
+passes=0
+skips=0
+pass() {
+    echo "  [PASS] $1"
+    passes=$((passes + 1))
+}
+skip() {
+    echo "  [SKIP] $1"
+    skips=$((skips + 1))
+}
 fail() {
     echo "  [FAIL] $1"
     failures=$((failures + 1))
@@ -209,8 +218,21 @@ fi
 # 5b. Runs once the split has happened: each destination file on disk equals
 #     its reconstruction. Gated on the index no longer carrying section
 #     bodies, so a pre-split run reports SKIP rather than a vacuous pass.
-if grep -Fq '## 1. Preflight availability' "$GATE_DIR/codex-review-gate.md"; then
-    echo "  [SKIP] per-file byte-identity (pre-split: index still holds section bodies)"
+# A skip is legal only in a genuinely untouched pre-split tree: the index
+# still carries the section bodies AND not one destination file exists yet.
+# Either signal alone is forgeable by a half-finished split, which is
+# precisely the state this check must refuse to wave through.
+split_started=0
+while IFS="$TAB" read -r dest _; do
+    case "$dest" in \#* | "") continue ;; esac
+    if [ -e "$GATE_DIR/$dest" ]; then
+        split_started=1
+    fi
+done <"$MANIFEST"
+
+if [ "$split_started" -eq 0 ] &&
+    grep -Fq '## 1. Preflight availability' "$GATE_DIR/codex-review-gate.md"; then
+    skip "per-file byte-identity (pre-split: index still holds section bodies)"
 else
     # The index preamble is the one destination with no manifest row, so the
     # loop below would never see it and check 5a compares it against itself
@@ -270,6 +292,16 @@ for needle in "$REPLACEMENT_1" "$REPLACEMENT_2"; do
         fail "replacement contract needle is present: \"$needle\""
     fi
 done
+
+# The suite has exactly two legal shapes. Anything else means a check
+# vanished, or the tree is in a half-split state that no single assertion
+# above would catch. Without this, a check could stop running and its
+# silence would read as success. This assertion prints nothing when it
+# holds, so the two documented counts stay exact.
+if ! { { [ "$skips" -eq 1 ] && [ "$passes" -eq 12 ]; } ||
+    { [ "$skips" -eq 0 ] && [ "$passes" -eq 22 ]; }; }; then
+    fail "check inventory is one of the two legal shapes (pre-split 12 PASS/1 SKIP, post-split 22 PASS/0 SKIP); got $passes PASS/$skips SKIP"
+fi
 
 echo ""
 if [ "$failures" -gt 0 ]; then

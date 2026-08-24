@@ -119,8 +119,14 @@ assert_contains "$SDD" 'test ! -d' "real deletion assertion not vacuous ls"
 assert_contains "$SDD_RATIONALIZATIONS" "stale-forensics trap" "rationalization names forensics trap"
 # Stubs left behind by the 6.x reference-file extraction must keep the
 # operative rules on the main path, not only behind the link.
-assert_contains "$SDD" "Only an EFFECTIVE-low task — declared low with no escalation trigger fired at any point during execution — skips the per-task Codex gate, and the skip is recorded durably." \
-  "risk-tier stub pins the EFFECTIVE-low skip precondition and its durable record"
+assert_contains "$SDD" "A task skips the per-task Codex gate only when all three hold: declared low, the plan's own Codex gate actually reviewed the plan, and no escalation trigger fired at any point during execution." \
+  "risk-tier stub pins all three skip preconditions, including plan-gate-reviewed"
+assert_contains "$SDD" "That skip is recorded durably." \
+  "risk-tier stub keeps the durable-record requirement"
+assert_contains "$SDD" "An unreviewed low tier — plan gate skipped, degraded, or outcome unknown — executes as standard, and a task demoted that way runs the full train and records NO tier-skip event." \
+  "risk-tier stub pins the demotion rule and that a demoted task records no tier-skip event"
+assert_contains "$SDD" 'write `tier-skips.md` in this plan' \
+  "risk-tier stub names the tier-skips.md producer that Final Review consumes"
 assert_contains "$SDD" "The Claude task reviewer and the final whole-branch train never tier off." \
   "risk-tier stub pins that the Claude reviewer and final train never tier off"
 assert_contains "$SDD" "read it before dispatching any task declared low" \

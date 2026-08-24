@@ -34,7 +34,7 @@ fail() {
     failures=$((failures + 1))
 }
 
-TEST_ROOT="$(mktemp -d)"
+TEST_ROOT="$(mktemp -d)" || { echo "  [FAIL] cannot create scratch directory" >&2; exit 1; }
 cleanup() { rm -rf "$TEST_ROOT"; }
 trap cleanup EXIT
 

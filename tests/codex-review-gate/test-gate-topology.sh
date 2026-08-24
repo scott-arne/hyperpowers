@@ -16,17 +16,26 @@ INDEX="$GATE_DIR/codex-review-gate.md"
 SIBLINGS="gate-preflight.md gate-setup.md gate-output-schema.md gate-lenses.md
 recipe-document.md recipe-code.md gate-findings.md gate-fix-loop.md gate-sweep.md"
 
-# All seven consumers of the gate. Two of them — the SDD final whole-branch
-# call and the review sweep — reach the gate without naming the file, so a
-# grep for the filename finds five call sites, not seven. Assert against
-# this list, never against a grep, or the matrix rots while the test passes.
-CALLERS="approach gate
-spec gate
-plan gate
-per-task code gate
-final whole-branch gate
-ad-hoc code review
-review sweep"
+# Every gate caller loads the same six-file spine and exactly one recipe.
+# Naming the spine once states that design instead of copying the matrix row
+# by row, so a legitimate route change edits one word here, not seven cells.
+SPINE="gate-preflight gate-setup gate-output-schema gate-lenses gate-findings gate-fix-loop"
+
+# All seven consumers of the gate, each with the exact route it must be given.
+# Two of them — the SDD final whole-branch call and the review sweep — reach
+# the gate without naming the file, so a grep for the filename finds five call
+# sites, not seven. Assert against this list, never against a grep, or the
+# matrix rots while the test passes.
+#
+# The field separator is `=` because no caller name and no route basename
+# contains one.
+ROUTES="approach gate=gate-preflight
+spec gate=$SPINE recipe-document
+plan gate=$SPINE recipe-document
+per-task code gate=$SPINE recipe-code
+final whole-branch gate=$SPINE recipe-code
+ad-hoc code review=$SPINE recipe-code
+review sweep=gate-preflight gate-sweep"
 
 failures=0
 pass() { echo "  [PASS] $1"; }
@@ -71,29 +80,49 @@ done
 # unterminated quote.
 BT='`'
 
-# 4. Every caller has a route, and that route names at least one file. Fed by
-#    here-string, not a pipe: a piped `while` runs in a subshell, so every
-#    failure it counted would be discarded.
+# 4. Every caller's route names exactly the files that caller needs — no name
+#    missing, no name extra. Fed by here-string, not a pipe: a piped `while`
+#    runs in a subshell, so every failure it counted would be discarded.
 #
-#    The row's existence is not the property. An emptied route cell still
-#    matches the caller, and check 5 cannot see the loss either — it counts
-#    distinct names across the whole table, and every file in an emptied cell
-#    is still named by some other row, so the total holds at 9. Measured: with
-#    `| approach gate |  |` the old check-4 reported PASS and the suite exited
-#    0. Assert on the cell, not the row.
-while IFS= read -r caller; do
-    row="$(grep -F "| $caller |" "$INDEX" | head -1)"
+#    Neither a row's existence nor a non-empty cell is the property. Check 5
+#    cannot see a partial loss either: it counts distinct names across the
+#    whole table, and a name dropped from one row is still supplied by another,
+#    so the total holds at 9. Measured — dropping `gate-lenses` from the spec
+#    gate row left check 4 PASS, check 5 PASS, and the suite exiting 0.
+#    Compare the parsed cell against the expected set in both directions.
+#
+#    `review sweep` carries conditional prose after its two names. The prose
+#    holds no backticks, so it parses to those two names and needs no case of
+#    its own.
+callers_checked=0
+while IFS='=' read -r caller expected; do
+    callers_checked=$((callers_checked + 1))
+    row="$(sed -n '/^| Caller /,$p' "$INDEX" | grep -F "| $caller |" | head -1)"
     if [ -z "$row" ]; then
-        fail "route present for: $caller (no row in the matrix)"
+        fail "route exact for: $caller (no row in the matrix)"
         continue
     fi
-    cell="${row#*| $caller |}"
-    if printf '%s\n' "$cell" | grep -q "${BT}[a-z0-9-]*${BT}"; then
-        pass "route present for: $caller"
+    cell="${row#*| "$caller" |}"
+    actual="$(printf '%s\n' "$cell" | grep -o "${BT}[a-z0-9-]*${BT}" | tr -d "$BT" |
+        LC_ALL=C sort | tr '\n' ' ')"
+    want="$(printf '%s\n' "$expected" | tr ' ' '\n' | LC_ALL=C sort | tr '\n' ' ')"
+    if [ "$actual" = "$want" ]; then
+        pass "route exact for: $caller"
     else
-        fail "route present for: $caller (row exists, route cell names no file)"
+        fail "route exact for: $caller (want [${want% }], got [${actual% }])"
     fi
-done <<<"$CALLERS"
+done <<<"$ROUTES"
+
+# The loop above is fed by a redirection, and bash backs a here-string with a
+# temp file. If that redirection fails the body never runs, `failures` never
+# moves, and the suite prints PASSED having checked nothing — Codex hit exactly
+# that in a sandbox whose temp dir was unwritable. Check 5 carries this guard
+# already; check 4 was missing it.
+if [ "$callers_checked" -eq 7 ]; then
+    pass "all 7 caller routes checked"
+else
+    fail "all 7 caller routes checked (ran $callers_checked)"
+fi
 
 # 5. Route cells name only files that exist.
 routes_seen=0

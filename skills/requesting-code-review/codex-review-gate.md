@@ -21,3 +21,26 @@ skip it silently — do not run the preflight, do not emit the notice.
 | [gate-findings.md](gate-findings.md) | §4 severity mapping; §4b completion check |
 | [gate-fix-loop.md](gate-fix-loop.md) | §5 fix-and-re-review loop and backstops; §6 hand back |
 | [gate-sweep.md](gate-sweep.md) | §7 review sweep |
+
+## Routes
+
+**Read your whole route before you start.** A route is a *set*, not a sequence.
+The gate's §-references point in both directions — §3 names §5's round counter
+and §4b's recovery path, §4b names §3's watch loop, §5 names §3's prompt and
+`GATE_DIR` — so there is no order in which every reference points backwards.
+Load the whole set first and every reference resolves against context you
+already hold. Section files never send you to another file.
+
+| Caller | Route |
+|--------|-------|
+| approach gate | `gate-preflight` |
+| spec gate | `gate-preflight`, `gate-setup`, `gate-output-schema`, `gate-lenses`, `recipe-document`, `gate-findings`, `gate-fix-loop` |
+| plan gate | `gate-preflight`, `gate-setup`, `gate-output-schema`, `gate-lenses`, `recipe-document`, `gate-findings`, `gate-fix-loop` |
+| per-task code gate | `gate-preflight`, `gate-setup`, `gate-output-schema`, `gate-lenses`, `recipe-code`, `gate-findings`, `gate-fix-loop` |
+| final whole-branch gate | `gate-preflight`, `gate-setup`, `gate-output-schema`, `gate-lenses`, `recipe-code`, `gate-findings`, `gate-fix-loop` |
+| ad-hoc code review | `gate-preflight`, `gate-setup`, `gate-output-schema`, `gate-lenses`, `recipe-code`, `gate-findings`, `gate-fix-loop` |
+| review sweep | `gate-preflight`, `gate-sweep`, plus the route for the gate type each queued event records |
+
+The approach gate's route is one file: its entire need is §1 and §2, which is
+why they share a file. The sweep's route is conditional by design — it
+dispatches by recorded gate type and inherits that type's route.

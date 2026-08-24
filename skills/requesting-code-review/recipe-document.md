@@ -1,4 +1,4 @@
-**Document review prompt templates.** Round 1 composes these through the lens fan-out in gate-lenses.md; re-review rounds (2+) use them as written here, after the round-aware preamble.
+**Document review prompt templates.** Rounds 2+ compose from these as written here, after the round-aware preamble from gate-fix-loop.md. Round 1 does not: it builds one prompt per lens from the skeleton in gate-lenses.md, reusing only this file's `task --fresh` invocation form and — plan gate only — its Round-1 Algorithm Assessment block.
 
 **Spec documents** — use `task`, read-only (no `--write`):
 

@@ -190,8 +190,14 @@ while IFS="$TAB" read -r src _reason replacement; do
         ;;
     esac
     # A row that changes nothing is a lie in the audit trail: it claims an edit
-    # the reconstruction cannot show.
-    if [ "$replacement" = "$(sed -n "${src}p" "$original")" ]; then
+    # the reconstruction cannot show. An empty replacement is the same lie in
+    # the other direction — a row that lost its third column parses to "",
+    # which is not equal to the original line, so it would otherwise sail
+    # through and silently blank a source line on both sides of the proof.
+    if [ -z "$replacement" ]; then
+        echo "    line $src: replacement is empty"
+        bad_edit=$((bad_edit + 1))
+    elif [ "$replacement" = "$(sed -n "${src}p" "$original")" ]; then
         echo "    line $src: replacement is identical to the original line"
         bad_edit=$((bad_edit + 1))
     fi
@@ -236,7 +242,7 @@ else
     fail "exactly 8 declared post-split edits (got $post_edit_count)"
 fi
 
-# --- 5. Reconstruct each destination from the original plus rewrites. ---
+# --- 5. Reconstruct each destination from the original, rewrites and edits. ---
 reconstruct() {
     local dest="$1" start="$2" end="$3" out="$4"
     sed -n "${start},${end}p" "$original" >"$out"
@@ -263,7 +269,8 @@ reconstruct() {
 }
 
 # 5a. Runnable before the split: all reconstructions concatenated in source
-#     order must equal the original, modulo untracked blanks and rewrites.
+#     order must equal the original, modulo untracked blanks, positional
+#     rewrites, and declared post-split edits.
 joined="$TEST_ROOT/joined.md"
 : >"$joined"
 sed -n '1,10p' "$original" >>"$joined"
@@ -353,18 +360,20 @@ else
     # anywhere in the index. Whole-line fixed-string matching, one pass.
     #
     # Every non-blank body line is a needle in BOTH its forms: as it reads in
-    # the reconstruction, and as it reads in the pinned original. Eight
-    # references are rewritten when they move, so a reconstruction-only needle
-    # set leaves the seven distinct pre-rewrite strings watched by nothing —
-    # source 106, 130, 131, 133, 196, 218 and 229/244 — and an index holding
-    # one of them passes clean. Earlier rounds also excluded fence markers and
-    # table separator rows as content-free lines a router might legitimately
-    # grow; every such exclusion reopened the same hole, so there are none
-    # left. Measured against the index states this split produces — Task 3's
-    # 23-line index and the 46-line index Task 4 grows it into — the 569-needle
-    # union collides with neither. If some later index genuinely needs a line
-    # byte-identical to a body line, the answer is to compare the index against
-    # its expected contents, not to re-open a class of unwatched lines.
+    # the reconstruction, and as it reads in the pinned original. Sixteen lines
+    # are substituted when they move — eight positional rewrites and eight
+    # declared post-split edits — so a reconstruction-only needle set leaves
+    # fifteen distinct pre-substitution strings watched by nothing (the rewrites
+    # contribute seven: source 106, 130, 131, 133, 196, 218 and 229/244), and an
+    # index holding one of them passes clean. Earlier rounds also excluded fence
+    # markers and table separator rows as content-free lines a router might
+    # legitimately grow; every such exclusion reopened the same hole, so there
+    # are none left. Measured against the index states this split produces —
+    # Task 3's 23-line index and the 46-line index Task 4 grows it into — the
+    # 569-needle union collides with neither. If some later index genuinely
+    # needs a line byte-identical to a body line, the answer is to compare the
+    # index against its expected contents, not to re-open a class of unwatched
+    # lines.
     #
     # Blank and whitespace-only lines stay out: `grep -Fxf` with a blank needle
     # matches every blank line in the index, which would make this a permanent

@@ -79,7 +79,7 @@ assert_contains "$GATE" "<BRANCH_REVIEW_PACKAGE_PATH>" \
 
 assert_contains "$GATE" "### Required document-review output" \
   "document review output is explicitly structured"
-assert_contains "$GATE" "Copy the Required document-review output block below into the prompt" \
+assert_contains "$GATE" "Copy the Required document-review output block from gate-output-schema.md into the prompt" \
   "document review prompts include the output schema in Codex context"
 assert_contains "$GATE" "Cannot verify" \
   "document review output includes cannot-verify items"
@@ -274,7 +274,7 @@ assert_contains "$GATE" "delivers its lens prompt as the review focus" \
   "code-gate lens prompts reach adversarial-review"
 assert_not_contains "$GATE" "The first round uses the prompt as-is." \
   "single-prompt round 1 is gone"
-assert_contains "$GATE" "composes the per-lens prompts from the lens fan-out block below" \
+assert_contains "$GATE" "composes the per-lens prompts from the lens fan-out block in gate-lenses.md" \
   "doc-gate round 1 routes to the fan-out"
 assert_contains "$GATE" 'put the Coverage section inside the `summary` field' \
   "structured payloads carry coverage in summary"

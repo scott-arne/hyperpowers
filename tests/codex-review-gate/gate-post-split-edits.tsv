@@ -7,7 +7,7 @@
 # every byte of every section file still traces to an original line, a declared
 # positional rewrite, or a declared edit here.
 # One line in, one line out. No tabs and no backslashes in a replacement.
-220	orphaned-label	**Document review prompt templates.** Round 1 composes these through the lens fan-out in gate-lenses.md; re-review rounds (2+) use them as written here, after the round-aware preamble.
+220	orphaned-label	**Document review prompt templates.** Rounds 2+ compose from these as written here, after the round-aware preamble from gate-fix-loop.md. Round 1 does not: it builds one prompt per lens from the skeleton in gate-lenses.md, reusing only this file's `task --fresh` invocation form and — plan gate only — its Round-1 Algorithm Assessment block.
 450	section-pointer	side — the detached launch in recipe-code.md — and it is required, not optional. If the
 463	section-pointer	- the recipe-code.md watch cap is reached with `.job.status` still `queued`/`running`,
 476	section-pointer	   - **Code gates:** the recipe-code.md watch loop *is* the recovery path — the job id is

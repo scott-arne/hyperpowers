@@ -137,6 +137,10 @@ assert_contains "$SDD" "always specify the model explicitly when dispatching a s
   "model-selection stub keeps the explicit-model rule on the main path"
 assert_contains "$SDD" "a mid-tier model is the floor for reviewers" \
   "model-selection stub keeps the reviewer floor on the main path"
+assert_contains "$SDD" "the floor for reviewers and for implementers working from prose descriptions" \
+  "model-selection stub keeps the prose-implementer floor on the main path"
+assert_contains "$SDD" "The cheapest tier is for transcription, where the task's own text carries the complete code to write, and for single-file mechanical fixes." \
+  "model-selection stub keeps the cheap-tier exemption that pairs with the floor"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

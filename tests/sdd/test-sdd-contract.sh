@@ -3,6 +3,9 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SDD="$REPO_ROOT/skills/subagent-driven-development/SKILL.md"
+SDD_MODEL_SELECTION="$REPO_ROOT/skills/subagent-driven-development/model-selection.md"
+SDD_RISK_TIERS="$REPO_ROOT/skills/subagent-driven-development/risk-tiers.md"
+SDD_RATIONALIZATIONS="$REPO_ROOT/skills/subagent-driven-development/common-rationalizations.md"
 IMPL="$REPO_ROOT/skills/subagent-driven-development/implementer-prompt.md"
 REVW="$REPO_ROOT/skills/subagent-driven-development/task-reviewer-prompt.md"
 FIXP="$REPO_ROOT/skills/subagent-driven-development/fix-subagent-prompt.md"
@@ -48,7 +51,7 @@ assert_not_contains() {
 
 echo "SDD prompt-surface contract tests"
 # SKILL.md — dispatch discipline
-assert_contains "$SDD" "Always specify the model explicitly when dispatching a subagent." "explicit model is mandatory"
+assert_contains "$SDD_MODEL_SELECTION" "Always specify the model explicitly when dispatching a subagent." "explicit model is mandatory"
 assert_contains "$SDD" "A dispatch prompt describes one task, not the session's history." "no pasted-history dispatches"
 assert_contains "$SDD" "which silently drops all but the last commit" "BASE not HEAD~1 (review package)"
 assert_contains "$SDD" "which silently truncates multi-commit tasks" "BASE not HEAD~1 (reviewer handoff)"
@@ -91,20 +94,20 @@ assert_contains "$WPLANS" "approval-authority code" "rubric names the high surfa
 assert_contains "$WPLANS" "declared risk tier against the rubric" "plan gate reviews tiers"
 assert_contains "$WPLANS" "the reviewer is stateless and cannot load this skill" \
   "rubric is delivered to the plan gate"
-assert_contains "$SDD" "may raise a tier" "escalation is expressible"
-assert_contains "$SDD" "never lower a declared tier" "lowering is not expressible"
-assert_contains "$SDD" "tier declared" "escalation record line format"
-assert_contains "$SDD" "--class tier-skip" "skip appends the durable record"
+assert_contains "$SDD_RISK_TIERS" "may raise a tier" "escalation is expressible"
+assert_contains "$SDD_RISK_TIERS" "never lower a declared tier" "lowering is not expressible"
+assert_contains "$SDD_RISK_TIERS" "tier declared" "escalation record line format"
+assert_contains "$SDD_RISK_TIERS" "--class tier-skip" "skip appends the durable record"
 assert_contains "$SDD" "tier-skips.md" "final review receives the skip list"
 assert_contains "$SDD" "no escalation trigger fired" "skip precondition is explicit"
 assert_contains "$SDD" "plan-gate-reviewed; no escalation trigger fired" "diagram skip path carries the full precondition"
-assert_contains "$SDD" "missing tier line" "fail-closed default is pinned"
+assert_contains "$SDD_RISK_TIERS" "missing tier line" "fail-closed default is pinned"
 assert_contains "$SDD" "gate dir:" "GATE_DIR is persisted in ledger"
 assert_contains "$WPLANS" "unreviewed low tiers execute as standard" \
   "plan-gate skip demotes low tiers (authoring side)"
-assert_contains "$SDD" "unreviewed low tiers execute as standard" \
+assert_contains "$SDD_RISK_TIERS" "unreviewed low tiers execute as standard" \
   "plan-gate skip demotes low tiers (dispatch side)"
-assert_contains "$SDD" "a demoted task runs the full train and records NO tier-skip event" \
+assert_contains "$SDD_RISK_TIERS" "a demoted task runs the full train and records NO tier-skip event" \
   "demote path never writes a skip record"
 assert_contains "$SDD" "Record tier-skip (ungated-ledger), skip Codex task gate" \
   "process diagram carries the skip path"
@@ -113,7 +116,17 @@ assert_contains "$WPLANS" "no escalation trigger fired at any point during execu
 # Finish section (6.6.0 deletion fix)
 assert_contains "$SDD" "INCOMPLETE finish" "finish section labels incomplete finish"
 assert_contains "$SDD" 'test ! -d' "real deletion assertion not vacuous ls"
-assert_contains "$SDD" "stale-forensics trap" "rationalization names forensics trap"
+assert_contains "$SDD_RATIONALIZATIONS" "stale-forensics trap" "rationalization names forensics trap"
+# Stubs left behind by the 6.x reference-file extraction must keep the
+# operative rules on the main path, not only behind the link.
+assert_contains "$SDD" "Only an EFFECTIVE-low task — declared low with no escalation trigger fired at any point during execution — skips the per-task Codex gate, and the skip is recorded durably." \
+  "risk-tier stub pins the EFFECTIVE-low skip precondition and its durable record"
+assert_contains "$SDD" "The Claude task reviewer and the final whole-branch train never tier off." \
+  "risk-tier stub pins that the Claude reviewer and final train never tier off"
+assert_contains "$SDD" "read it before dispatching any task declared low" \
+  "risk-tier stub routes low-tier dispatches to risk-tiers.md"
+assert_contains "$SDD" "Read it the moment you catch yourself justifying a shortcut." \
+  "rationalizations stub tells the agent when to read the reference"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

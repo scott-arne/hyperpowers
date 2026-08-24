@@ -8,7 +8,7 @@ Fire when, while formulating approaches after the clarifying questions are answe
 
 ## Preflight and Degrade
 
-Run the §1 preflight from [../requesting-code-review/codex-review-gate.md](../requesting-code-review/codex-review-gate.md) (at most once per skill run; reuse the result). When preflight status is not `ok`, first emit the §1 per-status notice from codex-review-gate.md (which carries the status token, reason, and recovery command where applicable) — so this brainstorm proceeds without independent Codex approaches. For the `not-installed` case, add the §2 install lines from [../requesting-code-review/codex-review-gate.md](../requesting-code-review/codex-review-gate.md):
+Run the §1 preflight from [../requesting-code-review/gate-preflight.md](../requesting-code-review/gate-preflight.md) (at most once per skill run; reuse the result). When preflight status is not `ok`, first emit the §1 per-status notice from gate-preflight.md (which carries the status token, reason, and recovery command where applicable) — so this brainstorm proceeds without independent Codex approaches. For the `not-installed` case, add the §2 install lines from [../requesting-code-review/gate-preflight.md](../requesting-code-review/gate-preflight.md):
 
 ```
 /plugin marketplace add openai/codex-plugin-cc

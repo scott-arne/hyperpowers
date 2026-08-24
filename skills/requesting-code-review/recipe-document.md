@@ -1,4 +1,4 @@
-**Re-review prompt (rounds 2+):**
+**Document review prompt templates.** Round 1 composes these through the lens fan-out in gate-lenses.md; re-review rounds (2+) use them as written here, after the round-aware preamble.
 
 **Spec documents** — use `task`, read-only (no `--write`):
 

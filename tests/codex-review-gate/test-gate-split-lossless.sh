@@ -258,23 +258,35 @@ else
         fi
     done <"$MANIFEST"
     # Duplication is the failure this file's header names and the contract
-    # test cannot catch. Nine correct section files plus an index that still
-    # holds the bodies passes every check above, because the preamble check
-    # reads only the index's first ten lines. So each section's opening line
-    # must be absent from the index. The needles are derived from the
-    # reconstructions rather than hand-listed, so they cannot drift from the
-    # manifest. Fail-only, to keep the two documented counts exact.
-    while IFS="$TAB" read -r dest start end; do
+    # test cannot catch. Every other check here is blind to it: check 5a
+    # compares reconstructions to the original, the per-file loop compares
+    # section files to their ranges, and the preamble check reads only the
+    # index's first ten lines. So no reconstructed body line may survive
+    # anywhere in the index. Whole-line fixed-string matching, one pass.
+    #
+    # Fence markers and table separator rows are excluded by pattern, never
+    # by a hand-listed string: they carry no content, and the index is a
+    # router that legitimately grows tables and may grow fenced examples. A
+    # real duplicated chunk always brings its content lines with it.
+    needles="$TEST_ROOT/index-needles"
+    : >"$needles"
+    while IFS="$TAB" read -r dest _start _end; do
         case "$dest" in \#* | "") continue ;; esac
-        needle="$(head -n 1 "$TEST_ROOT/recon-$dest")"
-        if [ -z "$needle" ]; then
-            fail "$dest starts on a non-blank source line ($start); a blank needle would match anything"
-            continue
-        fi
-        if grep -Fxq -- "$needle" "$GATE_DIR/codex-review-gate.md"; then
-            fail "index no longer carries $dest's body (found its opening line from source $start-$end)"
-        fi
+        grep -v '^[[:space:]]*$' "$TEST_ROOT/recon-$dest" |
+            grep -Ev '^[[:space:]]*```' |
+            grep -Ev '^[[:space:]]*\|[-|: ]+\|[[:space:]]*$' >>"$needles"
     done <"$MANIFEST"
+
+    needle_count="$(wc -l <"$needles" | tr -d ' ')"
+    if [ "$needle_count" -lt 500 ]; then
+        # An empty or truncated needle file makes the grep below vacuously
+        # clean, which is exactly the silent pass this check exists to
+        # prevent. 551 today; the floor catches a collapse, not drift.
+        fail "needle set is populated (expected ~551 body lines, got $needle_count)"
+    elif grep -Fxf "$needles" "$GATE_DIR/codex-review-gate.md" >"$TEST_ROOT/dupes"; then
+        fail "index carries no section-body line ($(wc -l <"$TEST_ROOT/dupes" | tr -d ' ') duplicated)"
+        head -5 "$TEST_ROOT/dupes" | sed 's/^/    /'
+    fi
 fi
 
 # --- 6. Audit trail for the two contract needles the rewrites touch. ---

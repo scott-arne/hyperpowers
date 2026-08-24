@@ -17,7 +17,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 REVIEW_DIR_SCRIPT="$REPO_ROOT/skills/requesting-code-review/scripts/codex-review-dir"
-GATE="$REPO_ROOT/skills/requesting-code-review/codex-review-gate.md"
 
 failures=0
 TEST_ROOT="$(mktemp -d)"
@@ -27,6 +26,11 @@ export XDG_CACHE_HOME="$TEST_ROOT/cache"
 
 cleanup() { rm -rf "$TEST_ROOT"; }
 trap cleanup EXIT
+# The gate is an index plus section-file siblings; grep the union, not the
+# index — otherwise a split would make these greps pressure content back
+# into the index just to keep them passing.
+GATE="$TEST_ROOT/assembled-gate.md"
+bash "$REPO_ROOT/tests/codex-review-gate/assemble-gate.sh" "$REPO_ROOT" "$GATE"
 
 pass() { echo "  [PASS] $1"; }
 fail() {

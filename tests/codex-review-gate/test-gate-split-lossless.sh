@@ -257,6 +257,24 @@ else
             diff "$TEST_ROOT/recon-$dest" "$GATE_DIR/$dest" | head -10
         fi
     done <"$MANIFEST"
+    # Duplication is the failure this file's header names and the contract
+    # test cannot catch. Nine correct section files plus an index that still
+    # holds the bodies passes every check above, because the preamble check
+    # reads only the index's first ten lines. So each section's opening line
+    # must be absent from the index. The needles are derived from the
+    # reconstructions rather than hand-listed, so they cannot drift from the
+    # manifest. Fail-only, to keep the two documented counts exact.
+    while IFS="$TAB" read -r dest start end; do
+        case "$dest" in \#* | "") continue ;; esac
+        needle="$(head -n 1 "$TEST_ROOT/recon-$dest")"
+        if [ -z "$needle" ]; then
+            fail "$dest starts on a non-blank source line ($start); a blank needle would match anything"
+            continue
+        fi
+        if grep -Fxq -- "$needle" "$GATE_DIR/codex-review-gate.md"; then
+            fail "index no longer carries $dest's body (found its opening line from source $start-$end)"
+        fi
+    done <"$MANIFEST"
 fi
 
 # --- 6. Audit trail for the two contract needles the rewrites touch. ---

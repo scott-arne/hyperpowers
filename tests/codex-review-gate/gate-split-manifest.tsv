@@ -1,0 +1,12 @@
+# destination	start	end
+# Lines 1-10 stay in codex-review-gate.md as the index preamble.
+# Blank separators 273 and 356 are untracked and appear in no range.
+gate-preflight.md	11	100
+gate-setup.md	101	176
+gate-lenses.md	177	219
+recipe-document.md	220	272
+recipe-code.md	274	355
+gate-output-schema.md	357	393
+gate-findings.md	394	541
+gate-fix-loop.md	542	690
+gate-sweep.md	691	766

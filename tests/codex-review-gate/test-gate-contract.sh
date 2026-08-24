@@ -173,7 +173,7 @@ assert_contains "$GATE" "model_reasoning_effort" \
 assert_contains "$SDD" "code-gate backstop of 3 rounds" \
   "SDD names the code-gate backstop of 3 rounds"
 assert_contains "$SDD_RATIONALIZATIONS" "Treat an unfinished or \"still verifying\" Codex result as approval" \
-  "SDD Red Flags echo the incomplete-is-not-approval rule"
+  "SDD common-rationalizations echo the incomplete-is-not-approval rule"
 
 # --- Task 5: caller skills reference the new contract ---
 assert_contains "$BRAINSTORMING" "document-gate backstop of 4 rounds" \

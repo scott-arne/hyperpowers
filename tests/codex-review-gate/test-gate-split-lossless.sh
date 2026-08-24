@@ -264,33 +264,40 @@ else
     # index's first ten lines. So no reconstructed body line may survive
     # anywhere in the index. Whole-line fixed-string matching, one pass.
     #
-    # Every non-blank body line is a needle, with no exceptions. Earlier
-    # rounds excluded fence markers and table separator rows as content-free
-    # lines a router might legitimately grow, and each exclusion reopened the
-    # hole: a stray excluded line in the index is still a source line living
-    # in two places. Measured against the index states this split produces —
-    # Task 3's 23-line index and the 46-line index Task 4 grows it into —
-    # the unexcluded needle set collides with neither. If some later index
-    # genuinely needs a line byte-identical to a body line, the answer is to
-    # compare the index against its expected contents, not to re-open a
-    # class of unwatched lines.
+    # Every non-blank body line is a needle in BOTH its forms: as it reads in
+    # the reconstruction, and as it reads in the pinned original. Eight
+    # references are rewritten when they move, so a reconstruction-only needle
+    # set leaves the seven distinct pre-rewrite strings watched by nothing —
+    # source 106, 130, 131, 133, 196, 218 and 229/244 — and an index holding
+    # one of them passes clean. Earlier rounds also excluded fence markers and
+    # table separator rows as content-free lines a router might legitimately
+    # grow; every such exclusion reopened the same hole, so there are none
+    # left. Measured against the index states this split produces — Task 3's
+    # 23-line index and the 46-line index Task 4 grows it into — the 561-needle
+    # union collides with neither. If some later index genuinely needs a line
+    # byte-identical to a body line, the answer is to compare the index against
+    # its expected contents, not to re-open a class of unwatched lines.
     #
-    # Blank and whitespace-only lines stay out: `grep -Fxf` with a blank
-    # needle matches every blank line in the index, which would make this a
-    # permanent false failure.
+    # Blank and whitespace-only lines stay out: `grep -Fxf` with a blank needle
+    # matches every blank line in the index, which would make this a permanent
+    # false failure.
+    needles_raw="$TEST_ROOT/index-needles-raw"
     needles="$TEST_ROOT/index-needles"
-    : >"$needles"
-    while IFS="$TAB" read -r dest _start _end; do
+    : >"$needles_raw"
+    while IFS="$TAB" read -r dest start end; do
         case "$dest" in \#* | "") continue ;; esac
-        grep -v '^[[:space:]]*$' "$TEST_ROOT/recon-$dest" >>"$needles"
+        grep -v '^[[:space:]]*$' "$TEST_ROOT/recon-$dest" >>"$needles_raw"
+        sed -n "${start},${end}p" "$original" |
+            grep -v '^[[:space:]]*$' >>"$needles_raw"
     done <"$MANIFEST"
+    sort -u "$needles_raw" >"$needles"
 
     needle_count="$(wc -l <"$needles" | tr -d ' ')"
-    if [ "$needle_count" -lt 550 ]; then
+    if [ "$needle_count" -lt 520 ]; then
         # An empty or truncated needle file makes the grep below vacuously
         # clean, which is exactly the silent pass this check exists to
-        # prevent. 606 today; the floor catches a collapse, not drift.
-        fail "needle set is populated (expected ~606 body lines, got $needle_count)"
+        # prevent. 561 today; the floor catches a collapse, not drift.
+        fail "needle set is populated (expected ~561 body lines, got $needle_count)"
     elif grep -Fxf "$needles" "$GATE_DIR/codex-review-gate.md" >"$TEST_ROOT/dupes"; then
         fail "index carries $(wc -l <"$TEST_ROOT/dupes" | tr -d ' ') line(s) that also appear in a section body"
         head -5 "$TEST_ROOT/dupes" | sed 's/^/    /'

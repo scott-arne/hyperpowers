@@ -191,9 +191,12 @@ Match the model to the task's difficulty rather than defaulting. Two rules are
 defaults you will get wrong by omission, so they stay here: **always specify
 the model explicitly when dispatching a subagent** — an omitted model inherits
 your session's, usually the most capable and most expensive — and **a mid-tier
-model is the floor for reviewers**, whatever the schedule pressure. The
-per-role guidance, the complexity signals, and the fix-loop escalation rule are
-in [model-selection.md](model-selection.md).
+model is the floor for reviewers and for implementers working from prose
+descriptions**, whatever the schedule pressure. The cheapest tier is for
+transcription, where the task's own text carries the complete code to write,
+and for single-file mechanical fixes. The per-role guidance, the complexity
+signals, and the fix-loop escalation rule are in
+[model-selection.md](model-selection.md).
 
 ## The Task Loop
 

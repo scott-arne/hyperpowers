@@ -71,6 +71,16 @@ else
     pass "assembler fails on a dangling sibling link"
 fi
 
+# 4. A write failure is an error, not a silent success. This helper's whole
+#    job is to hand the contract tests a real assembled view; reporting
+#    success while producing nothing would disarm every content assertion
+#    downstream without failing anything visible.
+if bash "$ASSEMBLE" "$REPO_ROOT" "$TEST_ROOT/no-such-dir/out.md" >/dev/null 2>&1; then
+    fail "assembler fails when the output cannot be written"
+else
+    pass "assembler fails when the output cannot be written"
+fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"

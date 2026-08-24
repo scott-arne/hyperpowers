@@ -10,6 +10,11 @@
 # empty them out. Siblings are discovered from the index's own markdown
 # links, so this stays correct as files are added or renamed, and a
 # dangling link is a hard error rather than a silent omission.
+#
+# `-e` is deliberately absent: the link grep exits 1 when the index has no
+# links yet, which is the correct pre-split state. Every write is therefore
+# checked explicitly — a helper that reported success without producing an
+# assembled view would silently disarm the tests that consume it.
 set -uo pipefail
 
 repo_root="${1:?usage: assemble-gate.sh <repo-root> <out-file>}"
@@ -23,8 +28,14 @@ if [ ! -f "$index" ]; then
   exit 1
 fi
 
-: >"$out_file"
-cat "$index" >>"$out_file"
+if ! : >"$out_file"; then
+  echo "assemble-gate: cannot create output: $out_file" >&2
+  exit 1
+fi
+if ! cat "$index" >>"$out_file"; then
+  echo "assemble-gate: failed writing index to: $out_file" >&2
+  exit 1
+fi
 
 # Same-directory .md link targets, in the order they appear, deduplicated.
 seen=" "
@@ -36,5 +47,8 @@ while IFS= read -r target; do
     echo "assemble-gate: index links a missing sibling: $target" >&2
     exit 1
   fi
-  cat "$sibling" >>"$out_file"
+  if ! cat "$sibling" >>"$out_file"; then
+    echo "assemble-gate: failed writing sibling $target to: $out_file" >&2
+    exit 1
+  fi
 done < <(grep -o '](\([a-z0-9-]*\.md\))' "$index" | sed 's/^](//; s/)$//')

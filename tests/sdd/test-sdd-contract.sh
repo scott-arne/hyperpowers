@@ -133,6 +133,10 @@ assert_contains "$SDD" "read it before dispatching any task declared low" \
   "risk-tier stub routes low-tier dispatches to risk-tiers.md"
 assert_contains "$SDD" "Read it the moment you catch yourself justifying a shortcut." \
   "rationalizations stub tells the agent when to read the reference"
+assert_contains "$SDD" "always specify the model explicitly when dispatching a subagent" \
+  "model-selection stub keeps the explicit-model rule on the main path"
+assert_contains "$SDD" "a mid-tier model is the floor for reviewers" \
+  "model-selection stub keeps the reviewer floor on the main path"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

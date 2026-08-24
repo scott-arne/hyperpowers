@@ -1,0 +1,17 @@
+# srcline	reason	replacement
+# Intentional post-split content edits, applied on top of the positional
+# rewrites in gate-split-references.tsv. That table is closed-world — its
+# candidate set is a grep of the original for "below|above" (check 3) and its
+# rewrite count is pinned at 8 (check 4) — so it is the wrong home for an edit
+# that is not a positional reference. These rows keep such edits provable:
+# every byte of every section file still traces to an original line, a declared
+# positional rewrite, or a declared edit here.
+# One line in, one line out. No tabs and no backslashes in a replacement.
+220	orphaned-label	**Document review prompt templates.** Round 1 composes these through the lens fan-out in gate-lenses.md; re-review rounds (2+) use them as written here, after the round-aware preamble.
+450	section-pointer	side — the detached launch in recipe-code.md — and it is required, not optional. If the
+463	section-pointer	- the recipe-code.md watch cap is reached with `.job.status` still `queued`/`running`,
+476	section-pointer	   - **Code gates:** the recipe-code.md watch loop *is* the recovery path — the job id is
+490	section-pointer	     the explicit 600000 ms (10 minutes) timeout from gate-setup.md if the failure looked
+505	section-pointer	the detached launch in recipe-code.md supplies the background path from the harness side.
+511	section-pointer	the foreground (gate-setup.md) with the explicit timeout and it blocks and returns the
+529	section-pointer	> runs. The recipe-code.md watch loop keeps a blocking `status <job-id> --wait` call in the

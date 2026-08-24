@@ -54,7 +54,7 @@ recovery steps below, re-capture, and re-normalize; if it remains
 **foreground-only**: `handleReviewCommand` always calls `runForegroundCommand`,
 and the review command's own `--wait`/`--background` flags are parsed but
 ignored. The background path for code gates therefore comes from the harness
-side — the detached launch in §3 — and it is required, not optional. If the
+side — the detached launch in recipe-code.md — and it is required, not optional. If the
 review is instead run as a plain blocking call and the harness command timeout
 kills it, the companion process dies mid-turn and never writes a terminal job
 state: the job record stays `running` with a dead worker, `status <job-id>
@@ -67,7 +67,7 @@ hitting it is not a review failure, just the cue to issue the next watch call.
 
 - the background launch exits non-zero, or its job never appears in
   `status --json`,
-- the §3 watch cap is reached with `.job.status` still `queued`/`running`,
+- the recipe-code.md watch cap is reached with `.job.status` still `queued`/`running`,
 - a foreground call (document review) is aborted by the harness command timeout
   before returning, or exits non-zero,
 - the `--json` payload has no terminal verdict / no structured `result` payload
@@ -80,7 +80,7 @@ hitting it is not a review failure, just the cue to issue the next watch call.
 
 1. Do not interpret an incomplete result as approval, and do not interpret it as findings — `verdict-normalize` returns `incomplete` for exactly this case, and only `approved` exits the gate.
 2. Recover best-effort, bounded:
-   - **Code gates:** the §3 watch loop *is* the recovery path — the job id is
+   - **Code gates:** the recipe-code.md watch loop *is* the recovery path — the job id is
      known from launch, and `status <job-id> --wait --json` / `result <job-id>
      --json` return the verdict whenever the detached worker finishes, no matter
      how many individual watch calls timed out along the way. If the watch cap
@@ -94,7 +94,7 @@ hitting it is not a review failure, just the cue to issue the next watch call.
    - **Document gates:** the foreground `task` call returned without a verdict.
      Check `status --json` for a completed job holding the result
      (`result <job-id> --json`); if none, re-run the document review once with
-     the §3 explicit 600000 ms (10 minutes) timeout if the failure looked
+     the explicit 600000 ms (10 minutes) timeout from gate-setup.md if the failure looked
      transient, otherwise surface it.
    - The authoritative signals everywhere are `.job.status` (`queued`/`running` = not done; `completed`/`failed`/`cancelled` = terminal) for job lifecycle, and the captured result file + `verdict-normalize` for the review outcome. The raw review text for reading findings remains at `.storedJob.result.rawOutput` or `.storedJob.result.codex.stdout`. Do not hand-roll a `sleep`-then-re-query loop; `status <job-id> --wait --json` is the condition-based primitive (2 s interval, 240 s deadline) and returns as soon as Codex is done. A wait cycle is not a review round — it does not consume the §5 convergence/backstop budget.
 3. If still incomplete after the bounded recovery, hand back to the user as
@@ -109,13 +109,13 @@ hitting it is not a review failure, just the cue to issue the next watch call.
    ```
 
 The companion itself offers no working `--background` for `adversarial-review`;
-the detached launch in §3 supplies the background path from the harness side.
+the detached launch in recipe-code.md supplies the background path from the harness side.
 A plain blocking call turns any harness timeout into an unrecoverable lost
 review — that is why the detached launch is the required form, not an
 optimization.
 
 Document gates (spec/plan) need none of this watch machinery: run `task` in
-the foreground (§3) with the explicit timeout and it blocks and returns the
+the foreground (gate-setup.md) with the explicit timeout and it blocks and returns the
 verdict inline. Do not add
 `--background` and do not poll — backgrounding a document review only replaces a
 clean blocking call with a detached worker you then have to chase through
@@ -133,7 +133,7 @@ clean blocking call with a detached worker you then have to chase through
 > before it exists.
 
 > **Red Flag — Never** launch a code review and move on (or fall idle) while it
-> runs. The §3 watch loop keeps a blocking `status <job-id> --wait` call in the
+> runs. The recipe-code.md watch loop keeps a blocking `status <job-id> --wait` call in the
 > foreground for the whole review — launch-and-forget hides that work is in
 > flight and risks acting before the verdict exists.
 

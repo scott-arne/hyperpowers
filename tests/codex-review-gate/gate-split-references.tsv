@@ -1,0 +1,21 @@
+# srcline	referent	disposition	replacement
+106	188	rewrite	Write the gate's own scratch files — the prompt files named in gate-lenses.md and the recipe files, the round ledger,
+130	233	rewrite	ledger) to the recipe prompt for this gate type and pass the ledger path, so Codex confirms prior
+131	177	rewrite	resolutions instead of re-reviewing cold. The first round composes the per-lens prompts from the lens fan-out block in gate-lenses.md instead of this single prompt.
+133	225	rewrite	Run `task` in the **foreground** — as written in recipe-document.md, with no `--background`. The
+153	156	verbatim
+161	156	verbatim
+191	203	verbatim
+195	-	verbatim
+196	357	rewrite	<the Required document-review output block from gate-output-schema.md, verbatim>
+218	233	rewrite	**Re-review rounds (2+) use no lenses**: the existing single-reviewer round-aware preamble and ledger contract apply verbatim. The ORIGINAL single-review spec and plan prompt templates are retained in recipe-document.md, textually unchanged, and rounds 2+ compose from them exactly as today.
+229	357	rewrite	Required document-review output block from gate-output-schema.md into the prompt so Codex has the
+233	-	verbatim
+244	357	rewrite	Required document-review output block from gate-output-schema.md into the prompt so Codex has the
+248	-	verbatim
+275	280	verbatim
+429	443	verbatim
+443	450	verbatim
+558	615	verbatim
+631	645	verbatim
+645	648	verbatim

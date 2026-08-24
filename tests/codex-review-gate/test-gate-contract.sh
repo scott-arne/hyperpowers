@@ -3,7 +3,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-GATE="$REPO_ROOT/skills/requesting-code-review/codex-review-gate.md"
+# The gate is an index plus section-file siblings; assert against the union.
+GATE="$(mktemp)"
+trap 'rm -f "$GATE"' EXIT
+bash "$SCRIPT_DIR/assemble-gate.sh" "$REPO_ROOT" "$GATE" || exit 1
 BRAINSTORMING="$REPO_ROOT/skills/brainstorming/SKILL.md"
 WRITING_PLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
 SDD="$REPO_ROOT/skills/subagent-driven-development/SKILL.md"

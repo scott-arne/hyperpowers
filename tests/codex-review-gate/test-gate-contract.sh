@@ -10,6 +10,7 @@ bash "$SCRIPT_DIR/assemble-gate.sh" "$REPO_ROOT" "$GATE" || exit 1
 BRAINSTORMING="$REPO_ROOT/skills/brainstorming/SKILL.md"
 WRITING_PLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
 SDD="$REPO_ROOT/skills/subagent-driven-development/SKILL.md"
+SDD_RATIONALIZATIONS="$REPO_ROOT/skills/subagent-driven-development/common-rationalizations.md"
 REQUESTING_REVIEW="$REPO_ROOT/skills/requesting-code-review/SKILL.md"
 APPROACH_GATE="$REPO_ROOT/skills/brainstorming/codex-approach-gate.md"
 
@@ -171,7 +172,7 @@ assert_contains "$GATE" "model_reasoning_effort" \
 # --- Task 4: SDD references new caps + completion Red Flag ---
 assert_contains "$SDD" "code-gate backstop of 3 rounds" \
   "SDD names the code-gate backstop of 3 rounds"
-assert_contains "$SDD" "Treat an unfinished or \"still verifying\" Codex result as approval" \
+assert_contains "$SDD_RATIONALIZATIONS" "Treat an unfinished or \"still verifying\" Codex result as approval" \
   "SDD Red Flags echo the incomplete-is-not-approval rule"
 
 # --- Task 5: caller skills reference the new contract ---

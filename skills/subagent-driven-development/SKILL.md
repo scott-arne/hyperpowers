@@ -187,40 +187,9 @@ from implementation.
 
 ## Model Selection
 
-Use the least powerful model that can handle each role to conserve cost and increase speed.
-
-**Mechanical implementation tasks** (isolated functions, clear specs, 1-2 files): use a fast, cheap model. Most implementation tasks are mechanical when the plan is well-specified.
-
-**Integration and judgment tasks** (multi-file coordination, pattern matching, debugging): use a standard model.
-
-**Architecture and design tasks**: use the most capable available model.
-The final whole-branch review is one of these — dispatch it on the most
-capable available model, not the session default.
-
-**Review tasks**: choose the model with the same judgment, scaled to the
-diff's size, complexity, and risk. A small mechanical diff does not need the
-most capable model; a subtle concurrency change does. Scoped re-reviews of
-small fix diffs take a cheap-to-mid tier.
-
-**Fix-loop escalation (rounds 4-5)**: use a model at least one tier above
-the implementer that got stuck.
-
-**Always specify the model explicitly when dispatching a subagent.** An
-omitted model inherits your session's model — often the most capable and
-most expensive — which silently defeats this section.
-
-**Turn count beats token price.** Wall-clock and context cost scale with how
-many turns a subagent takes, and the cheapest models routinely take 2-3× the
-turns on multi-step work — costing more overall. Use a mid-tier model as the
-floor for reviewers and for implementers working from prose descriptions.
-When the task's plan text contains the complete code to write, the
-implementation is transcription plus testing: use the cheapest tier for
-that implementer. Single-file mechanical fixes also take the cheapest tier.
-
-**Task complexity signals (implementation tasks):**
-- Touches 1-2 files with a complete spec → cheap model
-- Touches multiple files with integration concerns → standard model
-- Requires design judgment or broad codebase understanding → most capable model
+Match the model to the task's difficulty rather than defaulting; the per-role
+guidance and the escalation rule are in
+[model-selection.md](model-selection.md).
 
 ## The Task Loop
 
@@ -519,40 +488,13 @@ the review has open Critical/Important issues.
 
 ## Risk Tiers (per-task Codex gate applicability)
 
-Each plan task declares `**Risk tier:** low|standard|high — <rationale>`
-under its heading; the task brief carries it. The effective tier starts as
-the declared tier. You may raise a tier at any point — never lower a
-declared tier, whatever the schedule pressure. Escalation triggers (any
-one): DONE_WITH_CONCERNS with correctness doubts; any fix cycle (a
-reviewer-driven fix that changes files — including a ⚠️-item resolution —
-is a fix cycle); files touched outside the plan's Files list; anything on
-the high rubric surfacing mid-task (approval-authority code —
-verdict-normalize, gate-round, ungated-ledger, or any script whose output
-other machinery trusts — concurrency/locking, security surfaces,
-destructive git operations, durable-record writers; writing-plans' Risk
-Tier Rubric is the authoritative list). Raise to high iff the trigger
-itself is a high-rubric criterion; otherwise standard. Record every
-escalation or fallback as one progress-ledger line:
-`Task N: tier declared <low|standard|high|none> -> effective <standard|high> (<trigger phrase>)`.
-A missing or unparseable tier line is `declared none -> effective standard
-(missing tier line)` — full train, fail-closed.
-
-The tier changes exactly one thing: an EFFECTIVE-LOW task — no escalation
-trigger fired at any point — skips the per-task Codex gate after the task
-reviewer approves. A low tier is honored only if the plan's Codex gate
-actually reviewed the plan; when that gate was skipped or degraded, or its
-outcome is unknown (no plan-gate evidence available), unreviewed low tiers
-execute as standard (full train), recorded with the ledger line shape as
-`(unreviewed low tier)`. When the skip IS permitted — effective-low, plan-gate-reviewed, no trigger fired — record it immediately (a demoted task runs the full train and records NO tier-skip event):
-`bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class tier-skip --gate task --base <TASK_BASE> --head <HEAD> --tier-declared low --tier-effective low --note "Task N: <rationale>"`.
-Standard and high tiers run today's full train unchanged; so does every
-non-SDD review. The Claude task reviewer always runs.
-
-When any task skipped, write `tier-skips.md` in this plan's workspace — one
-line per skip: `Task N: <rationale> (<base>..<head>)` — and hand its path
-to the final code-reviewer dispatch (beside the Minor-findings list) and
-to the final Codex gate as `<TIER_SKIPS_PATH>` plus a dossier
-`--adjudications` input, per the gate doc's final recipe.
+Tiers are `low`, `standard`, `high`, declared per task in the plan. Only an
+EFFECTIVE-low task — declared low with no escalation trigger fired at any point
+during execution — skips the per-task Codex gate, and the skip is recorded
+durably. The Claude task reviewer and the final whole-branch train never tier
+off. The escalation triggers, the fallback rules, and the exact ledger line
+shape are in [risk-tiers.md](risk-tiers.md) — read it before dispatching any
+task declared low.
 
 ## Final Review
 
@@ -617,90 +559,11 @@ Use hyperpowers:finishing-a-development-branch.
 
 ## Common Rationalizations
 
-| Excuse | Reality |
-|--------|---------|
-| "Close enough on spec compliance" | Reviewer found spec gaps = not done. Fix it, or hit the cap and hand it back — those are the only exits. |
-| "I'll fix it myself, dispatching is overhead" | Controller fixes pollute your context and skip review. Resume the implementer. |
-| "One more round will converge" | Past the cap, rounds don't converge — the failure is structural. It goes to your human partner as BLOCKED. |
-| "The reviewer will just find something new anyway" | Scoped re-reviews verify fixes; they cannot wander. New findings on untouched code go to the ledger, not the loop. |
-| "This finding is obviously wrong, I'll drop it" | A finding you disagree with goes to your human partner with the plan text beside it. Silent discards are forbidden. |
-| "The fix was small, skip the re-review" | Unreviewed fixes are how regressions land. Every round ends with a scoped re-review. |
-| "Reviews slow the loop down" | The loop without reviews is just unverified churn. Reviews are the loop's brakes and steering. |
-| "Ledger bookkeeping is overhead" | The ledger is what survives compaction. Controllers without one have re-dispatched entire completed task sequences. |
-| "The implementer spawned its own reviewer — free extra assurance" | It's a duplicate seat reviewing the same diff; the task review is the gate. A worker-spawned reviewer is a defect to flag, not rigor. |
-| "The Codex gate gets its own rounds" | One task, one five-round cap. Gate rounds are fix-loop rounds, and the scoped re-review — not a task-reviewer re-run — precedes each one. |
-| "Codex is still verifying, that's basically a pass" | Treat an unfinished or "still verifying" Codex result as approval and the gate never happened. Incomplete is not a pass: recover via `status`/`result`, or surface it. |
-| "Batching these small tasks lets the gate go" | A batch's tier is the MAX of its members' declared tiers. Batching never manufactures a gate skip. |
-| "I'll keep the workspace for reference" | The repo's commits are the record. Delete it — an undeleted clean-finish workspace becomes a stale-forensics trap for the next plan. |
+The excuses that show up mid-run and what is actually true:
+[common-rationalizations.md](common-rationalizations.md). Read it the moment you
+catch yourself justifying a shortcut.
 
 ## Example Workflow
 
-```
-You: I'm using Subagent-Driven Development to execute this plan.
-
-[Setup: worktree verified]
-[Read plan file once: docs/hyperpowers/plans/feature-plan.md, and the spec its **Spec:** header names]
-[Resolve workspace: scripts/sdd-dir docs/hyperpowers/plans/feature-plan.md — no ledger inside, fresh start]
-[Ledger: # SDD ledger — plan: docs/hyperpowers/plans/feature-plan.md]
-[Create todos for all tasks]
-
-Task 1: Hook installation script (declared low)
-
-[Run task-brief for Task 1; dispatch implementer with brief + report paths + context]
-
-Implementer: "Before I begin - should the hook be installed at user or system level?"
-
-You: "User level (~/.config/hyperpowers/hooks/)"
-
-Implementer: [Later]
-  - Implemented install-hook command
-  - Added tests, 5/5 passing
-  - Self-review: Found I missed --force flag, added it
-  - Committed
-
-[Re-run the covering command myself: 5/5 — matches the report]
-[Run review-package PLAN_FILE BASE HEAD; dispatch task reviewer with the printed path]
-Task reviewer: Spec ✅ - all requirements met, nothing extra.
-  Strengths: Good test coverage, clean. Issues: None. Task quality: Approved.
-
-[Effective tier still low, plan gate reviewed the plan, no trigger fired: record the tier-skip event, skip the Codex task gate]
-[Ledger: Task 1: complete (commits a1b2c3d..d4e5f6a, review clean)]
-
-Task 2: Recovery modes (declared standard)
-
-[Run task-brief for Task 2; dispatch implementer with brief + report paths + context]
-
-Implementer: [No questions]
-  - Added verify/repair modes
-  - 8/8 tests passing
-  - Committed
-
-[Run review-package PLAN_FILE BASE HEAD; dispatch task reviewer with the printed path]
-Task reviewer: Spec ❌:
-  - Missing: Progress reporting (spec says "report every 100 items")
-  Issues (Important): Magic number (100)
-
-[Fix round 1: resume the implementer with both findings]
-Implementer: Added progress reporting, extracted PROGRESS_INTERVAL constant.
-  Re-ran test/recovery.test.js — 10/10 passing. Fix report appended.
-
-[Run review-package PLAN_FILE FIX_BASE HEAD; dispatch scoped re-review]
-Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
-  Magic number — ADDRESSED (src/recovery.js:7). New breakage: none.
-  Verdict: all findings addressed.
-
-[Ledger: Task 2: fix round 1/5 (2 addressed, 0 open; commits d4e5f6a..b7c8d9e)]
-[Codex per-task gate over d4e5f6a..b7c8d9e — approved; that would have been round 2 of the same five]
-[Ledger: Task 2: complete (commits d4e5f6a..b7c8d9e, review clean)]
-
-...
-
-[After all tasks]
-[Run review-package PLAN_FILE MERGE_BASE HEAD; dispatch final code-reviewer, most capable model]
-Final reviewer: All requirements met. Deferred minors triaged: none block merge.
-[Codex final code gate over the branch range — approved]
-
-[Delete this plan's workspace — the record now lives in git]
-
-Done! Using hyperpowers:finishing-a-development-branch.
-```
+A complete worked run, dispatch through finish:
+[example-workflow.md](example-workflow.md).

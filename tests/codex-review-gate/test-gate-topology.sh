@@ -66,20 +66,36 @@ for f in $SIBLINGS; do
     fi
 done
 
-# 4. Every caller has a route. Fed by here-string, not a pipe: a piped `while`
-#    runs in a subshell, so every failure it counted would be discarded.
+# Route entries are backticked basenames without the .md suffix. The backtick
+# lives in a variable so the pattern reads as a pattern rather than as an
+# unterminated quote.
+BT='`'
+
+# 4. Every caller has a route, and that route names at least one file. Fed by
+#    here-string, not a pipe: a piped `while` runs in a subshell, so every
+#    failure it counted would be discarded.
+#
+#    The row's existence is not the property. An emptied route cell still
+#    matches the caller, and check 5 cannot see the loss either — it counts
+#    distinct names across the whole table, and every file in an emptied cell
+#    is still named by some other row, so the total holds at 9. Measured: with
+#    `| approach gate |  |` the old check-4 reported PASS and the suite exited
+#    0. Assert on the cell, not the row.
 while IFS= read -r caller; do
-    if grep -Fq "| $caller |" "$INDEX"; then
+    row="$(grep -F "| $caller |" "$INDEX" | head -1)"
+    if [ -z "$row" ]; then
+        fail "route present for: $caller (no row in the matrix)"
+        continue
+    fi
+    cell="${row#*| $caller |}"
+    if printf '%s\n' "$cell" | grep -q "${BT}[a-z0-9-]*${BT}"; then
         pass "route present for: $caller"
     else
-        fail "route present for: $caller"
+        fail "route present for: $caller (row exists, route cell names no file)"
     fi
 done <<<"$CALLERS"
 
-# 5. Route cells name only files that exist. Route entries are backticked
-#    basenames without the .md suffix. The backtick lives in a variable so
-#    the pattern reads as a pattern rather than as an unterminated quote.
-BT='`'
+# 5. Route cells name only files that exist.
 routes_seen=0
 while IFS= read -r name; do
     routes_seen=$((routes_seen + 1))

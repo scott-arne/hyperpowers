@@ -488,13 +488,19 @@ the review has open Critical/Important issues.
 
 ## Risk Tiers (per-task Codex gate applicability)
 
-Tiers are `low`, `standard`, `high`, declared per task in the plan. Only an
-EFFECTIVE-low task — declared low with no escalation trigger fired at any point
-during execution — skips the per-task Codex gate, and the skip is recorded
-durably. The Claude task reviewer and the final whole-branch train never tier
-off. The escalation triggers, the fallback rules, and the exact ledger line
-shape are in [risk-tiers.md](risk-tiers.md) — read it before dispatching any
-task declared low.
+Tiers are `low`, `standard`, `high`, declared per task in the plan. A task
+skips the per-task Codex gate only when all three hold: declared low, the
+plan's own Codex gate actually reviewed the plan, and no escalation trigger
+fired at any point during execution. That skip is recorded durably. An
+unreviewed low tier — plan gate skipped, degraded, or outcome unknown —
+executes as standard, and a task demoted that way runs the full train and
+records NO tier-skip event. The Claude task reviewer and the final
+whole-branch train never tier off. When any task did skip, write
+`tier-skips.md` in this plan's workspace; Final Review hands its path to the
+final reviewer and the final Codex gate. The escalation triggers, the
+fallback rules, and the exact ledger line shape are in
+[risk-tiers.md](risk-tiers.md) — read it before dispatching any task declared
+low.
 
 ## Final Review
 

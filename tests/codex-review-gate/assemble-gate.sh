@@ -37,6 +37,17 @@ if ! cat "$index" >>"$out_file"; then
   exit 1
 fi
 
+# A same-directory .md link the discovery pattern below cannot parse — an
+# uppercase letter, an underscore, a path prefix — would be skipped silently,
+# dropping that sibling's content out of every downstream assertion without
+# failing anything. Names outside lowercase-hyphen are a hard error instead.
+unparseable="$(grep -o '](\([^)]*\.md\))' "$index" | sed 's/^](//; s/)$//' |
+  grep -v '^[a-z0-9-]*\.md$' || true)"
+if [ -n "$unparseable" ]; then
+  echo "assemble-gate: index links a .md target outside the lowercase-hyphen namespace: $unparseable" >&2
+  exit 1
+fi
+
 # Same-directory .md link targets, in the order they appear, deduplicated.
 seen=" "
 while IFS= read -r target; do

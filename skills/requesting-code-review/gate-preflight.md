@@ -41,7 +41,7 @@ It prints one JSON line. Branch on `.status`:
 
 **Record every degrade durably.** Whenever a gate proceeds on a degrade
 branch (`not-installed`, `not-ready`, `stale-broker`, `preflight-error`),
-append a ledger event before continuing — document gates:
+append a ledger event before continuing (the approach gate alone is exempt: no ledger token, no §6 on its route — it proceeds per §2) — document gates:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/ungated-ledger" append --class degraded-gate --gate <spec|plan> --status <token> --note "<one line; include the task brief / plan path if one exists — the sweep uses it as a breadcrumb>"

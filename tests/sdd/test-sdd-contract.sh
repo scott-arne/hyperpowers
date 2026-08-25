@@ -155,6 +155,8 @@ fi
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "## Example Workflow" "example workflow carries its section header"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Using hyperpowers:finishing-a-development-branch." \
   "example workflow runs through to the finishing handoff"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 — recorded for fix-round resumes" \
+  "example workflow records the implementer identity in the ledger"
 if [ -f "$SDD_RATIONALIZATIONS" ]; then
   pass "common-rationalizations.md exists where its stub points"
 else

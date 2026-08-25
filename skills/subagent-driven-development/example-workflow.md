@@ -12,6 +12,7 @@ You: I'm using Subagent-Driven Development to execute this plan.
 Task 1: Hook installation script (declared low)
 
 [Run task-brief for Task 1; dispatch implementer with brief + report paths + context]
+[Ledger: Task 1: implementer subagent-01f3 — recorded for fix-round resumes]
 
 Implementer: "Before I begin - should the hook be installed at user or system level?"
 

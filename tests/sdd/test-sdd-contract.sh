@@ -163,6 +163,12 @@ assert_contains "$SDD_EXAMPLE_WORKFLOW" "Re-run the covering command myself: 8/8
   "example fix-loop task re-runs the covering command before review"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Re-run the fix's covering command myself: 10/10 — matches the fix report" \
   "example fix report is re-run before the scoped re-review"
+assert_contains "$SDD" "is a dispatch in flight: do not re-dispatch" \
+  "resume rules consume the implementer-identity ledger state"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Write tier-skips.md in this plan's workspace" \
+  "example's low-tier skip writes the tier-skip summary"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "most capable model, with tier-skips.md" \
+  "example hands tier-skips.md to the final review surfaces"
 if [ -f "$SDD_RATIONALIZATIONS" ]; then
   pass "common-rationalizations.md exists where its stub points"
 else

@@ -2,9 +2,9 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
-## 6.10.0 (2026-08-25)
+## 6.10.0 (2026-08-24)
 
-- **Codex gate document split into routed sections.** The single `codex-review-gate.md` was the most-opened file in the package: 970 opens across 96 sessions, with 87% partial reads, because every caller (brainstorming's spec gate, the approach gate, writing-plans' plan gate, SDD's per-task and final code gates) re-read one shared document to reach its own few paragraphs. It is now a dispatcher index over nine section files, each under 150 lines, with an explicit route per caller. `scripts/assemble-gate.sh` reconstructs the full document for anyone who wants it whole, and `test-gate-split-lossless.sh` proves the split lost nothing.
+- **Codex gate document split into routed sections.** The single `codex-review-gate.md` was the most-opened file in the package: 970 opens across 96 sessions, with 87% partial reads, because every caller (brainstorming's spec gate, the approach gate, writing-plans' plan gate, SDD's per-task and final code gates) re-read one shared document to reach its own few paragraphs. It is now a dispatcher index over nine section files, each under 150 lines, with an explicit route per caller. `tests/codex-review-gate/assemble-gate.sh` reconstructs the full document for anyone who wants it whole, and `test-gate-split-lossless.sh` proves the split lost nothing.
 - **New offline suites** guard the split: `test-assemble-gate.sh`, `test-gate-split-lossless.sh`, `test-gate-placement.sh`, and `test-gate-topology.sh`. A routing matrix maps each caller to its section.
 - **Brainstorming approach gate corrected.** It pointed at the whole gate document and now points at `gate-preflight.md`.
 - **SDD SKILL.md reference extraction.** Four sections (`## Model Selection`, `## Risk Tiers`, `## Common Rationalizations`, `## Example Workflow`) moved verbatim into sibling reference files, each replaced by a stub. SKILL.md went from 706 to 582 lines, a net reduction of 124.

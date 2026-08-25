@@ -288,6 +288,12 @@ controller's substitute verification (read the diff against the brief;
 render or grep the changed doc). A dispatch naming neither is malformed —
 fix the dispatch, not the rule.
 
+A covering command must be able to fail. One that can no-op on the state
+under test — a changed-files linter on a clean tree, a test filter that
+matches nothing — is not covering evidence, however honestly it exits 0.
+Name the files or the test ids explicitly so the command exercises what
+the report claims.
+
 Implementer subagents report one of four statuses. Handle each appropriately:
 
 **DONE:** Generate the review package (`scripts/review-package PLAN_FILE BASE HEAD`, from this skill's directory — it prints the unique file path it wrote; BASE is the commit you recorded before dispatching the implementer — never `HEAD~1`, which silently drops all but the last commit of a multi-commit task), then dispatch the task reviewer with the printed path.

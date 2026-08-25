@@ -15,3 +15,4 @@
 505	section-pointer	the detached launch in recipe-code.md supplies the background path from the harness side.
 511	section-pointer	the foreground (gate-setup.md) with the explicit timeout and it blocks and returns the
 529	section-pointer	> runs. The recipe-code.md watch loop keeps a blocking `status <job-id> --wait` call in the
+54	route-scope	append a ledger event before continuing (the approach gate alone is exempt: no ledger token, no §6 on its route — it proceeds per §2) — document gates:

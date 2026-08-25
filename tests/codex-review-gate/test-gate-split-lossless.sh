@@ -263,10 +263,10 @@ fi
 # never ran — a failed redirection, an emptied table — reports 0 here instead of
 # leaving the assertion above vacuously clean. Growth of this channel must be a
 # deliberate bump, not a silent one.
-if [ "$post_edit_count" -eq 8 ]; then
-    pass "exactly 8 declared post-split edits"
+if [ "$post_edit_count" -eq 9 ]; then
+    pass "exactly 9 declared post-split edits"
 else
-    fail "exactly 8 declared post-split edits (got $post_edit_count)"
+    fail "exactly 9 declared post-split edits (got $post_edit_count)"
 fi
 
 # --- 5. Reconstruct each destination from the original, rewrites and edits. ---
@@ -387,17 +387,17 @@ else
     # anywhere in the index. Whole-line fixed-string matching, one pass.
     #
     # Every non-blank body line is a needle in BOTH its forms: as it reads in
-    # the reconstruction, and as it reads in the pinned original. Sixteen lines
-    # are substituted when they move — eight positional rewrites and eight
+    # the reconstruction, and as it reads in the pinned original. Seventeen
+    # lines are substituted when they move — eight positional rewrites and nine
     # declared post-split edits — so a reconstruction-only needle set leaves
-    # fifteen distinct pre-substitution strings watched by nothing (the rewrites
+    # sixteen distinct pre-substitution strings watched by nothing (the rewrites
     # contribute seven: source 106, 130, 131, 133, 196, 218 and 229/244), and an
     # index holding one of them passes clean. Earlier rounds also excluded fence
     # markers and table separator rows as content-free lines a router might
     # legitimately grow; every such exclusion reopened the same hole, so there
     # are none left. Measured against the index states this split produces —
     # Task 3's 23-line index and the 46-line index Task 4 grows it into — the
-    # 569-needle union collides with neither. If some later index genuinely
+    # 570-needle union collides with neither. If some later index genuinely
     # needs a line byte-identical to a body line, the answer is to compare the
     # index against its expected contents, not to re-open a class of unwatched
     # lines.
@@ -422,8 +422,8 @@ else
     if [ "$needle_count" -lt 520 ]; then
         # An empty or truncated needle file makes the grep below vacuously
         # clean, which is exactly the silent pass this check exists to
-        # prevent. 569 today; the floor catches a collapse, not drift.
-        fail "needle set is populated (expected ~569 body lines, got $needle_count)"
+        # prevent. 570 today; the floor catches a collapse, not drift.
+        fail "needle set is populated (expected ~570 body lines, got $needle_count)"
     elif grep -Fxf "$needles" "$GATE_DIR/codex-review-gate.md" >"$TEST_ROOT/dupes"; then
         fail "index carries $(wc -l <"$TEST_ROOT/dupes" | tr -d ' ') line(s) that also appear in a section body"
         head -5 "$TEST_ROOT/dupes" | sed 's/^/    /'

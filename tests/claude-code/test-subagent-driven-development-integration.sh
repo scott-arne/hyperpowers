@@ -8,7 +8,7 @@
 #   - >=3 git commits (initial + per-task commits, exercising SDD's
 #     commit-per-task workflow shape)
 #   - >=2 Claude Code subagent dispatches via Agent or Task (drill only asserts >=1)
-#   - Claude Code task-tracking tool usage (drill makes no assertion)
+#   - durable progress tracking: a task tool or the SDD ledger (drill makes no assertion)
 #   - test/math.test.js exists (drill relies on `npm test` succeeding)
 #   - analyze-token-usage.py token-budget telemetry
 # Kept until those assertions are added to drill or explicitly retired.
@@ -29,15 +29,21 @@ echo "  4. Spec compliance review before code quality"
 echo "  5. Review loops when issues found"
 echo "  6. Spec reviewer reads code independently"
 echo ""
-echo "WARNING: This test may take 10-30 minutes to complete."
+echo "WARNING: This test may take 10-60 minutes to complete."
 echo ""
+
+# Ceiling for the live claude execution. A full SDD run (two tasks, task
+# reviews, fix loops, final review) was observed to exceed the original
+# 1800s ceiling before its analysis phase ran; 3600s gives the workflow
+# headroom. Override with SDD_INTEGRATION_TIMEOUT for slower environments.
+CLAUDE_TIMEOUT="${SDD_INTEGRATION_TIMEOUT:-3600}"
 
 # Create test project
 TEST_PROJECT=$(create_test_project)
 echo "Test project: $TEST_PROJECT"
 
 # Trap to cleanup
-trap "cleanup_test_project $TEST_PROJECT" EXIT
+trap 'cleanup_test_project "$TEST_PROJECT"' EXIT
 
 # Set up minimal Node.js project
 cd "$TEST_PROJECT"
@@ -164,12 +170,25 @@ PLUGIN_DIR=$(cd "$SCRIPT_DIR/../.." && pwd)
 # other concurrent claude sessions.
 echo "Running Claude (plugin-dir: $PLUGIN_DIR, cwd: $TEST_PROJECT)..."
 echo "================================================================================"
-cd "$TEST_PROJECT" && timeout 1800 claude -p "$PROMPT" --plugin-dir "$PLUGIN_DIR" --allowed-tools=all --permission-mode bypassPermissions 2>&1 | tee "$OUTPUT_FILE" || {
+# Capture the CLI's own exit status via PIPESTATUS: `$?` after the pipeline
+# reports tee's status, and `$?` inside an `|| { ... }` block is clobbered by
+# the block's own commands before it can be printed.
+set +e
+cd "$TEST_PROJECT" && timeout "$CLAUDE_TIMEOUT" claude -p "$PROMPT" --plugin-dir "$PLUGIN_DIR" --allowed-tools=all --permission-mode bypassPermissions 2>&1 | tee "$OUTPUT_FILE"
+CLAUDE_STATUS=${PIPESTATUS[0]}
+set -e
+if [ "$CLAUDE_STATUS" -ne 0 ]; then
     echo ""
     echo "================================================================================"
-    echo "EXECUTION FAILED (exit code: $?)"
+    # timeout(1) exits 124 on expiry (137 if it had to SIGKILL); tell a
+    # ceiling kill apart from a real crash so triage starts in the right place.
+    if [ "$CLAUDE_STATUS" -eq 124 ] || [ "$CLAUDE_STATUS" -eq 137 ]; then
+        echo "EXECUTION TIMED OUT after ${CLAUDE_TIMEOUT}s (exit code: $CLAUDE_STATUS)"
+    else
+        echo "EXECUTION FAILED (exit code: $CLAUDE_STATUS)"
+    fi
     exit 1
-}
+fi
 echo "================================================================================"
 
 echo ""
@@ -215,7 +234,11 @@ echo ""
 
 # Test 2: Subagents were used (Agent / Task tool — name varies by harness version)
 echo "Test 2: Subagents dispatched..."
-task_count=$(grep -cE '"name":"(Agent|Task)"' "$SESSION_FILE" || echo "0")
+# grep -c prints "0" itself when nothing matches (exiting 1), so `|| echo 0`
+# would yield the two-line "0\n0" and break the integer comparison below.
+# `|| true` swallows the no-match exit; the fallback covers an unreadable file.
+task_count=$(grep -cE '"name":"(Agent|Task)"' "$SESSION_FILE" 2>/dev/null || true)
+task_count=${task_count:-0}
 if [ "$task_count" -ge 2 ]; then
     echo "  [PASS] $task_count subagents dispatched"
 else
@@ -224,13 +247,22 @@ else
 fi
 echo ""
 
-# Test 3: Claude Code task-tracking tool was used
-echo "Test 3: Task tracking..."
-todo_count=$(grep -cE '"name":"(TodoWrite|TaskCreate|TaskUpdate|TaskList|TaskGet)"' "$SESSION_FILE" || echo "0")
+# Test 3: Durable progress tracking. SDD's load-bearing mechanism is the
+# plan-scoped ledger (progress.md in the plan workspace); the Claude Code task
+# tools are its interactive complement and sit behind ToolSearch in headless
+# runs — two complete runs tracked exclusively through the ledger and never
+# loaded a task tool. Accept either signal; require at least one.
+echo "Test 3: Durable progress tracking (task tool or SDD ledger)..."
+todo_count=$(grep -cE '"name":"(TodoWrite|TaskCreate|TaskUpdate|TaskList|TaskGet)"' "$SESSION_FILE" 2>/dev/null || true)
+todo_count=${todo_count:-0}
+ledger_count=$(grep -c 'progress\.md' "$SESSION_FILE" 2>/dev/null || true)
+ledger_count=${ledger_count:-0}
 if [ "$todo_count" -ge 1 ]; then
-    echo "  [PASS] Task tracking used $todo_count time(s)"
+    echo "  [PASS] Task-tracking tool used $todo_count time(s)"
+elif [ "$ledger_count" -ge 1 ]; then
+    echo "  [PASS] SDD ledger tracking used ($ledger_count transcript references to progress.md)"
 else
-    echo "  [FAIL] No Claude Code task-tracking tool used"
+    echo "  [FAIL] No task-tracking tool used and no SDD ledger activity found"
     FAILED=$((FAILED + 1))
 fi
 echo ""

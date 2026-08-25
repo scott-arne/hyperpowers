@@ -35,6 +35,7 @@ Task reviewer: Spec ✅ - all requirements met, nothing extra.
 Task 2: Recovery modes (declared standard)
 
 [Run task-brief for Task 2; dispatch implementer with brief + report paths + context]
+[Ledger: Task 2: implementer subagent-7c42 — recorded for fix-round resumes]
 
 Implementer: [No questions]
   - Added verify/repair modes

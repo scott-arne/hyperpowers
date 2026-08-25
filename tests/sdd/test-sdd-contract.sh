@@ -157,6 +157,8 @@ assert_contains "$SDD_EXAMPLE_WORKFLOW" "Using hyperpowers:finishing-a-developme
   "example workflow runs through to the finishing handoff"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 — recorded for fix-round resumes" \
   "example workflow records the implementer identity in the ledger"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 — recorded for fix-round resumes" \
+  "example workflow records the identity on the task that enters the fix loop"
 if [ -f "$SDD_RATIONALIZATIONS" ]; then
   pass "common-rationalizations.md exists where its stub points"
 else

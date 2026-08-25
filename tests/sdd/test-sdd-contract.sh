@@ -168,6 +168,8 @@ assert_contains "$SDD_RATIONALIZATIONS" "Silent discards are forbidden." \
 # implementer identity is written into the ledger so compaction cannot orphan
 # fix-round resumes, and a covering command that cannot fail is not evidence.
 assert_contains "$SDD" "todos mirror it, never replace it" "ledger is canonical; todos are the mirror"
+assert_contains "$SDD" "in the ledger's task entry" "implementer identity anchored to the ledger"
+assert_contains "$SDD" "after compaction the ledger is the only place the identity survives" "identity survives compaction via the ledger"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

@@ -67,7 +67,7 @@ digraph process {
         "Record tier-skip (ungated-ledger), skip Codex task gate" [shape=box];
         "Codex task code gate\n(Claude Code; degrade if absent)" [shape=box];
         "Codex gate blocking findings?" [shape=diamond];
-        "Append completion to ledger, mark todo complete" [shape=box];
+        "Append completion to ledger, mark todo complete (where kept)" [shape=box];
     }
 
     "Setup: worktree, workspace and ledger check, read plan and spec, pre-flight review" [shape=box];
@@ -97,12 +97,12 @@ digraph process {
     "R = 5?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="no - next round"];
     "R = 5?" -> "Surface open findings to your human partner (BLOCKED)" [label="yes - breaker trips"];
     "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Record tier-skip (ungated-ledger), skip Codex task gate" [label="yes"];
-    "Record tier-skip (ungated-ledger), skip Codex task gate" -> "Append completion to ledger, mark todo complete";
+    "Record tier-skip (ungated-ledger), skip Codex task gate" -> "Append completion to ledger, mark todo complete (where kept)";
     "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Codex task code gate\n(Claude Code; degrade if absent)" [label="no"];
     "Codex task code gate\n(Claude Code; degrade if absent)" -> "Codex gate blocking findings?";
     "Codex gate blocking findings?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="yes - same five-round cap"];
-    "Codex gate blocking findings?" -> "Append completion to ledger, mark todo complete" [label="no"];
-    "Append completion to ledger, mark todo complete" -> "More tasks remain?";
+    "Codex gate blocking findings?" -> "Append completion to ledger, mark todo complete (where kept)" [label="no"];
+    "Append completion to ledger, mark todo complete (where kept)" -> "More tasks remain?";
     "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
     "More tasks remain?" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="no"];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, surface residuals";

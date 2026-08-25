@@ -264,8 +264,11 @@ and fix-round diffs need it.
 - If an earlier task deferred a finding in the area this task touches — a
   Minor in the ledger, or one your human partner decided — carry a pointer
   to that ledger entry in the dispatch.
-- Record the implementer's agent identity from the dispatch result —
-  fix-loop rounds 1-3 resume this agent.
+- Record the implementer's agent identity from the dispatch result in the
+  ledger's task entry (`Task <N>: implementer <agent-id-or-name>`) —
+  fix-loop rounds 1-3 resume this agent, and after compaction the ledger is
+  the only place the identity survives. An identity that was never written
+  down forces a fresh takeover where a resume was owed.
 - Never dispatch multiple implementation subagents in parallel (conflicts).
 
 Template: [implementer-prompt.md](implementer-prompt.md)

@@ -439,8 +439,11 @@ exception: a fix fully specified by the finding itself — exact file, exact
 lines, exact replacement, no judgment left — touching at most 3 lines in
 one file with no new logic, may be controller-applied. The exception
 waives nothing else: it consumes a fix round and ends in the same scoped
-re-review, and its ledger line must read
-`Task <N>: fix round <R>/5 controller-applied (de minimis) — <finding>`.
+re-review; the controller runs the fix's covering command and appends the
+fix report — diff summary, command, output — to the task's report file
+itself, exactly as an implementer would. Its ledger line keeps the
+fix-round schema with the marker inside it:
+`Task <N>: fix round <R>/5 controller-applied (de minimis) (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`.
 Reaching for it twice in the same task means the findings are not de
 minimis — resume the implementer.
 

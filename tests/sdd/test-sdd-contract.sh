@@ -195,6 +195,10 @@ assert_contains "$SDD" "fully specified by the finding itself" "carve-out requir
 assert_contains "$SDD" "controller-applied (de minimis)" "carve-out requires the disclosure ledger line"
 assert_contains "$SDD" "consumes a fix round and ends in the same scoped re-review" "carve-out waives neither the round nor the re-review"
 assert_contains "$SDD" "Reaching for it twice in the same task means the findings are not de minimis" "carve-out two-strike rule"
+assert_contains "$SDD" "runs the fix's covering command and appends the fix report" \
+  "carve-out carries the implementer's evidence duty"
+assert_contains "$SDD" "controller-applied (de minimis) (<X> addressed, <Y> open" \
+  "carve-out ledger line keeps the fix-round schema"
 assert_contains "$SDD_RATIONALIZATIONS" "Outside the de-minimis exception" "rationalization row scoped to the exception"
 assert_contains "$SDD_RATIONALIZATIONS" "Resume the implementer." "rationalization row still lands on resume"
 

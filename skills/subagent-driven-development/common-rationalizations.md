@@ -3,7 +3,7 @@
 | Excuse | Reality |
 |--------|---------|
 | "Close enough on spec compliance" | Reviewer found spec gaps = not done. Fix it, or hit the cap and hand it back — those are the only exits. |
-| "I'll fix it myself, dispatching is overhead" | Controller fixes pollute your context and skip review. Resume the implementer. |
+| "I'll fix it myself, dispatching is overhead" | Controller fixes pollute your context and skip review. Outside the de-minimis exception (at most 3 fully-specified lines, one file, disclosed in the ledger, re-review still runs), that is rationalization. Resume the implementer. |
 | "One more round will converge" | Past the cap, rounds don't converge — the failure is structural. It goes to your human partner as BLOCKED. |
 | "The reviewer will just find something new anyway" | Scoped re-reviews verify fixes; they cannot wander. New findings on untouched code go to the ledger, not the loop. |
 | "This finding is obviously wrong, I'll drop it" | A finding you disagree with goes to your human partner with the plan text beside it. Silent discards are forbidden. |

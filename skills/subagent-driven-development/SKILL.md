@@ -434,7 +434,15 @@ origin.
 `Task <N>: fix round <R>/5 (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`
 
 Never fix findings yourself in the controller session — your context stays
-clean for coordination, and controller fixes skip review.
+clean for coordination, and controller fixes skip review. One narrow
+exception: a fix fully specified by the finding itself — exact file, exact
+lines, exact replacement, no judgment left — touching at most 3 lines in
+one file with no new logic, may be controller-applied. The exception
+waives nothing else: it consumes a fix round and ends in the same scoped
+re-review, and its ledger line must read
+`Task <N>: fix round <R>/5 controller-applied (de minimis) — <finding>`.
+Reaching for it twice in the same task means the findings are not de
+minimis — resume the implementer.
 
 **Codex Review Gate (Claude Code only).** When running under Claude Code, add
 a Codex **code** review gate at two points — here, per task, and once more

@@ -186,5 +186,17 @@ assert_contains "$SDD" "in the ledger's task entry" "implementer identity anchor
 assert_contains "$SDD" "after compaction the ledger is the only place the identity survives" "identity survives compaction via the ledger"
 assert_contains "$SDD" "A covering command must be able to fail." "vacuous covering commands are not evidence"
 
+# De-minimis carve-out (2026-08-25). The exception must carry all three
+# guardrails in text: the full-specification bound, the mandatory disclosure
+# ledger line, and the two-strike escape back to a real dispatch. The
+# rationalization row must scope itself to the exception rather than being
+# silently weakened.
+assert_contains "$SDD" "fully specified by the finding itself" "carve-out requires a fully-specified fix"
+assert_contains "$SDD" "controller-applied (de minimis)" "carve-out requires the disclosure ledger line"
+assert_contains "$SDD" "consumes a fix round and ends in the same scoped re-review" "carve-out waives neither the round nor the re-review"
+assert_contains "$SDD" "Reaching for it twice in the same task means the findings are not de minimis" "carve-out two-strike rule"
+assert_contains "$SDD_RATIONALIZATIONS" "Outside the de-minimis exception" "rationalization row scoped to the exception"
+assert_contains "$SDD_RATIONALIZATIONS" "Resume the implementer." "rationalization row still lands on resume"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

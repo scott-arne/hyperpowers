@@ -158,7 +158,9 @@ a ledger file, not only in todos.
   every call refreshes it — so a resumed session always finds its ledger.
 
 Read the plan once, note its context and Global Constraints, and create a
-todo per task. Read the plan's `**Spec:**` header and the spec file it
+todo per task where your harness surfaces todos — the ledger is the
+progress record either way; todos mirror it, never replace it. Read the
+plan's `**Spec:**` header and the spec file it
 names: the spec is the binding authority the plan argues from, and
 conflicts inside the plan resolve against it. A plan whose spec is `none`
 or unreachable gets a ledger line saying so — without a spec, a conflict
@@ -490,7 +492,8 @@ message as your other bookkeeping:
 
 - `Task <N>: complete (commits <base7>..<head7>, review clean)`
 
-Then mark the todo complete and move on. Never move to the next task while
+Then mark the task's todo complete, where you keep todos, and move on.
+Never move to the next task while
 the review has open Critical/Important issues.
 
 ## Risk Tiers (per-task Codex gate applicability)

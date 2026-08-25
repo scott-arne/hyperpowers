@@ -42,6 +42,8 @@ Implementer: [No questions]
   - 8/8 tests passing
   - Committed
 
+[Re-run the covering command myself: 8/8 — matches the report]
+
 [Run review-package PLAN_FILE BASE HEAD; dispatch task reviewer with the printed path]
 Task reviewer: Spec ❌:
   - Missing: Progress reporting (spec says "report every 100 items")
@@ -50,6 +52,8 @@ Task reviewer: Spec ❌:
 [Fix round 1: resume the implementer with both findings]
 Implementer: Added progress reporting, extracted PROGRESS_INTERVAL constant.
   Re-ran test/recovery.test.js — 10/10 passing. Fix report appended.
+
+[Re-run the fix's covering command myself: 10/10 — matches the fix report]
 
 [Run review-package PLAN_FILE FIX_BASE HEAD; dispatch scoped re-review]
 Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).

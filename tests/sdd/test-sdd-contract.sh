@@ -142,5 +142,26 @@ assert_contains "$SDD" "the floor for reviewers and for implementers working fro
 assert_contains "$SDD" "The cheapest tier is for transcription, where the task's own text carries the complete code to write, and for single-file mechanical fixes." \
   "model-selection stub keeps the cheap-tier exemption that pairs with the floor"
 
+# The reference files the stubs point at must actually exist and carry their
+# content. Without these, example-workflow.md or common-rationalizations.md
+# could be deleted with every suite still green — the stubs in SKILL.md would
+# keep asserting fine while pointing at nothing.
+SDD_EXAMPLE_WORKFLOW="$REPO_ROOT/skills/subagent-driven-development/example-workflow.md"
+if [ -f "$SDD_EXAMPLE_WORKFLOW" ]; then
+  pass "example-workflow.md exists where its stub points"
+else
+  fail "example-workflow.md exists where its stub points"
+fi
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "## Example Workflow" "example workflow carries its section header"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Using hyperpowers:finishing-a-development-branch." \
+  "example workflow runs through to the finishing handoff"
+if [ -f "$SDD_RATIONALIZATIONS" ]; then
+  pass "common-rationalizations.md exists where its stub points"
+else
+  fail "common-rationalizations.md exists where its stub points"
+fi
+assert_contains "$SDD_RATIONALIZATIONS" "Silent discards are forbidden." \
+  "rationalizations reference keeps the no-silent-discard row"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

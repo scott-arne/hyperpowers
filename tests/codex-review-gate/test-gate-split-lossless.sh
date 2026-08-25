@@ -13,6 +13,14 @@
 # duplication, or the loss of any line no assertion happens to name.
 set -uo pipefail
 
+# Byte semantics for the whole proof. sort, uniq, and grep ranges all honor
+# the locale's collation, and some locales (measured: kk_KZ.PT154) collate
+# distinct byte strings as equal — under which `sort -u` silently dropped 32
+# needles while still clearing the count floor, and `uniq` reported false
+# duplicates in the numeric tiling. Byte-identity is the property under test,
+# so the tools must compare bytes.
+export LC_ALL=C
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 GATE_DIR="$REPO_ROOT/skills/requesting-code-review"
@@ -22,6 +30,9 @@ POST_EDITS="$SCRIPT_DIR/gate-post-split-edits.tsv"
 
 # Pinned pre-split commit. The original file is read from git, so it stays
 # available no matter what happens to the working tree.
+# This suite is checkout-only by design: it needs a .git that contains the
+# pinned blob, so it cannot run from a packaged plugin install and fails
+# closed (rather than skipping) if the object is missing from a shallow clone.
 ORIGIN_SHA="9242d4f6bdcdbf373548a8197b515a2e309de03b"
 ORIGIN_PATH="skills/requesting-code-review/codex-review-gate.md"
 ORIGIN_LINES=766
@@ -162,8 +173,11 @@ fi
 # split script and this verifier substitute through awk -v — so a mangled
 # replacement would appear identically on each side and pass unnoticed. None of
 # the eight replacements contains a backslash today; keep it that way.
+# `cut -f4-` (not -f4) matches the consuming loop's `read` remainder
+# semantics: a replacement containing a literal tab spills into fields 5+,
+# which the loop would still hand to awk but a single-field cut would not see.
 # shellcheck disable=SC1003  # the literal backslash is the pattern, not an escape
-if grep -v '^#' "$REFERENCES" | cut -f4 | grep -qF '\'; then
+if grep -v '^#' "$REFERENCES" | cut -f4- | grep -qF '\'; then
     fail "no replacement text contains a backslash (awk -v would reinterpret it)"
 else
     pass "no replacement text contains a backslash"
@@ -220,12 +234,25 @@ else
     fail "no line is edited by both tables (shared: ${both% })"
 fi
 
+# The same hazard exists in miniature inside one table: two rows naming the
+# same source line make the result depend on row order, with the later row
+# silently overwriting the earlier in every consumer loop. Fail-only — no
+# PASS line — so the suite's two documented inventory shapes stay exact.
+for tbl in "$REFERENCES" "$POST_EDITS"; do
+    dups="$(grep -v '^#' "$tbl" | grep -v '^$' | cut -f1 | sort | uniq -d | tr '\n' ' ')"
+    if [ -n "$dups" ]; then
+        fail "$(basename "$tbl"): no source line appears in two rows (duplicated: ${dups% })"
+    fi
+done
+
 # Same hazard as the references table: awk -v reinterprets backslash escapes in
 # the value it is handed, and both the substitution side and this verifier use
 # awk -v, so a mangled replacement would look identical on each side and pass
 # unnoticed.
+# `cut -f3-` (not -f3) for the same reason as the references guard above:
+# the consuming loop reads the replacement with remainder semantics.
 # shellcheck disable=SC1003  # the literal backslash is the pattern, not an escape
-if grep -v '^#' "$POST_EDITS" | cut -f3 | grep -qF '\'; then
+if grep -v '^#' "$POST_EDITS" | cut -f3- | grep -qF '\'; then
     fail "no post-split replacement contains a backslash (awk -v would reinterpret it)"
 else
     pass "no post-split replacement contains a backslash"
@@ -387,6 +414,8 @@ else
         sed -n "${start},${end}p" "$original" |
             grep -v '^[[:space:]]*$' >>"$needles_raw"
     done <"$MANIFEST"
+    # Dedup is byte-exact via the top-level LC_ALL=C export; locale collation
+    # here once silently dropped needles below the count floor (R6-1).
     sort -u "$needles_raw" >"$needles"
 
     needle_count="$(wc -l <"$needles" | tr -d ' ')"

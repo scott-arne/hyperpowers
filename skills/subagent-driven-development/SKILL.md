@@ -142,7 +142,12 @@ a ledger file, not only in todos.
   it points to, not the string. Tasks with a `Task <N>: complete` line are
   DONE — do not re-dispatch them; resume at the first task without one. A
   task whose last line is a fix round is mid-loop: resume the loop at the
-  next round. A first line that resolves to a genuinely different plan
+  next round. A task whose last line is its implementer identity is a
+  dispatch in flight: do not re-dispatch — reconcile that agent first
+  (list your live children, chase its report), resume it by the recorded
+  id where your harness allows, and only if it cannot be recovered
+  dispatch a takeover, recording the takeover's identity beside the
+  original. A first line that resolves to a genuinely different plan
   file means this workspace is corrupt, not that you wandered into a
   sibling's: stop and surface it to your human partner rather than
   starting fresh on top of another plan's state.

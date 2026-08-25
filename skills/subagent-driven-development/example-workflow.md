@@ -30,6 +30,7 @@ Task reviewer: Spec ✅ - all requirements met, nothing extra.
   Strengths: Good test coverage, clean. Issues: None. Task quality: Approved.
 
 [Effective tier still low, plan gate reviewed the plan, no trigger fired: record the tier-skip event, skip the Codex task gate]
+[Write tier-skips.md in this plan's workspace — Task 1's skip, one line]
 [Ledger: Task 1: complete (commits a1b2c3d..d4e5f6a, review clean)]
 
 Task 2: Recovery modes (declared standard)
@@ -67,9 +68,9 @@ Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
 ...
 
 [After all tasks]
-[Run review-package PLAN_FILE MERGE_BASE HEAD; dispatch final code-reviewer, most capable model]
+[Run review-package PLAN_FILE MERGE_BASE HEAD; dispatch final code-reviewer, most capable model, with tier-skips.md]
 Final reviewer: All requirements met. Deferred minors triaged: none block merge.
-[Codex final code gate over the branch range — approved]
+[Codex final code gate over the branch range, tier-skips.md among the dossier adjudications — approved]
 
 [Delete this plan's workspace — the record now lives in git]
 

@@ -24,12 +24,7 @@ skip it silently — do not run the preflight, do not emit the notice.
 
 ## Routes
 
-**Read your whole route before you start.** A route is a *set*, not a sequence.
-The gate's §-references point in both directions — §3 names §5's round counter
-and §4b's recovery path, §4b names §3's watch loop, §5 names §3's prompt and
-`GATE_DIR` — so there is no order in which every reference points backwards.
-Load the whole set first and every reference resolves against context you
-already hold. Section files never send you to another file.
+**Read your whole route before you start.** A route is a *set*, not a sequence. References point in both directions — gate-setup.md names gate-lenses.md and §5's round ledger, gate-lenses.md uses `GATE_DIR` from gate-setup.md, gate-fix-loop.md names §3's `GATE_DIR` — so no reading order makes every reference point backwards. Load the whole route first and every reference resolves against context you already hold. A section file may name a sibling so you can tell what a thing is, but it never requires you to go open one; where a named file is outside your route, the material it holds belongs to the other gate type and is not yours to read.
 
 | Caller | Route |
 |--------|-------|

@@ -141,6 +141,116 @@ else
     fail "route cells parsed (got $routes_seen, expected at least 9)"
 fi
 
+# 6. Bare cross-file references respect route boundaries.
+#
+# A section file may name a sibling (e.g., "the watch loop in recipe-code.md")
+# for orientation, but only if every route that delivers the mentioning file
+# also delivers the mentioned file. The seven known exceptions are pinned here;
+# a reference outside this list violates the route-aware property, and a stale
+# exception (one whose reference no longer exists) must also fail.
+#
+# Exception format: <mentioning-file>:<line>:<mentioned-file>
+# Each is scoped to the other gate type, with the reading caller's equivalent
+# stated adjacent.
+EXCEPTIONS="gate-findings.md:57:recipe-code.md
+gate-findings.md:70:recipe-code.md
+gate-findings.md:83:recipe-code.md
+gate-findings.md:112:recipe-code.md
+gate-findings.md:136:recipe-code.md
+gate-setup.md:33:recipe-document.md
+gate-lenses.md:42:recipe-document.md"
+
+# Find all bare .md references to section files (not inside markdown links).
+violations=""
+for f in $SIBLINGS; do
+    # For each section file, look for mentions of other section files.
+    for target in $SIBLINGS; do
+        [ "$target" = "$f" ] && continue
+
+        # Find all mentions of this target file in the current file.
+        # grep -Fn finds the exact string with line numbers.
+        mentions="$(grep -Fn "$target" "$GATE_DIR/$f" 2>/dev/null || true)"
+
+        while IFS=: read -r line rest; do
+            [ -z "$line" ] && continue
+
+            # Skip if this mention is inside a markdown link: ](<target>)
+            if printf '%s' "$rest" | grep -Fq "]($target)"; then
+                continue
+            fi
+
+            # Check if this is an allowed exception.
+            exception_key="$f:$line:$target"
+            if printf '%s\n' "$EXCEPTIONS" | grep -Fqx "$exception_key"; then
+                continue
+            fi
+
+            # Extract basename without .md for route checking.
+            mentioned_base="${target%.md}"
+            mentioning_base="${f%.md}"
+
+            # For each route that includes the mentioning file, verify it also
+            # includes the mentioned file.
+            route_violation=""
+            while IFS='=' read -r caller route_files; do
+                # Check if this route includes the mentioning file.
+                if ! printf '%s\n' "$route_files" | grep -qw "$mentioning_base"; then
+                    continue
+                fi
+
+                # This route includes the mentioning file. Does it include the mentioned?
+                if ! printf '%s\n' "$route_files" | grep -qw "$mentioned_base"; then
+                    route_violation="$caller"
+                    break
+                fi
+            done <<<"$ROUTES"
+
+            if [ -n "$route_violation" ]; then
+                violations="${violations}${f}:${line} mentions ${target} (route '$route_violation' excludes it)
+"
+            fi
+        done <<<"$mentions"
+    done
+done
+
+if [ -n "$violations" ]; then
+    fail "bare cross-file references respect routes"
+    printf '%s' "$violations" | head -5
+else
+    pass "bare cross-file references respect routes"
+fi
+
+# Check for stale exceptions (references that no longer exist).
+stale=""
+while IFS= read -r exception; do
+    [ -z "$exception" ] && continue
+
+    exc_file="${exception%%:*}"
+    rest="${exception#*:}"
+    exc_line="${rest%%:*}"
+    exc_mentioned="${rest#*:}"
+
+    # Verify this exact reference exists.
+    if ! grep -Fq "$exc_mentioned" "$GATE_DIR/$exc_file" 2>/dev/null; then
+        stale="${stale}${exception} (reference no longer exists)
+"
+    else
+        # Verify it's at the expected line.
+        actual_line="$(grep -n "$exc_mentioned" "$GATE_DIR/$exc_file" | grep "^${exc_line}:" || true)"
+        if [ -z "$actual_line" ]; then
+            stale="${stale}${exception} (not at line $exc_line)
+"
+        fi
+    fi
+done <<<"$EXCEPTIONS"
+
+if [ -n "$stale" ]; then
+    fail "exception list current (no stale entries)"
+    printf '%s' "$stale"
+else
+    pass "exception list current (no stale entries)"
+fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"

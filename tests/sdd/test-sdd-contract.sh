@@ -159,6 +159,10 @@ assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 — recorded 
   "example workflow records the implementer identity in the ledger"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 — recorded for fix-round resumes" \
   "example workflow records the identity on the task that enters the fix loop"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Re-run the covering command myself: 8/8 — matches the report" \
+  "example fix-loop task re-runs the covering command before review"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Re-run the fix's covering command myself: 10/10 — matches the fix report" \
+  "example fix report is re-run before the scoped re-review"
 if [ -f "$SDD_RATIONALIZATIONS" ]; then
   pass "common-rationalizations.md exists where its stub points"
 else

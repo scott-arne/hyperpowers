@@ -163,5 +163,11 @@ fi
 assert_contains "$SDD_RATIONALIZATIONS" "Silent discards are forbidden." \
   "rationalizations reference keeps the no-silent-discard row"
 
+# Ledger-anchoring needles (2026-08-25 attribution fixes). The ledger is the
+# canonical tracker; todos mirror it where the harness surfaces them, the
+# implementer identity is written into the ledger so compaction cannot orphan
+# fix-round resumes, and a covering command that cannot fail is not evidence.
+assert_contains "$SDD" "todos mirror it, never replace it" "ledger is canonical; todos are the mirror"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

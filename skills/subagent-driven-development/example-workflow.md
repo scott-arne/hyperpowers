@@ -12,6 +12,7 @@ You: I'm using Subagent-Driven Development to execute this plan.
 Task 1: Hook installation script (declared low)
 
 [Run task-brief for Task 1; dispatch implementer with brief + report paths + context]
+[Ledger: Task 1: implementer subagent-01f3 — recorded for fix-round resumes]
 
 Implementer: "Before I begin - should the hook be installed at user or system level?"
 
@@ -29,16 +30,20 @@ Task reviewer: Spec ✅ - all requirements met, nothing extra.
   Strengths: Good test coverage, clean. Issues: None. Task quality: Approved.
 
 [Effective tier still low, plan gate reviewed the plan, no trigger fired: record the tier-skip event, skip the Codex task gate]
+[Write tier-skips.md in this plan's workspace — Task 1's skip, one line]
 [Ledger: Task 1: complete (commits a1b2c3d..d4e5f6a, review clean)]
 
 Task 2: Recovery modes (declared standard)
 
 [Run task-brief for Task 2; dispatch implementer with brief + report paths + context]
+[Ledger: Task 2: implementer subagent-7c42 — recorded for fix-round resumes]
 
 Implementer: [No questions]
   - Added verify/repair modes
   - 8/8 tests passing
   - Committed
+
+[Re-run the covering command myself: 8/8 — matches the report]
 
 [Run review-package PLAN_FILE BASE HEAD; dispatch task reviewer with the printed path]
 Task reviewer: Spec ❌:
@@ -48,6 +53,8 @@ Task reviewer: Spec ❌:
 [Fix round 1: resume the implementer with both findings]
 Implementer: Added progress reporting, extracted PROGRESS_INTERVAL constant.
   Re-ran test/recovery.test.js — 10/10 passing. Fix report appended.
+
+[Re-run the fix's covering command myself: 10/10 — matches the fix report]
 
 [Run review-package PLAN_FILE FIX_BASE HEAD; dispatch scoped re-review]
 Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
@@ -61,9 +68,9 @@ Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
 ...
 
 [After all tasks]
-[Run review-package PLAN_FILE MERGE_BASE HEAD; dispatch final code-reviewer, most capable model]
+[Run review-package PLAN_FILE MERGE_BASE HEAD; dispatch final code-reviewer, most capable model, with tier-skips.md]
 Final reviewer: All requirements met. Deferred minors triaged: none block merge.
-[Codex final code gate over the branch range — approved]
+[Codex final code gate over the branch range, tier-skips.md among the dossier adjudications — approved]
 
 [Delete this plan's workspace — the record now lives in git]
 

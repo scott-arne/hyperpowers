@@ -155,6 +155,20 @@ fi
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "## Example Workflow" "example workflow carries its section header"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Using hyperpowers:finishing-a-development-branch." \
   "example workflow runs through to the finishing handoff"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 — recorded for fix-round resumes" \
+  "example workflow records the implementer identity in the ledger"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 — recorded for fix-round resumes" \
+  "example workflow records the identity on the task that enters the fix loop"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Re-run the covering command myself: 8/8 — matches the report" \
+  "example fix-loop task re-runs the covering command before review"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Re-run the fix's covering command myself: 10/10 — matches the fix report" \
+  "example fix report is re-run before the scoped re-review"
+assert_contains "$SDD" "is a dispatch in flight: do not re-dispatch" \
+  "resume rules consume the implementer-identity ledger state"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Write tier-skips.md in this plan's workspace" \
+  "example's low-tier skip writes the tier-skip summary"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "most capable model, with tier-skips.md" \
+  "example hands tier-skips.md to the final review surfaces"
 if [ -f "$SDD_RATIONALIZATIONS" ]; then
   pass "common-rationalizations.md exists where its stub points"
 else
@@ -162,6 +176,45 @@ else
 fi
 assert_contains "$SDD_RATIONALIZATIONS" "Silent discards are forbidden." \
   "rationalizations reference keeps the no-silent-discard row"
+
+# Ledger-anchoring needles (2026-08-25 attribution fixes). The ledger is the
+# canonical tracker; todos mirror it where the harness surfaces them, the
+# implementer identity is written into the ledger so compaction cannot orphan
+# fix-round resumes, and a covering command that cannot fail is not evidence.
+assert_contains "$SDD" "todos mirror it, never replace it" "ledger is canonical; todos are the mirror"
+assert_contains "$SDD" "in the ledger's task entry" "implementer identity anchored to the ledger"
+assert_contains "$SDD" "after compaction the ledger is the only place the identity survives" "identity survives compaction via the ledger"
+assert_contains "$SDD" "A covering command must be able to fail." "vacuous covering commands are not evidence"
+
+# De-minimis carve-out (2026-08-25). The exception must carry all three
+# guardrails in text: the full-specification bound, the mandatory disclosure
+# ledger line, and the two-strike escape back to a real dispatch. The
+# rationalization row must scope itself to the exception rather than being
+# silently weakened.
+assert_contains "$SDD" "fully specified by the finding itself" "carve-out requires a fully-specified fix"
+assert_contains "$SDD" "controller-applied (de minimis)" "carve-out requires the disclosure ledger line"
+assert_contains "$SDD" "consumes a fix round and ends in the same scoped re-review" "carve-out waives neither the round nor the re-review"
+assert_contains "$SDD" "Reaching for it twice in the same task means the findings are not de minimis" "carve-out two-strike rule"
+assert_contains "$SDD" "applies the edit and runs the fix's covering command FIRST" \
+  "carve-out verifies before committing"
+assert_contains "$SDD" "controller-applied (de minimis) (<X> addressed, <Y> open" \
+  "carve-out ledger line keeps the fix-round schema"
+assert_contains "$SDD" "touching at most 3 lines in one file with no new logic" \
+  "carve-out numeric and scope bounds are pinned"
+assert_contains "$SDD" "one finding per reach; a round holding two such findings is not de minimis" \
+  "carve-out forbids per-round multiplication"
+assert_contains "$SDD" "then commits the verified fix" \
+  "carve-out commits only a verified fix"
+assert_contains "$SDD" "resume the implementer at rounds 1-3, dispatch the takeover at rounds 4-5" \
+  "carve-out two-strike escape respects the round-4 takeover rule"
+assert_contains "$SDD" "or one controller-applied de-minimis fix" \
+  "fix-round definition counts controller-applied fixes"
+assert_contains "$SDD" "where you keep todos" \
+  "completion line keeps todos conditional"
+assert_contains "$SDD" "mark todo complete (where kept)" \
+  "digraph todo node stays conditional"
+assert_contains "$SDD_RATIONALIZATIONS" "Outside the de-minimis exception" "rationalization row scoped to the exception"
+assert_contains "$SDD_RATIONALIZATIONS" "Resume the implementer at rounds 1-3; dispatch the takeover at rounds 4-5." "rationalization row defers to the round's own rule"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

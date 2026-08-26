@@ -67,7 +67,7 @@ digraph process {
         "Record tier-skip (ungated-ledger), skip Codex task gate" [shape=box];
         "Codex task code gate\n(Claude Code; degrade if absent)" [shape=box];
         "Codex gate blocking findings?" [shape=diamond];
-        "Append completion to ledger, mark todo complete" [shape=box];
+        "Append completion to ledger, mark todo complete (where kept)" [shape=box];
     }
 
     "Setup: worktree, workspace and ledger check, read plan and spec, pre-flight review" [shape=box];
@@ -97,12 +97,12 @@ digraph process {
     "R = 5?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="no - next round"];
     "R = 5?" -> "Surface open findings to your human partner (BLOCKED)" [label="yes - breaker trips"];
     "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Record tier-skip (ungated-ledger), skip Codex task gate" [label="yes"];
-    "Record tier-skip (ungated-ledger), skip Codex task gate" -> "Append completion to ledger, mark todo complete";
+    "Record tier-skip (ungated-ledger), skip Codex task gate" -> "Append completion to ledger, mark todo complete (where kept)";
     "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Codex task code gate\n(Claude Code; degrade if absent)" [label="no"];
     "Codex task code gate\n(Claude Code; degrade if absent)" -> "Codex gate blocking findings?";
     "Codex gate blocking findings?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="yes - same five-round cap"];
-    "Codex gate blocking findings?" -> "Append completion to ledger, mark todo complete" [label="no"];
-    "Append completion to ledger, mark todo complete" -> "More tasks remain?";
+    "Codex gate blocking findings?" -> "Append completion to ledger, mark todo complete (where kept)" [label="no"];
+    "Append completion to ledger, mark todo complete (where kept)" -> "More tasks remain?";
     "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
     "More tasks remain?" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="no"];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, surface residuals";
@@ -142,7 +142,12 @@ a ledger file, not only in todos.
   it points to, not the string. Tasks with a `Task <N>: complete` line are
   DONE — do not re-dispatch them; resume at the first task without one. A
   task whose last line is a fix round is mid-loop: resume the loop at the
-  next round. A first line that resolves to a genuinely different plan
+  next round. A task whose last line is its implementer identity is a
+  dispatch in flight: do not re-dispatch — reconcile that agent first
+  (list your live children, chase its report), resume it by the recorded
+  id where your harness allows, and only if it cannot be recovered
+  dispatch a takeover, recording the takeover's identity beside the
+  original. A first line that resolves to a genuinely different plan
   file means this workspace is corrupt, not that you wandered into a
   sibling's: stop and surface it to your human partner rather than
   starting fresh on top of another plan's state.
@@ -158,11 +163,13 @@ a ledger file, not only in todos.
   every call refreshes it — so a resumed session always finds its ledger.
 
 Read the plan once, note its context and Global Constraints, and create a
-todo per task. Read the plan's `**Spec:**` header and the spec file it
-names: the spec is the binding authority the plan argues from, and
-conflicts inside the plan resolve against it. A plan whose spec is `none`
-or unreachable gets a ledger line saying so — without a spec, a conflict
-has no tiebreaker but your human partner.
+todo per task where your harness surfaces todos — the ledger is the
+progress record either way; todos mirror it, never replace it. Read the
+plan's `**Spec:**` header and the spec file it names: the spec is the
+binding authority the plan argues from, and conflicts inside the plan
+resolve against it. A plan whose spec is `none` or unreachable gets a
+ledger line saying so — without a spec, a conflict has no tiebreaker but
+your human partner.
 
 Before dispatching Task 1, scan the plan once for conflicts, writing down
 what you checked as you check it:
@@ -262,8 +269,12 @@ and fix-round diffs need it.
 - If an earlier task deferred a finding in the area this task touches — a
   Minor in the ledger, or one your human partner decided — carry a pointer
   to that ledger entry in the dispatch.
-- Record the implementer's agent identity from the dispatch result —
-  fix-loop rounds 1-3 resume this agent.
+- Record the implementer's agent identity from the dispatch result in the
+  ledger's task entry (`Task <N>: implementer <agent-id-or-name>`) —
+  fix-loop rounds 1-3 resume this agent, and after compaction the ledger is
+  the only place the identity survives once its agent has exited. An
+  identity that was never written down forces a fresh takeover where a
+  resume was owed.
 - Never dispatch multiple implementation subagents in parallel (conflicts).
 
 Template: [implementer-prompt.md](implementer-prompt.md)
@@ -282,6 +293,12 @@ command(s) or an explicit `no covering command: <rationale>` line plus the
 controller's substitute verification (read the diff against the brief;
 render or grep the changed doc). A dispatch naming neither is malformed —
 fix the dispatch, not the rule.
+
+A covering command must be able to fail. One that can no-op on the state
+under test — a changed-files linter on a clean tree, a test filter that
+matches nothing — is not covering evidence, however honestly it exits 0.
+Name the files or the test ids explicitly so the command exercises what
+the report claims.
 
 Implementer subagents report one of four statuses. Handle each appropriately:
 
@@ -377,8 +394,8 @@ Before the loop starts, two routes leave it immediately:
 Everything else enters the loop — the Claude task reviewer's blocking
 findings and the per-task Codex gate's blocking findings alike. They are ONE
 loop with ONE shared cap of **five rounds per task**: the gate does not run
-a count of its own. A fix round is one fix dispatch plus one scoped
-re-review.
+a count of its own. A fix round is one fix dispatch — or one
+controller-applied de-minimis fix — plus one scoped re-review.
 
 **Rounds 1-3 — resume the original implementer.** Send it the open findings
 verbatim. Its context is intact: it knows the task, the code, and its own
@@ -418,7 +435,24 @@ origin.
 `Task <N>: fix round <R>/5 (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`
 
 Never fix findings yourself in the controller session — your context stays
-clean for coordination, and controller fixes skip review.
+clean for coordination, and controller fixes skip review. One narrow
+exception: a fix fully specified by the finding itself — exact file, exact
+lines, exact replacement, no judgment left — touching at most 3 lines in
+one file with no new logic, may be controller-applied — one finding per
+reach; a round holding two such findings is not de minimis. The exception
+waives nothing else: it consumes a fix round and ends in the same scoped
+re-review; the controller applies the edit and runs the fix's covering
+command FIRST — a failure means the fix was not de minimis: revert the
+edit, spend no round, resume the implementer — then commits the verified
+fix (the re-review packages committed diffs — an uncommitted fix hands
+it nothing) and appends the fix report — the command, its output, and a
+diff summary — to the task's report file itself, exactly as an
+implementer would. Its ledger line keeps the
+fix-round schema with the marker inside it:
+`Task <N>: fix round <R>/5 controller-applied (de minimis) (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`.
+Reaching for it twice in the same task means the findings are not de
+minimis — go back to the round's own rule: resume the implementer at
+rounds 1-3, dispatch the takeover at rounds 4-5.
 
 **Codex Review Gate (Claude Code only).** When running under Claude Code, add
 a Codex **code** review gate at two points — here, per task, and once more
@@ -490,8 +524,9 @@ message as your other bookkeeping:
 
 - `Task <N>: complete (commits <base7>..<head7>, review clean)`
 
-Then mark the todo complete and move on. Never move to the next task while
-the review has open Critical/Important issues.
+Then mark the task's todo complete, where you keep todos, and move on.
+Never move to the next task while the review has open Critical/Important
+issues.
 
 ## Risk Tiers (per-task Codex gate applicability)
 

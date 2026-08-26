@@ -214,7 +214,7 @@ assert_contains "$SDD" "where you keep todos" \
 assert_contains "$SDD" "mark todo complete (where kept)" \
   "digraph todo node stays conditional"
 assert_contains "$SDD_RATIONALIZATIONS" "Outside the de-minimis exception" "rationalization row scoped to the exception"
-assert_contains "$SDD_RATIONALIZATIONS" "Resume the implementer." "rationalization row still lands on resume"
+assert_contains "$SDD_RATIONALIZATIONS" "Resume the implementer at rounds 1-3; dispatch the takeover at rounds 4-5." "rationalization row defers to the round's own rule"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

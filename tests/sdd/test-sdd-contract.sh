@@ -203,6 +203,10 @@ assert_contains "$SDD" "touching at most 3 lines in one file with no new logic" 
   "carve-out numeric and scope bounds are pinned"
 assert_contains "$SDD" "one finding per reach; a round holding two such findings is not de minimis" \
   "carve-out forbids per-round multiplication"
+assert_contains "$SDD" "the controller commits the fix" \
+  "carve-out requires the fix to be committed before re-review"
+assert_contains "$SDD" "resume the implementer at rounds 1-3, dispatch the takeover at rounds 4-5" \
+  "carve-out two-strike escape respects the round-4 takeover rule"
 assert_contains "$SDD" "or one controller-applied de-minimis fix" \
   "fix-round definition counts controller-applied fixes"
 assert_contains "$SDD" "where you keep todos" \

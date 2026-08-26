@@ -441,13 +441,16 @@ lines, exact replacement, no judgment left — touching at most 3 lines in
 one file with no new logic, may be controller-applied — one finding per
 reach; a round holding two such findings is not de minimis. The exception
 waives nothing else: it consumes a fix round and ends in the same scoped
-re-review; the controller runs the fix's covering command and appends the
-fix report — the command, its output, and a diff summary — to the task's
-report file itself, exactly as an implementer would. Its ledger line keeps the
+re-review; the controller commits the fix (the re-review packages
+committed diffs — an uncommitted fix hands it nothing), runs the fix's
+covering command and appends the fix report — the command, its output,
+and a diff summary — to the task's report file itself, exactly as an
+implementer would. Its ledger line keeps the
 fix-round schema with the marker inside it:
 `Task <N>: fix round <R>/5 controller-applied (de minimis) (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`.
 Reaching for it twice in the same task means the findings are not de
-minimis — resume the implementer.
+minimis — go back to the round's own rule: resume the implementer at
+rounds 1-3, dispatch the takeover at rounds 4-5.
 
 **Codex Review Gate (Claude Code only).** When running under Claude Code, add
 a Codex **code** review gate at two points — here, per task, and once more

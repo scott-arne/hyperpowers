@@ -119,5 +119,11 @@ The reviewer verdicts those branch-level findings against the fix diff exactly
 as the template above specifies — its "one task's fix round" framing does not
 narrow the scope in that usage.
 
+**Carve-out usage (controller-applied de-minimis fixes):** when the fix
+round was controller-applied under SKILL.md's de-minimis exception, read
+"the implementer" in this prompt as the controller: the fix report and
+covering-command output land in the same task report file, and your job
+is unchanged — verify the named findings against the diff.
+
 **Re-reviewer returns:** per-finding verdicts (ADDRESSED / NOT ADDRESSED),
 new breakage in the fix diff, out-of-scope observations, and a round verdict.

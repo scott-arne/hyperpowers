@@ -1,9 +1,10 @@
 # Fix Subagent Prompt Template
 
 You are dispatched for the FINAL-REVIEW fix wave only: the per-task fix loop
-resumes the original implementer (rounds 1-3) or dispatches a takeover
-implementer (rounds 4-5) — it never uses this prompt. You fix the final
-review's blocking findings in one wave; exactly one scoped re-review follows.
+resumes the original implementer (rounds 1-3), applies a de-minimis fix
+itself under the carve-out's bounds, or dispatches a takeover implementer
+(rounds 4-5) — it never uses this prompt. You fix the final review's
+blocking findings in one wave; exactly one scoped re-review follows.
 
 ```
 Subagent (general-purpose):

@@ -199,6 +199,16 @@ assert_contains "$SDD" "runs the fix's covering command and appends the fix repo
   "carve-out carries the implementer's evidence duty"
 assert_contains "$SDD" "controller-applied (de minimis) (<X> addressed, <Y> open" \
   "carve-out ledger line keeps the fix-round schema"
+assert_contains "$SDD" "touching at most 3 lines in one file with no new logic" \
+  "carve-out numeric and scope bounds are pinned"
+assert_contains "$SDD" "one finding per reach; a round holding two such findings is not de minimis" \
+  "carve-out forbids per-round multiplication"
+assert_contains "$SDD" "or one controller-applied de-minimis fix" \
+  "fix-round definition counts controller-applied fixes"
+assert_contains "$SDD" "where you keep todos" \
+  "completion line keeps todos conditional"
+assert_contains "$SDD" "mark todo complete (where kept)" \
+  "digraph todo node stays conditional"
 assert_contains "$SDD_RATIONALIZATIONS" "Outside the de-minimis exception" "rationalization row scoped to the exception"
 assert_contains "$SDD_RATIONALIZATIONS" "Resume the implementer." "rationalization row still lands on resume"
 

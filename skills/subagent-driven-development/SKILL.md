@@ -441,10 +441,12 @@ lines, exact replacement, no judgment left — touching at most 3 lines in
 one file with no new logic, may be controller-applied — one finding per
 reach; a round holding two such findings is not de minimis. The exception
 waives nothing else: it consumes a fix round and ends in the same scoped
-re-review; the controller commits the fix (the re-review packages
-committed diffs — an uncommitted fix hands it nothing), runs the fix's
-covering command and appends the fix report — the command, its output,
-and a diff summary — to the task's report file itself, exactly as an
+re-review; the controller applies the edit and runs the fix's covering
+command FIRST — a failure means the fix was not de minimis: revert the
+edit, spend no round, resume the implementer — then commits the verified
+fix (the re-review packages committed diffs — an uncommitted fix hands
+it nothing) and appends the fix report — the command, its output, and a
+diff summary — to the task's report file itself, exactly as an
 implementer would. Its ledger line keeps the
 fix-round schema with the marker inside it:
 `Task <N>: fix round <R>/5 controller-applied (de minimis) (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`.

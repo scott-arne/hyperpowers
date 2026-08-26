@@ -195,16 +195,16 @@ assert_contains "$SDD" "fully specified by the finding itself" "carve-out requir
 assert_contains "$SDD" "controller-applied (de minimis)" "carve-out requires the disclosure ledger line"
 assert_contains "$SDD" "consumes a fix round and ends in the same scoped re-review" "carve-out waives neither the round nor the re-review"
 assert_contains "$SDD" "Reaching for it twice in the same task means the findings are not de minimis" "carve-out two-strike rule"
-assert_contains "$SDD" "runs the fix's covering command and appends the fix report" \
-  "carve-out carries the implementer's evidence duty"
+assert_contains "$SDD" "applies the edit and runs the fix's covering command FIRST" \
+  "carve-out verifies before committing"
 assert_contains "$SDD" "controller-applied (de minimis) (<X> addressed, <Y> open" \
   "carve-out ledger line keeps the fix-round schema"
 assert_contains "$SDD" "touching at most 3 lines in one file with no new logic" \
   "carve-out numeric and scope bounds are pinned"
 assert_contains "$SDD" "one finding per reach; a round holding two such findings is not de minimis" \
   "carve-out forbids per-round multiplication"
-assert_contains "$SDD" "the controller commits the fix" \
-  "carve-out requires the fix to be committed before re-review"
+assert_contains "$SDD" "then commits the verified fix" \
+  "carve-out commits only a verified fix"
 assert_contains "$SDD" "resume the implementer at rounds 1-3, dispatch the takeover at rounds 4-5" \
   "carve-out two-strike escape respects the round-4 takeover rule"
 assert_contains "$SDD" "or one controller-applied de-minimis fix" \

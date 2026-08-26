@@ -165,11 +165,11 @@ a ledger file, not only in todos.
 Read the plan once, note its context and Global Constraints, and create a
 todo per task where your harness surfaces todos — the ledger is the
 progress record either way; todos mirror it, never replace it. Read the
-plan's `**Spec:**` header and the spec file it
-names: the spec is the binding authority the plan argues from, and
-conflicts inside the plan resolve against it. A plan whose spec is `none`
-or unreachable gets a ledger line saying so — without a spec, a conflict
-has no tiebreaker but your human partner.
+plan's `**Spec:**` header and the spec file it names: the spec is the
+binding authority the plan argues from, and conflicts inside the plan
+resolve against it. A plan whose spec is `none` or unreachable gets a
+ledger line saying so — without a spec, a conflict has no tiebreaker but
+your human partner.
 
 Before dispatching Task 1, scan the plan once for conflicts, writing down
 what you checked as you check it:
@@ -272,8 +272,9 @@ and fix-round diffs need it.
 - Record the implementer's agent identity from the dispatch result in the
   ledger's task entry (`Task <N>: implementer <agent-id-or-name>`) —
   fix-loop rounds 1-3 resume this agent, and after compaction the ledger is
-  the only place the identity survives. An identity that was never written
-  down forces a fresh takeover where a resume was owed.
+  the only place the identity survives once its agent has exited. An
+  identity that was never written down forces a fresh takeover where a
+  resume was owed.
 - Never dispatch multiple implementation subagents in parallel (conflicts).
 
 Template: [implementer-prompt.md](implementer-prompt.md)
@@ -393,8 +394,8 @@ Before the loop starts, two routes leave it immediately:
 Everything else enters the loop — the Claude task reviewer's blocking
 findings and the per-task Codex gate's blocking findings alike. They are ONE
 loop with ONE shared cap of **five rounds per task**: the gate does not run
-a count of its own. A fix round is one fix dispatch plus one scoped
-re-review.
+a count of its own. A fix round is one fix dispatch — or one
+controller-applied de-minimis fix — plus one scoped re-review.
 
 **Rounds 1-3 — resume the original implementer.** Send it the open findings
 verbatim. Its context is intact: it knows the task, the code, and its own
@@ -437,11 +438,12 @@ Never fix findings yourself in the controller session — your context stays
 clean for coordination, and controller fixes skip review. One narrow
 exception: a fix fully specified by the finding itself — exact file, exact
 lines, exact replacement, no judgment left — touching at most 3 lines in
-one file with no new logic, may be controller-applied. The exception
+one file with no new logic, may be controller-applied — one finding per
+reach; a round holding two such findings is not de minimis. The exception
 waives nothing else: it consumes a fix round and ends in the same scoped
 re-review; the controller runs the fix's covering command and appends the
-fix report — diff summary, command, output — to the task's report file
-itself, exactly as an implementer would. Its ledger line keeps the
+fix report — the command, its output, and a diff summary — to the task's
+report file itself, exactly as an implementer would. Its ledger line keeps the
 fix-round schema with the marker inside it:
 `Task <N>: fix round <R>/5 controller-applied (de minimis) (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`.
 Reaching for it twice in the same task means the findings are not de
@@ -518,8 +520,8 @@ message as your other bookkeeping:
 - `Task <N>: complete (commits <base7>..<head7>, review clean)`
 
 Then mark the task's todo complete, where you keep todos, and move on.
-Never move to the next task while
-the review has open Critical/Important issues.
+Never move to the next task while the review has open Critical/Important
+issues.
 
 ## Risk Tiers (per-task Codex gate applicability)
 

@@ -205,6 +205,12 @@ assert_contains "$SDD" "one finding per reach; a round holding two such findings
   "carve-out forbids per-round multiplication"
 assert_contains "$SDD" "then commits the verified fix" \
   "carve-out commits only a verified fix"
+# The failure branch is the half the successful-commit needles cannot see: a
+# failed covering command exits the exception, so it must revert, cost nothing,
+# and hand control back round-aware — not unconditionally to the implementer
+# the round-4/5 takeover rule has already replaced.
+assert_contains "$SDD" "revert the edit, spend no round, and go back to the round's own rule" \
+  "carve-out failure path reverts, spends no round, and defers to the round's rule"
 assert_contains "$SDD" "resume the implementer at rounds 1-3, dispatch the takeover at rounds 4-5" \
   "carve-out two-strike escape respects the round-4 takeover rule"
 assert_contains "$SDD" "or one controller-applied de-minimis fix" \

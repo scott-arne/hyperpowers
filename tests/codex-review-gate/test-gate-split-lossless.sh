@@ -39,6 +39,13 @@ ORIGIN_LINES=766
 UNTRACKED_BLANKS=(273 356)
 TAB="$(printf '\t')"
 
+# What counts as a positional reference. Check 3 enumerates the original with
+# it; check 4c polices what the post-split edits channel may carry. One
+# definition deliberately: a guard built on its own second pattern would drift
+# into policing something other than what check 3 enumerated, and the gap
+# between the two would be exactly where an unwatched reference lives.
+POSITIONAL_RE='below\|above\|^<the existing .*verbatim>$'
+
 failures=0
 passes=0
 skips=0
@@ -109,12 +116,15 @@ fi
 
 # --- 3. The positional-reference candidate set is exhaustive. ---
 # Independent enumeration: every line naming a relative position, plus the
-# composer instruction that points at the output block without using
-# "below". If a future edit adds a positional reference, this fails and the
-# table must be updated rather than the count.
-grep -n 'below\|above' "$original" | cut -d: -f1 >"$TEST_ROOT/grep-hits"
-grep -n '^<the existing .*verbatim>$' "$original" | cut -d: -f1 >>"$TEST_ROOT/grep-hits"
-sort -n "$TEST_ROOT/grep-hits" | uniq >"$TEST_ROOT/candidates"
+# composer instruction that points at the output block without using "below".
+# The table must cover the set exactly — a reference the split forgot to
+# consider cannot hide behind a count.
+#
+# This enumeration is frozen, not live: it reads the PINNED original, so no
+# later edit can add a line to its candidate set. Reading it as a live guard
+# against new references is the mistake that leaves the post-split edits
+# channel unwatched — checks 4c and 4d cover that channel.
+grep -n "$POSITIONAL_RE" "$original" | cut -d: -f1 | sort -n | uniq >"$TEST_ROOT/candidates"
 grep -v '^#' "$REFERENCES" | grep -v '^$' | cut -f1 | sort -n >"$TEST_ROOT/tabled"
 if diff -q "$TEST_ROOT/candidates" "$TEST_ROOT/tabled" >/dev/null; then
     pass "reference table covers every positional-reference candidate"
@@ -241,6 +251,70 @@ if [ -z "$both" ]; then
     pass "no line is edited by both tables"
 else
     fail "no line is edited by both tables (shared: ${both% })"
+fi
+
+# --- 4c. The edits channel may not manufacture a positional reference. ---
+# Check 3 reads the pinned original, so its candidate set is frozen the moment
+# the SHA is chosen. That makes the post-split edits table a second content
+# channel arriving after every reference has been enumerated and every
+# disposition derived: a replacement carrying a "below" the original line never
+# had is a pointer no check validates, which is the dangling-reference class
+# the references table exists to catch. Nor can such a reference be legalized by
+# adding a row — check 3 pins the table's key set to the original's candidates,
+# so the references table structurally cannot host one.
+#
+# So the channel may carry a positional reference only where the original line
+# already had one, and never more of them: there the resolution is the row
+# check 4 derived, and the edit inherits its certification.
+#
+# What this cannot see: an edit that keeps one certified "below" and re-aims it
+# at different content. That is semantic, and stated here rather than papered
+# over with a check that only looks like it covers the case.
+bad_positional=0
+while IFS="$TAB" read -r src _reason replacement; do
+    case "$src" in \#* | "") continue ;; esac
+    repl_hits="$(printf '%s\n' "$replacement" | grep -o "$POSITIONAL_RE" | wc -l | tr -d ' ')"
+    [ "$repl_hits" -eq 0 ] && continue
+    orig_hits="$(sed -n "${src}p" "$original" | grep -o "$POSITIONAL_RE" | wc -l | tr -d ' ')"
+    if [ "$orig_hits" -eq 0 ]; then
+        echo "    line $src: replacement introduces a positional reference the original line had none of"
+        bad_positional=$((bad_positional + 1))
+    elif [ "$repl_hits" -gt "$orig_hits" ]; then
+        echo "    line $src: replacement carries $repl_hits positional references, original line had $orig_hits"
+        bad_positional=$((bad_positional + 1))
+    fi
+done <"$POST_EDITS"
+if [ "$bad_positional" -eq 0 ]; then
+    pass "no post-split edit introduces an uncertified positional reference"
+else
+    fail "no post-split edit introduces an uncertified positional reference ($bad_positional bad)"
+fi
+
+# --- 4d. Edits landing on a REFERENT line are pinned. ---
+# Check 4c guards the pointing side; this guards the side pointed AT. A
+# reference row certifies that line A's "below" resolves to line B, and an edit
+# to B can invalidate that without touching A — invisible to everything above,
+# which reads only the pinned original. Two couplings exist today and both
+# still resolve: 443's "recovery steps below" survives the §3 pointer swap
+# inside 450, and 631's "follow the backstop stop-condition below" survives
+# 645's disposition rewrite. Whether a pointer still resolves is semantic and
+# not checkable here. What IS checkable is that a new coupling cannot appear
+# quietly, so the count is pinned: adding one means reading the pointing line
+# first and bumping this on purpose.
+couplings=0
+coupling_note=""
+while IFS="$TAB" read -r src _reason _replacement; do
+    case "$src" in \#* | "") continue ;; esac
+    pointers="$(grep -v '^#' "$REFERENCES" | grep -v '^$' |
+        awk -F"$TAB" -v r="$src" '$2 == r { printf "%s ", $1 }')"
+    [ -z "$pointers" ] && continue
+    couplings=$((couplings + 1))
+    coupling_note="$coupling_note ${pointers% }->$src"
+done <"$POST_EDITS"
+if [ "$couplings" -eq 2 ]; then
+    pass "exactly 2 post-split edits land on a referenced line (${coupling_note# })"
+else
+    fail "exactly 2 post-split edits land on a referenced line (got $couplings:${coupling_note:-' none'}) — re-read each pointing line before bumping"
 fi
 
 # The same hazard exists in miniature inside one table: two rows naming the
@@ -478,9 +552,9 @@ done
 # above would catch. Without this, a check could stop running and its
 # silence would read as success. This assertion prints nothing when it
 # holds, so the two documented counts stay exact.
-if ! { { [ "$skips" -eq 1 ] && [ "$passes" -eq 16 ]; } ||
-    { [ "$skips" -eq 0 ] && [ "$passes" -eq 26 ]; }; }; then
-    fail "check inventory is one of the two legal shapes (pre-split 16 PASS/1 SKIP, post-split 26 PASS/0 SKIP); got $passes PASS/$skips SKIP"
+if ! { { [ "$skips" -eq 1 ] && [ "$passes" -eq 18 ]; } ||
+    { [ "$skips" -eq 0 ] && [ "$passes" -eq 28 ]; }; }; then
+    fail "check inventory is one of the two legal shapes (pre-split 18 PASS/1 SKIP, post-split 28 PASS/0 SKIP); got $passes PASS/$skips SKIP"
 fi
 
 echo ""

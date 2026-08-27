@@ -183,9 +183,16 @@ TEST_DIST_CANARY=$(mktemp -d)
 # shellcheck disable=SC2064
 trap "rm -rf $TEST_DIST_CANARY $CANARY" EXIT
 export DIST_DIR="$TEST_DIST_CANARY"
-bash "$PACKAGE_SCRIPT" > /dev/null 2>&1 || true
 CANARY_ZIP="$TEST_DIST_CANARY/hyperpowers-$VERSION.zip"
-if unzip -l "$CANARY_ZIP" | grep -q ".tmp-untracked-canary"; then
+# Assert the build before inspecting it. This file runs without `set -e`, so a
+# failed packaging run left no archive, `unzip -l` failed, `grep -q` matched
+# nothing, and the else branch reported PASS — the absent canary proving only
+# that nothing was built at all.
+if ! bash "$PACKAGE_SCRIPT" > /dev/null 2>&1; then
+  fail "canary packaging run failed (untracked-file staging unproven)"
+elif [ ! -f "$CANARY_ZIP" ]; then
+  fail "canary packaging produced no archive at $CANARY_ZIP"
+elif unzip -l "$CANARY_ZIP" | grep -q ".tmp-untracked-canary"; then
   fail "untracked canary file was included in zip"
 else
   pass "untracked files NOT staged (canary absent)"

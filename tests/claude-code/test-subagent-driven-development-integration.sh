@@ -255,12 +255,17 @@ echo ""
 echo "Test 3: Durable progress tracking (task tool or SDD ledger)..."
 todo_count=$(grep -cE '"name":"(TodoWrite|TaskCreate|TaskUpdate|TaskList|TaskGet)"' "$SESSION_FILE" 2>/dev/null || true)
 todo_count=${todo_count:-0}
-ledger_count=$(grep -c 'progress\.md' "$SESSION_FILE" 2>/dev/null || true)
+# Match a tool INPUT that targets the ledger, not the bare filename. `file_path`
+# and `command` are tool-input keys, so they cannot appear in the loaded skill
+# text, assistant prose, or error output — all of which mention progress.md and
+# all of which satisfied the old bare-substring grep, letting a run with no
+# durable write at all report PASS for the one signal this test exists to check.
+ledger_count=$(grep -cE '"(file_path|command)":"[^"]*progress\.md' "$SESSION_FILE" 2>/dev/null || true)
 ledger_count=${ledger_count:-0}
 if [ "$todo_count" -ge 1 ]; then
     echo "  [PASS] Task-tracking tool used $todo_count time(s)"
 elif [ "$ledger_count" -ge 1 ]; then
-    echo "  [PASS] SDD ledger tracking used ($ledger_count transcript references to progress.md)"
+    echo "  [PASS] SDD ledger tracking used ($ledger_count tool call(s) writing progress.md)"
 else
     echo "  [FAIL] No task-tracking tool used and no SDD ledger activity found"
     FAILED=$((FAILED + 1))

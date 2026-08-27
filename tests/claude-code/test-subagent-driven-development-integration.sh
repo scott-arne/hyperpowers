@@ -242,10 +242,14 @@ if [ "$delivery_found" = false ]; then
     # The base checkout by fallback, not by a match -- nothing anywhere holds
     # the deliverable. Print the search so a genuine "never produced" is
     # distinguishable from a "produced somewhere this test does not know to
-    # look". The flag decides this rather than $DELIVERY_DIR = $TEST_PROJECT:
-    # `git worktree list` reports physical paths, so the two forms differ
-    # whenever the fixture sits under a symlinked tmpdir (macOS /tmp ->
-    # /private/tmp) and the string comparison would never fire.
+    # look". A flag decides this rather than $DELIVERY_DIR = $TEST_PROJECT,
+    # because that comparison infers the outcome from a path and gets it wrong:
+    # `git worktree list` reports PHYSICAL paths, so on a filesystem where
+    # $TEST_PROJECT is already physical, a successful match against the base
+    # checkout yields the identical string and reads as a fallback -- printing
+    # a search for a deliverable that had just been found. Under macOS's
+    # symlinked tmpdir (/var -> /private/var) the two forms differ and it
+    # happens to behave, which is how it survived.
     echo "  (no worktree holds src/math.js; searched: $(echo "$worktree_list" | tr '\n' ' '))"
 fi
 echo ""

@@ -1,12 +1,12 @@
 # vrzn configuration — single source of truth for the plugin version.
 #
-# Seven manifests must carry the same version or installs across harnesses
+# Six manifests must carry the same version or installs across harnesses
 # drift. Each is JSON with exactly one `"version": "X.Y.Z"` key, so the
 # package-json preset matches unambiguously (including the nested key in
 # marketplace.json). Bump every file at once with:
 #
 #     vrzn -y bump patch      # or: minor / major
-#     vrzn get                # verify all seven agree
+#     vrzn get                # verify all six agree
 
 [[locations]]
 file = "package.json"

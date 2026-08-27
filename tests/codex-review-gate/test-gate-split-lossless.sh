@@ -222,11 +222,20 @@ else
     fail "every post-split edit targets a declared range and changes the line ($bad_edit bad)"
 fi
 
-# Two mechanisms writing the same source line would make the result depend on
-# which loop runs last. Forbidding the overlap is what lets the reconstruction
+# Two mechanisms WRITING the same source line would make the result depend on
+# which loop runs last. Forbidding that overlap is what lets the reconstruction
 # order below be a convention rather than a correctness dependency.
+#
+# Only `rewrite` rows write: the reconstruction loop skips every other
+# disposition. A `verbatim` row records that a positional reference still
+# resolves in its new home and substitutes nothing, so it cannot race a
+# post-split edit of the same line — line 645 is both (its "ceiling below"
+# points at the backstop table, which travelled with it). Comparing raw first
+# columns here would forbid that legal pairing and push a content edit into the
+# references table, whose candidate set and rewrite count are pinned closed.
 grep -v '^#' "$POST_EDITS" | grep -v '^$' | cut -f1 >"$TEST_ROOT/post-edit-lines"
-grep -v '^#' "$REFERENCES" | grep -v '^$' | cut -f1 >"$TEST_ROOT/reference-lines"
+grep -v '^#' "$REFERENCES" | grep -v '^$' |
+    awk -F"$TAB" '$3 == "rewrite" { print $1 }' >"$TEST_ROOT/reference-lines"
 both="$(grep -Fxf "$TEST_ROOT/post-edit-lines" "$TEST_ROOT/reference-lines" | tr '\n' ' ')"
 if [ -z "$both" ]; then
     pass "no line is edited by both tables"
@@ -263,10 +272,10 @@ fi
 # never ran — a failed redirection, an emptied table — reports 0 here instead of
 # leaving the assertion above vacuously clean. Growth of this channel must be a
 # deliberate bump, not a silent one.
-if [ "$post_edit_count" -eq 9 ]; then
-    pass "exactly 9 declared post-split edits"
+if [ "$post_edit_count" -eq 10 ]; then
+    pass "exactly 10 declared post-split edits"
 else
-    fail "exactly 9 declared post-split edits (got $post_edit_count)"
+    fail "exactly 10 declared post-split edits (got $post_edit_count)"
 fi
 
 # --- 5. Reconstruct each destination from the original, rewrites and edits. ---
@@ -387,17 +396,17 @@ else
     # anywhere in the index. Whole-line fixed-string matching, one pass.
     #
     # Every non-blank body line is a needle in BOTH its forms: as it reads in
-    # the reconstruction, and as it reads in the pinned original. Seventeen
-    # lines are substituted when they move — eight positional rewrites and nine
+    # the reconstruction, and as it reads in the pinned original. Eighteen
+    # lines are substituted when they move — eight positional rewrites and ten
     # declared post-split edits — so a reconstruction-only needle set leaves
-    # sixteen distinct pre-substitution strings watched by nothing (the rewrites
+    # seventeen distinct pre-substitution strings watched by nothing (the rewrites
     # contribute seven: source 106, 130, 131, 133, 196, 218 and 229/244), and an
     # index holding one of them passes clean. Earlier rounds also excluded fence
     # markers and table separator rows as content-free lines a router might
     # legitimately grow; every such exclusion reopened the same hole, so there
     # are none left. Measured against the index states this split produces —
     # Task 3's 23-line index and the 46-line index Task 4 grows it into — the
-    # 570-needle union collides with neither. If some later index genuinely
+    # 571-needle union collides with neither. If some later index genuinely
     # needs a line byte-identical to a body line, the answer is to compare the
     # index against its expected contents, not to re-open a class of unwatched
     # lines.
@@ -422,8 +431,8 @@ else
     if [ "$needle_count" -lt 520 ]; then
         # An empty or truncated needle file makes the grep below vacuously
         # clean, which is exactly the silent pass this check exists to
-        # prevent. 570 today; the floor catches a collapse, not drift.
-        fail "needle set is populated (expected ~570 body lines, got $needle_count)"
+        # prevent. 571 today; the floor catches a collapse, not drift.
+        fail "needle set is populated (expected ~571 body lines, got $needle_count)"
     elif grep -Fxf "$needles" "$GATE_DIR/codex-review-gate.md" >"$TEST_ROOT/dupes"; then
         fail "index carries $(wc -l <"$TEST_ROOT/dupes" | tr -d ' ') line(s) that also appear in a section body"
         head -5 "$TEST_ROOT/dupes" | sed 's/^/    /'
@@ -431,7 +440,7 @@ else
 fi
 
 # --- 6. Audit trail for the two contract needles the rewrites touch. ---
-# Two of the 119 assertions in test-gate-contract.sh pin text that the
+# Two of the 124 assertions in test-gate-contract.sh pin text that the
 # declared rewrites change, so Task 3 edits those two needles. This check is
 # what makes that edit auditable: both retired strings must be absent and
 # both replacements present in the reconstruction, which is derived from the

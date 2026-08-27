@@ -12,7 +12,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/test-helpers.sh"
 
-CLAUDE_PROMPT_TIMEOUT="${CLAUDE_PROMPT_TIMEOUT:-90}"
+# Per-prompt ceiling. These prompts ask for prose explanations, and answers
+# have grown with the skill. At 90s the Test 5 prompt expired mid-answer while
+# every assertion the run reached had passed, and the answer it had already
+# produced satisfied both of Test 5's patterns; at 300s the whole file passes.
+# A cap the correct answer cannot fit inside turns this suite into a latency
+# test.
+CLAUDE_PROMPT_TIMEOUT="${CLAUDE_PROMPT_TIMEOUT:-300}"
 
 echo "=== Test: subagent-driven-development skill ==="
 echo ""

@@ -216,6 +216,40 @@ fi
 echo "Analyzing session transcript: $(basename "$SESSION_FILE")"
 echo ""
 
+# Resolve where the deliverable actually landed before verifying it. SDD's
+# Setup step does the work in an isolated worktree and commits on that branch,
+# so $TEST_PROJECT keeps only the initial commit and the empty src/ and test/
+# dirs the fixture made. Checking the base checkout reported "src/math.js not
+# created" against a run that had created it one directory away -- and the same
+# mismatch let `npm test` and the extra-features check pass over files that
+# were not there, which is worse than the visible failures because it reads as
+# evidence.
+DELIVERY_DIR="$TEST_PROJECT"
+delivery_found=false
+worktree_list=$(git -C "$TEST_PROJECT" worktree list --porcelain 2>/dev/null |
+    awk '/^worktree /{print $2}')
+while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if [ -f "$candidate/src/math.js" ]; then
+        DELIVERY_DIR="$candidate"
+        delivery_found=true
+        break
+    fi
+done <<<"$worktree_list"
+
+echo "Verifying delivery in: $DELIVERY_DIR"
+if [ "$delivery_found" = false ]; then
+    # The base checkout by fallback, not by a match -- nothing anywhere holds
+    # the deliverable. Print the search so a genuine "never produced" is
+    # distinguishable from a "produced somewhere this test does not know to
+    # look". The flag decides this rather than $DELIVERY_DIR = $TEST_PROJECT:
+    # `git worktree list` reports physical paths, so the two forms differ
+    # whenever the fixture sits under a symlinked tmpdir (macOS /tmp ->
+    # /private/tmp) and the string comparison would never fire.
+    echo "  (no worktree holds src/math.js; searched: $(echo "$worktree_list" | tr '\n' ' '))"
+fi
+echo ""
+
 # Verification tests
 FAILED=0
 
@@ -274,47 +308,62 @@ echo ""
 
 # Test 6: Implementation actually works
 echo "Test 6: Implementation verification..."
-if [ -f "$TEST_PROJECT/src/math.js" ]; then
+if [ -f "$DELIVERY_DIR/src/math.js" ]; then
     echo "  [PASS] src/math.js created"
 
-    if grep -q "export function add" "$TEST_PROJECT/src/math.js"; then
+    if grep -q "export function add" "$DELIVERY_DIR/src/math.js"; then
         echo "  [PASS] add function exists"
     else
         echo "  [FAIL] add function missing"
         FAILED=$((FAILED + 1))
     fi
 
-    if grep -q "export function multiply" "$TEST_PROJECT/src/math.js"; then
+    if grep -q "export function multiply" "$DELIVERY_DIR/src/math.js"; then
         echo "  [PASS] multiply function exists"
     else
         echo "  [FAIL] multiply function missing"
         FAILED=$((FAILED + 1))
     fi
 else
-    echo "  [FAIL] src/math.js not created"
+    echo "  [FAIL] src/math.js not created (searched $DELIVERY_DIR)"
     FAILED=$((FAILED + 1))
 fi
 
-if [ -f "$TEST_PROJECT/test/math.test.js" ]; then
+if [ -f "$DELIVERY_DIR/test/math.test.js" ]; then
     echo "  [PASS] test/math.test.js created"
 else
-    echo "  [FAIL] test/math.test.js not created"
+    echo "  [FAIL] test/math.test.js not created (searched $DELIVERY_DIR)"
     FAILED=$((FAILED + 1))
 fi
 
-# Try running tests
-if cd "$TEST_PROJECT" && npm test > test-output.txt 2>&1; then
-    echo "  [PASS] Tests pass"
+# Run the delivered tests. Exit status alone is not evidence: `node --test`
+# exits 0 when it finds no test files at all, so the old check reported
+# "Tests pass" for a run whose tests it never saw. Require that tests actually
+# executed. The count is read from the runner's summary line, which is "pass N"
+# under both the spec and tap reporters.
+TEST_OUTPUT="$DELIVERY_DIR/test-output.txt"
+if (cd "$DELIVERY_DIR" && npm test) > "$TEST_OUTPUT" 2>&1; then
+    tests_run=$(grep -oE 'pass [0-9]+' "$TEST_OUTPUT" | head -1 | awk '{print $2}')
+    tests_run=${tests_run:-0}
+    if [ "$tests_run" -ge 1 ]; then
+        echo "  [PASS] Tests pass ($tests_run test(s) ran)"
+    else
+        echo "  [FAIL] npm test exited 0 but ran no tests -- nothing was verified"
+        cat "$TEST_OUTPUT"
+        FAILED=$((FAILED + 1))
+    fi
 else
     echo "  [FAIL] Tests failed"
-    cat test-output.txt
+    cat "$TEST_OUTPUT"
     FAILED=$((FAILED + 1))
 fi
 echo ""
 
-# Test 7: Git commits show proper workflow
+# Test 7: Git commits show proper workflow. Count on the delivery worktree's
+# branch -- the task commits live there, and $TEST_PROJECT's HEAD never moves
+# off the initial commit when SDD works in a worktree.
 echo "Test 7: Git commit history..."
-commit_count=$(git -C "$TEST_PROJECT" log --oneline | wc -l)
+commit_count=$(git -C "$DELIVERY_DIR" log --oneline | wc -l)
 if [ "$commit_count" -gt 2 ]; then  # Initial + at least 2 task commits
     echo "  [PASS] Multiple commits created ($commit_count total)"
 else
@@ -323,9 +372,14 @@ else
 fi
 echo ""
 
-# Test 8: Check for extra features (spec compliance should catch)
+# Test 8: Check for extra features (spec compliance should catch). A missing
+# file is not evidence of restraint: the old `grep ... 2>/dev/null` fell into
+# the else-branch and announced "No extra features added" about a file that did
+# not exist. Absence of the subject makes this check inconclusive, not passed.
 echo "Test 8: No extra features added (spec compliance)..."
-if grep -q "export function divide\|export function power\|export function subtract" "$TEST_PROJECT/src/math.js" 2>/dev/null; then
+if [ ! -f "$DELIVERY_DIR/src/math.js" ]; then
+    echo "  [SKIP] Cannot assess -- src/math.js missing (see Test 6)"
+elif grep -q "export function divide\|export function power\|export function subtract" "$DELIVERY_DIR/src/math.js"; then
     echo "  [WARN] Extra features found (spec review should have caught this)"
     # Not failing on this as it tests reviewer effectiveness
 else

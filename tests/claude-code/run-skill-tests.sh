@@ -76,6 +76,7 @@ tests=(
     "test-worktree-path-policy.sh"
     "test-sdd-dir-path.sh"
     "test-codex-review-dir-path.sh"
+    "test-delivery-resolution.sh"
     "test-subagent-driven-development.sh"
 )
 
@@ -93,6 +94,25 @@ fi
 if [ -n "$SPECIFIC_TEST" ]; then
     tests=("$SPECIFIC_TEST")
 fi
+
+# Render a failure's cause. `timeout` exits 124 when IT kills a test, but
+# test-helpers.sh's run_claude wraps each individual prompt in its own
+# `timeout $CLAUDE_PROMPT_TIMEOUT` and propagates that 124 upward, so a
+# per-prompt expiry reaches this loop indistinguishable from a suite-ceiling
+# kill. Elapsed time separates them: only the outer timeout can have burned the
+# whole ceiling. Reporting both as "timeout after ${TIMEOUT}s" sent triage
+# hunting a 65-minute hang that never happened -- the real cause was a 90s
+# prompt cap, and the test had already printed a correct answer.
+fail_label() {
+    local exit_code="$1" duration="$2"
+    if [ "$exit_code" -eq 124 ] && [ "$duration" -ge "$TIMEOUT" ]; then
+        echo "timeout after ${TIMEOUT}s"
+    elif [ "$exit_code" -eq 124 ]; then
+        echo "${duration}s - exit 124 from an inner timeout, not the ${TIMEOUT}s suite ceiling; see CLAUDE_PROMPT_TIMEOUT"
+    else
+        echo "${duration}s"
+    fi
+}
 
 # Track results
 passed=0
@@ -132,11 +152,7 @@ for test in "${tests[@]}"; do
             end_time=$(date +%s)
             duration=$((end_time - start_time))
             echo ""
-            if [ $exit_code -eq 124 ]; then
-                echo "  [FAIL] $test (timeout after ${TIMEOUT}s)"
-            else
-                echo "  [FAIL] $test (${duration}s)"
-            fi
+            echo "  [FAIL] $test ($(fail_label "$exit_code" "$duration"))"
             failed=$((failed + 1))
         fi
     else
@@ -150,11 +166,7 @@ for test in "${tests[@]}"; do
             exit_code=$?
             end_time=$(date +%s)
             duration=$((end_time - start_time))
-            if [ $exit_code -eq 124 ]; then
-                echo "  [FAIL] (timeout after ${TIMEOUT}s)"
-            else
-                echo "  [FAIL] (${duration}s)"
-            fi
+            echo "  [FAIL] ($(fail_label "$exit_code" "$duration"))"
             echo ""
             echo "  Output:"
             echo "$output" | sed 's/^/    /'

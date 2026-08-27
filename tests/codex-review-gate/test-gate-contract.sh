@@ -169,6 +169,21 @@ assert_contains "$GATE" "not re-reviewed by Codex" \
 assert_contains "$GATE" "model_reasoning_effort" \
   "hand-back reports the review model and effort"
 
+# A blocking finding raised IN the ceiling round is ungated by construction --
+# the round that found it is the last one. The disposition must be a stated
+# three-way choice with its price, or "fix it and disclose" becomes the default
+# and silently buys a follow-on gate the operator never agreed to.
+assert_contains "$GATE" "has no round left to confirm its fix" \
+  "a backstop-round finding is named as unconfirmable by construction"
+assert_contains "$GATE" "choose its disposition deliberately instead of defaulting to a fix" \
+  "backstop disposition is an explicit choice, not a default"
+assert_contains "$GATE" "buys no follow-on gate" \
+  "declining at the backstop is offered, with its price"
+assert_contains "$GATE" "open the follow-on review now" \
+  "paying the follow-on gate immediately is offered"
+assert_contains "$GATE" "schedules a full follow-on gate over the recorded range rather than discharging one" \
+  "the backstop-fix ledger append is priced, not bookkeeping"
+
 # --- Task 4: SDD references new caps + completion Red Flag ---
 assert_contains "$SDD" "code-gate backstop of 3 rounds" \
   "SDD names the code-gate backstop of 3 rounds"

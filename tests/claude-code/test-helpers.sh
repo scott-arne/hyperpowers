@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # Helper functions for Claude Code skill tests
 
+# The plugin these suites certify. Without --plugin-dir, `claude -p` loads
+# whichever hyperpowers is installed in the ambient plugin home, so a green run
+# said the *installed* copy behaves -- not this working tree. The integration
+# test has always passed --plugin-dir; run_claude did not, which left the two
+# kinds of live suite silently testing different code. Override with
+# HYPERPOWERS_PLUGIN_DIR to point a run at some other copy.
+HELPERS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${HYPERPOWERS_PLUGIN_DIR:=$(cd "$HELPERS_DIR/../.." && pwd)}"
+export HYPERPOWERS_PLUGIN_DIR
+
 # Run Claude Code with a prompt and capture output
 # Usage: run_claude "prompt text" [timeout_seconds] [allowed_tools]
 run_claude() {
@@ -11,7 +21,7 @@ run_claude() {
     output_file=$(mktemp)
 
     # Build command as an argv array so timeout wraps claude directly.
-    local cmd=(claude -p "$prompt")
+    local cmd=(claude -p "$prompt" --plugin-dir "$HYPERPOWERS_PLUGIN_DIR")
     if [ -n "$allowed_tools" ]; then
         cmd+=(--allowed-tools="$allowed_tools")
     fi

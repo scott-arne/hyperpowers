@@ -38,6 +38,17 @@ echo ""
 # headroom. Override with SDD_INTEGRATION_TIMEOUT for slower environments.
 CLAUDE_TIMEOUT="${SDD_INTEGRATION_TIMEOUT:-3600}"
 
+# Which delivery shape to exercise. SDD's Setup routes through
+# using-git-worktrees, whose Step 1b takes a linked worktree only when the
+# instructions declare a worktree directory preference (priority 1) or a
+# project-local .worktrees/ already exists (priority 2). A headless run
+# declares neither, so it branches in place and only the base-checkout
+# resolution path runs -- leaving the worktree path, the one whose
+# mis-resolution caused this suite to report "src/math.js not created" against
+# a run that had created it, covered offline only. Set
+# SDD_INTEGRATION_WORKTREE=1 to force the other shape.
+WORKTREE_MODE="${SDD_INTEGRATION_WORKTREE:-0}"
+
 # Create test project
 TEST_PROJECT=$(create_test_project)
 echo "Test project: $TEST_PROJECT"
@@ -60,6 +71,18 @@ cat > package.json <<'EOF'
 EOF
 
 mkdir -p src test docs/hyperpowers/plans
+
+# Keep a worktree out of the fixture's own history whichever shape SDD picks.
+# using-git-worktrees refuses a project-local worktree directory that is not
+# ignored, and would otherwise stop to add and commit this itself.
+printf '.worktrees/\n' > .gitignore
+
+if [ "$WORKTREE_MODE" = "1" ]; then
+    # Directory-selection priority 2: an existing .worktrees/ wins the choice.
+    # git carries no empty directories, so this lives on disk and never in the
+    # initial commit -- which is all `ls -d .worktrees` needs.
+    mkdir -p .worktrees
+fi
 
 # Create a simple implementation plan
 cat > docs/hyperpowers/plans/implementation-plan.md <<'EOF'
@@ -163,12 +186,25 @@ IMPORTANT: Follow the skill exactly. I will be verifying that you:
 
 Begin now. Execute the plan."
 
+if [ "$WORKTREE_MODE" = "1" ]; then
+    # Priority 1: a declared preference. This also answers Step 0's consent
+    # question, which a headless run has no way to ask.
+    PROMPT="$PROMPT
+
+Work in an isolated git worktree under .worktrees/. That is my declared worktree directory preference -- create it without asking me for consent."
+fi
+
 PLUGIN_DIR=$(cd "$SCRIPT_DIR/../.." && pwd)
 
 # Run claude from inside the test project so its session JSONL lands in a
 # project-specific directory under ~/.claude/projects/, isolated from any
 # other concurrent claude sessions.
 echo "Running Claude (plugin-dir: $PLUGIN_DIR, cwd: $TEST_PROJECT)..."
+if [ "$WORKTREE_MODE" = "1" ]; then
+    echo "Delivery shape: worktree requested (SDD_INTEGRATION_WORKTREE=1)"
+else
+    echo "Delivery shape: unconstrained (set SDD_INTEGRATION_WORKTREE=1 for a worktree)"
+fi
 echo "================================================================================"
 # Capture the CLI's own exit status via PIPESTATUS: `$?` after the pipeline
 # reports tee's status, and `$?` inside an `|| { ... }` block is clobbered by
@@ -204,12 +240,21 @@ TEST_PROJECT_REAL=$(cd "$TEST_PROJECT" && pwd -P)
 # Claude normalizes the cwd to a directory name by replacing every non-alphanumeric
 # character with `-` (so `_`, `.`, `/` all become `-`).
 SESSION_DIR="$HOME/.claude/projects/$(echo "$TEST_PROJECT_REAL" | sed 's|[^a-zA-Z0-9]|-|g')"
+# The transcript does not necessarily land there. Claude Code names the project
+# directory after the session's cwd and re-homes the JSONL when the controller
+# cd's into a worktree, so an SDD run that isolates its work leaves
+# $SESSION_DIR holding nothing but an empty memory/ dir while the real
+# transcript sits under a directory named for the worktree. Every worktree path
+# is a child of $TEST_PROJECT, so its mangled name is this one plus a suffix:
+# search the base directory and all of its extensions, newest first. Anchoring
+# on $SESSION_DIR keeps the search inside this run's unique tmp dir, so a
+# concurrent session cannot be picked up.
 # `|| true` prevents pipefail killing the script if ls gets SIGPIPE'd by head.
-SESSION_FILE=$(ls -t "$SESSION_DIR"/*.jsonl 2>/dev/null | head -1 || true)
+SESSION_FILE=$(ls -t "$SESSION_DIR"/*.jsonl "$SESSION_DIR"-*/*.jsonl 2>/dev/null | head -1 || true)
 
 if [ -z "$SESSION_FILE" ]; then
     echo "ERROR: Could not find session transcript file"
-    echo "Looked in: $SESSION_DIR"
+    echo "Looked in: $SESSION_DIR (and ${SESSION_DIR##*/}-* siblings)"
     exit 1
 fi
 

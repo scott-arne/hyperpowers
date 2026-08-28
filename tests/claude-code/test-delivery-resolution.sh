@@ -203,5 +203,89 @@ JS
 fi
 
 echo ""
+echo "=== session transcript resolution ==="
+
+# Third member of the same defect family: the harness looking in one place while
+# the artifact is in another. Claude Code names its project directory after the
+# session's cwd and re-homes the transcript when the controller cd's into a
+# worktree, so a worktree-shaped run leaves the base directory holding an empty
+# memory/ dir and nothing else. Observed live: the first run with
+# SDD_INTEGRATION_WORKTREE=1 finished every task, both Codex gates and the final
+# review, then died on "Could not find session transcript file".
+SESSION_BLOCK="$WORK/session.sh"
+sed -n '/^SESSION_DIR="\$HOME\/\.claude\/projects\//,/^fi$/p' \
+    "$SUBJECT" >"$SESSION_BLOCK"
+if [ ! -s "$SESSION_BLOCK" ]; then
+    fail "could not extract the session-resolution block (its anchors changed)"
+else
+    mangle() { printf '%s' "$1" | sed 's|[^a-zA-Z0-9]|-|g'; }
+
+    # Creates <home>/.claude/projects/<mangled project><suffix>/session.jsonl
+    # and prints the file path. A suffix mimics the worktree re-home.
+    mk_session() {
+        local dir
+        dir="$1/.claude/projects/$(mangle "$2")$3"
+        mkdir -p "$dir"
+        printf '{}\n' >"$dir/session.jsonl"
+        printf '%s' "$dir/session.jsonl"
+    }
+
+    resolve_session() {
+        HOME="$1" TEST_PROJECT_REAL="$2" bash -c '
+            set -uo pipefail
+            source "$1"
+            printf "RESOLVED=%s\n" "${SESSION_FILE:-}"
+        ' _ "$SESSION_BLOCK" 2>&1
+    }
+
+    PROJ="/tmp/proj-one"
+
+    # The live failure: base directory present but transcript-less, real
+    # transcript under the worktree-named sibling.
+    H="$WORK/h-worktree"
+    mkdir -p "$H/.claude/projects/$(mangle "$PROJ")/memory"
+    want=$(mk_session "$H" "$PROJ" "--worktrees-math-functions")
+    got=$(resolve_session "$H" "$PROJ") || true
+    if [ "$got" = "RESOLVED=$want" ]; then
+        pass "finds the transcript re-homed under a worktree-named sibling"
+    else
+        fail "worktree re-home: got '$got', want 'RESOLVED=$want'"
+    fi
+
+    # Unconstrained runs still resolve from the base directory.
+    H="$WORK/h-base"
+    want=$(mk_session "$H" "$PROJ" "")
+    got=$(resolve_session "$H" "$PROJ") || true
+    if [ "$got" = "RESOLVED=$want" ]; then
+        pass "finds the transcript in the base project directory"
+    else
+        fail "base directory: got '$got', want 'RESOLVED=$want'"
+    fi
+
+    # An unrelated project's transcript must not be adopted -- the glob is
+    # anchored on this run's unique tmp dir, not on the projects root.
+    H="$WORK/h-foreign"
+    mkdir -p "$H/.claude/projects/$(mangle "$PROJ")/memory"
+    mk_session "$H" "/tmp/other-project" "" >/dev/null
+    got=$(resolve_session "$H" "$PROJ") || true
+    if printf '%s' "$got" | grep -q 'Could not find session transcript'; then
+        pass "ignores a foreign project's transcript"
+    else
+        fail "foreign transcript: should not have resolved, got '$got'"
+    fi
+
+    # Nothing anywhere: the error names both places it looked.
+    H="$WORK/h-empty"
+    mkdir -p "$H/.claude/projects"
+    got=$(resolve_session "$H" "$PROJ") || true
+    if printf '%s' "$got" | grep -q 'Could not find session transcript' &&
+        printf '%s' "$got" | grep -q 'siblings'; then
+        pass "reports both search locations when nothing is found"
+    else
+        fail "empty case: unexpected output '$got'"
+    fi
+fi
+
+echo ""
 echo "$passes passed, $failures failed"
 [ "$failures" -eq 0 ]

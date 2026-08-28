@@ -115,6 +115,17 @@ Full workflow execution test (~10-30 minutes):
 - Subagents follow the skill correctly
 - Final code is functional and tested
 
+**Environment knobs:**
+- `SDD_INTEGRATION_TIMEOUT` (default `3600`) — ceiling in seconds for the live
+  `claude` execution.
+- `SDD_INTEGRATION_WORKTREE` (default `0`) — set to `1` to make SDD deliver
+  into a linked worktree instead of branching in the base checkout. The test
+  resolves the deliverable either way, but the two shapes exercise different
+  branches of that resolution, and only a declared worktree preference plus an
+  existing `.worktrees/` reliably produces the worktree one. Run both when
+  changing the resolution block; `test-delivery-resolution.sh` pins both
+  offline in seconds.
+
 #### test-worktree-native-preference.sh
 RED-GREEN-REFACTOR validation for the using-git-worktrees skill (~5 minutes):
 - RED: skill without Step 1a — agent should use `git worktree add`

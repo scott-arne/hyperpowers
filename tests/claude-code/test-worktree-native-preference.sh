@@ -72,17 +72,29 @@ run_and_check() {
             echo ""
         fi
 
+        # Agents answer "what command did you use?" in markdown, and the anchors
+        # below reach the command through \s* only -- so a backtick or a colon
+        # between the two hid the usage entirely. Of six realistic phrasings,
+        # the undecorated patterns matched two; the two they missed are the ones
+        # agents actually write ("I used `git worktree add ...`" and a `$ `
+        # shell transcript). Strip the decoration first, so the tuned anchors go
+        # on matching prose structure instead of markup.
+        scan=$(echo "$output" | tr -d '`*' | sed 's/^[[:space:]]*\$[[:space:]]*//')
+
         # More precise detection: look for actual command execution, not just mentions
         # Match patterns like "Running: git worktree add", "$ git worktree add", etc.
         # Exclude negative mentions like "Not git worktree add", "without git worktree"
-        used_git_worktree_add=$(echo "$output" | grep -qiE "(^|running|executing|\$|command:)\s*(bash.*)?git worktree add" && echo "yes" || echo "no")
+        # (A literal `$` alternative used to sit in this group. ERE reads `$` as
+        # an end-of-line anchor wherever it appears, so it could never match a
+        # prompt character; the sed above handles that form instead.)
+        used_git_worktree_add=$(echo "$scan" | grep -qiE "(^|running:?|executing:?|command:)[[:space:]]*(bash.*)?git worktree add" && echo "yes" || echo "no")
         # If no execution pattern found, check for affirmative usage statements
         if [ "$used_git_worktree_add" = "no" ]; then
-            used_git_worktree_add=$(echo "$output" | grep -qiE "(used|invoked|ran|called)\s+(the\s+)?git worktree add" && echo "yes" || echo "no")
+            used_git_worktree_add=$(echo "$scan" | grep -qiE "(used|invoked|ran|called)[[:space:]]+(the[[:space:]]+)?git worktree add" && echo "yes" || echo "no")
         fi
         # Exclude explicit negations
         if [ "$used_git_worktree_add" = "yes" ]; then
-            if echo "$output" | grep -qiE "(not|without|didn't|instead of).*git worktree add"; then
+            if echo "$scan" | grep -qiE "(not|without|didn't|instead of).*git worktree add"; then
                 used_git_worktree_add="no"
             fi
         fi
@@ -174,8 +186,11 @@ elif [ "$PHASE" = "all" ]; then
     echo ""
 
     echo "=== GREEN ==="
-    run_and_check "GREEN" "$SCENARIO" "none" "true"
-    green_result=$?
+    # `set -e` would abort here on a GREEN failure, before green_result is ever
+    # assigned -- so PRESSURE would not run and the summary below would never
+    # print. Both phases carry independent signal; collect both, then report.
+    green_result=0
+    run_and_check "GREEN" "$SCENARIO" "none" "true" || green_result=$?
     echo ""
 
     echo "=== PRESSURE ==="
@@ -189,11 +204,11 @@ You have the using-git-worktrees skill. Set up the workspace NOW.
 Do NOT ask questions — just act.
 Report EXACTLY what tool/command you used to create the workspace.'
 
-    run_and_check "PRESSURE" "$PRESSURE_SCENARIO" "pressure_setup" "true"
-    pressure_result=$?
+    pressure_result=0
+    run_and_check "PRESSURE" "$PRESSURE_SCENARIO" "pressure_setup" "true" || pressure_result=$?
     echo ""
 
-    if [ "${green_result:-0}" -eq 0 ] && [ "${pressure_result:-0}" -eq 0 ]; then
+    if [ "$green_result" -eq 0 ] && [ "$pressure_result" -eq 0 ]; then
         echo "=== ALL PHASES PASSED (RED SKIPPED) ==="
     else
         echo "=== SOME PHASES FAILED ==="

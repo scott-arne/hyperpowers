@@ -188,9 +188,12 @@ is clean" without those rows is not a scan you ran.
 Write the table to the ledger. Then present everything it surfaced to your
 human partner as ONE batched question — each finding beside the plan text
 that mandates it, asking which governs — before execution begins, not one
-interrupt per discovery mid-plan. If the scan is clean, proceed without
-comment. The review loop remains the net for conflicts that only emerge
-from implementation.
+interrupt per discovery mid-plan. Each finding is a decision with
+consequences downstream, so it gets the shape the brainstorming skill's
+Deciding Together section describes: the conflict and what each resolution
+costs in chat, then the selection widget to collect the answers. If the scan
+is clean, proceed without comment. The review loop remains the net for
+conflicts that only emerge from implementation.
 
 ## Model Selection
 

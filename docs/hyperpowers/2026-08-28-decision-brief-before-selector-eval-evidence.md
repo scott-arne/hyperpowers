@@ -66,6 +66,11 @@ The prohibition arm is indistinguishable from no guidance and produced fewer
 recommendations than the control. **The two Red Flags rows were dropped from
 the design on this evidence.**
 
+Per-rep transcripts and the arm drivers are preserved under
+`evals/results/_micro-decision-brief-20260829/wording-arms/`. The v3 section
+text did not survive — the harness rewrote one file in place across
+iterations — so that row has its counts but not its wording.
+
 ## A micro-test artifact worth recording
 
 In the simulated widget, no rep in any arm ever produced both the comparison
@@ -104,6 +109,14 @@ Run directories, preserved under `evals/results/`:
 | Treatment | `…-20260828T233322Z-540d` | pass |
 | Treatment | `…-20260828T234106Z-f8a9` | pass |
 | Treatment | `…-20260828T234459Z-0bff` | pass |
+| Treatment, opus-5 | `…-20260829T033425Z-9f0d` | pass |
+| Treatment, opus-5 | `…-20260829T033809Z-01c1` | pass |
+| Treatment, opus-5 | `…-20260829T034239Z-e952` | pass |
+
+**The result is not sonnet-specific.** Those first six runs are a
+`claude-sonnet-5` measurement. Re-running the same scenario against the
+committed amendment with both agents pinned to `claude-opus-5` passes 3/3,
+post-checks 4/4 in each.
 
 **Residual, not fixed:** in one treatment run the agent's *first* widget (a
 lower-stakes question) carried no chat brief, and the Gauntlet-Agent recorded
@@ -113,14 +126,32 @@ legitimately skips the brief — but whether the agent is applying that
 predicate or merely briefing the last question is not something these runs
 distinguish.
 
-## Two defects found along the way
+## One real defect, and one finding that dissolved
 
-- **Opus does not auto-trigger `hyperpowers:brainstorming` on this task.**
-  0/5 under `claude -p` with the bootstrap confirmed loaded, against sonnet's
-  5/5. This is why the live runs pin `claude-sonnet-5` rather than use
-  `claude-vertex`'s default `claude-opus-4-8`: an Opus arm would have measured
-  base-model behavior with the skill never loaded. Not investigated further
-  here; it deserves its own scenario.
+- **"Opus never triggers `hyperpowers:brainstorming`" was a harness artifact.**
+  Under `claude -p` with the simulated widget, `claude-opus-5` invoked the
+  skill 0/5 with the bootstrap confirmed loaded, against sonnet's 5/5. That
+  read as a serious integration defect, and it is why the first six live runs
+  pin `claude-sonnet-5`.
+
+  It does not survive a real session. The repo's canonical acceptance test
+  ("Let's make a react todo list", clean session, no `--append-system-prompt`)
+  fires the skill as the FIRST tool call 3/3 on `claude-opus-5` and 3/3 on
+  `claude-sonnet-5` — transcripts and driver preserved under
+  `evals/results/_micro-decision-brief-20260829/trigger-acceptance/`. On this
+  scenario's own bounded-modification task, three live gauntlet runs on
+  `claude-opus-5` invoked it 3/3. The 0/5 appears only in the simulated
+  harness — single-turn print mode, no write tools, and a system prompt
+  instructing the agent to emit one fenced block and stop — the same harness
+  that manufactured the comparison/widget coupling described above. No Opus
+  triggering defect is demonstrated. Nothing to fix, and the scenario this
+  note previously called for is not warranted.
+
+  One result from the exercise is worth keeping. Base Opus, with no skill
+  loaded, wrote the fork in chat before the widget in 5/5 reps with correct
+  per-option consequences — but offered a recommendation in 0/5. The skill is
+  doing real work on Opus rather than restating what the model already does.
+
 - **A sandboxed micro-test arm was silently invalid.** The SessionStart hook's
   `mkdir` under `~/.claude/session-env` is denied by the command sandbox, so
   five reps ran with no bootstrap, no skill, and straight-to-implementation

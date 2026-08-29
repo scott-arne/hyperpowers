@@ -208,7 +208,7 @@ is the whole process.
 - Before asking detailed questions, assess scope: if the request describes multiple independent subsystems (e.g., "build a platform with chat, file storage, billing, and analytics"), flag this immediately. Don't spend questions refining details of a project that needs to be decomposed first.
 - If the project is too large for a single spec, help the user decompose into sub-projects: what are the independent pieces, how do they relate, what order should they be built? Then brainstorm the first sub-project through the normal design flow. Each sub-project gets its own spec → plan → implementation cycle.
 - For appropriately-scoped projects, ask questions one at a time to refine the idea
-- Prefer multiple choice questions when possible, but open-ended is fine too
+- Prefer multiple choice questions when possible, but open-ended is fine too. When the options differ in what happens afterward, the comparison goes in chat before you ask — see Deciding Together below
 - Only one question per message - if a topic needs more exploration, break it into multiple questions
 - Focus on understanding: purpose, constraints, success criteria
 
@@ -240,6 +240,31 @@ is the whole process.
 - Explore the current structure before proposing changes. Follow existing patterns.
 - Where existing code has problems that affect the work (e.g., a file that's grown too large, unclear boundaries, tangled responsibilities), include targeted improvements as part of the design - the way a good developer improves code they're working in.
 - Don't propose unrelated refactoring. Stay focused on what serves the current goal.
+
+## Deciding Together
+
+Five-word labels with a line of description each are plenty for "which of
+these do you prefer" and nowhere near enough for a choice your human partner
+has to live with. Whenever the options differ in what happens afterward — an
+interface, a stored format, a default, a dependency, work that would have to
+be redone — the comparison goes in chat, before you ask.
+
+That message has three parts, in this order:
+
+1. **The fork**, in one sentence: what actually differs between the options,
+   not what they are named.
+2. **One line per option**: what it buys, what it costs, and what it rules
+   out later. Say which choices are cheap to change afterward and which are
+   not.
+3. **Your recommendation**, and the reason you hold it.
+
+Send that message. Then ask with the normal selection widget — short labels,
+one line of description each, your recommended option first. The message is
+how they decide; the widget is how they answer. You send both, and you fold
+neither into the other.
+
+If the options differ only in what they are called — a name, an ordering, a
+wording — ask directly. There is nothing to compare.
 
 ## Visual Companion
 

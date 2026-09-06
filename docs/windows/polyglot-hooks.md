@@ -89,10 +89,30 @@ afterward.
 
 ### How it works on Unix (bash/sh)
 
-1. `: << 'CMDBLOCK'` opens a heredoc on a no-op command.
-2. The entire CMD batch block is consumed by the heredoc and ignored.
-3. After `CMDBLOCK`, bash resolves the script directory and `exec`s the named
-   extensionless script directly.
+The wrapper opens with four `:;` label lines:
+
+```
+:; command -v bash >/dev/null 2>&1 || exit 0
+:; [ $# -ge 1 ] || exit 0
+:; SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+:; SCRIPT_NAME="$1"; shift; exec bash "${SCRIPT_DIR}/${SCRIPT_NAME}" "$@"
+```
+
+`cmd.exe` reads a line beginning with `:` as a label and skips it, so Windows
+falls straight through to the `@echo off` batch block. A POSIX shell runs `:`
+as a no-op, evaluates the rest of each line, and `exec`s bash on the named
+hook before it ever reaches the batch text.
+
+This replaced an earlier `: << 'CMDBLOCK'` heredoc that wrapped the batch
+block. bash 5.1 and newer write a heredoc into a pipe before forking; under
+macOS pipe pressure the kernel hands out 512-byte pipes and the wrapper's
+1.4 KB block deadlocked every hook
+([obra/superpowers#571](https://github.com/obra/superpowers/issues/571)).
+Heredocs are now banned throughout `hooks/`, with
+`tests/hooks/test-no-heredocs-in-hooks.sh` as the fence.
+
+Both missing-bash and missing-script-name exit 0 silently. Hooks supply
+optional context; a wrapper that errors is worse than one that says nothing.
 
 ### Key design decisions
 

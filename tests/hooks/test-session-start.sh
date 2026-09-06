@@ -253,6 +253,73 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash "$CODEX_HOOK_UNDER_TEST"
 
+# --- plugin version staleness notice (spec D4) ------------------------------
+# The running version is this repo's .claude-plugin/plugin.json; the test writes
+# a marketplace manifest under the sandboxed HOME and varies only its version.
+running_version="$(node -e 'console.log(require(process.argv[1]).version)' "$REPO_ROOT/.claude-plugin/plugin.json")"
+
+write_marketplace() { # <home> <version>
+    local mdir="$1/.claude/plugins/marketplaces/hyperpowers/.claude-plugin"
+    mkdir -p "$mdir"
+    printf '{"name":"hyperpowers","owner":{"name":"t"},"plugins":[{"name":"hyperpowers","source":"./","version":"%s"}]}\n' \
+        "$2" > "$mdir/marketplace.json"
+}
+
+stale_home="$(make_home version-stale)"
+write_marketplace "$stale_home" "99.0.0"
+assert_command_output \
+    "SessionStart announces a strictly newer marketplace version" \
+    "nested" \
+    "hyperpowers 99.0.0 is available; this session loaded ${running_version}" \
+    "" \
+    "$stale_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+current_home="$(make_home version-current)"
+write_marketplace "$current_home" "$running_version"
+assert_command_output \
+    "SessionStart is silent when the marketplace version matches" \
+    "nested" \
+    "" \
+    "is available" \
+    "$current_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+ahead_home="$(make_home version-ahead)"
+write_marketplace "$ahead_home" "0.0.1"
+assert_command_output \
+    "SessionStart is silent when the running version leads the marketplace" \
+    "nested" \
+    "" \
+    "is available" \
+    "$ahead_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+absent_home="$(make_home version-no-marketplace)"
+assert_command_output \
+    "SessionStart is silent with no marketplace clone" \
+    "nested" \
+    "" \
+    "is available" \
+    "$absent_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+corrupt_home="$(make_home version-corrupt-marketplace)"
+mkdir -p "$corrupt_home/.claude/plugins/marketplaces/hyperpowers/.claude-plugin"
+printf 'not json at all' > "$corrupt_home/.claude/plugins/marketplaces/hyperpowers/.claude-plugin/marketplace.json"
+assert_command_output \
+    "SessionStart survives an unparseable marketplace manifest" \
+    "nested" \
+    "You have superpowers" \
+    "is available" \
+    "$corrupt_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
 if [[ "$FAILURES" -gt 0 ]]; then
     echo "STATUS: FAILED ($FAILURES failure(s))"
     exit 1

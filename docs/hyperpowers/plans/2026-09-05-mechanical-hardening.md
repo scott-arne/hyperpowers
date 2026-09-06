@@ -222,7 +222,7 @@ write_marketplace "$stale_home" "99.0.0"
 assert_command_output \
     "SessionStart announces a strictly newer marketplace version" \
     "nested" \
-    "hyperpowers 99.0.0 is available"$'\037'"this session loaded ${running_version}" \
+    "hyperpowers 99.0.0 is available; this session loaded ${running_version}" \
     "" \
     "$stale_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \

@@ -290,6 +290,30 @@ rc=0
 out=$( ( cd "$TEST_ROOT/repo-nomode" && bash "$nomode/task-brief" docs/plan.md 1 ) 2>&1 ) || rc=$?
 if [ "$rc" -eq 0 ]; then pass "task-brief survives stripped exec bits"; else fail "task-brief with stripped exec bits (rc=$rc: $out)"; fi
 
+echo ""
+echo "Test: helper stdout matches what the skill docs tell controllers to expect"
+make_repo "$TEST_ROOT/repo-stdout"
+mkdir -p "$TEST_ROOT/repo-stdout/docs"
+printf '### Task 1: Thing\n\nbody\n' > "$TEST_ROOT/repo-stdout/docs/plan.md"
+git -C "$TEST_ROOT/repo-stdout" add -A
+git -C "$TEST_ROOT/repo-stdout" commit -qm "base"
+so_base=$(git -C "$TEST_ROOT/repo-stdout" rev-parse HEAD)
+echo more >> "$TEST_ROOT/repo-stdout/docs/plan.md"
+git -C "$TEST_ROOT/repo-stdout" commit -qam "work"
+so_head=$(git -C "$TEST_ROOT/repo-stdout" rev-parse HEAD)
+
+tb_out=$( cd "$TEST_ROOT/repo-stdout" && bash "$TASK_BRIEF" docs/plan.md 1 )
+case "$tb_out" in
+    "wrote "*": "*" lines") pass "task-brief prints 'wrote <path>: <N> lines'" ;;
+    *) fail "task-brief stdout shape (got: $tb_out)" ;;
+esac
+
+rp_out=$( cd "$TEST_ROOT/repo-stdout" && bash "$REVIEW_PACKAGE" docs/plan.md "$so_base" "$so_head" )
+case "$rp_out" in
+    "wrote "*": "*" commit(s), "*" bytes") pass "review-package prints 'wrote <path>: <N> commit(s), <N> bytes'" ;;
+    *) fail "review-package stdout shape (got: $rp_out)" ;;
+esac
+
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"
     exit 1

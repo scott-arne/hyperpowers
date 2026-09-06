@@ -78,6 +78,43 @@ if [ -n "$ungated_notice" ]; then
 fi
 # ---------------------------------------------------------------------------
 
+# --- Plugin version staleness notice (spec D4) ------------------------------
+# Releases 6.10.0-6.11.1 never loaded in a single session: the plugin cache
+# went stale and nothing said so. Compare the manifest this session actually
+# loaded against the marketplace clone's, and speak one line only when the
+# marketplace is strictly newer — a contributor running ahead of the
+# marketplace is never nagged. Never updates anything, never fails the hook.
+# The text carries no quote, backslash, or newline: it is appended to
+# session_context raw and interpolated into JSON by printf below.
+version_notice="$(
+  ( set +e
+    running="${PLUGIN_ROOT}/.claude-plugin/plugin.json"
+    market="${HOME:-}/.claude/plugins/marketplaces/hyperpowers/.claude-plugin/marketplace.json"
+    [ -f "$running" ] && [ -f "$market" ] || exit 0
+    command -v node >/dev/null 2>&1 || exit 0
+    node -e '
+      const fs = require("fs");
+      const read = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch (e) { return null; } };
+      const cur = read(process.argv[1]), mkt = read(process.argv[2]);
+      if (!cur || !mkt) process.exit(0);
+      const list = Array.isArray(mkt.plugins) ? mkt.plugins : [];
+      const entry = list.find((p) => p && p.name === "hyperpowers");
+      const a = String(cur.version || "");
+      const b = String((entry && entry.version) || mkt.version || "");
+      const tri = (s) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(s); return m ? [+m[1], +m[2], +m[3]] : null; };
+      const x = tri(a), y = tri(b);
+      if (!x || !y) process.exit(0);
+      const newer = (p, q) => { for (let i = 0; i < 3; i++) if (p[i] !== q[i]) return p[i] > q[i]; return false; };
+      if (!newer(y, x)) process.exit(0);
+      process.stdout.write("hyperpowers " + b + " is available; this session loaded " + a + ". Run /plugin and restart to pick it up.");
+    ' "$running" "$market" 2>/dev/null
+  ) 2>/dev/null
+)" || version_notice=""
+if [ -n "$version_notice" ]; then
+  session_context="${session_context}\n\n${version_notice}"
+fi
+# ---------------------------------------------------------------------------
+
 # Output context injection as JSON.
 # Cursor hooks expect additional_context (snake_case).
 # Claude Code hooks expect hookSpecificOutput.additionalContext (nested).

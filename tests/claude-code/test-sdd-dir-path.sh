@@ -277,6 +277,19 @@ rc=0
 if [ "$rc" -eq 0 ]; then pass "a real range still produces a package"; else fail "a real range still produces a package (got rc=$rc)"; fi
 
 echo ""
+echo "Test: helpers still work when an extractor has stripped their exec bits"
+make_repo "$TEST_ROOT/repo-nomode"
+mkdir -p "$TEST_ROOT/repo-nomode/docs"
+printf '### Task 1: Thing\n\nbody\n' > "$TEST_ROOT/repo-nomode/docs/plan.md"
+nomode="$TEST_ROOT/nomode-scripts"
+mkdir -p "$nomode"
+cp "$SDD_DIR_SCRIPT" "$TASK_BRIEF" "$REVIEW_PACKAGE" "$nomode/"
+chmod -x "$nomode"/*
+
+rc=0
+out=$( ( cd "$TEST_ROOT/repo-nomode" && bash "$nomode/task-brief" docs/plan.md 1 ) 2>&1 ) || rc=$?
+if [ "$rc" -eq 0 ]; then pass "task-brief survives stripped exec bits"; else fail "task-brief with stripped exec bits (rc=$rc: $out)"; fi
+
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"
     exit 1

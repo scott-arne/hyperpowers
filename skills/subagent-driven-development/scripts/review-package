@@ -37,7 +37,9 @@ git merge-base --is-ancestor "$base" "$head" || { echo "HEAD is not a descendant
 if [ $# -eq 4 ]; then
   out=$4
 else
-  dir=$("$SCRIPT_DIR/sdd-dir" "$plan")
+  # Invoke via bash rather than direct exec: some extractors (Python zipfile)
+  # strip Unix exec bits when unpacking marketplace packages.
+  dir=$("${BASH:-bash}" "$SCRIPT_DIR/sdd-dir" "$plan")
   out="$dir/review-$(git rev-parse --short "$base")..$(git rev-parse --short "$head").diff"
 fi
 

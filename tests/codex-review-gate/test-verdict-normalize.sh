@@ -85,6 +85,37 @@ EOF
 check "$work/blocking.json" '"result":"blocking"' "json needs-attention -> blocking"
 check "$work/blocking.json" '"blockingCount":1' "json counts only critical/high"
 
+# spec D2: needs-attention whose findings are all below the blocking bar is an
+# approval with notes — "Blocking = Critical + Important" (gate-findings.md).
+cat > "$work/na-minor.json" <<'EOF'
+{ "storedJob": { "result": { "parseError": null,
+  "result": { "verdict": "needs-attention",
+    "findings": [ { "severity": "medium", "title": "untested path" },
+                  { "severity": "low", "title": "nit" } ] },
+  "rawOutput": "..." } } }
+EOF
+check "$work/na-minor.json" '"result":"approved"' "json needs-attention with only medium/low -> approved"
+check "$work/na-minor.json" '"verdict":"needs-attention"' "approved-with-notes keeps the reviewer's verdict"
+check "$work/na-minor.json" '"blockingCount":0' "approved-with-notes reports zero blocking"
+check "$work/na-minor.json" '2 non-blocking' "reason names the non-blocking count"
+
+# spec D3: needs-attention with no findings at all is an unfinished review,
+# not an approval — 37 measured task captures were interim narration.
+cat > "$work/na-empty.json" <<'EOF'
+{ "storedJob": { "result": { "parseError": null,
+  "result": { "verdict": "needs-attention", "findings": [] },
+  "rawOutput": "I'm checking whether that gap is covered elsewhere" } } }
+EOF
+check "$work/na-empty.json" '"result":"incomplete"' "json needs-attention with no findings -> incomplete"
+
+# An unrecognized verdict string may never reach the new approval path.
+cat > "$work/na-unknown.json" <<'EOF'
+{ "storedJob": { "result": { "parseError": null,
+  "result": { "verdict": "reject", "findings": [ { "severity": "low", "title": "nit" } ] },
+  "rawOutput": "..." } } }
+EOF
+check "$work/na-unknown.json" '"result":"blocking"' "unknown verdict with only low findings stays blocking"
+
 cat > "$work/novderdict.json" <<'EOF'
 { "storedJob": { "result": { "parseError": "schema mismatch",
   "result": null, "rawOutput": "still verifying the diff" } } }
@@ -208,6 +239,10 @@ checkc "$work/cov-bare.txt" '"result":"incomplete"' "flag: bare Coverage heading
 
 # needs-attention unaffected by the flag
 checkc "$work/needs.txt" '"result":"blocking"' "flag: needs-attention unaffected"
+
+# spec D3: the coverage floor governs the D2 approval exactly as it governs an
+# ordinary approve — a way to be incomplete, never a way to approve.
+checkc "$work/na-minor.json" '"result":"incomplete"' "flag: approved-with-notes without coverage -> incomplete"
 
 # JSON path: structured approve honored ONLY with coverage in raw text
 cat > "$work/cov-json-ok.json" <<'EOF'

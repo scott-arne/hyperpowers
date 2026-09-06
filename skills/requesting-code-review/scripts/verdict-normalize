@@ -5,7 +5,10 @@
 # shape) or a code-gate --json payload, and reduces it to a tri-state
 # (spec 4.5). Fail-closed: anything without a parseable verdict is
 # "incomplete", and incomplete is never approval. The contradictory
-# approve-with-blocking-findings case is "blocking" (conservative).
+# approve-with-blocking-findings case is "blocking" (conservative). On the
+# JSON path a "needs-attention" carrying only medium/low findings is
+# "approved" with those findings reported, and one carrying no findings at
+# all is "incomplete" (2026-09-05 spec, D2/D3).
 #
 # stdout: {"result":"approved|blocking|incomplete",
 #          "verdict":"approve|needs-attention|none",
@@ -56,18 +59,39 @@ node -e '
     if (!v || typeof v.verdict !== "string") return false;
     const findings = Array.isArray(v.findings) ? v.findings : [];
     const blocking = findings.filter(f => f && /^(critical|high)$/i.test(String(f.severity || ""))).length;
+    // Coverage is satisfied if EITHER the raw markdown has a Coverage heading
+    // (text path), OR the structured payload summary field contains a
+    // Coverage: run (structured path). Governs every approval this function
+    // can produce, including the needs-attention-with-no-blocking one.
+    const coverageMissing = () => {
+      if (!requireCoverage) return false;
+      const rawCoverageOk = coverageOk(raw || "");
+      const summaryCoverageOk = typeof v.summary === "string" && /(?:^|[\s;.…)\-—"\x27(])Coverage:\s*\S/.test(v.summary);
+      return !rawCoverageOk && !summaryCoverageOk;
+    };
     if (v.verdict === "approve" && blocking === 0) {
-      if (requireCoverage) {
-        // Coverage is satisfied if EITHER the raw markdown has a Coverage heading (text path),
-        // OR the structured payload summary field contains a Coverage: run (structured path).
-        const rawCoverageOk = coverageOk(raw || "");
-        const summaryCoverageOk = typeof v.summary === "string" && /(?:^|[\s;.…)\-—"\x27(])Coverage:\s*\S/.test(v.summary);
-        if (!rawCoverageOk && !summaryCoverageOk)
-          out("incomplete", "approve", 0, source + ": approve without coverage evidence");
-      }
+      if (coverageMissing())
+        out("incomplete", "approve", 0, source + ": approve without coverage evidence");
       out("approved", "approve", 0, source + ": approve, no blocking findings");
     }
     if (v.verdict === "approve") out("blocking", "approve", blocking, source + ": contradictory approve with blocking findings");
+    // spec D2/D3. The written contract is "Blocking = Critical + Important"
+    // (gate-findings.md), so a needs-attention carrying only medium/low
+    // findings has raised nothing the fix loop is chartered to fix: it is an
+    // approval with notes, and the findings still travel in the payload for
+    // the round ledger. A needs-attention carrying NO findings at all is not a
+    // verdict about the code but an unfinished review, so it fails closed to
+    // incomplete. Restricted to the exact string "needs-attention" so an
+    // unrecognized verdict can never reach an approval. The text path
+    // (parseText) is deliberately excluded: there, placing a finding under
+    // "Blocking Findings:" is the blocking judgment of the reviewer.
+    if (v.verdict === "needs-attention" && blocking === 0) {
+      if (findings.length === 0)
+        out("incomplete", "needs-attention", 0, source + ": needs-attention with no findings");
+      if (coverageMissing())
+        out("incomplete", "needs-attention", 0, source + ": needs-attention without coverage evidence");
+      out("approved", "needs-attention", 0, source + ": needs-attention, no blocking findings (" + findings.length + " non-blocking)");
+    }
     out("blocking", "needs-attention", blocking, source + ": " + v.verdict);
     return true;
   };

@@ -5,6 +5,8 @@
 # tasks intact.
 #
 # Usage: review-package PLAN_FILE BASE HEAD [OUTFILE]
+# Exit 2: usage or unresolvable ref. Exit 3: BASE..HEAD is empty or HEAD is
+# not a descendant of BASE (a wrong-branch commit, upstream #2050).
 # Default OUTFILE: <sdd-dir PLAN_FILE>/review-<base7>..<head7>.diff — unique per
 # plan and per range, so concurrent sessions cannot collide and a re-review
 # after fixes always gets a distinctly named fresh file. The scratch dir comes
@@ -25,6 +27,12 @@ head=$3
 [ -f "$plan" ] || { echo "no such plan file: $plan" >&2; exit 2; }
 git rev-parse --verify --quiet "$base" >/dev/null || { echo "bad BASE: $base" >&2; exit 2; }
 git rev-parse --verify --quiet "$head" >/dev/null || { echo "bad HEAD: $head" >&2; exit 2; }
+
+# Range guards (exit 3): a wrong-branch HEAD yields a range that is empty or
+# not rooted at BASE; either would silently produce a bogus review package,
+# and an empty one reads to a reviewer as clean work that was never done.
+git merge-base --is-ancestor "$base" "$head" || { echo "HEAD is not a descendant of BASE: ${base}..${head}" >&2; exit 3; }
+[ "$(git rev-list --count "${base}..${head}")" -gt 0 ] || { echo "empty commit range: ${base}..${head}" >&2; exit 3; }
 
 if [ $# -eq 4 ]; then
   out=$4

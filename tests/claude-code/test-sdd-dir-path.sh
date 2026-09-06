@@ -253,6 +253,30 @@ symlink_dir=$(cd "$TEST_ROOT/symlink-to-repo" && "$SDD_DIR_SCRIPT" docs/plan.md)
 if [ "$physical_dir" = "$symlink_dir" ]; then pass "symlinked cwd and physical cwd yield identical workspace paths"; else fail "path-form sensitivity: physical=$physical_dir vs symlink=$symlink_dir"; fi
 
 echo ""
+echo "Test: review-package rejects ranges that cannot describe a task's work"
+make_repo "$TEST_ROOT/repo-range"
+mkdir -p "$TEST_ROOT/repo-range/docs"
+echo plan > "$TEST_ROOT/repo-range/docs/plan.md"
+git -C "$TEST_ROOT/repo-range" add -A
+git -C "$TEST_ROOT/repo-range" commit -qm "base"
+range_base=$(git -C "$TEST_ROOT/repo-range" rev-parse HEAD)
+echo more >> "$TEST_ROOT/repo-range/docs/plan.md"
+git -C "$TEST_ROOT/repo-range" commit -qam "work"
+range_head=$(git -C "$TEST_ROOT/repo-range" rev-parse HEAD)
+
+rc=0
+( cd "$TEST_ROOT/repo-range" && bash "$REVIEW_PACKAGE" docs/plan.md "$range_head" "$range_head" ) >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 3 ]; then pass "empty commit range exits 3"; else fail "empty commit range exits 3 (got rc=$rc)"; fi
+
+rc=0
+( cd "$TEST_ROOT/repo-range" && bash "$REVIEW_PACKAGE" docs/plan.md "$range_head" "$range_base" ) >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 3 ]; then pass "non-descendant HEAD exits 3"; else fail "non-descendant HEAD exits 3 (got rc=$rc)"; fi
+
+rc=0
+( cd "$TEST_ROOT/repo-range" && bash "$REVIEW_PACKAGE" docs/plan.md "$range_base" "$range_head" ) >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 0 ]; then pass "a real range still produces a package"; else fail "a real range still produces a package (got rc=$rc)"; fi
+
+echo ""
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"
     exit 1

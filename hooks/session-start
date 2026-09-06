@@ -106,7 +106,9 @@ version_notice="$(
       if (!x || !y) process.exit(0);
       const newer = (p, q) => { for (let i = 0; i < 3; i++) if (p[i] !== q[i]) return p[i] > q[i]; return false; };
       if (!newer(y, x)) process.exit(0);
-      process.stdout.write("hyperpowers " + b + " is available; this session loaded " + a + ". Run /plugin and restart to pick it up.");
+      const aStr = x[0] + "." + x[1] + "." + x[2];
+      const bStr = y[0] + "." + y[1] + "." + y[2];
+      process.stdout.write("hyperpowers " + bStr + " is available; this session loaded " + aStr + ". Run /plugin and restart to pick it up.");
     ' "$running" "$market" 2>/dev/null
   ) 2>/dev/null
 )" || version_notice=""

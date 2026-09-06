@@ -320,6 +320,17 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash "$HOOK_UNDER_TEST"
 
+unsafe_home="$(make_home version-unsafe-string)"
+write_marketplace "$unsafe_home" '99.0.0\"x'
+assert_command_output \
+    "SessionStart emits only the validated semver, never the raw manifest string" \
+    "nested" \
+    "hyperpowers 99.0.0 is available" \
+    '"x' \
+    "$unsafe_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
 if [[ "$FAILURES" -gt 0 ]]; then
     echo "STATUS: FAILED ($FAILURES failure(s))"
     exit 1

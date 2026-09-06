@@ -131,8 +131,8 @@ In `skills/requesting-code-review/scripts/verdict-normalize`, replace the whole 
     // verdict about the code but an unfinished review, so it fails closed to
     // incomplete. Restricted to the exact string "needs-attention" so an
     // unrecognized verdict can never reach an approval. The text path
-    // (parseText) is deliberately excluded: there, a finding's placement under
-    // "Blocking Findings:" is the reviewer's own blocking judgment.
+    // (parseText) is deliberately excluded: there, placing a finding under
+    // "Blocking Findings:" is the blocking judgment of the reviewer.
     if (v.verdict === "needs-attention" && blocking === 0) {
       if (findings.length === 0)
         out("incomplete", "needs-attention", 0, source + ": needs-attention with no findings");

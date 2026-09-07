@@ -14,21 +14,23 @@ Hyperpowers has two distinct kinds of tests, in two different repositories:
 
 ## Plugin tests
 
-Every suite is a standalone bash script. There is no aggregate runner and no
-CI; run the suites that cover what you changed.
+Most suites are standalone bash scripts; two directories are not. There is no
+aggregate runner and no CI; run the suites that cover what you changed, one
+script per `bash` invocation.
 
-| Directory | Covers |
-|---|---|
-| `tests/hooks/` | session-start context injection, the ungated notice, the Codex broker janitor, the hooks heredoc fence |
-| `tests/codex-review-gate/` | gate scripts (`verdict-normalize`, `gate-round`, `gate-telemetry`, `ungated-ledger`, preflight, broker health), gate topology, and the gate-split losslessness proof |
-| `tests/sdd/` | the subagent-driven-development contract |
-| `tests/claude-code/` | SDD scratch-dir derivation and helper behavior, plus Claude Code skill tests and token analysis |
-| `tests/packaging/` | manifest wiring and the orphaned-skill-file guard |
-| `tests/brainstorm-server/` | the brainstorm server JS |
-| `tests/opencode/`, `tests/kimi/`, `tests/pi/`, `tests/antigravity/` | per-harness plugin loading, bootstrap caching, tool registration |
-| `tests/writing-skills/`, `tests/systematic-debugging/` | skill-specific structural checks |
-| `tests/explicit-skill-requests/` | Haiku-specific, multi-turn, and skill-name-prompted behavior |
-| `tests/shell-lint/` | shellcheck over the repo's shell scripts |
+| Directory | Covers | Runner |
+|---|---|---|
+| `tests/hooks/` | session-start context injection, the ungated notice, the Codex broker janitor, the hooks heredoc fence | each `test-*.sh`, one per `bash` call |
+| `tests/codex-review-gate/` | gate scripts (`verdict-normalize`, `gate-round`, `gate-telemetry`, `ungated-ledger`, preflight, broker health), gate topology, and the gate-split losslessness proof | each `test-*.sh`, one per `bash` call |
+| `tests/sdd/` | the subagent-driven-development contract | `bash tests/sdd/test-sdd-contract.sh` |
+| `tests/claude-code/` | offline: SDD scratch-dir derivation, helper stdout and range guards, delivery resolution, worktree path policy; live: skill tests that spawn the real `claude` CLI | offline: `test-sdd-dir-path.sh`, `test-codex-review-dir-path.sh`, `test-delivery-resolution.sh`, `test-worktree-path-policy.sh`, one per `bash` call; live: `run-skill-tests.sh` |
+| `tests/packaging/` | manifest wiring and the orphaned-skill-file guard | each `test-*.sh`, one per `bash` call |
+| `tests/brainstorm-server/` | the brainstorm server: JavaScript unit tests plus the start/stop and Windows-lifecycle shell tests | `cd tests/brainstorm-server && npm test` |
+| `tests/pi/` | the Pi extension | `node tests/pi/test-pi-extension.mjs` |
+| `tests/opencode/`, `tests/kimi/`, `tests/antigravity/` | per-harness plugin loading, bootstrap caching, tool registration | each directory's `run-tests.sh` |
+| `tests/writing-skills/`, `tests/systematic-debugging/` | skill-specific structural checks | each `test-*.sh`, one per `bash` call |
+| `tests/explicit-skill-requests/` | Haiku-specific, multi-turn, and skill-name-prompted behavior (live) | `tests/explicit-skill-requests/run-all.sh` |
+| `tests/shell-lint/` | shellcheck over the repo's shell scripts | `bash tests/shell-lint/test-lint-shell.sh` |
 
 Run one suite directly:
 
@@ -36,17 +38,21 @@ Run one suite directly:
 bash tests/codex-review-gate/test-verdict-normalize.sh
 ```
 
-Run a directory's worth:
+Run a directory's worth and fail if any suite fails. A loop that only echoes on
+failure exits 0 and reads as green, and `bash tests/hooks/test-*.sh` runs only
+the first file:
 
 ```bash
-for t in tests/hooks/test-*.sh; do bash "$t" || echo "FAILED: $t"; done
+fails=0
+for t in tests/hooks/test-*.sh; do bash "$t" || { echo "FAILED: $t"; fails=$((fails + 1)); }; done
+[ "$fails" -eq 0 ]
 ```
 
-Some directories ship a `run-tests.sh` or `run-all.sh`; prefer it when present.
-
-The suites under `tests/claude-code/` and `tests/explicit-skill-requests/`
-spawn the real `claude` CLI. They need credentials, take minutes, and are not
-part of any automated run.
+The offline set is every `test-*.sh` outside `tests/claude-code/` and
+`tests/explicit-skill-requests/`, the four offline `tests/claude-code/` suites
+named in the table, `npm test` in `tests/brainstorm-server/`, and the Pi Node
+file. The live suites spawn the real `claude` CLI: they need credentials, take
+minutes, and are not part of any automated run.
 
 ## Skill behavior evals
 

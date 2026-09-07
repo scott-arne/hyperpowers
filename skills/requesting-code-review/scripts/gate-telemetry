@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# gate-telemetry [--json] [--all] [--since ISO-8601] [repo-dir] — read-only aggregation over
+# gate-telemetry [--json] [--all] [--since ISO-8601] [--until ISO-8601] [repo-dir] — read-only aggregation over
 # the hyperpowers scratch roots (spec 4.5): sdd/<key>, codex-review/<key>,
 # ungated/<key>. Markdown to stdout by default; --json for snapshots.
 # Nothing is written anywhere. Unparseable/old-format artifacts are counted
 # and reported, never silently dropped. Exit 0; exit 2 usage/not-a-repo.
 # --since drops gate runs whose run directory is older than the timestamp, so
-# a post-release cohort can be read without the history it follows. ISO-8601
-# only (YYYY-MM-DD, optionally Thh:mm[:ss[.fff]] and Z or an offset); anything
-# else exits 2 rather than silently reporting the whole history.
+# a post-release cohort can be read without the history it follows. --until
+# drops runs whose directory mtime is at or after the timestamp; together they
+# select the half-open window [since, until), so two reads that share a
+# boundary are disjoint by construction. ISO-8601 only (YYYY-MM-DD, optionally
+# Thh:mm[:ss[.fff]] and Z or an offset); anything else exits 2 rather than
+# silently reporting the whole history.
 set -uo pipefail
 
 command -v node >/dev/null 2>&1 || { echo "gate-telemetry: node not found" >&2; exit 2; }
-json=0; all=0; since=""; repo="."
+json=0; all=0; since=""; until=""; repo="."
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) json=1; shift ;;
@@ -19,6 +22,9 @@ while [ $# -gt 0 ]; do
     --since)
       [ $# -ge 2 ] || { echo "gate-telemetry: --since needs an ISO-8601 timestamp" >&2; exit 2; }
       since="$2"; shift 2 ;;
+    --until)
+      [ $# -ge 2 ] || { echo "gate-telemetry: --until needs an ISO-8601 timestamp" >&2; exit 2; }
+      until="$2"; shift 2 ;;
     -*) echo "gate-telemetry: unknown flag $1" >&2; exit 2 ;;
     *) repo="$1"; shift ;;
   esac
@@ -42,12 +48,12 @@ fi
 # shellcheck disable=SC2016
 node -e '
   const fs = require("fs"), path = require("path");
-  const [base, jsonOut, since, ...keys] = process.argv.slice(1);
+  const [base, jsonOut, since, until, ...keys] = process.argv.slice(1);
   // --since bounds the cohort by run-directory mtime. Date.parse accepts many
   // non-ISO forms, so the syntax is checked first; a bad value is a usage
   // error, never a silent no-op over the whole history.
   const ISO = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
-  const validSince = (v) => {
+  const validIso = (v) => {
     const m = ISO.exec(v); if (!m) return false;
     const y = +m[1], mo = +m[2], d = +m[3];
     const hh = m[4] === undefined ? 0 : +m[4], mi = m[5] === undefined ? 0 : +m[5], ss = m[6] === undefined ? 0 : +m[6];
@@ -56,7 +62,10 @@ node -e '
     return mo >= 1 && mo <= 12 && d >= 1 && d <= days[mo - 1] && hh < 24 && mi < 60 && ss < 60 && Number.isFinite(Date.parse(v));
   };
   const sinceMs = since ? Date.parse(since) : NaN;
-  if (since && !validSince(since)) { console.error("gate-telemetry: --since must be a valid ISO-8601 timestamp, got " + since); process.exit(2); }
+  if (since && !validIso(since)) { console.error("gate-telemetry: --since must be a valid ISO-8601 timestamp, got " + since); process.exit(2); }
+  const untilMs = until ? Date.parse(until) : NaN;
+  if (until && !validIso(until)) { console.error("gate-telemetry: --until must be a valid ISO-8601 timestamp, got " + until); process.exit(2); }
+  if (Number.isFinite(sinceMs) && Number.isFinite(untilMs) && untilMs <= sinceMs) { console.error("gate-telemetry: --until must be later than --since"); process.exit(2); }
   // Churn metrics (2026-09-05 spec): the round distribution was already in
   // byGate.rounds; only the summary was missing, so every churn question had
   // to be answered with a throwaway script over the cache.
@@ -92,6 +101,7 @@ node -e '
     if (fs.existsSync(cr)) for (const run of fs.readdirSync(cr)) {
       if (!fs.statSync(path.join(cr, run)).isDirectory()) continue;
       if (Number.isFinite(sinceMs) && fs.statSync(path.join(cr, run)).mtimeMs < sinceMs) continue;
+      if (Number.isFinite(untilMs) && fs.statSync(path.join(cr, run)).mtimeMs >= untilMs) continue;
       const gr = path.join(cr, run, "gate-round.json");
       if (!fs.existsSync(gr)) { r.oldFormatRuns++; continue; }
       try {
@@ -194,4 +204,4 @@ node -e '
     console.log(`- Degrades by status — ` + (Object.entries(agg.degrades).map(([k, v]) => `${k}: ${v}`).join("; ") || "none"));
     console.log(`- Total pending: ${agg.pending}${agg.oldestPendingDays === null ? "" : `; Oldest pending: ${agg.oldestPendingDays} day(s)`}; Total swept: ${agg.sweptTotal} (${Object.entries(agg.swept).map(([k,v])=>`${k}:${v}`).join(", ") || "-"}); Artifacts skipped: ${agg.skipped}`);
   }
-' "$base" "$json" "$since" "${keys[@]}"
+' "$base" "$json" "$since" "$until" "${keys[@]}"

@@ -169,6 +169,23 @@ stderr="$(bash "$GT" "$churnrepo" --since 2>&1 >/dev/null)"
 rc=$?
 [ "$rc" -eq 2 ] && printf '%s' "$stderr" | grep -q '\--since' && pass "--since without an operand exits 2 with diagnostic" || fail "--since without an operand exits 2 with diagnostic"
 
+# --until bounds a cohort from above: [since, until) creates disjoint windows.
+untiljs="$(bash "$GT" --until 2025-01-01T00:00:00Z "$churnrepo" --json)"
+node -e 'const d=JSON.parse(process.argv[1]);const g=d.repos[0].byGate.task;process.exit(g.runs===2&&g.meanRounds===1?0:1)' "$untiljs" && pass "--until drops runs at or after the timestamp" || fail "--until drops runs at or after the timestamp"
+untilcount="$(bash "$GT" --until 2025-01-01 "$churnrepo" --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(d.repos[0].byGate.task.runs)')"
+sincecount="$(bash "$GT" --since 2025-01-01 "$churnrepo" --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(d.repos[0].byGate.task.runs)')"
+allcount="$(bash "$GT" "$churnrepo" --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(d.repos[0].byGate.task.runs)')"
+[ "$((untilcount + sincecount))" -eq "$allcount" ] && pass "unbounded count equals --until count plus --since count (disjoint split)" || fail "unbounded count equals --until count plus --since count (disjoint split)"
+stderr="$(bash "$GT" --until 09/05/2026 "$churnrepo" 2>&1 >/dev/null)"
+rc=$?
+[ "$rc" -eq 2 ] && printf '%s' "$stderr" | grep -q '\--until' && pass "--until rejects non-ISO format (exit 2, diagnostic)" || fail "--until rejects non-ISO format (exit 2, diagnostic)"
+stderr="$(bash "$GT" "$churnrepo" --until 2>&1 >/dev/null)"
+rc=$?
+[ "$rc" -eq 2 ] && pass "--until without an operand exits 2" || fail "--until without an operand exits 2"
+stderr="$(bash "$GT" --since 2025-01-02 --until 2025-01-01 "$churnrepo" 2>&1 >/dev/null)"
+rc=$?
+[ "$rc" -eq 2 ] && pass "--until before --since exits 2" || fail "--until before --since exits 2"
+
 # Additional malformed round fixtures (null, "", false, [], 0, -1, 1.5) to verify
 # the filter excludes them before conversion. Valid rounds remain [1,1,3,3].
 mkdir -p "$cr3/run-null" "$cr3/run-empty" "$cr3/run-false" "$cr3/run-array" "$cr3/run-zero" "$cr3/run-neg" "$cr3/run-frac"

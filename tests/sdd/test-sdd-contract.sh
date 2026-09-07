@@ -222,6 +222,18 @@ assert_contains "$SDD" "mark todo complete (where kept)" \
 assert_contains "$SDD_RATIONALIZATIONS" "Outside the de-minimis exception" "rationalization row scoped to the exception"
 assert_contains "$SDD_RATIONALIZATIONS" "Resume the implementer at rounds 1-3; dispatch the takeover at rounds 4-5." "rationalization row defers to the round's own rule"
 
+# --- durable fences: helper output claims (Important 1 from 2026-09-05 review) -
+# The helpers print `wrote <path>: <N> ...` lines, never a bare path. Stale
+# "prints a path" / "printed path" claims contradict the correct phrasing already
+# present at other sites and would confuse controllers. `sdd-dir` DOES print a
+# bare path, so "it prints" alone is not fenced.
+EXAMPLE_WORKFLOW="$REPO_ROOT/skills/subagent-driven-development/example-workflow.md"
+for needle in "the file path it prints" "printed path" "prints the path" "prints the unique file path"; do
+  for f in "$SDD" "$REVW" "$REREVW" "$EXAMPLE_WORKFLOW" "$IMPL" "$FIXP"; do
+    assert_not_contains "$f" "$needle" "$(basename "$f") does not claim helpers print a bare path"
+  done
+done
+
 # --- one source of truth for the reviewer read-only clause ---------------
 # Three reviewer templates carry the clause inline so a dispatched reviewer
 # always sees it; the source file is what they must match, and this fence is

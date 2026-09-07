@@ -19,7 +19,7 @@ offenders=""
 for f in "$REPO_ROOT"/hooks/*; do
     [ -f "$f" ] || continue
     # `<<` opens a heredoc; `<<<` is a here-string and writes no pipe.
-    if grep -Eq '<<[^<]' "$f"; then
+    if grep -Eq '(^|[^<])<<([^<]|$)' "$f"; then
         offenders="$offenders $(basename "$f")"
     fi
 done

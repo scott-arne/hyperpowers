@@ -290,6 +290,16 @@ rc=0
 out=$( ( cd "$TEST_ROOT/repo-nomode" && bash "$nomode/task-brief" docs/plan.md 1 ) 2>&1 ) || rc=$?
 if [ "$rc" -eq 0 ]; then pass "task-brief survives stripped exec bits"; else fail "task-brief with stripped exec bits (rc=$rc: $out)"; fi
 
+git -C "$TEST_ROOT/repo-nomode" add -A
+git -C "$TEST_ROOT/repo-nomode" commit -qm "base"
+nomode_base=$(git -C "$TEST_ROOT/repo-nomode" rev-parse HEAD)
+echo more >> "$TEST_ROOT/repo-nomode/docs/plan.md"
+git -C "$TEST_ROOT/repo-nomode" commit -qam "work"
+nomode_head=$(git -C "$TEST_ROOT/repo-nomode" rev-parse HEAD)
+rc=0
+( cd "$TEST_ROOT/repo-nomode" && bash "$nomode/review-package" docs/plan.md "$nomode_base" "$nomode_head" ) >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 0 ]; then pass "review-package survives stripped exec bits"; else fail "review-package with stripped exec bits (rc=$rc)"; fi
+
 echo ""
 echo "Test: helper stdout matches what the skill docs tell controllers to expect"
 make_repo "$TEST_ROOT/repo-stdout"

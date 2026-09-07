@@ -6,13 +6,13 @@
 
 **Goal:** Cut Codex gate rounds-to-convergence by fixing the prompt language that makes every re-review a cold re-derivation, and land the two upstream prose ports, each with fork-side before/after evidence.
 
-**Architecture:** Seven tasks. One establishes the post-Part-1 baseline. Four are measured arms, each a small prose or script change with its own eval scenario, control runs, and treatment runs. Two are upstream prose ports carrying fork-side evidence. Arms run strictly one at a time because they all move the same metric. An arm that does not beat its control is reverted, and the negative result is recorded rather than buried.
+**Architecture:** Twelve tasks, numbered 0 to 11. Task 0 lands the Part 1 follow-ups the 6.13.0 Codex sweep found (a testing guide that hid two suites, a churn test that never asserted the fleet aggregate, a review-base default that truncates multi-commit ranges) and gives `gate-telemetry` a `--since` bound. Task 1 records the baselines. Tasks 2-5 are the gate arms, each a small prose or script change with its own eval scenario, control runs, and treatment runs. Task 6 gives approved-with-notes verdicts a required path for their notes. Tasks 7-8 are upstream prose ports and Task 9 is the arm that gives 6.13.0's two shipped routing edits their before/after evidence, all with fork-side runs. Task 10 measures the lens count; Task 11 releases. Arms run strictly one at a time because they all move the same metric. An arm that does not beat its control is reverted, and the negative result is recorded rather than buried.
 
 **Tech Stack:** Markdown skill prose, Bash, Node.js. Evals run on Quorum (TypeScript, Bun) in the separate `hyperpowers-evals` clone at `evals/`.
 
 ## Global Constraints
 
-- **Part 1 must be released before Task 1 runs.** Part 1's `verdict-normalize` fix changes round-1 convergence on its own. Measuring an arm against a pre-Part-1 control would credit this plan with Part 1's effect. Confirm `git tag --list v6.13.0` returns the tag before starting.
+- **Part 1 must be released and merged before Task 1 runs.** Part 1's `verdict-normalize` fix changes round-1 convergence on its own. Measuring an arm against a pre-Part-1 control would credit this plan with Part 1's effect. Confirm `git merge-base --is-ancestor v6.13.0 HEAD` succeeds before starting — a tag that merely exists proves nothing about the tree you are measuring.
 - **One arm at a time.** Tasks 2 through 5 all move rounds-to-convergence. Do not start an arm's control runs while another arm's change is uncommitted in the tree.
 - **An arm that loses is reverted, not kept.** "No measurable difference" is a losing result for a change to tuned prose. Record it in the evidence note and restore the file with `git show HEAD:<path> > <path>`.
 - **Live eval runs are trusted-maintainer operations.** They spend real API credit and launch agents in dangerous mode. Never add live evals, API keys, or dangerous-mode launches to public CI.
@@ -35,8 +35,219 @@ Four tasks edit a gate section file. Those nine files are covered by a byte-iden
 3. **Use the source line numbers given in each task.** They were verified against the pinned original `9242d4f6bdcdbf373548a8197b515a2e309de03b` by comparing the section file's line to the original's line byte-for-byte. Do not recompute them from a manifest offset.
 4. **A replacement may contain no tab and no backslash.** Both tables are substituted through `awk -v`, which reinterprets backslash escapes identically on each side of the proof, so a mangled replacement would pass unnoticed.
 5. **A replacement may not introduce the words "below" or "above".** The positional-reference candidate set was frozen at the pinned SHA; a new positional reference is a pointer no check validates and the references table structurally cannot host one.
-6. **Bump the pinned edit count.** `test-gate-split-lossless.sh` asserts `[ "$post_edit_count" -eq 10 ]`. Each task that adds rows raises that literal by exactly the number of rows it added, and the counts run 10 → 12 → 13 → 17 → 18 across Tasks 2, 3, 4, and 5 in order. If you execute out of order, use the actual row count.
+6. **Bump the pinned edit count from what the file says now, never from a number in this plan.** `test-gate-split-lossless.sh` asserts `[ "$post_edit_count" -eq N ]` and repeats N in two message strings. In every task that adds rows: read the current N first (`grep -n 'post_edit_count" -eq' tests/codex-review-gate/test-gate-split-lossless.sh`), then set all three occurrences to N plus the number of rows that task appended. A reverted arm restores the previous N, so the sequence a task will see depends on which earlier arms won; a literal copied from a plan would be wrong on every path but one.
 7. **Do not target a referent line.** The proof pins at exactly 2 the number of post-split edits landing on a line the references table points at. The referent lines are 156, 177, 188, 203, 225, 233, 280, 357, 443, 450, 615, 645, 648. None of this plan's targets is among them; keep it that way.
+
+---
+
+### Task 0: Part 1 follow-ups from the 6.13.0 Codex sweep
+
+**Risk tier:** standard — three mechanical corrections and one read-only reporter flag, all offline-testable; `gate-telemetry` is a reporter, not approval authority.
+
+**Files:**
+- Modify: `docs/testing.md` (the "Plugin tests" section)
+- Modify: `skills/requesting-code-review/SKILL.md:27-30` (the `BASE_SHA` block)
+- Modify: `tests/codex-review-gate/test-gate-topology.sh` (one regression assertion)
+- Modify: `skills/requesting-code-review/scripts/gate-telemetry` (`--since`; churn ignores non-numeric rounds)
+- Modify: `tests/codex-review-gate/test-gate-telemetry.sh` (fleet churn assertion, malformed-round case, `--since` cases)
+
+**Interfaces:**
+- Consumes: nothing from other tasks.
+- Produces: `gate-telemetry --since <ISO-8601>`, which drops every gate run whose run directory is older than the timestamp; usable with or without `--all`; a non-ISO value exits 2. Task 1 reads the post-release cohort through it. `churn()` now ignores non-numeric round records instead of counting them as 0.
+
+**Context the implementer needs.** The Codex sweep of release 6.13.0 (gate `run-vTvF2CDw`, three lenses at xhigh) found four things Part 1 left standing, and the final Claude review had deferred a fifth. (1) `docs/testing.md` says every suite is a standalone bash script and offers a loop that echoes on failure and exits 0; `tests/brainstorm-server` runs through `npm test` and `tests/pi` is a Node file, and both were missing from the release's "36 suites green" evidence. (2) The churn test asserts `repos[0].byGate.task` although Task 13 required `aggregate.byGate.task`, and its markdown check scans the whole `--all` output. (3) `requesting-code-review`'s primary `BASE_SHA` example is still `HEAD~1`, which keeps one commit of a multi-commit change; Part 1 fixed only the alternative. (4) `churn()` coerces a malformed round to 0, which biases the mean this plan measures against. (5) Task 1 needs a way to read a post-release cohort without the history before it.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append the following to `tests/codex-review-gate/test-gate-topology.sh`, immediately before its final status block:
+
+```bash
+# The default review base must never be HEAD~1: it silently truncates a
+# multi-commit change to its last commit (6.13.0 sweep finding).
+if grep -q 'git rev-parse HEAD~1' "$REPO_ROOT/skills/requesting-code-review/SKILL.md"; then
+    fail "requesting-code-review offers HEAD~1 as a review base"
+else
+    pass "requesting-code-review never offers HEAD~1 as a review base"
+fi
+```
+
+Append the following to `tests/codex-review-gate/test-gate-telemetry.sh`, after the existing churn block and immediately before the final status line. The fixture state at that point is: key `$key` holds one task run at round 2, key2 holds one spec run, and `$cr3` (the churn repo) holds task runs at rounds 1, 1, 3, 3.
+
+```bash
+# Fleet churn: the aggregate must carry the derived fields, computed over every
+# repository's rounds — task rounds here are [2] (key) and [1,1,3,3] (key3).
+fleetjs="$(bash "$GT" --json --all)"
+node -e 'const d=JSON.parse(process.argv[1]);const g=d.aggregate.byGate.task;process.exit(g.meanRounds===2&&g.firstRound===2&&g.runs===5?0:1)' "$fleetjs" && pass "fleet churn: aggregate meanRounds=2, firstRound=2 over 5 runs" || fail "fleet churn: aggregate meanRounds=2, firstRound=2 over 5 runs"
+fleetmd="$(bash "$GT" --all | sed -n '/Fleet aggregate/,$p')"
+expect "$fleetmd" "task: mean 2, first-round 2/5" "fleet markdown churn line, fleet section only"
+
+# A malformed round record is excluded from the mean, not counted as 0.
+mkdir -p "$cr3/run-bad"
+printf '{"round":"x","ceiling":5,"gate":"task"}\n' > "$cr3/run-bad/gate-round.json"
+badjs="$(bash "$GT" "$churnrepo" --json)"
+node -e 'const d=JSON.parse(process.argv[1]);const g=d.repos[0].byGate.task;process.exit(g.meanRounds===2&&g.runs===5?0:1)' "$badjs" && pass "churn ignores a non-numeric round" || fail "churn ignores a non-numeric round"
+
+# --since bounds the cohort by run-directory mtime and rejects non-ISO input.
+touch -t 202001010000 "$cr3/run-r1a" "$cr3/run-r1b"
+sincejs="$(bash "$GT" --since 2025-01-01T00:00:00Z "$churnrepo" --json)"
+node -e 'const d=JSON.parse(process.argv[1]);const g=d.repos[0].byGate.task;process.exit(g.runs===3&&g.meanRounds===3?0:1)' "$sincejs" && pass "--since drops runs older than the timestamp" || fail "--since drops runs older than the timestamp"
+bash "$GT" --since not-a-date "$churnrepo" >/dev/null 2>&1 && fail "--since rejects a non-ISO value" || pass "--since rejects a non-ISO value"
+```
+
+- [ ] **Step 2: Run both suites to verify they fail**
+
+Run: `bash tests/codex-review-gate/test-gate-topology.sh`
+
+Expected: FAIL on `requesting-code-review offers HEAD~1 as a review base`.
+
+Run: `bash tests/codex-review-gate/test-gate-telemetry.sh`
+
+Expected: FAIL on `churn ignores a non-numeric round` (today the mean is 1.6), on `--since drops runs older than the timestamp` (unknown flag exits 2, so the JSON parse fails), and on `--since rejects a non-ISO value` (the unknown flag exits 2 for the wrong reason — that case passes vacuously today; note it and move on). The two fleet assertions pass already: Part 1 attached the churn fields to the aggregate; the sweep found only that nothing asserted it. They are the fence.
+
+- [ ] **Step 3: Fix the review-base default**
+
+In `skills/requesting-code-review/SKILL.md`, replace the two-line block
+
+```bash
+BASE_SHA=$(git rev-parse HEAD~1)  # or: git merge-base origin/main HEAD
+HEAD_SHA=$(git rev-parse HEAD)
+```
+
+with:
+
+```bash
+# A task-scoped review starts at the commit recorded before the work began.
+# Never HEAD~1: it keeps only the last commit of a multi-commit change.
+BASE_SHA=<the pre-change commit you recorded>
+# A whole-branch review starts at the branch point.
+BASE_SHA=$(git merge-base origin/main HEAD)
+HEAD_SHA=$(git rev-parse HEAD)
+```
+
+- [ ] **Step 4: Add `--since` and harden `churn()`**
+
+In `skills/requesting-code-review/scripts/gate-telemetry` make exactly these edits. The JavaScript lives inside a single-quoted `node -e` string, so no apostrophe may appear in anything you add.
+
+Header, line 2:
+
+```
+# gate-telemetry [--json] [--all] [--since ISO-8601] [repo-dir] — read-only aggregation over
+```
+
+After the header comment block (line 6), add:
+
+```
+# --since drops gate runs whose run directory is older than the timestamp, so
+# a post-release cohort can be read without the history it follows.
+```
+
+Replace `json=0; all=0; repo="."` with `json=0; all=0; since=""; repo="."` and add this case to the argument loop, before the `-*)` case:
+
+```bash
+    --since) since="$2"; shift 2 ;;
+```
+
+Replace the node argv line at the end of the script, `' "$base" "$json" "${keys[@]}"`, with `' "$base" "$json" "$since" "${keys[@]}"`.
+
+Replace `const [base, jsonOut, ...keys] = process.argv.slice(1);` with:
+
+```js
+  const [base, jsonOut, since, ...keys] = process.argv.slice(1);
+  // --since bounds the cohort by run-directory mtime; an unparseable value is
+  // a usage error, never a silent no-op.
+  const sinceMs = since ? Date.parse(since) : NaN;
+  if (since && !Number.isFinite(sinceMs)) { console.error("gate-telemetry: --since must be an ISO-8601 timestamp"); process.exit(2); }
+```
+
+Replace the whole `churn` helper with:
+
+```js
+  const churn = (rounds) => {
+    // A malformed round record is excluded, not counted as 0: this plan
+    // measures against these values.
+    const nums = rounds.map(Number).filter(Number.isFinite);
+    const n = nums.length;
+    if (!n) return { meanRounds: null, firstRound: 0 };
+    const sum = nums.reduce((a, b) => a + b, 0);
+    return {
+      meanRounds: Math.round((sum / n) * 100) / 100,
+      firstRound: nums.filter((r) => r === 1).length,
+    };
+  };
+```
+
+In the run walk, immediately after the line `if (!fs.statSync(path.join(cr, run)).isDirectory()) continue;`, insert:
+
+```js
+      if (Number.isFinite(sinceMs) && fs.statSync(path.join(cr, run)).mtimeMs < sinceMs) continue;
+```
+
+- [ ] **Step 5: Run both suites to verify they pass**
+
+Run: `bash tests/codex-review-gate/test-gate-topology.sh` and `bash tests/codex-review-gate/test-gate-telemetry.sh`
+
+Expected: `STATUS: PASSED` and `ALL PASS`.
+
+- [ ] **Step 6: Rewrite the testing guide's Plugin tests section**
+
+In `docs/testing.md`, replace everything from the line `Every suite is a standalone bash script. There is no aggregate runner and no` through the line `part of any automated run.` (the end of the "Plugin tests" section; `## Skill behavior evals` follows) with the text between the tilde fences, exactly:
+
+~~~markdown
+Most suites are standalone bash scripts; two directories are not. There is no
+aggregate runner and no CI; run the suites that cover what you changed.
+
+| Directory | Covers | Runner |
+|---|---|---|
+| `tests/hooks/` | session-start context injection, the ungated notice, the Codex broker janitor, the hooks heredoc fence | `bash tests/hooks/test-*.sh` |
+| `tests/codex-review-gate/` | gate scripts (`verdict-normalize`, `gate-round`, `gate-telemetry`, `ungated-ledger`, preflight, broker health), gate topology, and the gate-split losslessness proof | `bash tests/codex-review-gate/test-*.sh` |
+| `tests/sdd/` | the subagent-driven-development contract | `bash tests/sdd/test-sdd-contract.sh` |
+| `tests/claude-code/` | offline: SDD scratch-dir derivation, helper stdout and range guards, delivery resolution, worktree path policy; live: skill tests that spawn the real `claude` CLI | offline: `test-sdd-dir-path.sh`, `test-codex-review-dir-path.sh`, `test-delivery-resolution.sh`, `test-worktree-path-policy.sh` with `bash`; live: `run-skill-tests.sh` |
+| `tests/packaging/` | manifest wiring and the orphaned-skill-file guard | `bash tests/packaging/test-*.sh` |
+| `tests/brainstorm-server/` | the brainstorm server: JavaScript unit tests plus the start/stop and Windows-lifecycle shell tests | `cd tests/brainstorm-server && npm test` |
+| `tests/pi/` | the Pi extension | `node tests/pi/test-pi-extension.mjs` |
+| `tests/opencode/`, `tests/kimi/`, `tests/antigravity/` | per-harness plugin loading, bootstrap caching, tool registration | each directory's `run-tests.sh` |
+| `tests/writing-skills/`, `tests/systematic-debugging/` | skill-specific structural checks | `bash tests/<dir>/test-*.sh` |
+| `tests/explicit-skill-requests/` | Haiku-specific, multi-turn, and skill-name-prompted behavior (live) | `tests/explicit-skill-requests/run-all.sh` |
+| `tests/shell-lint/` | shellcheck over the repo's shell scripts | `bash tests/shell-lint/test-lint-shell.sh` |
+
+Run one suite directly:
+
+```bash
+bash tests/codex-review-gate/test-verdict-normalize.sh
+```
+
+Run a directory's worth and fail if any suite fails. A loop that only echoes on
+failure exits 0 and reads as green:
+
+```bash
+fails=0
+for t in tests/hooks/test-*.sh; do bash "$t" || { echo "FAILED: $t"; fails=$((fails + 1)); }; done
+[ "$fails" -eq 0 ]
+```
+
+The offline set is every `test-*.sh` outside `tests/claude-code/` and
+`tests/explicit-skill-requests/`, the four offline `tests/claude-code/` suites
+named in the table, `npm test` in `tests/brainstorm-server/`, and the Pi Node
+file. The live suites spawn the real `claude` CLI: they need credentials, take
+minutes, and are not part of any automated run.
+~~~
+
+- [ ] **Step 7: Verify the guide and run the two non-bash suites it now names**
+
+Run: `grep -n 'Every suite is a standalone bash script' docs/testing.md || echo "false claim removed"`
+
+Expected: `false claim removed`.
+
+Run: `( cd tests/brainstorm-server && npm test ) 2>&1 | tail -3` and `node tests/pi/test-pi-extension.mjs 2>&1 | tail -3`
+
+Expected: both green (on 6.13.0 they were: 7 and 4 shell-side passes plus the JS files, and Pi 6/6). Record the tail lines in your report.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add docs/testing.md skills/requesting-code-review/SKILL.md skills/requesting-code-review/scripts/gate-telemetry tests/codex-review-gate/test-gate-topology.sh tests/codex-review-gate/test-gate-telemetry.sh
+git commit -m "fix(review): the 6.13.0 sweep found a guide that hid two suites, a fleet metric nothing asserted, and a base default that truncates reviews"
+```
 
 ---
 
@@ -48,26 +259,34 @@ Four tasks edit a gate section file. Those nine files are covered by a byte-iden
 - Create: `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md`
 
 **Interfaces:**
-- Consumes: Part 1's released `gate-telemetry` with churn metrics, and Part 1's `verdict-normalize` fix.
-- Produces: the evidence note that Tasks 2 through 7 each append a section to. Its "Baseline" section holds the mean-rounds and first-round-convergence figures every arm compares against.
+- Consumes: Part 1's released `gate-telemetry` with churn metrics, Task 0's `--since` flag, and Part 1's `verdict-normalize` fix.
+- Produces: the evidence note that every later task appends a section to. Its "Baselines" section holds two lines: the historical fleet figures (every cached run predates 6.13.0) and the post-release cohort read through `--since`, which is expected to be small or empty when this task runs and is re-read at release. Arm verdicts rest on each arm's own control and treatment runs, never on these fleet lines.
 
-**Context the implementer needs.** The 2026-09-05 analysis measured task gates at mean 2.24 rounds with 27% converging in round 1, over 468 runs. Those numbers predate Part 1. Part 1's approval fix alone should move them, so this task re-reads them from the shipped tool and writes down the real starting line.
+**Context the implementer needs.** The 2026-09-05 analysis measured task gates at mean 2.24 rounds with 27% converging in round 1, over 468 runs. Every run in the telemetry cache still predates 6.13.0, so an unbounded `gate-telemetry --all` reports exactly that pre-fix history and must not be labeled a post-fix baseline (the 6.13.0 sweep flagged precisely this). This task records the history as history, reads the post-release cohort through `--since` (bounded at the release commit's timestamp), and states plainly that the arms are judged by their own control and treatment runs.
 
-- [ ] **Step 1: Confirm Part 1 shipped**
+- [ ] **Step 1: Confirm Part 1 shipped and is in this tree**
 
 ```bash
-git tag --list v6.13.0
+git merge-base --is-ancestor v6.13.0 HEAD && echo "v6.13.0 is an ancestor of HEAD"
+grep '"version"' .claude-plugin/plugin.json
 ```
 
-Expected: `v6.13.0`. If the tag is absent, STOP. This plan's measurements are invalid without it.
+Expected: the echo line, and a version of 6.13.0 or later. If either fails, STOP. This plan's measurements are invalid on a tree that does not contain the release.
 
-- [ ] **Step 2: Read the churn baseline from the shipped tool**
+- [ ] **Step 2: Read both baselines from the shipped tool**
 
 ```bash
 bash skills/requesting-code-review/scripts/gate-telemetry --all
 ```
 
-Copy the fleet aggregate's `Rounds by gate` line verbatim. It reports, per gate, mean rounds, first-round convergence, backstops, and the raw round list.
+Copy the fleet aggregate's `Rounds by gate` line verbatim; this is the historical line, and every run behind it predates the release. Then read the post-release cohort, bounded at the release commit:
+
+```bash
+since="$(git log -1 --format=%cI v6.13.0)"
+bash skills/requesting-code-review/scripts/gate-telemetry --all --since "$since"
+```
+
+Copy that fleet `Rounds by gate` line too, with the `$since` value. Expect it to be nearly empty: real post-release gate runs accrue only as this plan and later work run. That emptiness is the honest state, not a defect.
 
 - [ ] **Step 3: Verify the eval harness is green**
 
@@ -109,13 +328,18 @@ The four gate changes in this plan all move one metric — Codex rounds to
 convergence — so a single run cannot attribute a movement to a cause. Each
 arm ships alone, against the same baseline, with its own scenario.
 
-## Baseline (post-6.13.0)
+## Baselines
 
-<paste the gate-telemetry fleet aggregate "Rounds by gate" line here>
+Historical fleet (every cached run predates 6.13.0):
+<paste the unbounded gate-telemetry fleet "Rounds by gate" line here>
 
-Read from `gate-telemetry --all` after 6.13.0 shipped. This is the line every
-arm below compares against. It already includes the effect of 6.13.0's
-`verdict-normalize` fix, which is why Part 1 released separately.
+Post-release cohort (gate-telemetry --all --since <the release commit's %cI timestamp>, read <today's date>):
+<paste the bounded fleet "Rounds by gate" line here, or "empty" if no run has landed yet>
+
+The historical line is context, not a control: it is the number Part 1 set
+out to move. The post-release cohort is re-read at release so the note
+carries the fleet state after this plan's arms shipped. Each arm's verdict
+rests on its own control and treatment runs, recorded in its section.
 
 ## Arms
 ```
@@ -124,7 +348,7 @@ arm below compares against. It already includes the effect of 6.13.0's
 
 ```bash
 git add docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md
-git commit -m "docs(evals): record the post-6.13.0 gate churn baseline the calibration arms measure against"
+git commit -m "docs(evals): record the historical fleet churn and the empty post-6.13.0 cohort the calibration arms are judged beside"
 ```
 
 ---
@@ -137,7 +361,7 @@ git commit -m "docs(evals): record the post-6.13.0 gate churn baseline the calib
 - Modify: `skills/requesting-code-review/recipe-code.md:53`
 - Modify: `skills/requesting-code-review/recipe-code.md:57`
 - Modify: `tests/codex-review-gate/gate-post-split-edits.tsv` (two new rows)
-- Modify: `tests/codex-review-gate/test-gate-split-lossless.sh` (edit count 10 → 12)
+- Modify: `tests/codex-review-gate/test-gate-split-lossless.sh` (edit count plus 2)
 - Create (evals repo): `evals/scenarios/codex-gate-severity-calibration/`
 
 **Interfaces:**
@@ -178,7 +402,14 @@ cd evals && bun run quorum check codex-gate-severity-calibration
 cd evals && bun run quorum check codex-gate-severity-calibration-still-blocks
 ```
 
-- [ ] **Step 2: Run the control**
+- [ ] **Step 2: Commit the scenario in the evals repo**
+
+```bash
+git -C evals add scenarios/codex-gate-severity-calibration scenarios/codex-gate-severity-calibration-still-blocks
+git -C evals commit -m "scenario: the code gate blocks on a medium finding when severity has no scope anchor"
+```
+
+- [ ] **Step 3: Run the control**
 
 With this repository's tree unmodified, run the scenario three times:
 
@@ -196,14 +427,7 @@ cd evals && bun run quorum run scenarios/codex-gate-severity-calibration-still-b
 
 Expected: the control passes all three. A reviewer with no calibration already blocks on a real high-severity defect. If the guard fails in the control, the scenario is miscalibrated — fix it before measuring anything, because a guard that fails without the change cannot detect harm from the change.
 
-If the control PASSES on all three runs, STOP and report. The defect does not reproduce, the change has no evidence behind it, and per this repository's rules it must not ship. Record the null result in the evidence note and skip to the next task.
-
-- [ ] **Step 3: Commit the scenario in the evals repo**
-
-```bash
-git -C evals add scenarios/codex-gate-severity-calibration scenarios/codex-gate-severity-calibration-still-blocks
-git -C evals commit -m "scenario: the code gate blocks on a medium finding when severity has no scope anchor"
-```
+If the control PASSES on all three runs, STOP and report. The defect does not reproduce, the change has no evidence behind it, and per this repository's rules it must not ship. Record the null result in the evidence note and skip to the next task; the scenario stays committed in the evals repo, because a null result is evidence too; the scenario stays committed in the evals repo, because a null result is evidence too.
 
 - [ ] **Step 4: Add the calibration to the focus text**
 
@@ -244,19 +468,7 @@ Expected: `3 326 severity-calibration` and `3 330 severity-calibration`.
 
 - [ ] **Step 6: Bump the pinned edit count**
 
-In `tests/codex-review-gate/test-gate-split-lossless.sh`, change:
-
-```bash
-if [ "$post_edit_count" -eq 10 ]; then
-```
-
-to:
-
-```bash
-if [ "$post_edit_count" -eq 12 ]; then
-```
-
-and update the two adjacent message strings from `exactly 10 declared post-split edits` to `exactly 12 declared post-split edits`.
+Read the current pin: `grep -n 'post_edit_count" -eq' tests/codex-review-gate/test-gate-split-lossless.sh`. Call it N. This task appended two rows, so set the `-eq N` test and both adjacent `exactly N declared post-split edits` message strings to N plus 2. Do not copy a number from this plan: N is 10 only if no earlier task has added rows.
 
 - [ ] **Step 7: Prove the edit is lossless**
 
@@ -321,7 +533,7 @@ If the arm lost, commit only the evidence note, with the message `docs(evals): s
 **Files:**
 - Modify: `skills/requesting-code-review/gate-fix-loop.md:22`
 - Modify: `tests/codex-review-gate/gate-post-split-edits.tsv` (one new row)
-- Modify: `tests/codex-review-gate/test-gate-split-lossless.sh` (edit count 12 → 13)
+- Modify: `tests/codex-review-gate/test-gate-split-lossless.sh` (edit count plus 1)
 - Create (evals repo): `evals/scenarios/codex-gate-re-review-focus-is-fixed/`
 
 **Interfaces:**
@@ -347,7 +559,14 @@ Create `evals/scenarios/codex-gate-re-review-focus-is-fixed/`. It must:
 
 Validate: `cd evals && bun run quorum check codex-gate-re-review-focus-is-fixed`
 
-- [ ] **Step 2: Run the control**
+- [ ] **Step 2: Commit the scenario in the evals repo**
+
+```bash
+git -C evals add scenarios/codex-gate-re-review-focus-is-fixed
+git -C evals commit -m "scenario: the re-review focus string restates a ledger it already hands over as a path"
+```
+
+- [ ] **Step 3: Run the control**
 
 Run three times against the unmodified tree:
 
@@ -357,14 +576,7 @@ cd evals && bun run quorum run scenarios/codex-gate-re-review-focus-is-fixed --c
 
 Record each run's word count and pass or fail. Expected: the control fails, with focus strings well over 250 words.
 
-If all three pass, STOP, record the null result, and skip to the next task.
-
-- [ ] **Step 3: Commit the scenario in the evals repo**
-
-```bash
-git -C evals add scenarios/codex-gate-re-review-focus-is-fixed
-git -C evals commit -m "scenario: the re-review focus string restates a ledger it already hands over as a path"
-```
+If all three pass, STOP, record the null result, and skip to the next task; the scenario stays committed in the evals repo, because a null result is evidence too.
 
 - [ ] **Step 4: Replace the line with the recipe**
 
@@ -392,7 +604,7 @@ Expected: `3 563 fixed-rereview-recipe`.
 
 - [ ] **Step 6: Bump the pinned edit count**
 
-In `tests/codex-review-gate/test-gate-split-lossless.sh`, change `-eq 12` to `-eq 13` and both message strings from `exactly 12` to `exactly 13`.
+Read the current pin (`grep -n 'post_edit_count" -eq' tests/codex-review-gate/test-gate-split-lossless.sh`), call it N, and set the `-eq` test and both `exactly N declared post-split edits` message strings to N plus 1 (this task appended one row). N depends on which earlier arms won; never copy it from this plan.
 
 - [ ] **Step 7: Prove the edit is lossless**
 
@@ -424,7 +636,7 @@ git show HEAD:tests/codex-review-gate/test-gate-split-lossless.sh > tests/codex-
 bash tests/codex-review-gate/test-gate-split-lossless.sh
 ```
 
-Then record the loss and skip to Step 11. Note in the evidence note that Task 4's edit-count arithmetic shifts by one if this arm reverted.
+Then record the loss and skip to Step 11. The revert restores the previous edit count, which is why every count step reads the file rather than this plan.
 
 - [ ] **Step 10: Append the evidence section**
 
@@ -451,7 +663,7 @@ If the arm lost, commit only the evidence note, with the message `docs(evals): a
 - Modify: `skills/requesting-code-review/gate-fix-loop.md:33`
 - Modify: `skills/requesting-code-review/gate-fix-loop.md:34`
 - Modify: `tests/codex-review-gate/gate-post-split-edits.tsv` (four new rows)
-- Modify: `tests/codex-review-gate/test-gate-split-lossless.sh` (edit count 13 → 17)
+- Modify: `tests/codex-review-gate/test-gate-split-lossless.sh` (edit count plus 4)
 - Create (evals repo): `evals/scenarios/codex-gate-re-review-carries-forward/`
 
 **Interfaces:**
@@ -478,7 +690,14 @@ Create `evals/scenarios/codex-gate-re-review-carries-forward/`. It must:
 
 Validate: `cd evals && bun run quorum check codex-gate-re-review-carries-forward`
 
-- [ ] **Step 2: Run the control**
+- [ ] **Step 2: Commit the scenario in the evals repo**
+
+```bash
+git -C evals add scenarios/codex-gate-re-review-carries-forward
+git -C evals commit -m "scenario: a pre-existing defect outside the fix diff extends a loop chartered for the fix"
+```
+
+- [ ] **Step 3: Run the control**
 
 Run three times against the unmodified tree:
 
@@ -488,14 +707,7 @@ cd evals && bun run quorum run scenarios/codex-gate-re-review-carries-forward --
 
 Expected: the control fails by opening round 3 to fix the pre-existing defect.
 
-If all three pass, STOP, record the null result, and skip to the next task.
-
-- [ ] **Step 3: Commit the scenario in the evals repo**
-
-```bash
-git -C evals add scenarios/codex-gate-re-review-carries-forward
-git -C evals commit -m "scenario: a pre-existing defect outside the fix diff extends a loop chartered for the fix"
-```
+If all three pass, STOP, record the null result, and skip to the next task; the scenario stays committed in the evals repo, because a null result is evidence too.
 
 - [ ] **Step 4: Replace the four lines**
 
@@ -557,7 +769,7 @@ Expected: four rows, each reading `3 <srcline> carry-forward-bar`.
 
 - [ ] **Step 6: Bump the pinned edit count**
 
-In `tests/codex-review-gate/test-gate-split-lossless.sh`, change `-eq 13` to `-eq 17` and both message strings from `exactly 13` to `exactly 17`.
+Read the current pin (`grep -n 'post_edit_count" -eq' tests/codex-review-gate/test-gate-split-lossless.sh`), call it N, and set the `-eq` test and both `exactly N declared post-split edits` message strings to N plus 4 (this task appended four rows). N depends on which earlier arms won; never copy it from this plan.
 
 - [ ] **Step 7: Prove the edit is lossless**
 
@@ -615,7 +827,7 @@ If the arm lost, commit only the evidence note, with the message `docs(evals): c
 - Modify: `skills/requesting-code-review/gate-fix-loop.md:87`
 - Modify: `skills/subagent-driven-development/SKILL.md:491-503`
 - Modify: `tests/codex-review-gate/gate-post-split-edits.tsv` (one new row)
-- Modify: `tests/codex-review-gate/test-gate-split-lossless.sh` (edit count 17 → 18)
+- Modify: `tests/codex-review-gate/test-gate-split-lossless.sh` (edit count plus 1)
 - Test: `tests/codex-review-gate/test-gate-round.sh`
 
 **Interfaces:**
@@ -848,7 +1060,7 @@ tail -1 tests/codex-review-gate/gate-post-split-edits.tsv | awk -F'\t' '{print N
 
 Expected: `3 628 consumed-ceiling`.
 
-In `tests/codex-review-gate/test-gate-split-lossless.sh`, change `-eq 17` to `-eq 18` and both message strings from `exactly 17` to `exactly 18`.
+Read the current pin (`grep -n 'post_edit_count" -eq' tests/codex-review-gate/test-gate-split-lossless.sh`), call it N, and set the `-eq` test and both `exactly N declared post-split edits` message strings to N plus 1 (this task appended one row). N depends on which earlier arms won; never copy it from this plan.
 
 - [ ] **Step 9: Prove the edit is lossless and the gate still contracts**
 
@@ -873,7 +1085,83 @@ git commit -m "fix(gate): nineteen task gates recorded ceilings the shared cap m
 
 ---
 
-### Task 6: Upstream port — the project's suite defines green
+### Task 6: An approved-with-notes verdict keeps its notes
+
+**Risk tier:** standard — one gate section line with losslessness bookkeeping, plus a contract assertion; it changes what the controller records, not what the reviewer judges.
+
+**Files:**
+- Modify: `skills/requesting-code-review/gate-findings.md:48`
+- Modify: `tests/codex-review-gate/gate-post-split-edits.tsv` (one new row)
+- Modify: `tests/codex-review-gate/test-gate-split-lossless.sh` (edit count plus 1)
+- Modify: `tests/codex-review-gate/test-gate-contract.sh` (one new assertion)
+
+**Interfaces:**
+- Consumes: 6.13.0's `verdict-normalize`, whose JSON path now returns `{"result":"approved","verdict":"needs-attention",...}` for a capture with only medium/low findings.
+- Produces: nothing callable. The gate's completion-check prose now names what a controller does with that capture.
+
+**Context the implementer needs.** The 6.13.0 sweep's correctness lens raised this as a medium finding, and the sweep itself then demonstrated it: the release-commit review converged through exactly this path, and its two medium notes reached a ledger only because the controller chose to write them down. `gate-findings.md` tells the controller to read raw findings only on `blocking`, so an approved-with-notes capture can converge with its notes unread, contrary to spec D2's claim that the findings still travel to the round ledger. The fix is one sentence in the completion check. The line is `gate-findings.md:48`, which is source line 441 of the pinned original (verified byte-for-byte); it is not a referent line. Line 49 begins `fixing; normalization gates only the decision.`, so the replacement must end with `read the raw findings text as usual to do the` exactly as the current line does, or the paragraph breaks.
+
+No eval arm: this instruction is bookkeeping the controller performs after the reviewer has spoken, and its presence is what the contract suite can check. If the plan gate disagrees, it says so before this task runs.
+
+- [ ] **Step 1: Write the failing assertion**
+
+In `tests/codex-review-gate/test-gate-contract.sh`, immediately before the final status block, add:
+
+```bash
+assert_contains "$GATE" "the capture carries medium/low notes: read them and record each in the round ledger" \
+  "approved-with-notes findings are recorded, not dropped"
+```
+
+Run: `bash tests/codex-review-gate/test-gate-contract.sh`
+
+Expected: FAIL on that one assertion.
+
+- [ ] **Step 2: Replace the line**
+
+In `skills/requesting-code-review/gate-findings.md`, replace line 48 in full with this single line:
+
+```
+of output. On `approved` reached through a `needs-attention` verdict, the capture carries medium/low notes: read them and record each in the round ledger (and in the skill's Minor ledger, if it keeps one) before treating the round as converged. On `blocking`, read the raw findings text as usual to do the
+```
+
+Read lines 46-50 back and confirm the paragraph flows into line 49.
+
+- [ ] **Step 3: Add the losslessness row and bump the count**
+
+Do not retype the line; extract it so the table's copy is byte-identical:
+
+```bash
+printf '%s\t%s\t%s\n' 441 approved-with-notes "$(sed -n '48p' skills/requesting-code-review/gate-findings.md)" >> tests/codex-review-gate/gate-post-split-edits.tsv
+tail -1 tests/codex-review-gate/gate-post-split-edits.tsv | awk -F'\t' '{print NF, $1, $2}'
+```
+
+Expected: `3 441 approved-with-notes`.
+
+Read the current pin (`grep -n 'post_edit_count" -eq' tests/codex-review-gate/test-gate-split-lossless.sh`), call it N, and set the `-eq` test and both `exactly N declared post-split edits` message strings to N plus 1.
+
+- [ ] **Step 4: Prove the edit is lossless and the contract holds**
+
+```bash
+bash tests/codex-review-gate/test-gate-split-lossless.sh
+bash tests/codex-review-gate/test-gate-contract.sh
+```
+
+Expected: `STATUS: PASSED` from both.
+
+- [ ] **Step 5: Append the evidence section**
+
+Add `### Approved-with-notes bookkeeping` to `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md`: the sweep finding, the release-commit review that exercised the path, and why no arm was run.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add skills/requesting-code-review/gate-findings.md tests/codex-review-gate/gate-post-split-edits.tsv tests/codex-review-gate/test-gate-split-lossless.sh tests/codex-review-gate/test-gate-contract.sh docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md
+git commit -m "fix(gate): an approval that carried notes had no rule saying anyone reads them"
+```
+
+---
+
+### Task 7: Upstream port — the project's suite defines green
 
 **Risk tier:** standard — behavior-shaping prose in a frequently-loaded skill, requiring fork-side evidence.
 
@@ -901,7 +1189,14 @@ Create `evals/scenarios/tdd-runs-the-project-suite/`. It must:
 
 Validate: `cd evals && bun run quorum check tdd-runs-the-project-suite`
 
-- [ ] **Step 2: Run the control**
+- [ ] **Step 2: Commit the scenario in the evals repo**
+
+```bash
+git -C evals add scenarios/tdd-runs-the-project-suite
+git -C evals commit -m "scenario: a green single-file test run reported as a green suite"
+```
+
+- [ ] **Step 3: Run the control**
 
 Four runs against the unmodified tree, one per agent, so a result that is really one model's quirk cannot pass as a fleet effect:
 
@@ -912,13 +1207,6 @@ cd evals && bun run quorum run-all --scenarios tdd-runs-the-project-suite --codi
 Record each result. Expected: most fail.
 
 If all four pass, STOP and record the null result. Upstream's measurement does not license shipping into this fork without fork-side evidence.
-
-- [ ] **Step 3: Commit the scenario in the evals repo**
-
-```bash
-git -C evals add scenarios/tdd-runs-the-project-suite
-git -C evals commit -m "scenario: a green single-file test run reported as a green suite"
-```
 
 - [ ] **Step 4: Add the guidance**
 
@@ -977,7 +1265,7 @@ If the arm lost, commit only the evidence note, with the message `docs(evals): t
 
 ---
 
-### Task 7: Upstream port — the tooling question in a new project's design
+### Task 8: Upstream port — the tooling question in a new project's design
 
 **Risk tier:** standard — behavior-shaping prose in a frequently-loaded skill, requiring fork-side evidence.
 
@@ -1004,7 +1292,14 @@ Create `evals/scenarios/brainstorming-asks-tooling-question/`. It must:
 
 Validate: `cd evals && bun run quorum check brainstorming-asks-tooling-question`
 
-- [ ] **Step 2: Run the control**
+- [ ] **Step 2: Commit the scenario in the evals repo**
+
+```bash
+git -C evals add scenarios/brainstorming-asks-tooling-question
+git -C evals commit -m "scenario: a new project's design never asks which tooling to stand up"
+```
+
+- [ ] **Step 3: Run the control**
 
 Run three times against the unmodified tree:
 
@@ -1015,13 +1310,6 @@ cd evals && bun run quorum run scenarios/brainstorming-asks-tooling-question --c
 Record each result. Expected: all three fail.
 
 If all three pass, STOP and record the null result.
-
-- [ ] **Step 3: Commit the scenario in the evals repo**
-
-```bash
-git -C evals add scenarios/brainstorming-asks-tooling-question
-git -C evals commit -m "scenario: a new project's design never asks which tooling to stand up"
-```
 
 - [ ] **Step 4: Add the bullet**
 
@@ -1072,7 +1360,93 @@ If the arm lost, commit only the evidence note, with the message `docs(evals): t
 
 ---
 
-### Task 8: Lens-count measurement and decision
+### Task 9: Arm D — evidence for the two routing edits 6.13.0 shipped
+
+**Risk tier:** standard — no new prose; this arm measures prose that already shipped and reverts it if the measurement says so.
+
+**Files:**
+- Create (evals repo): `evals/scenarios/executing-plans-keeps-inline-request/`
+- Create (evals repo): `evals/scenarios/executing-plans-keeps-inline-request-control/`
+- Create (evals repo): `evals/scenarios/requesting-code-review-hands-off-to-receiving/`
+- Create (evals repo): `evals/scenarios/requesting-code-review-hands-off-to-receiving-control/`
+- Conditionally modify: `skills/executing-plans/SKILL.md:14` and `skills/requesting-code-review/SKILL.md` step 3 (only if a scenario loses)
+
+**Interfaces:**
+- Consumes: Task 1's evidence note.
+- Produces: an appended `### Arm D` section. If a scenario loses, a revert commit restoring that file's 6.12.0 text.
+
+**Context the implementer needs.** 6.13.0 shipped two routing edits as "mechanically checkable contradictions": `executing-plans/SKILL.md:14` now says the skill is the inline path by request and must not re-open the choice, and `requesting-code-review` step 3 now carries a REQUIRED SUB-SKILL pointer to `receiving-code-review`. The 6.13.0 Codex sweep held that both are behavior-shaping and shipped without the before/after evidence this repository requires. This arm supplies it after the fact. The treatment is the tree as it is. The control is the 6.12.0 text of the same file, which the control scenario's `setup.sh` writes over the staged plugin copy before the session starts — read how the harness stages the plugin from the parent checkout (see `evals/README.md`, "stages the local Superpowers plugin under the isolated home", and the setup helpers under `evals/src/`) and obtain the old text with `git show v6.12.0:skills/executing-plans/SKILL.md` (and `git show v6.12.0:skills/requesting-code-review/SKILL.md`) from the hyperpowers checkout the harness mounts.
+
+Because the treatment already shipped, "the arm loses" means a revert: a follow-up commit restoring that file's 6.12.0 text, with the loss recorded in the evidence note.
+
+- [ ] **Step 1: Write the two scenario pairs**
+
+`executing-plans-keeps-inline-request`: stage a small repo with a two-task plan under `docs/hyperpowers/plans/`; the prompt asks for the plan to be executed "inline, in this session, without subagents". Assert in `post()` that `hyperpowers:executing-plans` was invoked, that `hyperpowers:subagent-driven-development` was not, and that no subagent was dispatched. Acceptance criteria: the agent executes inline and never proposes switching to SDD. The `-control` twin is identical except its `setup.sh` overwrites the staged `skills/executing-plans/SKILL.md` with the `v6.12.0` text.
+
+`requesting-code-review-hands-off-to-receiving`: stage a small repo with a committed change and a prompt asking for a code review of it. Assert in `post()` that `hyperpowers:requesting-code-review` was invoked and that `hyperpowers:receiving-code-review` was invoked after the review result arrived and before any fix was applied. Acceptance criteria: findings were treated as claims to evaluate, with at least one explicitly weighed rather than executed. The `-control` twin overwrites the staged `skills/requesting-code-review/SKILL.md` with the `v6.12.0` text.
+
+Set `status: ready` and `quorum_tier: full` in every `story.md`; restrict to Claude-family agents. Validate all four with `cd evals && bun run quorum check <name>`.
+
+- [ ] **Step 2: Commit the scenarios in the evals repo**
+
+```bash
+git -C evals add scenarios/executing-plans-keeps-inline-request scenarios/executing-plans-keeps-inline-request-control scenarios/requesting-code-review-hands-off-to-receiving scenarios/requesting-code-review-hands-off-to-receiving-control
+git -C evals commit -m "scenario: before/after pairs for the two routing edits 6.13.0 shipped"
+```
+
+- [ ] **Step 3: Run the controls**
+
+Three runs of each `-control` scenario:
+
+```bash
+cd evals && bun run quorum run scenarios/executing-plans-keeps-inline-request-control --coding-agent claude
+```
+
+```bash
+cd evals && bun run quorum run scenarios/requesting-code-review-hands-off-to-receiving-control --coding-agent claude
+```
+
+Record each run. Expected: the controls fail — the 6.12.0 text pushed inline sessions toward SDD and never routed to `receiving-code-review`. If a control passes all three, that edit had no defect to fix: record the null result and treat that edit as unsupported (see Step 5).
+
+- [ ] **Step 4: Run the treatments**
+
+Three runs of each treatment scenario against the unmodified tree:
+
+```bash
+cd evals && bun run quorum run scenarios/executing-plans-keeps-inline-request --coding-agent claude
+```
+
+```bash
+cd evals && bun run quorum run scenarios/requesting-code-review-hands-off-to-receiving --coding-agent claude
+```
+
+**Decision rule, per edit:** the edit is supported if its treatment passes at least 2 of 3 while its control passed at most 1 of 3. Each edit is judged on its own pair.
+
+- [ ] **Step 5: Revert any edit the measurement does not support**
+
+For an unsupported edit, restore the 6.12.0 text of that file and commit:
+
+```bash
+git show v6.12.0:skills/executing-plans/SKILL.md > skills/executing-plans/SKILL.md
+git commit -am "revert(executing-plans): the inline-path note did not beat its control"
+```
+
+or, for the other edit, the same with `skills/requesting-code-review/SKILL.md` — but that file also carries Task 0's `BASE_SHA` change, so restore only the step 3 block by hand to its 6.12.0 four bullets rather than overwriting the file. Then run `bash tests/codex-review-gate/test-gate-topology.sh`: the routing assertion 6.13.0 added will fail, and the revert commit must remove that assertion too, naming the measurement in its message.
+
+- [ ] **Step 6: Append the evidence section**
+
+Add `### Arm D — the routing edits 6.13.0 shipped` to the evidence note: why the arm exists (the sweep finding), the four scenario names, control and treatment results run by run per edit, and the verdict per edit.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md
+git commit -m "docs(evals): before/after evidence for the two routing edits 6.13.0 shipped without it"
+```
+
+---
+
+### Task 10: Lens-count measurement and decision
 
 **Risk tier:** standard — the deliverable is a measurement and a recorded decision; a change ships only if the measurement supports one.
 
@@ -1081,7 +1455,7 @@ If the arm lost, commit only the evidence note, with the message `docs(evals): t
 - Conditionally modify: `skills/requesting-code-review/gate-lenses.md` and the losslessness tables, only if the measurement supports a change
 
 **Interfaces:**
-- Consumes: Task 1's baseline, and whichever of Tasks 2 through 5 won.
+- Consumes: Task 1's baselines, and whichever of Tasks 2 through 5 won.
 - Produces: an appended `### Lens count` section in the evidence note.
 
 **Context the implementer needs.** Round 1 of a code gate fans out to three lenses. Their measured needs-attention rates are correctness 55% over 402 captures, contracts-and-integration 59% over 352, and tests-and-evidence 69% over 401, at a mean of 0.94 findings per lens capture. The round converges only when every capture in the set approves, so three independent lenses at those rates make a round-1 convergence structurally unlikely. That is one mechanical explanation for the 27% first-round convergence rate.
@@ -1131,7 +1505,7 @@ git commit -m "docs(evals): measure whether the three-lens fan-out still explain
 
 ---
 
-### Task 9: Release
+### Task 11: Release
 
 **Risk tier:** standard — publishes every arm that won.
 
@@ -1141,7 +1515,7 @@ git commit -m "docs(evals): measure whether the three-lens fan-out still explain
 
 **Interfaces:**
 - Consumes: every preceding task's commits.
-- Produces: a `v6.14.0` tag.
+- Produces: a `v6.14.0` tag. Before tagging, Task 1's post-release cohort line is re-read and appended to the evidence note.
 
 **Context the implementer needs.** This task runs last. `vrzn` owns every version string. The bump is `minor` because Task 5 adds a flag. If every arm lost and only Task 5 and the evidence note shipped, the bump is still `minor` for that flag.
 
@@ -1163,9 +1537,19 @@ bash tests/codex-review-gate/test-gate-topology.sh
 bash tests/codex-review-gate/test-verdict-normalize.sh
 bash tests/codex-review-gate/test-gate-telemetry.sh
 bash tests/packaging/test-no-orphan-skill-files.sh
+bash tests/sdd/test-sdd-contract.sh
+( cd tests/brainstorm-server && npm test )
+node tests/pi/test-pi-extension.mjs
 ```
 
-Expected: `STATUS: PASSED` from each. If any fails, STOP and report. Do not release over a red suite.
+Expected: every bash suite prints `STATUS: PASSED` or `ALL PASS`, `npm test` and the Pi file end green. If any fails, STOP and report. Do not release over a red suite.
+
+Then re-read the post-release cohort and append it to the evidence note's Baselines section as the closing line:
+
+```bash
+since="$(git log -1 --format=%cI v6.13.0)"
+bash skills/requesting-code-review/scripts/gate-telemetry --all --since "$since"
+```
 
 - [ ] **Step 2: Verify the evidence note covers every change**
 
@@ -1179,7 +1563,11 @@ Every commit touching a skill file must have a matching section in `docs/hyperpo
 
 Add a 6.14.0 section at the top of `CHANGELOG.md`, matching the format of the 6.13.0 entry. Cover only what actually shipped. For each arm, state the control and treatment results in one clause. For each arm that lost, say nothing in the changelog — the evidence note is its record.
 
-Always covered, since Task 5 is not eval-gated:
+Always covered, since Tasks 0, 5, and 6 are not eval-gated:
+
+- The testing guide names the two non-bash suites and its directory loop fails when a suite fails; `gate-telemetry --since` bounds a cohort; `churn()` ignores malformed rounds; the fleet churn fields are asserted; `requesting-code-review` no longer offers `HEAD~1` as a review base (all from the 6.13.0 Codex sweep).
+- An approval reached through a `needs-attention` verdict now has a stated rule: its medium/low notes are read and recorded before the round converges.
+- Arm D: the two routing edits 6.13.0 shipped now carry before/after evidence (or a revert, if the measurement said so).
 
 - `gate-round --consumed <n>` computes the SDD per-task ceiling from the shared five-round cap, replacing a subtraction the controller performed by hand. Nineteen measured task gates recorded impossible ceilings.
 - `gate-round --peek` reports backstop for a spent ceiling of zero, which `--consumed 5` makes reachable.

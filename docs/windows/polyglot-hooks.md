@@ -65,9 +65,10 @@ The path is quoted because `${CLAUDE_PLUGIN_ROOT}` may contain spaces.
 
 ## How `run-hook.cmd` Works at a High Level
 
-`run-hook.cmd` is a polyglot script: Windows treats the first block as batch
-commands, while Unix shells treat that block as a no-op heredoc and continue
-after it.
+`run-hook.cmd` is a polyglot script. It opens with four `:;` label lines:
+`cmd.exe` skips a line beginning with `:` as a label and runs the batch block;
+a POSIX shell runs `:` as a no-op, evaluates the rest of each line, and `exec`s
+bash on the named hook before reaching any batch text.
 
 Do not copy an implementation from this document. Read `hooks/run-hook.cmd`
 directly when changing the dispatcher, and run `tests/hooks/test-session-start.sh`

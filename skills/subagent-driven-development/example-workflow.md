@@ -25,7 +25,7 @@ Implementer: [Later]
   - Committed
 
 [Re-run the covering command myself: 5/5 — matches the report]
-[Run review-package PLAN_FILE BASE HEAD; dispatch task reviewer with the printed path]
+[Run review-package PLAN_FILE BASE HEAD; dispatch task reviewer with the path from the `wrote <path>: ...` line]
 Task reviewer: Spec ✅ - all requirements met, nothing extra.
   Strengths: Good test coverage, clean. Issues: None. Task quality: Approved.
 
@@ -45,7 +45,7 @@ Implementer: [No questions]
 
 [Re-run the covering command myself: 8/8 — matches the report]
 
-[Run review-package PLAN_FILE BASE HEAD; dispatch task reviewer with the printed path]
+[Run review-package PLAN_FILE BASE HEAD; dispatch task reviewer with the path from the `wrote <path>: ...` line]
 Task reviewer: Spec ❌:
   - Missing: Progress reporting (spec says "report every 100 items")
   Issues (Important): Magic number (100)

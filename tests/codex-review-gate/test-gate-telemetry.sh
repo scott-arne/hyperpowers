@@ -135,5 +135,29 @@ churnmd="$(bash "$GT" "$churnrepo")"
 expect "$churnmd" "mean 2" "churn markdown contains mean 2"
 expect "$churnmd" "first-round 2/4" "churn markdown contains first-round 2/4"
 
+# Fleet churn: the aggregate must carry the derived fields, computed over every
+# repository's rounds — task rounds here are [2] (key) and [1,1,3,3] (key3).
+fleetjs="$(bash "$GT" --json --all)"
+node -e 'const d=JSON.parse(process.argv[1]);const g=d.aggregate.byGate.task;process.exit(g.meanRounds===2&&g.firstRound===2&&g.runs===5?0:1)' "$fleetjs" && pass "fleet churn: aggregate meanRounds=2, firstRound=2 over 5 runs" || fail "fleet churn: aggregate meanRounds=2, firstRound=2 over 5 runs"
+fleetmd="$(bash "$GT" --all | sed -n '/Fleet aggregate/,$p')"
+expect "$fleetmd" "task: mean 2, first-round 2/5" "fleet markdown churn line, fleet section only"
+
+# A malformed round record is excluded from the mean, not counted as 0.
+mkdir -p "$cr3/run-bad"
+printf '{"round":"x","ceiling":5,"gate":"task"}\n' > "$cr3/run-bad/gate-round.json"
+badjs="$(bash "$GT" "$churnrepo" --json)"
+node -e 'const d=JSON.parse(process.argv[1]);const g=d.repos[0].byGate.task;process.exit(g.meanRounds===2&&g.runs===5?0:1)' "$badjs" && pass "churn ignores a non-numeric round" || fail "churn ignores a non-numeric round"
+
+# --since bounds the cohort by run-directory mtime and accepts ISO-8601 only.
+touch -t 202001010000 "$cr3/run-r1a" "$cr3/run-r1b"
+sincejs="$(bash "$GT" --since 2025-01-01T00:00:00Z "$churnrepo" --json)"
+node -e 'const d=JSON.parse(process.argv[1]);const g=d.repos[0].byGate.task;process.exit(g.runs===3&&g.meanRounds===3?0:1)' "$sincejs" && pass "--since drops runs older than the timestamp" || fail "--since drops runs older than the timestamp"
+sincedate="$(bash "$GT" --since 2025-01-01 "$churnrepo" --json)"
+node -e 'const d=JSON.parse(process.argv[1]);process.exit(d.repos[0].byGate.task.runs===3?0:1)' "$sincedate" && pass "--since accepts a date-only ISO-8601 value" || fail "--since accepts a date-only ISO-8601 value"
+for bad in not-a-date 09/05/2026 2026 "2025-01-01 00:00"; do
+  if bash "$GT" --since "$bad" "$churnrepo" >/dev/null 2>&1; then fail "--since rejects '$bad'"; else pass "--since rejects '$bad'"; fi
+done
+bash "$GT" "$churnrepo" --since >/dev/null 2>&1 && fail "--since without an operand exits 2" || pass "--since without an operand exits 2"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

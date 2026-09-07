@@ -46,16 +46,24 @@ node -e '
   // --since bounds the cohort by run-directory mtime. Date.parse accepts many
   // non-ISO forms, so the syntax is checked first; a bad value is a usage
   // error, never a silent no-op over the whole history.
-  const ISO = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+  const ISO = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+  const validSince = (v) => {
+    const m = ISO.exec(v); if (!m) return false;
+    const y = +m[1], mo = +m[2], d = +m[3];
+    const hh = m[4] === undefined ? 0 : +m[4], mi = m[5] === undefined ? 0 : +m[5], ss = m[6] === undefined ? 0 : +m[6];
+    const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    return mo >= 1 && mo <= 12 && d >= 1 && d <= days[mo - 1] && hh < 24 && mi < 60 && ss < 60 && Number.isFinite(Date.parse(v));
+  };
   const sinceMs = since ? Date.parse(since) : NaN;
-  if (since && (!ISO.test(since) || !Number.isFinite(sinceMs))) { console.error("gate-telemetry: --since must be an ISO-8601 timestamp, got " + since); process.exit(2); }
+  if (since && !validSince(since)) { console.error("gate-telemetry: --since must be a valid ISO-8601 timestamp, got " + since); process.exit(2); }
   // Churn metrics (2026-09-05 spec): the round distribution was already in
   // byGate.rounds; only the summary was missing, so every churn question had
   // to be answered with a throwaway script over the cache.
   const churn = (rounds) => {
-    // A malformed round record is excluded, not counted as 0: this plan
-    // measures against these values.
-    const nums = rounds.map(Number).filter(Number.isFinite);
+    // A positive integer is the only valid round shape; anything else is
+    // excluded rather than coerced.
+    const nums = rounds.filter((r) => Number.isInteger(r) && r >= 1);
     const n = nums.length;
     if (!n) return { meanRounds: null, firstRound: 0 };
     const sum = nums.reduce((a, b) => a + b, 0);

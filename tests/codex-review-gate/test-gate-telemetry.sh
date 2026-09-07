@@ -154,10 +154,33 @@ sincejs="$(bash "$GT" --since 2025-01-01T00:00:00Z "$churnrepo" --json)"
 node -e 'const d=JSON.parse(process.argv[1]);const g=d.repos[0].byGate.task;process.exit(g.runs===3&&g.meanRounds===3?0:1)' "$sincejs" && pass "--since drops runs older than the timestamp" || fail "--since drops runs older than the timestamp"
 sincedate="$(bash "$GT" --since 2025-01-01 "$churnrepo" --json)"
 node -e 'const d=JSON.parse(process.argv[1]);process.exit(d.repos[0].byGate.task.runs===3?0:1)' "$sincedate" && pass "--since accepts a date-only ISO-8601 value" || fail "--since accepts a date-only ISO-8601 value"
-for bad in not-a-date 09/05/2026 2026 "2025-01-01 00:00"; do
-  if bash "$GT" --since "$bad" "$churnrepo" >/dev/null 2>&1; then fail "--since rejects '$bad'"; else pass "--since rejects '$bad'"; fi
+sinceleap="$(bash "$GT" --since 2024-02-29 "$churnrepo" --json)"
+node -e 'const d=JSON.parse(process.argv[1]);process.exit(d.repos[0].byGate.task.runs===3?0:1)' "$sinceleap" && pass "--since accepts a leap year date" || fail "--since accepts a leap year date"
+for bad in not-a-date 09/05/2026 2026 "2025-01-01 00:00" 2025-02-30 2025-02-29 2025-04-31 2025-13-01 2025-01-01T25:00; do
+  stderr="$(bash "$GT" --since "$bad" "$churnrepo" 2>&1 >/dev/null)"
+  rc=$?
+  if [ "$rc" -eq 2 ] && printf '%s' "$stderr" | grep -q '\--since'; then
+    pass "--since rejects '$bad' (exit 2, diagnostic)"
+  else
+    fail "--since rejects '$bad' (exit 2, diagnostic)"
+  fi
 done
-bash "$GT" "$churnrepo" --since >/dev/null 2>&1 && fail "--since without an operand exits 2" || pass "--since without an operand exits 2"
+stderr="$(bash "$GT" "$churnrepo" --since 2>&1 >/dev/null)"
+rc=$?
+[ "$rc" -eq 2 ] && printf '%s' "$stderr" | grep -q '\--since' && pass "--since without an operand exits 2 with diagnostic" || fail "--since without an operand exits 2 with diagnostic"
+
+# Additional malformed round fixtures (null, "", false, [], 0, -1, 1.5) to verify
+# the filter excludes them before conversion. Valid rounds remain [1,1,3,3].
+mkdir -p "$cr3/run-null" "$cr3/run-empty" "$cr3/run-false" "$cr3/run-array" "$cr3/run-zero" "$cr3/run-neg" "$cr3/run-frac"
+printf '{"round":null,"ceiling":5,"gate":"task"}\n' > "$cr3/run-null/gate-round.json"
+printf '{"round":"","ceiling":5,"gate":"task"}\n' > "$cr3/run-empty/gate-round.json"
+printf '{"round":false,"ceiling":5,"gate":"task"}\n' > "$cr3/run-false/gate-round.json"
+printf '{"round":[],"ceiling":5,"gate":"task"}\n' > "$cr3/run-array/gate-round.json"
+printf '{"round":0,"ceiling":5,"gate":"task"}\n' > "$cr3/run-zero/gate-round.json"
+printf '{"round":-1,"ceiling":5,"gate":"task"}\n' > "$cr3/run-neg/gate-round.json"
+printf '{"round":1.5,"ceiling":5,"gate":"task"}\n' > "$cr3/run-frac/gate-round.json"
+allbadjs="$(bash "$GT" "$churnrepo" --json)"
+node -e 'const d=JSON.parse(process.argv[1]);const g=d.repos[0].byGate.task;process.exit(g.meanRounds===2&&g.firstRound===2&&g.runs===12?0:1)' "$allbadjs" && pass "churn excludes all malformed rounds (12 total runs, 4 valid)" || fail "churn excludes all malformed rounds (12 total runs, 4 valid)"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

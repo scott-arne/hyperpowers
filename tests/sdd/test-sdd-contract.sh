@@ -222,5 +222,30 @@ assert_contains "$SDD" "mark todo complete (where kept)" \
 assert_contains "$SDD_RATIONALIZATIONS" "Outside the de-minimis exception" "rationalization row scoped to the exception"
 assert_contains "$SDD_RATIONALIZATIONS" "Resume the implementer at rounds 1-3; dispatch the takeover at rounds 4-5." "rationalization row defers to the round's own rule"
 
+# --- one source of truth for the reviewer read-only clause ---------------
+# Three reviewer templates carry the clause inline so a dispatched reviewer
+# always sees it; the source file is what they must match, and this fence is
+# what makes a drifted copy fail instead of waiting to be noticed.
+CLAUSE_SRC="$REPO_ROOT/skills/requesting-code-review/reviewer-read-only-clause.md"
+CODEREVW="$REPO_ROOT/skills/requesting-code-review/code-reviewer.md"
+if [ -f "$CLAUSE_SRC" ]; then
+  pass "read-only clause source file exists"
+  clause_text="$(tr '\n\t' '  ' <"$CLAUSE_SRC" | sed 's/  */ /g; s/^ //; s/ $//')"
+else
+  fail "read-only clause source file exists"
+  clause_text=""
+fi
+[ -n "$clause_text" ] || clause_text="<<missing clause source>>"
+case "$clause_text" in
+  "Your review is read-only on this checkout."*"never move HEAD on this checkout.")
+    pass "clause source carries the full read-only contract" ;;
+  *)
+    fail "clause source carries the full read-only contract (got: $clause_text)" ;;
+esac
+for tmpl in "$CODEREVW" "$REVW" "$REREVW"; do
+  assert_contains "$tmpl" "$clause_text" "$(basename "$tmpl") carries the read-only clause verbatim"
+  assert_contains "$tmpl" "reviewer-read-only-clause.md" "$(basename "$tmpl") names the clause source file"
+done
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

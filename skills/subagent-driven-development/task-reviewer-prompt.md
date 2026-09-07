@@ -209,5 +209,11 @@ Subagent (general-purpose):
   `wrote <path>: <N> commit(s), <N> bytes`; take the path from that line; the
   package never enters the controller's context)
 
+The read-only clause inside the prompt is a verbatim copy of
+[reviewer-read-only-clause.md](../requesting-code-review/reviewer-read-only-clause.md),
+the single source for every reviewer template; `tests/sdd/test-sdd-contract.sh`
+fails when any copy drifts from it. Change the source file and re-copy — never
+edit a copy in place.
+
 **Reviewer returns:** Spec Compliance verdict (✅/❌/⚠️), Strengths, Issues
 (Critical/Important/Minor), Task quality verdict

@@ -140,6 +140,12 @@ Subagent (general-purpose):
 - `[BASE_SHA]` — starting commit
 - `[HEAD_SHA]` — ending commit
 
+The Read-Only Review clause inside the prompt is a verbatim copy of
+[reviewer-read-only-clause.md](reviewer-read-only-clause.md), the single
+source for every reviewer template; `tests/sdd/test-sdd-contract.sh` fails
+when any copy drifts from it. Change the source file and re-copy — never
+edit a copy in place.
+
 **Reviewer returns:** Strengths, Issues (Critical / Important / Minor), Recommendations, Assessment
 
 ## Example Output

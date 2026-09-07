@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# gate-telemetry [--json] [--all] [repo-dir] — read-only aggregation over
+# gate-telemetry [--json] [--all] [--since ISO-8601] [repo-dir] — read-only aggregation over
 # the hyperpowers scratch roots (spec 4.5): sdd/<key>, codex-review/<key>,
 # ungated/<key>. Markdown to stdout by default; --json for snapshots.
 # Nothing is written anywhere. Unparseable/old-format artifacts are counted
 # and reported, never silently dropped. Exit 0; exit 2 usage/not-a-repo.
+# --since drops gate runs whose run directory is older than the timestamp, so
+# a post-release cohort can be read without the history it follows. ISO-8601
+# only (YYYY-MM-DD, optionally Thh:mm[:ss[.fff]] and Z or an offset); anything
+# else exits 2 rather than silently reporting the whole history.
 set -uo pipefail
 
 command -v node >/dev/null 2>&1 || { echo "gate-telemetry: node not found" >&2; exit 2; }
-json=0; all=0; repo="."
+json=0; all=0; since=""; repo="."
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) json=1; shift ;;
     --all) all=1; shift ;;
+    --since)
+      [ $# -ge 2 ] || { echo "gate-telemetry: --since needs an ISO-8601 timestamp" >&2; exit 2; }
+      since="$2"; shift 2 ;;
     -*) echo "gate-telemetry: unknown flag $1" >&2; exit 2 ;;
     *) repo="$1"; shift ;;
   esac
@@ -35,17 +42,26 @@ fi
 # shellcheck disable=SC2016
 node -e '
   const fs = require("fs"), path = require("path");
-  const [base, jsonOut, ...keys] = process.argv.slice(1);
+  const [base, jsonOut, since, ...keys] = process.argv.slice(1);
+  // --since bounds the cohort by run-directory mtime. Date.parse accepts many
+  // non-ISO forms, so the syntax is checked first; a bad value is a usage
+  // error, never a silent no-op over the whole history.
+  const ISO = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+  const sinceMs = since ? Date.parse(since) : NaN;
+  if (since && (!ISO.test(since) || !Number.isFinite(sinceMs))) { console.error("gate-telemetry: --since must be an ISO-8601 timestamp, got " + since); process.exit(2); }
   // Churn metrics (2026-09-05 spec): the round distribution was already in
   // byGate.rounds; only the summary was missing, so every churn question had
   // to be answered with a throwaway script over the cache.
   const churn = (rounds) => {
-    const n = rounds.length;
+    // A malformed round record is excluded, not counted as 0: this plan
+    // measures against these values.
+    const nums = rounds.map(Number).filter(Number.isFinite);
+    const n = nums.length;
     if (!n) return { meanRounds: null, firstRound: 0 };
-    const sum = rounds.reduce((a, b) => a + (Number(b) || 0), 0);
+    const sum = nums.reduce((a, b) => a + b, 0);
     return {
       meanRounds: Math.round((sum / n) * 100) / 100,
-      firstRound: rounds.filter((r) => Number(r) === 1).length,
+      firstRound: nums.filter((r) => r === 1).length,
     };
   };
   const repos = [];
@@ -67,6 +83,7 @@ node -e '
     const cr = path.join(base, "codex-review", key);
     if (fs.existsSync(cr)) for (const run of fs.readdirSync(cr)) {
       if (!fs.statSync(path.join(cr, run)).isDirectory()) continue;
+      if (Number.isFinite(sinceMs) && fs.statSync(path.join(cr, run)).mtimeMs < sinceMs) continue;
       const gr = path.join(cr, run, "gate-round.json");
       if (!fs.existsSync(gr)) { r.oldFormatRuns++; continue; }
       try {
@@ -169,4 +186,4 @@ node -e '
     console.log(`- Degrades by status — ` + (Object.entries(agg.degrades).map(([k, v]) => `${k}: ${v}`).join("; ") || "none"));
     console.log(`- Total pending: ${agg.pending}${agg.oldestPendingDays === null ? "" : `; Oldest pending: ${agg.oldestPendingDays} day(s)`}; Total swept: ${agg.sweptTotal} (${Object.entries(agg.swept).map(([k,v])=>`${k}:${v}`).join(", ") || "-"}); Artifacts skipped: ${agg.skipped}`);
   }
-' "$base" "$json" "${keys[@]}"
+' "$base" "$json" "$since" "${keys[@]}"

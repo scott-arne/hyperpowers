@@ -196,7 +196,7 @@ After saving the plan, hand off to execution. **Subagent-Driven Development is t
 **"Plan complete and saved to `docs/hyperpowers/plans/<filename>.md`. Executing with Subagent-Driven Development (fresh subagent per task, review between tasks)."**
 
 - **REQUIRED SUB-SKILL:** Use hyperpowers:subagent-driven-development
-- Fresh subagent per task + two-stage review
+- Fresh subagent per task, then one task reviewer returning a spec verdict and a quality verdict
 
 **If your human partner explicitly requested inline execution** (execute in this session, no subagents):
 - **REQUIRED SUB-SKILL:** Use hyperpowers:executing-plans

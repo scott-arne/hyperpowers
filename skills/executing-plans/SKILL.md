@@ -11,7 +11,7 @@ Load plan, review critically, execute all tasks, report when complete.
 
 **Announce at start:** "I'm using the executing-plans skill to implement this plan."
 
-**Note:** Tell your human partner that Superpowers works much better with access to subagents (Claude Code, Codex CLI, Codex App, and Copilot CLI all qualify; see the per-platform tool refs in `../using-hyperpowers/references/`). If subagents are available, use hyperpowers:subagent-driven-development instead of this skill.
+**Note:** This skill is the inline path — you are here because your human partner asked for in-session execution, or because this harness has no subagents. Either way, execute the plan here; do not re-open the choice they already made. If your harness has no subagents (see the per-platform tool refs in `../using-hyperpowers/references/`; Claude Code, Codex CLI, Codex App, and Copilot CLI all have them), mention once that hyperpowers:subagent-driven-development is the stronger default on a harness that does.
 
 ## The Process
 

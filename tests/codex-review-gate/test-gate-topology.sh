@@ -251,6 +251,15 @@ else
     pass "exception list current (no stale entries)"
 fi
 
+# The skill that governs "feedback has arrived, now what" must be reachable
+# from the skill that requests the feedback. It was referenced by no skill,
+# hook, or test until 2026-09-05.
+if grep -q 'hyperpowers:receiving-code-review' "$REPO_ROOT/skills/requesting-code-review/SKILL.md"; then
+    pass "requesting-code-review routes to receiving-code-review"
+else
+    fail "requesting-code-review routes to receiving-code-review"
+fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"

@@ -35,25 +35,44 @@ plan. No before/after runs were made for them.
 ## Arms
 ### Arm A — severity calibration in the focus text
 
-**Defect.** codex-plugin-cc's `prompts/adversarial-review.md` template wraps our focus text in a schema that enumerates severities (critical, high, medium, low, informational) without defining their scope, so the reviewer picks a severity with no anchor. Historical captures showed 30% of task-gate blocking runs carried nothing critical or high — the untested-branch finding was classified as high when it should have been medium, causing unnecessary rounds. The template is a plugin file a future version overwrites; the focus string is the only durable channel we own.
+**Defect.** codex-plugin-cc's `prompts/adversarial-review.md` template wraps our focus text in a schema that enumerates severities (critical, high, medium, low, informational) without defining their scope, so the reviewer picks a severity with no anchor. Historical captures showed 30% of task-gate blocking runs carried nothing critical or high — findings were over-classified (untested branches called high) or under-classified (genuine defects called medium). The template is a plugin file a future version overwrites; the focus string is the only durable channel we own.
 
-**Calibration.** Add three sentences to all three code-review focus strings in `skills/requesting-code-review/recipe-code.md` (per-task line 326, final whole-branch line 344, code-review-request line 354): "Severity is scoped to this diff: critical or high means a defect in the changed lines that yields a wrong result, a crash, data loss, or a reachable security hole. An untested path is medium unless the requirements named that test as a deliverable. Naming, style, and speculative hardening are low." A contract assertion pins all three copies so none can drift apart.
+**Calibration.** Three sentences added to all three code-review focus strings in `skills/requesting-code-review/recipe-code.md` (per-task source line 326, final whole-branch line 344, code-review-request line 354): "Severity is scoped to this diff: critical or high means a defect in the changed lines that yields a wrong result, a crash, data loss, or a reachable security hole. An untested path is medium unless the requirements named that test as a deliverable. Naming, style, and speculative hardening are low." A contract assertion pins all three copies so none can drift apart.
 
-**Method.** Direct Codex review of two fixture diffs, each reviewed three times under the control focus (today's recipe text) and three times under the treatment focus (with the calibration). This arm uses a direct reviewer run rather than a Quorum scenario because the harness seeds a stub Codex whose verdicts are canned — it cannot classify severity — and asserting the calibration phrase in the launch made the control fail by construction. Fixtures: **M** adds a branch nobody tested and contains no defect (the calibration says medium); **H** adds the same branch with a reachable crash (high under either focus, the guard that the calibration scopes severity rather than suppressing it). Each capture normalized by `verdict-normalize`.
+**Method.** Direct Codex review of two fixture diffs, each reviewed three times under the control focus (the original recipe text without calibration) and three times under the treatment focus (with the calibration sentences). This arm uses a direct reviewer run rather than a Quorum scenario because the harness seeds a stub Codex whose verdicts are canned — it cannot classify severity — and asserting the calibration phrase in the launch made the control fail by construction. Fixtures: **M** adds a branch nobody tested and contains no defect (the calibration says medium); **H** adds the same branch with a reachable crash and wrong-result defect (high under either focus, the guard that the calibration scopes severity rather than suppressing it). Each capture normalized by `verdict-normalize`.
 
 **Reviewer.** gpt-5.6-sol at xhigh reasoning effort.
+
+**Decision rule.** The original rule expected M to block under control (over-classification of untested paths) and approve under treatment. The control runs showed M approved 3 of 3, so the over-classification half is null with this reviewer. However, all three H control reviews found the crash-and-wrong-result defect in the fixture, yet only one rated it high while two rated it medium — the under-classification half the calibration sentence names as high. The human partner amended the rule on 2026-09-07 after reading the control results: the arm wins if treatment H blocks 3 of 3 AND treatment M stays approved in at least 2 of 3 (the calibration must not reintroduce blocking on the untested path). Any other outcome is a loss and is reverted.
 
 **Control arm results** (capture directory: `$TMPDIR/focus-arm/control/`):
 - M control 1: approved
 - M control 2: approved
 - M control 3: approved
-- H control 1: blocking
-- H control 2: approved
-- H control 3: approved
+- H control 1: blocking (defect found, rated high)
+- H control 2: approved (defect found, rated medium)
+- H control 3: approved (defect found, rated medium)
 
-**Verdict.** The defect does not reproduce with this reviewer. Fixture M normalized `approved` in 3 of 3 control runs, meaning the untested-branch finding was not classified as high by this model configuration. Without the defect manifesting in the control, the calibration cannot be measured. Treatment arm not run.
+All three H control reviews identified the same crash-and-wrong-result defect (the unanchored digit regex returns wrong values for `-25%`, `.5%`, `1e2%`, and `"%"` throws). The severity inconsistency for one defect — high once, medium twice — is evidence about the reviewer's classification behavior without calibration guidance.
 
-**Files changed.** None (arm not applied).
+**Treatment arm results** (capture directory: `$TMPDIR/focus-arm/treatment/`):
+- M treatment 1: approved
+- M treatment 2: approved
+- M treatment 3: blocking
+- H treatment 1: blocking
+- H treatment 2: blocking
+- H treatment 3: blocking
+
+All three H treatment reviews rated the defect high (3 of 3 blocking). M treatment approved 2 of 3, with one run blocking on the untested path.
+
+**Verdict.** The arm wins under the amended rule's under-classification half. Treatment H blocked 3 of 3 (vs. control H 1 of 3), and treatment M approved 2 of 3 (meeting the guard that calibration must not reintroduce over-classification). The calibration lifted a genuine crash-and-wrong-result defect from medium to high in 2 of 3 runs, while keeping the untested-branch finding below blocking in 2 of 3 runs.
+
+**Files changed.**
+- `skills/requesting-code-review/recipe-code.md` (three focus strings at source lines 326, 330, 344, 354)
+- `tests/codex-review-gate/gate-post-split-edits.tsv` (four rows added)
+- `tests/codex-review-gate/test-gate-split-lossless.sh` (pin raised from 10 to 14)
+- `tests/codex-review-gate/test-gate-contract.sh` (contract assertion that all three focus strings carry the calibration)
 
 **Commits.**
 - evals repo: 0614bc7 arm: the code-gate focus text reviewed by real Codex, with and without a severity scope
+- hyperpowers repo: (this commit)

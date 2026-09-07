@@ -66,8 +66,8 @@ expect "$md" 'stale-broker: 1' "degrades bucketed by token"
 expect "$md" 'not-ready: 1' "doc degrade counted"
 expect "$md" 'Backstop rate' "backstop metric present"
 expect "$md" '1/2' "backstop rate 1 of 2 parseable runs"
-expect "$md" 'final: [4] (backstops 1/1)' "rounds and backstops bucketed by gate type"
-expect "$md" 'task: [2] (backstops 0/1)' "non-backstopped type bucketed too"
+expect "$md" 'final: mean 4, first-round 0/1, backstops 1/1 [4]' "rounds and backstops bucketed by gate type"
+expect "$md" 'task: mean 2, first-round 0/1, backstops 0/1 [2]' "non-backstopped type bucketed too"
 expect "$md" 'old-format runs: 1' "run dirs without round data reported"
 expect "$md" 'Fix-cycle rate' "fix-cycle metric present"
 expect "$md" '1/3' "fix rate 1 of 3 tasks"
@@ -101,7 +101,7 @@ printf '%s' "$alljs" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,
 allmd="$(bash "$GT" --all)"
 printf '%s' "$allmd" | grep -Fq 'Fleet aggregate (2 repos)' && pass "--all markdown has fleet section" || fail "--all markdown has fleet section"
 printf '%s' "$allmd" | grep -Fq 'Backstop rate: 1/3' && pass "fleet backstop rate combined" || fail "fleet backstop rate combined"
-printf '%s' "$allmd" | grep -Fq 'spec: [1] (backstops 0/1)' && pass "fleet rounds-by-gate present" || fail "fleet rounds-by-gate present"
+printf '%s' "$allmd" | grep -Fq 'spec: mean 1, first-round 1/1, backstops 0/1 [1]' && pass "fleet rounds-by-gate present" || fail "fleet rounds-by-gate present"
 printf '%s' "$allmd" | grep -Fq 'Oldest pending: 0 day(s)' && pass "fleet oldest-pending present" || fail "fleet oldest-pending present"
 printf '%s' "$allmd" | grep -Fq '(approved:1)' && pass "fleet swept-by-verdict present" || fail "fleet swept-by-verdict present"
 printf '%s' "$allmd" | grep -Fq 'Dossiers: 1/2' && pass "fleet dossier count present" || fail "fleet dossier count present"
@@ -116,6 +116,24 @@ out="$( (cd "$repo" && bash "$GT") )"
 expect "$out" "Tier skips: 1" "tier-skip count unchanged by swept ref"
 json="$( (cd "$repo" && bash "$GT" --json) )"
 node -e 'const d=JSON.parse(process.argv[1]);const r=d.repos[0];process.exit(Object.values(r.swept||{}).reduce((a,b)=>a+b,0)===1?0:1)' "$json" && pass "swept counts exclude tier-skip refs" || fail "swept counts exclude tier-skip refs"
+
+# --- Churn metrics (2026-09-05 spec): meanRounds and firstRound derived from rounds array ---
+churnrepo="$work/churnrepo"; mkdir -p "$churnrepo"; git -C "$churnrepo" init -q
+git -C "$churnrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+key3="$(printf '%s' "$(git -C "$churnrepo" rev-parse --absolute-git-dir)" | git -C "$churnrepo" hash-object --stdin)"
+cr3="$XDG_CACHE_HOME/hyperpowers/codex-review/$key3"
+mkdir -p "$cr3/run-r1a" "$cr3/run-r1b" "$cr3/run-r3a" "$cr3/run-r3b"
+printf '{"round":1,"ceiling":5,"gate":"task"}\n' > "$cr3/run-r1a/gate-round.json"
+printf '{"round":1,"ceiling":5,"gate":"task"}\n' > "$cr3/run-r1b/gate-round.json"
+printf '{"round":3,"ceiling":5,"gate":"task"}\n' > "$cr3/run-r3a/gate-round.json"
+printf '{"round":3,"ceiling":5,"gate":"task"}\n' > "$cr3/run-r3b/gate-round.json"
+
+churnjs="$(bash "$GT" "$churnrepo" --json)"
+node -e 'const d=JSON.parse(process.argv[1]);const g=d.repos[0].byGate.task;process.exit(g.meanRounds===2&&g.firstRound===2?0:1)' "$churnjs" && pass "churn metrics: meanRounds=2, firstRound=2" || fail "churn metrics: meanRounds=2, firstRound=2"
+
+churnmd="$(bash "$GT" "$churnrepo")"
+expect "$churnmd" "mean 2" "churn markdown contains mean 2"
+expect "$churnmd" "first-round 2/4" "churn markdown contains first-round 2/4"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

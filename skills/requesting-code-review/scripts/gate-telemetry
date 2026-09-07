@@ -36,6 +36,18 @@ fi
 node -e '
   const fs = require("fs"), path = require("path");
   const [base, jsonOut, ...keys] = process.argv.slice(1);
+  // Churn metrics (2026-09-05 spec): the round distribution was already in
+  // byGate.rounds; only the summary was missing, so every churn question had
+  // to be answered with a throwaway script over the cache.
+  const churn = (rounds) => {
+    const n = rounds.length;
+    if (!n) return { meanRounds: null, firstRound: 0 };
+    const sum = rounds.reduce((a, b) => a + (Number(b) || 0), 0);
+    return {
+      meanRounds: Math.round((sum / n) * 100) / 100,
+      firstRound: rounds.filter((r) => Number(r) === 1).length,
+    };
+  };
   const repos = [];
   for (const key of keys) {
     const r = { key, tasks: 0, fixBriefs: 0, runs: 0, backstops: 0,
@@ -122,6 +134,10 @@ node -e '
       agg.byGate[g].backstops += v.backstops; agg.byGate[g].runs += v.runs;
     }
   }
+  // Attach the derived metrics to every byGate entry, per-repo and fleet.
+  for (const r of repos)
+    for (const v of Object.values(r.byGate)) Object.assign(v, churn(v.rounds));
+  for (const v of Object.values(agg.byGate)) Object.assign(v, churn(v.rounds));
   if (jsonOut === "1") {
     process.stdout.write(JSON.stringify({ v: 1, repos, aggregate: agg }) + "\n");
     process.exit(0);
@@ -130,7 +146,7 @@ node -e '
     const sweptTotal = Object.values(r.swept).reduce((a, b) => a + b, 0);
     console.log(`# Gate telemetry — ${r.key}`);
     console.log(`- Gate runs (with round data): ${r.runs}; old-format runs: ${r.oldFormatRuns}`);
-    const byg = Object.entries(r.byGate).map(([g, v]) => `${g}: [${v.rounds.join(", ")}] (backstops ${v.backstops}/${v.runs})`).join("; ") || "none";
+    const byg = Object.entries(r.byGate).map(([g, v]) => `${g}: mean ${v.meanRounds === null ? "-" : v.meanRounds}, first-round ${v.firstRound}/${v.runs}, backstops ${v.backstops}/${v.runs} [${v.rounds.join(", ")}]`).join("; ") || "none";
     console.log(`- Rounds by gate — ${byg}`);
     console.log(`- Backstop rate: ${r.backstops}/${r.runs}`);
     console.log(`- Dossiers: ${r.dossiers}/${r.runs}`);
@@ -146,7 +162,7 @@ node -e '
     console.log(`# Fleet aggregate (${agg.repos} repos)`);
     console.log(`- Runs: ${agg.runs}; Backstop rate: ${agg.backstops}/${agg.runs}; old-format runs: ${agg.oldFormatRuns}`);
     console.log(`- Dossiers: ${agg.dossiers}/${agg.runs}`);
-    const abyg = Object.entries(agg.byGate).map(([g, v]) => `${g}: [${v.rounds.join(", ")}] (backstops ${v.backstops}/${v.runs})`).join("; ") || "none";
+    const abyg = Object.entries(agg.byGate).map(([g, v]) => `${g}: mean ${v.meanRounds === null ? "-" : v.meanRounds}, first-round ${v.firstRound}/${v.runs}, backstops ${v.backstops}/${v.runs} [${v.rounds.join(", ")}]`).join("; ") || "none";
     console.log(`- Rounds by gate — ${abyg}`);
     console.log(`- Fix-cycle rate: ${agg.fixBriefs}/${agg.tasks} tasks`);
     console.log(`- Tier skips: ${agg.tierSkips}`);

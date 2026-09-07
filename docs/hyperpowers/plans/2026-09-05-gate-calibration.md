@@ -408,7 +408,7 @@ git commit -m "docs(evals): record the historical fleet churn and the empty post
 - Create (evals repo): `evals/fixtures/codex-focus-arm/` (two fixture repos built from checked-in files)
 
 **Interfaces:**
-- Consumes: Task 1's evidence note (this task appends a section). Real Codex through codex-plugin-cc (preflight must be `ok` and a probe must answer; if not, this task is BLOCKED, not degraded).
+- Consumes: Task 1's evidence note (this task appends a section). Real Codex through codex-plugin-cc: `CODEX_PATH` is derived from the preflight's `.codexPath` in Step 3 (nothing exports it beforehand), the preflight must be `ok`, and a probe must answer; if not, this task is BLOCKED, not degraded.
 - Produces: an appended `### Arm A` section. No callable interface.
 
 **Context the implementer needs.** codex-plugin-cc's `prompts/adversarial-review.md` wraps our focus text in a template that never defines the severities its schema enumerates, so the reviewer picks a severity with no scope anchor, and 30% of task-gate blocking captures carried nothing critical or high. The template is a plugin file a future version overwrites; the focus string is the only durable channel we own. 6.13.0 fixed the downstream consequence in `verdict-normalize`; this arm attacks the cause.
@@ -524,7 +524,14 @@ git -C evals commit -m "arm: the code-gate focus text reviewed by real Codex, wi
 
 - [ ] **Step 3: Run the control arm**
 
-Confirm Codex is reachable first: `bash skills/requesting-code-review/scripts/codex-preflight` must say `ok`, and a probe (`node "$CODEX_PATH/scripts/codex-companion.mjs" task --fresh --json "Reply with the single word ok."`) must return `"status":0`. If not, this task is BLOCKED: report and stop; do not substitute the stub.
+Resolve the companion path from the preflight first — `CODEX_PATH` is not set by anything else, and every new shell must re-derive it the same way:
+
+```bash
+CODEX_PATH="$(bash skills/requesting-code-review/scripts/codex-preflight | node -e 'const p=JSON.parse(require("fs").readFileSync(0,"utf8"));if(p.status!=="ok"){console.error("preflight: "+p.status+" "+(p.reason||""));process.exit(2)}console.log(p.codexPath)')" && echo "CODEX_PATH=$CODEX_PATH"
+node "$CODEX_PATH/scripts/codex-companion.mjs" task --fresh --json "Reply with the single word ok." | node -e 'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));process.exit(j.status===0?0:1)' && echo "probe ok"
+```
+
+Expected: a real path under `~/.claude/plugins/cache/openai-codex/codex/` and `probe ok`. If the preflight is not `ok` or the probe fails, this task is BLOCKED: report and stop; do not substitute the stub. The runner takes `CODEX_PATH` as its second argument, so the block that launches it must run in a shell where this assignment has happened.
 
 Then, with `recipe-code.md` unmodified, run the control arm in the background and watch its log until it prints six normalized lines:
 
@@ -591,6 +598,8 @@ bash tests/codex-review-gate/test-gate-contract.sh
 Expected: `STATUS: PASSED`.
 
 - [ ] **Step 8: Run the treatment arm**
+
+Re-derive `CODEX_PATH` with Step 3's preflight command if this is a new shell, then:
 
 ```bash
 bash evals/scripts/codex-focus-arm.sh /Users/johnss51/Development/agents/hyperpowers "$CODEX_PATH" treatment "$TMPDIR/focus-arm/treatment" > "$TMPDIR/focus-arm/treatment.log" 2>&1
@@ -1300,7 +1309,7 @@ If the arm lost, commit only the evidence note, with the message `docs(evals): t
 
 ### Task 8: Arm D — evidence for the two routing edits 6.13.0 shipped
 
-**Risk tier:** standard — no new prose; this arm measures prose that already shipped and reverts it if the measurement says so.
+**Risk tier:** standard — no new prose; this arm measures prose that already shipped and reverts it if the measurement says so. The control worktree is restored to HEAD before an ordinary `git worktree remove`; no force removal or other destructive git operation occurs.
 
 **Files:**
 - Create (evals repo): `evals/scenarios/executing-plans-keeps-inline-request/`
@@ -1380,12 +1389,24 @@ git commit -am "revert(executing-plans): the inline-path note did not beat its c
 
 For the routing pointer: delete the `**REQUIRED SUB-SKILL:** Use hyperpowers:receiving-code-review.` paragraph from `skills/requesting-code-review/SKILL.md` step 3 by hand (the file also carries Task 0's `BASE_SHA` change, which stays), remove the `requesting-code-review routes to receiving-code-review` assertion from `tests/codex-review-gate/test-gate-topology.sh`, run that suite to `STATUS: PASSED`, and commit both files with the message `revert(requesting-code-review): the receiving-code-review pointer did not beat its control`.
 
-- [ ] **Step 7: Remove the control checkout**
+- [ ] **Step 7: Restore and remove the control checkout**
+
+Put the two edited files back to HEAD inside the control worktree so that an ordinary, non-force removal suffices — no destructive git operation is needed or permitted here:
 
 ```bash
-git worktree remove --force "$TMPDIR/arm-d-control"
+git -C "$TMPDIR/arm-d-control" show HEAD:skills/executing-plans/SKILL.md > "$TMPDIR/arm-d-control/skills/executing-plans/SKILL.md"
+git -C "$TMPDIR/arm-d-control" show HEAD:skills/requesting-code-review/SKILL.md > "$TMPDIR/arm-d-control/skills/requesting-code-review/SKILL.md"
+git -C "$TMPDIR/arm-d-control" status --short
+```
+
+Expected: empty status. Then:
+
+```bash
+git worktree remove "$TMPDIR/arm-d-control"
 git worktree prune
 ```
+
+If removal is refused because the worktree is not clean, stop and report which files differ; never add `--force`.
 
 - [ ] **Step 8: Append the evidence section**
 
@@ -1416,55 +1437,101 @@ git commit -m "docs(evals): before/after evidence for the two routing edits 6.13
 
 **Decision rule, stated before looking:** a lens is a merge candidate only if, over the cohort, its blocking rate (captures normalizing to `blocking` divided by captures normalizing to `blocking` or `approved`; `incomplete` captures are reported but excluded) is at or above 60% AND at least 80% of its blocking findings are duplicated by another lens in the same round-1 batch (same `GATE_DIR`, word-Jaccard of titles at or above 0.5). Minimum sample: 30 complete round-1 batches in the cohort. Below that, the section records the counts and the conclusion "insufficient post-release data" and the task ends.
 
-- [ ] **Step 1: Write the extractor in the evals repo**
+- [ ] **Step 1: Write the extractor and its test in the evals repo**
 
-Create `evals/scripts/lens-cohort.sh` with exactly this content:
+Create `evals/scripts/lens-cohort.sh` with exactly this content. Traversal and the timestamp filter live in Node (`fs.statSync().mtimeMs`), because macOS `find` rejects `-newermt "@epoch"`; the script is `set -euo pipefail` so a traversal failure is fatal rather than an empty, false "no captures" answer.
 
 ```bash
 #!/usr/bin/env bash
-# lens-cohort.sh <hyperpowers-root> <since-ISO-8601>
-# Walks every codex-review run directory newer than <since>, normalizes each
-# round-1 lens capture with verdict-normalize, and prints per-lens outcome
-# counts plus the share of each lens's blocking findings that another lens in
-# the same batch also raised (title word-Jaccard >= 0.5). Read-only.
-set -uo pipefail
+# lens-cohort.sh <hyperpowers-root> <since-ISO-8601> [cache-root]
+# Walks every codex-review run directory whose mtime is at or after <since>,
+# normalizes each round-1 lens capture with verdict-normalize, and prints
+# per-lens outcome counts plus the share of each lens's blocking findings
+# that another lens in the same batch also raised (title word-Jaccard >= 0.5).
+# Read-only. Any failure is fatal: an empty answer must mean an empty cohort.
+set -euo pipefail
 root="${1:?hyperpowers root}"; since="${2:?ISO-8601}"
-base="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/codex-review"
-sinceEpoch="$(node -e 'const t=Date.parse(process.argv[1]);if(!Number.isFinite(t)){process.exit(2)};console.log(Math.floor(t/1000))' "$since")" || { echo "bad --since" >&2; exit 2; }
-tmp="$(mktemp -d "${TMPDIR:-/tmp}/lens-cohort.XXXXXX")"
-find "$base" -mindepth 2 -maxdepth 2 -type d -name 'run-*' -newermt "@$sinceEpoch" | while read -r run; do
-  for cap in "$run"/lens-*-capture; do
-    [ -f "$cap" ] || continue
-    lens="$(basename "$cap")"; lens="${lens#lens-}"; lens="${lens%-capture}"
-    res="$(bash "$root/skills/requesting-code-review/scripts/verdict-normalize" --require-coverage "$cap" 2>/dev/null | node -e 'try{console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).result)}catch(e){console.log("incomplete")}')"
-    titles="$(node -e 'try{const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const r=j.storedJob.result.result;console.log(JSON.stringify((r.findings||[]).filter(f=>/^(critical|high)$/i.test(String(f.severity))).map(f=>String(f.title))))}catch(e){console.log("[]")}' "$cap")"
-    printf '%s\t%s\t%s\t%s\n' "$run" "$lens" "$res" "$titles" >> "$tmp/rows.tsv"
-  done
-done
-[ -s "$tmp/rows.tsv" ] || { echo "no round-1 lens captures newer than $since"; exit 0; }
-node -e '
-  const fs=require("fs");
-  const rows=fs.readFileSync(process.argv[1],"utf8").trim().split("\n").map(l=>{const [run,lens,res,titles]=l.split("\t");return {run,lens,res,titles:JSON.parse(titles)};});
-  const byRun={}; for(const r of rows){(byRun[r.run]=byRun[r.run]||[]).push(r);}
-  const batches=Object.values(byRun).filter(b=>b.length>=3);
-  const words=t=>new Set(String(t).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
-  const jac=(a,b)=>{const A=words(a),B=words(b);const i=[...A].filter(x=>B.has(x)).length;const u=new Set([...A,...B]).size;return u?i/u:0;};
-  const per={};
-  for(const b of batches) for(const r of b){
-    const p=per[r.lens]=per[r.lens]||{approved:0,blocking:0,incomplete:0,findings:0,dup:0};
-    p[r.res]=(p[r.res]||0)+1;
-    for(const t of r.titles){p.findings++; if(b.some(o=>o.lens!==r.lens&&o.titles.some(u=>jac(t,u)>=0.5)))p.dup++;}
+base="${3:-${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/codex-review}"
+[ -d "$base" ] || { echo "lens-cohort: no cache root at $base" >&2; exit 2; }
+node - "$root" "$since" "$base" <<'JS'
+const fs = require("fs"), path = require("path"), cp = require("child_process");
+const [root, since, base] = process.argv.slice(2);
+const sinceMs = Date.parse(since);
+if (!Number.isFinite(sinceMs)) { console.error("lens-cohort: bad since: " + since); process.exit(2); }
+const normalize = root + "/skills/requesting-code-review/scripts/verdict-normalize";
+const rows = [];
+for (const key of fs.readdirSync(base)) {
+  const kd = path.join(base, key);
+  if (!fs.statSync(kd).isDirectory()) continue;
+  for (const run of fs.readdirSync(kd)) {
+    const rd = path.join(kd, run);
+    const st = fs.statSync(rd);
+    if (!st.isDirectory() || !run.startsWith("run-") || st.mtimeMs < sinceMs) continue;
+    for (const f of fs.readdirSync(rd)) {
+      const m = /^lens-(.+)-capture$/.exec(f);
+      if (!m) continue;
+      const cap = path.join(rd, f);
+      let res = "incomplete";
+      try { res = JSON.parse(cp.execFileSync("bash", [normalize, "--require-coverage", cap], { encoding: "utf8" })).result; } catch (e) { res = "incomplete"; }
+      let titles = [];
+      try { const j = JSON.parse(fs.readFileSync(cap, "utf8")); const r = j.storedJob.result.result; titles = (r.findings || []).filter(x => /^(critical|high)$/i.test(String(x.severity))).map(x => String(x.title)); } catch (e) { titles = []; }
+      rows.push({ run: rd, lens: m[1], res, titles });
+    }
   }
-  console.log("complete round-1 batches:",batches.length);
-  for(const [lens,p] of Object.entries(per)){
-    const decided=p.approved+p.blocking; const rate=decided?Math.round(100*p.blocking/decided):null; const dup=p.findings?Math.round(100*p.dup/p.findings):null;
-    console.log(`${lens}: approved ${p.approved}, blocking ${p.blocking}, incomplete ${p.incomplete}; blocking rate ${rate===null?"-":rate+"%"}; blocking findings ${p.findings}, duplicated by another lens ${dup===null?"-":dup+"%"}`);
-  }
-' "$tmp/rows.tsv"
-rm -rf "$tmp"
+}
+if (!rows.length) { console.log("no round-1 lens captures at or after " + since); process.exit(0); }
+const byRun = {}; for (const r of rows) (byRun[r.run] = byRun[r.run] || []).push(r);
+const batches = Object.values(byRun).filter(b => b.length >= 3);
+const words = t => new Set(String(t).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+const jac = (a, b) => { const A = words(a), B = words(b); const i = [...A].filter(x => B.has(x)).length; const u = new Set([...A, ...B]).size; return u ? i / u : 0; };
+const per = {};
+for (const b of batches) for (const r of b) {
+  const p = per[r.lens] = per[r.lens] || { approved: 0, blocking: 0, incomplete: 0, findings: 0, dup: 0 };
+  p[r.res] = (p[r.res] || 0) + 1;
+  for (const t of r.titles) { p.findings++; if (b.some(o => o.lens !== r.lens && o.titles.some(u => jac(t, u) >= 0.5))) p.dup++; }
+}
+console.log("complete round-1 batches: " + batches.length);
+for (const [lens, p] of Object.entries(per)) {
+  const decided = p.approved + p.blocking; const rate = decided ? Math.round(100 * p.blocking / decided) : null; const dup = p.findings ? Math.round(100 * p.dup / p.findings) : null;
+  console.log(lens + ": approved " + p.approved + ", blocking " + p.blocking + ", incomplete " + p.incomplete + "; blocking rate " + (rate === null ? "-" : rate + "%") + "; blocking findings " + p.findings + ", duplicated by another lens " + (dup === null ? "-" : dup + "%"));
+}
+JS
 ```
 
-Make it executable and commit it in the evals repo: `git -C evals add scripts/lens-cohort.sh && git -C evals commit -m "tool: per-lens outcomes and within-batch overlap over a bounded cohort"`.
+Create `evals/scripts/lens-cohort.test.sh` with exactly this content — it proves old/new run selection on this host with a synthetic cache root:
+
+```bash
+#!/usr/bin/env bash
+# Proves lens-cohort.sh selects runs by mtime on this host: one batch older
+# than the cutoff must vanish, one newer must count. Needs a hyperpowers
+# checkout (arg 1) for verdict-normalize.
+set -euo pipefail
+root="${1:?hyperpowers root}"
+here="$(cd "$(dirname "$0")" && pwd)"
+work="$(mktemp -d "${TMPDIR:-/tmp}/lens-cohort-test.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+cache="$work/codex-review/key1"
+mk() { # <run-name> <verdict> <title>
+  mkdir -p "$cache/$1"
+  for lens in correctness contracts-and-integration tests-and-evidence; do
+    printf '{"storedJob":{"result":{"parseError":null,"result":{"verdict":"%s","findings":[%s],"summary":"Coverage: documents read - d; adjudicated decisions considered - none; changed surfaces reviewed - all; test evidence inspected - yes"},"rawOutput":"x"}}}\n' \
+      "$2" "$( [ "$2" = needs-attention ] && printf '{"severity":"high","title":"%s"}' "$3" )" > "$cache/$1/lens-$lens-capture"
+  done
+}
+mk run-old approve ""
+mk run-new needs-attention "null dereference in parseRate"
+touch -t 202001010000 "$cache/run-old"
+out="$(bash "$here/lens-cohort.sh" "$root" 2025-01-01T00:00:00Z "$work/codex-review")"
+printf '%s\n' "$out"
+printf '%s' "$out" | grep -q 'complete round-1 batches: 1' || { echo "FAIL: expected exactly the new batch"; exit 1; }
+printf '%s' "$out" | grep -q 'correctness: approved 0, blocking 1' || { echo "FAIL: new batch not counted as blocking"; exit 1; }
+printf '%s' "$out" | grep -q 'duplicated by another lens 100%' || { echo "FAIL: identical titles across lenses should read as duplicated"; exit 1; }
+out2="$(bash "$here/lens-cohort.sh" "$root" 2000-01-01T00:00:00Z "$work/codex-review")"
+printf '%s' "$out2" | grep -q 'complete round-1 batches: 2' || { echo "FAIL: an early cutoff must include both batches"; exit 1; }
+echo "PASS: lens-cohort selects by mtime and scores overlap"
+```
+
+Make both executable, run `bash evals/scripts/lens-cohort.test.sh /Users/johnss51/Development/agents/hyperpowers` (expected: the PASS line), then commit both in the evals repo: `git -C evals add scripts/lens-cohort.sh scripts/lens-cohort.test.sh && git -C evals commit -m "tool: per-lens outcomes and within-batch overlap over a bounded cohort, with an mtime-selection test"`.
 
 - [ ] **Step 2: Run it over the post-release cohort**
 

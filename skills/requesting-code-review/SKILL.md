@@ -25,8 +25,11 @@ Dispatch a code reviewer subagent to catch issues before they cascade. The revie
 
 **1. Get git SHAs:**
 ```bash
-BASE_SHA=$(git rev-parse HEAD~1)  # or: git merge-base origin/main HEAD
 HEAD_SHA=$(git rev-parse HEAD)
+# Pick the base for the scope you are reviewing. Never HEAD~1: it keeps only
+# the last commit of a multi-commit change.
+BASE_SHA=$(git merge-base origin/main HEAD)   # whole branch: the branch point
+# BASE_SHA=$(git rev-parse "$TASK_BASE")       # one task: the commit recorded before it began
 ```
 
 **2. Dispatch code reviewer subagent:**

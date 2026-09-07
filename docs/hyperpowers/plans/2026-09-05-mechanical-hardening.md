@@ -6,7 +6,7 @@
 
 **Goal:** Fix every defect from the 2026-09-05 gate-churn analysis and skills audit whose correctness an offline suite can prove, and release it so Part 2's live evals measure against a clean baseline.
 
-**Architecture:** Fifteen independent tasks over four surfaces: the gate's approval script and its telemetry reader, the session-start hook and its polyglot wrapper, the two SDD helper scripts, and skill/doc prose whose claims contradict shipped code. Every behavioral change gets an assertion in an existing bash suite; two tasks add new suites. No task depends on another's output, so they may execute in any order, but Task 15 (release) must run last.
+**Architecture:** Sixteen independent tasks over four surfaces (Task 16 was added during execution, when the Task 11 review's plan-mandated finding was decided in the finding's favour): the gate's approval script and its telemetry reader, the session-start hook and its polyglot wrapper, the two SDD helper scripts, and skill/doc prose whose claims contradict shipped code. Every behavioral change gets an assertion in an existing bash suite; two tasks add new suites. No task depends on another's output, so they may execute in any order, but Task 15 (release) must run last, after Task 16.
 
 **Tech Stack:** Bash 3.2+ (macOS default), Node.js (already required by the gate scripts), Markdown. No new dependencies.
 
@@ -1527,6 +1527,129 @@ git commit -m "docs(testing): the whole file described a Python harness this rep
 
 ---
 
+### Task 16: one source of truth for the reviewer read-only clause
+
+**Risk tier:** standard — prompt-template surgery across two skills plus a new fence in the SDD contract suite.
+
+**Files:**
+- Create: `skills/requesting-code-review/reviewer-read-only-clause.md`
+- Modify: `skills/requesting-code-review/code-reviewer.md` (Placeholders section, after line 141)
+- Modify: `skills/subagent-driven-development/task-reviewer-prompt.md` (Placeholders section, after the `[DIFF_FILE]` entry)
+- Modify: `skills/subagent-driven-development/re-review-prompt.md` (Placeholders section, after the `[DIFF_FILE]` entry)
+- Test: `tests/sdd/test-sdd-contract.sh`
+
+**Interfaces:**
+- Consumes: Task 11's result — the three templates already carry byte-identical read-only clauses.
+- Produces: `skills/requesting-code-review/reviewer-read-only-clause.md`, the single source for the clause. Every reviewer template keeps the clause inline (so a reviewer prompt can never be dispatched without it) and the SDD contract suite fails if any copy drifts from the source.
+
+**Context the implementer needs.** Task 11's review raised a plan-mandated Important finding: the read-only clause now exists as three hand-maintained copies, and this task exists because those copies drifted once. The human partner decided the finding governs. The design chosen is a source-of-truth file with test-enforced copies rather than a `[READ_ONLY_CLAUSE]` placeholder: a placeholder the controller forgets to fill would dispatch a reviewer with no read-only instruction at all and fail silently, whereas an inline copy is always present and a drifted copy fails a suite loudly. Do not turn the clause into a placeholder.
+
+The canonical clause is the paragraph at `skills/requesting-code-review/code-reviewer.md:35`. It is one long line there and wrapped with a four-space indent inside the two SDD templates; the test normalizes whitespace before comparing, so wrapping differences are fine and wording differences are not.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/sdd/test-sdd-contract.sh`, insert the following immediately before the final two lines (the blank `echo` and the `[ "$FAILURES" -eq 0 ] && { ...` status line):
+
+```bash
+# --- one source of truth for the reviewer read-only clause ---------------
+# Three reviewer templates carry the clause inline so a dispatched reviewer
+# always sees it; the source file is what they must match, and this fence is
+# what makes a drifted copy fail instead of waiting to be noticed.
+CLAUSE_SRC="$REPO_ROOT/skills/requesting-code-review/reviewer-read-only-clause.md"
+CODEREVW="$REPO_ROOT/skills/requesting-code-review/code-reviewer.md"
+if [ -f "$CLAUSE_SRC" ]; then
+  pass "read-only clause source file exists"
+  clause_text="$(tr '\n\t' '  ' <"$CLAUSE_SRC" | sed 's/  */ /g; s/^ //; s/ $//')"
+else
+  fail "read-only clause source file exists"
+  clause_text=""
+fi
+[ -n "$clause_text" ] || clause_text="<<missing clause source>>"
+case "$clause_text" in
+  "Your review is read-only on this checkout."*"never move HEAD on this checkout.")
+    pass "clause source carries the full read-only contract" ;;
+  *)
+    fail "clause source carries the full read-only contract (got: $clause_text)" ;;
+esac
+for tmpl in "$CODEREVW" "$REVW" "$REREVW"; do
+  assert_contains "$tmpl" "$clause_text" "$(basename "$tmpl") carries the read-only clause verbatim"
+  assert_contains "$tmpl" "reviewer-read-only-clause.md" "$(basename "$tmpl") names the clause source file"
+done
+```
+
+- [ ] **Step 2: Run the suite to verify it fails**
+
+Run: `bash tests/sdd/test-sdd-contract.sh`
+
+Expected: `STATUS: FAILED (8)` — the source file is missing, so its existence and contract assertions fail, the three verbatim assertions fail against the `<<missing clause source>>` sentinel, and no template names the source file yet.
+
+- [ ] **Step 3: Create the source file**
+
+Write `skills/requesting-code-review/reviewer-read-only-clause.md` with exactly this content (six lines plus a trailing newline; no heading, no comment — the file is the clause and nothing else, so it can be copied whole):
+
+```
+Your review is read-only on this checkout. Do not mutate the working
+tree, the index, HEAD, or branch state in any way. Use tools like
+`git show`, `git diff`, and `git log` to inspect history. If you need a
+working copy of a different revision, check it out into a separate
+temporary directory (e.g. `git worktree add /tmp/review-[SHA] [SHA]`) —
+never move HEAD on this checkout.
+```
+
+- [ ] **Step 4: Point each template at the source**
+
+In `skills/requesting-code-review/code-reviewer.md`, immediately after the last placeholder bullet (`- `[HEAD_SHA]` — ending commit`, line 141) and before the blank line that precedes `## Example Output`, insert a blank line and then this paragraph:
+
+```markdown
+The Read-Only Review clause inside the prompt is a verbatim copy of
+[reviewer-read-only-clause.md](reviewer-read-only-clause.md), the single
+source for every reviewer template; `tests/sdd/test-sdd-contract.sh` fails
+when any copy drifts from it. Change the source file and re-copy — never
+edit a copy in place.
+```
+
+In `skills/subagent-driven-development/task-reviewer-prompt.md` and `skills/subagent-driven-development/re-review-prompt.md`, immediately after each file's last placeholder bullet (the `[DIFF_FILE]` entry) and before the blank line that follows the list, insert a blank line and then the same paragraph with the path adjusted:
+
+```markdown
+The read-only clause inside the prompt is a verbatim copy of
+[reviewer-read-only-clause.md](../requesting-code-review/reviewer-read-only-clause.md),
+the single source for every reviewer template; `tests/sdd/test-sdd-contract.sh`
+fails when any copy drifts from it. Change the source file and re-copy — never
+edit a copy in place.
+```
+
+Do not change the clause text inside any of the three prompts. Task 11 already made them identical to the source.
+
+- [ ] **Step 5: Run the suite to verify it passes**
+
+Run: `bash tests/sdd/test-sdd-contract.sh`
+
+Expected: `STATUS: PASSED`.
+
+- [ ] **Step 6: Run the neighbouring suites**
+
+Run each and expect `STATUS: PASSED`:
+
+```bash
+bash tests/packaging/test-no-orphan-skill-files.sh
+bash tests/codex-review-gate/test-gate-topology.sh
+```
+
+The orphan guard is the one that would fail if the new file were unreferenced; the three template notes and the test are its inbound references.
+
+- [ ] **Step 7: Prove the fence bites**
+
+Temporarily change one word inside the clause in `skills/subagent-driven-development/re-review-prompt.md` (for example `never move HEAD` to `never moves HEAD`), run `bash tests/sdd/test-sdd-contract.sh`, and confirm `re-review-prompt.md carries the read-only clause verbatim` reports FAIL. Restore the file with `git show HEAD:skills/subagent-driven-development/re-review-prompt.md > skills/subagent-driven-development/re-review-prompt.md` — but note that HEAD does not yet contain your Step 4 note, so re-apply the Step 4 paragraph to that file afterwards and re-run the suite to `STATUS: PASSED`. Record both outputs in your report.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add skills/requesting-code-review/reviewer-read-only-clause.md skills/requesting-code-review/code-reviewer.md skills/subagent-driven-development/task-reviewer-prompt.md skills/subagent-driven-development/re-review-prompt.md tests/sdd/test-sdd-contract.sh
+git commit -m "fix(skills): three hand-maintained copies of the reviewer read-only clause had already drifted once"
+```
+
+---
+
 ### Task 15: release
 
 **Risk tier:** standard — publishes every preceding task, and the release is what gives Part 2 a clean baseline.
@@ -1588,6 +1711,7 @@ Add a new section at the top of `CHANGELOG.md`, matching the format of the exist
 - `optimizing-performance` names the repo-scoped scratch dir, which survives SDD's Finish.
 - `gate-telemetry` reports mean rounds and first-round convergence per gate.
 - `docs/testing.md` describes Quorum and the current test tree.
+- The reviewer read-only clause has one source file, `reviewer-read-only-clause.md`, and the SDD contract suite fails when any template's copy drifts from it.
 
 - [ ] **Step 3: Bump the version**
 

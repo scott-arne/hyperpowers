@@ -305,6 +305,13 @@ assert_contains "$GATE" "<TIER_SKIPS_PATH>" \
 assert_contains "$GATE" "include it among the final dossier's --adjudications inputs" \
   "tier-skip summary reaches the final dossier"
 
+
+n="$(grep -c 'Severity is scoped to this diff' "$GATE")"
+if [ "$n" -eq 3 ]; then
+  pass "all three code-review focus strings carry the severity calibration"
+else
+  fail "all three code-review focus strings carry the severity calibration (found $n)"
+fi
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

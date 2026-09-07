@@ -23,11 +23,11 @@ script per `bash` invocation.
 | `tests/hooks/` | session-start context injection, the ungated notice, the Codex broker janitor, the hooks heredoc fence | each `test-*.sh`, one per `bash` call |
 | `tests/codex-review-gate/` | gate scripts (`verdict-normalize`, `gate-round`, `gate-telemetry`, `ungated-ledger`, preflight, broker health), gate topology, and the gate-split losslessness proof | each `test-*.sh`, one per `bash` call |
 | `tests/sdd/` | the subagent-driven-development contract | `bash tests/sdd/test-sdd-contract.sh` |
-| `tests/claude-code/` | offline: SDD scratch-dir derivation, helper stdout and range guards, delivery resolution, worktree path policy; live: skill tests that spawn the real `claude` CLI | offline: `test-sdd-dir-path.sh`, `test-codex-review-dir-path.sh`, `test-delivery-resolution.sh`, `test-worktree-path-policy.sh`, one per `bash` call; live: `run-skill-tests.sh` |
+| `tests/claude-code/` | offline: SDD scratch-dir derivation, helper stdout and range guards, delivery resolution, worktree path policy; live: skill tests that spawn the real `claude` CLI | offline: `test-sdd-dir-path.sh`, `test-codex-review-dir-path.sh`, `test-delivery-resolution.sh`, `test-worktree-path-policy.sh`, one per `bash` call; live: `run-skill-tests.sh` (covers `test-subagent-driven-development.sh`; `--integration` adds `test-subagent-driven-development-integration.sh`), plus `test-worktree-native-preference.sh` |
 | `tests/packaging/` | manifest wiring and the orphaned-skill-file guard | each `test-*.sh`, one per `bash` call |
-| `tests/brainstorm-server/` | the brainstorm server: JavaScript unit tests plus the start/stop and Windows-lifecycle shell tests | `cd tests/brainstorm-server && npm test` |
+| `tests/brainstorm-server/` | the brainstorm server: JavaScript unit tests plus the start/stop and Windows-lifecycle shell tests | `cd tests/brainstorm-server && npm test`; `bash tests/brainstorm-server/windows-lifecycle.test.sh` |
 | `tests/pi/` | the Pi extension | `node tests/pi/test-pi-extension.mjs` |
-| `tests/opencode/`, `tests/kimi/`, `tests/antigravity/` | per-harness plugin loading, bootstrap caching, tool registration | each directory's `run-tests.sh` |
+| `tests/opencode/`, `tests/kimi/`, `tests/antigravity/` | per-harness plugin loading, bootstrap caching, tool registration | each directory's `run-tests.sh` (default set); OpenCode's `test-tools.sh` and `test-priority.sh` are integration suites, run only with `run-tests.sh --integration` and an installed OpenCode |
 | `tests/writing-skills/`, `tests/systematic-debugging/` | skill-specific structural checks | each `test-*.sh`, one per `bash` call |
 | `tests/explicit-skill-requests/` | Haiku-specific, multi-turn, and skill-name-prompted behavior (live) | `tests/explicit-skill-requests/run-all.sh` |
 | `tests/shell-lint/` | shellcheck over the repo's shell scripts | `bash tests/shell-lint/test-lint-shell.sh` |
@@ -49,10 +49,12 @@ for t in tests/hooks/test-*.sh; do bash "$t" || { echo "FAILED: $t"; fails=$((fa
 ```
 
 The offline set is every `test-*.sh` outside `tests/claude-code/` and
-`tests/explicit-skill-requests/`, the four offline `tests/claude-code/` suites
-named in the table, `npm test` in `tests/brainstorm-server/`, and the Pi Node
-file. The live suites spawn the real `claude` CLI: they need credentials, take
-minutes, and are not part of any automated run.
+`tests/explicit-skill-requests/` (excluding `tests/opencode/test-tools.sh` and
+`tests/opencode/test-priority.sh`), the four offline `tests/claude-code/` suites
+named in the table, `npm test` in `tests/brainstorm-server/`, the
+`windows-lifecycle.test.sh` test, and the Pi Node file. The live suites spawn
+the real `claude` CLI: they need credentials, take minutes, and are not part of
+any automated run.
 
 ## Skill behavior evals
 

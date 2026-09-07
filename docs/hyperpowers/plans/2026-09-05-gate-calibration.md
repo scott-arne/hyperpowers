@@ -17,6 +17,7 @@
 - **An arm that loses is reverted, not kept.** "No measurable difference" is a losing result for a change to tuned prose. Record it in the evidence note and restore the file with `git show HEAD:<path> > <path>`.
 - **Live eval runs are trusted-maintainer operations.** They spend real API credit and launch agents in dangerous mode. Never add live evals, API keys, or dangerous-mode launches to public CI.
 - **Scenario work is committed in the evals repo, never here.** `evals/` is a separate clone of `hyperpowers-evals`, gitignored in this repository. Commit each scenario there, in its own commit, before the run that uses it.
+- **Every `quorum run` needs `SUPERPOWERS_ROOT`.** The runner refuses to start without it (`evals/coding-agents/claude.yaml`, `evals/src/runner/index.ts`); it is the plugin root the Claude launcher passes as `--plugin-dir`. Treatment runs set it to this checkout, `/Users/johnss51/Development/agents/hyperpowers`; Task 8's control runs set it to the control worktree. Every `quorum run` command in this plan carries it explicitly so no run silently fails setup or, worse, loads a plugin from somewhere else.
 - **Every new scenario's `story.md` frontmatter needs `status: ready` and `quorum_tier: full`.** A scenario left at `status: draft` is skipped by `quorum run-all` unless `--include-drafts` is passed, so a draft scenario silently produces no runs and an arm looks unmeasured. Sixty-eight of the clone's sixty-nine scenarios are `ready`; match them.
 - Zero new third-party dependencies in this repository.
 - No emojis in code, documentation, commit messages, or reports.
@@ -716,7 +717,7 @@ git -C evals commit -m "scenario: the re-review focus string restates a ledger i
 Run three times against the unmodified tree:
 
 ```bash
-cd evals && bun run quorum run scenarios/codex-gate-re-review-focus-is-fixed --coding-agent claude
+cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun run quorum run scenarios/codex-gate-re-review-focus-is-fixed --coding-agent claude
 ```
 
 Record each run's word count and pass or fail. Expected: the control fails, with focus strings well over 250 words.
@@ -765,7 +766,7 @@ Expected: `STATUS: PASSED` from both.
 Three runs against the modified tree:
 
 ```bash
-cd evals && bun run quorum run scenarios/codex-gate-re-review-focus-is-fixed --coding-agent claude
+cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun run quorum run scenarios/codex-gate-re-review-focus-is-fixed --coding-agent claude
 ```
 
 Record word counts and pass or fail.
@@ -1183,7 +1184,7 @@ git -C evals commit -m "scenario: a green single-file test run reported as a gre
 Four runs against the unmodified tree, one per agent, so a result that is really one model's quirk cannot pass as a fleet effect:
 
 ```bash
-cd evals && bun run quorum run-all --scenarios tdd-runs-the-project-suite --coding-agents claude,claude-sonnet,codex,kimi --jobs 2
+cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun run quorum run-all --scenarios tdd-runs-the-project-suite --coding-agents claude,claude-sonnet,codex,kimi --jobs 2
 ```
 
 Record each result. Expected: most fail.
@@ -1217,7 +1218,7 @@ by omission.
 Four runs against the modified tree, same four agents as the control:
 
 ```bash
-cd evals && bun run quorum run-all --scenarios tdd-runs-the-project-suite --coding-agents claude,claude-sonnet,codex,kimi --jobs 2
+cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun run quorum run-all --scenarios tdd-runs-the-project-suite --coding-agents claude,claude-sonnet,codex,kimi --jobs 2
 ```
 
 Record each result.
@@ -1286,7 +1287,7 @@ git -C evals commit -m "scenario: a new project's design never asks which toolin
 Run three times against the unmodified tree:
 
 ```bash
-cd evals && bun run quorum run scenarios/brainstorming-asks-tooling-question --coding-agent claude
+cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun run quorum run scenarios/brainstorming-asks-tooling-question --coding-agent claude
 ```
 
 Record each result. Expected: all three fail.
@@ -1312,7 +1313,7 @@ Insert immediately after it, as the next bullet:
 Three runs against the modified tree, same agent as the control:
 
 ```bash
-cd evals && bun run quorum run scenarios/brainstorming-asks-tooling-question --coding-agent claude
+cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun run quorum run scenarios/brainstorming-asks-tooling-question --coding-agent claude
 ```
 
 Record each result.
@@ -1404,11 +1405,11 @@ Confirm from each run's session log that the plugin loaded from `$TMPDIR/arm-d-c
 Three runs of each scenario against this checkout:
 
 ```bash
-cd evals && bun run quorum run scenarios/executing-plans-keeps-inline-request --coding-agent claude
+cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun run quorum run scenarios/executing-plans-keeps-inline-request --coding-agent claude
 ```
 
 ```bash
-cd evals && bun run quorum run scenarios/requesting-code-review-hands-off-to-receiving --coding-agent claude
+cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun run quorum run scenarios/requesting-code-review-hands-off-to-receiving --coding-agent claude
 ```
 
 **Decision rule, per edit:** the edit is supported if its treatment passes at least 2 of 3 while its control passed at most 1 of 3. Each edit is judged on its own pair.

@@ -419,7 +419,7 @@ git commit -m "docs(evals): record the historical fleet churn and the empty post
 - Consumes: Task 1's evidence note (this task appends a section). Real Codex through codex-plugin-cc: `CODEX_PATH` is derived from the preflight's `.codexPath` in Step 3 (nothing exports it beforehand), the preflight must be `ok`, and a probe must answer; if not, this task is BLOCKED, not degraded.
 - Produces: an appended `### Arm A` section. No callable interface.
 
-**Context the implementer needs.** codex-plugin-cc's `prompts/adversarial-review.md` wraps our focus text in a template that never defines the severities its schema enumerates, so the reviewer picks a severity with no scope anchor, and 30% of task-gate blocking captures carried nothing critical or high. The template is a plugin file a future version overwrites; the focus string is the only durable channel we own. 6.13.0 fixed the downstream consequence in `verdict-normalize`; this arm attacks the cause.
+**Context the implementer needs.** codex-plugin-cc's `prompts/adversarial-review.md` wraps our focus text in a template that never defines the severities its schema enumerates, so the reviewer picks a severity with no scope anchor: 30% of task-gate blocking captures carried nothing critical or high, and — as this arm's own control runs showed on 2026-09-07 — the same reviewer rated one genuine crash-and-wrong-result defect high once and medium twice across three reads. The template is a plugin file a future version overwrites; the focus string is the only durable channel we own. 6.13.0 fixed the downstream consequence in `verdict-normalize`; this arm attacks the cause.
 
 The plan gate rejected measuring this through Quorum: the harness seeds a stub Codex whose verdicts are canned, so it cannot classify severity, and asserting the calibration phrase in the launch made the control fail by construction. This arm therefore measures the reviewer directly: the same fixture diff, reviewed by real Codex three times under the control focus (today's recipe text) and three times under the treatment focus (with the calibration), each capture normalized by `verdict-normalize`. Two fixtures: **M** adds a branch nobody tested and contains no defect — the calibration says medium; **H** adds the same branch with a reachable crash — high under either focus, the guard that the calibration scopes severity rather than suppressing it.
 
@@ -551,7 +551,7 @@ bash evals/scripts/codex-focus-arm.sh /Users/johnss51/Development/agents/hyperpo
 
 Record the six lines. Expected: fixture M normalizes `blocking` in at least 2 of 3 (the untested branch is called high); fixture H normalizes `blocking` in 3 of 3.
 
-If M normalizes `approved` in 2 or more of 3, the defect does not reproduce with this reviewer: append the null result to the evidence note as this arm's section, commit it, and skip to the next task.
+If M normalizes `approved` in 2 or more of 3, the untested-path half of the hypothesis does not reproduce with this reviewer: record that half as null in the arm's section, but do not stop yet, because the guard fixture H is a measurement too. If H normalized `blocking` in fewer than 3 of 3 control runs, the reviewer under-rates a genuine crash-and-wrong-result defect — the mirror of the defect this arm set out to fix, and one the calibration sentence names as high — so proceed to the treatment under the amended rule in Step 8. Only when M is approved (2 or more of 3) AND H is blocked 3 of 3 under control is there nothing left to measure: then append the null result, commit it, and skip to the next task. (Amended 2026-09-07 by the human partner after the control runs showed M approved 3/3 and H blocked 1/3.)
 
 - [ ] **Step 4: Add the calibration to all three focus strings**
 
@@ -648,7 +648,7 @@ bash evals/scripts/codex-focus-arm.sh /Users/johnss51/Development/agents/hyperpo
 
 Record the six lines.
 
-**Decision rule, both sides required.** The arm wins only if fixture M normalizes `approved` in at least 2 of 3 treatment runs while its control normalized `blocking` in at least 2 of 3, AND fixture H normalizes `blocking` in 3 of 3 treatment runs. An H approval means the calibration bought fewer rounds by suppressing a real defect, which is worse than the defect it fixes. Treat that as a loss and revert.
+**Decision rule.** The arm wins if either half is measured and won: (a) the over-classification half — control M blocked in at least 2 of 3, treatment M approved in at least 2 of 3, and treatment H blocked 3 of 3; or (b) the under-classification half — control H blocked in fewer than 3 of 3, treatment H blocked 3 of 3, and treatment M still approved in at least 2 of 3 (the calibration must not reintroduce blocking on the untested path). In every other case the arm loses and is reverted. An H approval under treatment means the calibration failed to lift a real defect to high, or worse suppressed it; a treatment M block means it over-corrected. The evidence section states which half was measured and the numbers that decided it.
 
 - [ ] **Step 9: If the arm lost, revert it**
 

@@ -544,9 +544,9 @@ grep -n 'CMDBLOCK\|heredoc' docs/porting-to-a-new-harness.md
 
 - [ ] **Step 7: Confirm no doc still describes the retired mechanism**
 
-Run: `grep -rn "CMDBLOCK" docs/ hooks/ || echo "no CMDBLOCK references remain"`
+Run: `grep -rn "CMDBLOCK" hooks/ docs/windows/ docs/porting-to-a-new-harness.md`
 
-Expected: `no CMDBLOCK references remain`.
+Expected: exactly one line, the historical mention Step 6 writes into `docs/windows/polyglot-hooks.md` ("This replaced an earlier `: << 'CMDBLOCK'` heredoc"). Nothing under `hooks/`. This plan file mentions the marker too, which is why the search excludes `docs/hyperpowers/`.
 
 - [ ] **Step 8: Commit**
 
@@ -915,7 +915,9 @@ Expected: `syntax OK`.
 
 - [ ] **Step 3: Verify the redirect is present exactly once**
 
-Run: `grep -c 'timeout "$timeout" "${cmd\[@\]}" > "$output_file" 2>&1 < /dev/null' tests/claude-code/test-helpers.sh`
+Run: `grep -F -c 'timeout "$timeout" "${cmd[@]}" > "$output_file" 2>&1 < /dev/null' tests/claude-code/test-helpers.sh`
+
+(`-F` because a `$` mid-pattern is an anchor to some grep implementations, ugrep among them, and the count would read 0 against a correct file.)
 
 Expected: `1`.
 

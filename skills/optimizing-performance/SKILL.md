@@ -35,7 +35,7 @@ The correctness, noise, and materiality gates below are meaningless without benc
 
 ## The Workflow (Hybrid: SDD batch + bounded re-profile)
 
-1. **Baseline & candidates.** Take the measured baseline + ranked candidate list from profiling-performance. Persist to the SDD scratch dir via the `sdd-dir` cache helper (the path `subagent-driven-development`'s `scripts/sdd-dir` prints — **never** `.git/`, never the working tree):
+1. **Baseline & candidates.** Take the measured baseline + ranked candidate list from profiling-performance. Persist to the repo-scoped scratch dir: run `subagent-driven-development`'s `scripts/sdd-dir` with **no plan argument** and use the path it prints (**never** `.git/`, never the working tree). The no-argument form is required — the plan-scoped directory does not exist yet at this step, and SDD's Finish deletes it, which would destroy the baseline the bounded re-profile round in step 5 reads:
    - `baseline.json` — benchmark numbers **plus run-to-run variance**, the named workload, and the exact benchmark command.
    - the **correctness reference** — reference outputs + the agreed comparison rule (bitwise, or absolute/relative tolerance).
    - an **attempts ledger** — one row per candidate tried, its measured result, and the keep/revert decision.

@@ -294,9 +294,11 @@ Expected: the three commits from Steps 3, 4, and 7 in that order and nothing lef
 
 **Files:**
 - Create: `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md`
+- Modify: `skills/requesting-code-review/scripts/gate-telemetry` and `tests/codex-review-gate/test-gate-telemetry.sh` (`--until`, the upper bound that makes the historical read disjoint from the cohort; added in this task's fix round after the Codex gate found the unbounded read contaminated)
 
 **Interfaces:**
 - Consumes: Part 1's released `gate-telemetry` with churn metrics, Task 0's `--since` flag, and Part 1's `verdict-normalize` fix.
+- Produces: `gate-telemetry --until <ISO-8601>`, the mirror of `--since`; together they select the half-open window [since, until), so two reads sharing a boundary are disjoint by construction.
 - Produces: the evidence note that every later task appends a section to. Its "Baselines" section holds two lines: the historical fleet figures (every cached run predates 6.13.0) and the post-release cohort read through `--since`, which is expected to be small or empty when this task runs and is re-read at release. Arm verdicts rest on each arm's own control and treatment runs, never on these fleet lines.
 
 **Context the implementer needs.** The 2026-09-05 analysis measured task gates at mean 2.24 rounds with 27% converging in round 1, over 468 runs. Every run in the telemetry cache still predates 6.13.0, so an unbounded `gate-telemetry --all` reports exactly that pre-fix history and must not be labeled a post-fix baseline (the 6.13.0 sweep flagged precisely this). This task records the history as history, reads the post-release cohort through `--since` (bounded at the release commit's timestamp), and states plainly that the arms are judged by their own control and treatment runs.
@@ -310,20 +312,22 @@ grep '"version"' .claude-plugin/plugin.json
 
 Expected: the echo line, and a version of 6.13.0 or later. If either fails, STOP. This plan's measurements are invalid on a tree that does not contain the release.
 
-- [ ] **Step 2: Read both baselines from the shipped tool**
+- [ ] **Step 2: Read both baselines from the shipped tool, each bounded at the release commit**
 
-```bash
-bash skills/requesting-code-review/scripts/gate-telemetry --all
-```
-
-Copy the fleet aggregate's `Rounds by gate` line verbatim; this is the historical line, and every run behind it predates the release. Then read the post-release cohort, bounded at the release commit:
+An unbounded `--all` is not history: by the time this task runs, the cache already holds this plan's own gate rounds, so the historical line must be bounded from above and the cohort from below at the same instant.
 
 ```bash
 since="$(git log -1 --format=%cI v6.13.0)"
+bash skills/requesting-code-review/scripts/gate-telemetry --all --until "$since"
+```
+
+Copy that fleet `Rounds by gate` line verbatim; it is the historical line, and every run behind it predates the release commit. Then read the post-release cohort:
+
+```bash
 bash skills/requesting-code-review/scripts/gate-telemetry --all --since "$since"
 ```
 
-Copy that fleet `Rounds by gate` line too, with the `$since` value. Expect it to be nearly empty: real post-release gate runs accrue only as this plan and later work run. That emptiness is the honest state, not a defect.
+Copy that fleet line too, with the `$since` value. Expect it to be small: real post-release gate runs accrue only as this plan and later work run. Finally run the unbounded `--all` once and confirm, for the task gate, that the historical run count plus the cohort run count equals the unbounded count; write those three numbers into the note as the disjointness check.
 
 - [ ] **Step 3: Verify the eval harness is green**
 
@@ -367,11 +371,13 @@ arm ships alone, with its own control and treatment runs.
 
 ## Baselines
 
-Historical fleet (every cached run predates 6.13.0):
-<paste the unbounded gate-telemetry fleet "Rounds by gate" line here>
+Historical fleet (runs before the 6.13.0 release commit; gate-telemetry --all --until <the release commit's %cI timestamp>):
+<paste the bounded historical fleet "Rounds by gate" line here>
 
 Post-release cohort (gate-telemetry --all --since <the release commit's %cI timestamp>, read <today's date>):
-<paste the bounded fleet "Rounds by gate" line here, or "empty" if no run has landed yet>
+<paste the bounded cohort fleet "Rounds by gate" line here, or "empty" if no run has landed yet>
+
+Disjointness verified: task gate historical <n> runs + cohort <m> runs = unbounded <n+m> runs.
 
 The historical line is context, not a control: it is the number Part 1 set
 out to move. The post-release cohort is re-read at release so the note

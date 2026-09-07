@@ -115,6 +115,12 @@ Subagent (general-purpose):
 - `[HEAD_SHA]` — current commit
 - `[DIFF_FILE]` — the path `scripts/review-package PLAN_FILE FIX_BASE HEAD` printed
 
+The read-only clause inside the prompt is a verbatim copy of
+[reviewer-read-only-clause.md](../requesting-code-review/reviewer-read-only-clause.md),
+the single source for every reviewer template; `tests/sdd/test-sdd-contract.sh`
+fails when any copy drifts from it. Change the source file and re-copy — never
+edit a copy in place.
+
 **Final-wave usage:** this same template covers the fix wave of the FINAL
 whole-branch review, where the findings span tasks and no task brief exists.
 There `[BRIEF_FILE]` carries the plan file, `[FINDINGS]` carries the final

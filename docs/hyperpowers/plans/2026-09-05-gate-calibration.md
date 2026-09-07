@@ -23,6 +23,7 @@
 - No `Co-Authored-By` lines and no text implying AI-generated assistance.
 - Never run `git reset --hard`, `git clean`, `git checkout -- <path>`, or any force-push. Restore a tracked file with `git show HEAD:<path> > <path>`.
 - Do not push. Committing is expected; pushing is a separate instruction from the human partner.
+- **How the contributor rule "show the complete diff and get approval before committing" is met here.** The human partner approves this plan before execution and approves the complete branch diff at the finishing step, where the merge decision is theirs; every commit lands on a feature branch and nothing is pushed. Per-commit diff approval is not requested during execution unless the human partner asks for it. This is the same arrangement Part 1 ran under and is recorded so no task re-litigates it.
 - Version bumps use `vrzn`. Never hand-edit a version string.
 - This repository commits its `docs/hyperpowers/` specs, plans, and eval-evidence notes.
 
@@ -400,10 +401,10 @@ git commit -m "docs(evals): record the historical fleet churn and the empty post
 **Risk tier:** standard — behavior-shaping prose in a gate section file, with losslessness bookkeeping; the measurement runs real Codex reviews, not sessions in dangerous mode.
 
 **Files:**
-- Modify: `skills/requesting-code-review/recipe-code.md:53`
-- Modify: `skills/requesting-code-review/recipe-code.md:57`
-- Modify: `tests/codex-review-gate/gate-post-split-edits.tsv` (two new rows)
-- Modify: `tests/codex-review-gate/test-gate-split-lossless.sh` (edit count plus 2)
+- Modify: `skills/requesting-code-review/recipe-code.md:53` (per-task focus), `:57` (the sentence after it), `:71` (final whole-branch focus), `:81` (code-review-request focus)
+- Modify: `tests/codex-review-gate/gate-post-split-edits.tsv` (four new rows)
+- Modify: `tests/codex-review-gate/test-gate-split-lossless.sh` (edit count plus 4)
+- Modify: `tests/codex-review-gate/test-gate-contract.sh` (one new assertion)
 - Create (evals repo): `evals/scripts/codex-focus-arm.sh`
 - Create (evals repo): `evals/fixtures/codex-focus-arm/` (two fixture repos built from checked-in files)
 
@@ -414,6 +415,8 @@ git commit -m "docs(evals): record the historical fleet churn and the empty post
 **Context the implementer needs.** codex-plugin-cc's `prompts/adversarial-review.md` wraps our focus text in a template that never defines the severities its schema enumerates, so the reviewer picks a severity with no scope anchor, and 30% of task-gate blocking captures carried nothing critical or high. The template is a plugin file a future version overwrites; the focus string is the only durable channel we own. 6.13.0 fixed the downstream consequence in `verdict-normalize`; this arm attacks the cause.
 
 The plan gate rejected measuring this through Quorum: the harness seeds a stub Codex whose verdicts are canned, so it cannot classify severity, and asserting the calibration phrase in the launch made the control fail by construction. This arm therefore measures the reviewer directly: the same fixture diff, reviewed by real Codex three times under the control focus (today's recipe text) and three times under the treatment focus (with the calibration), each capture normalized by `verdict-normalize`. Two fixtures: **M** adds a branch nobody tested and contains no defect — the calibration says medium; **H** adds the same branch with a reachable crash — high under either focus, the guard that the calibration scopes severity rather than suppressing it.
+
+The defect and spec D7 cover every JSON code gate, not only the per-task one, so the same three calibration sentences go into all three code-review focus strings in `recipe-code.md` — per-task (line 53, source line 326), final whole-branch (line 71, source line 344), and code-review request (line 81, source line 354); all three verified byte-for-byte against the pinned original, none a referent. The runner measures the per-task focus; the other two carry identical sentences, and a contract assertion pins all three so none can drift apart.
 
 - [ ] **Step 1: Create the fixtures and the runner in the evals repo**
 
@@ -543,7 +546,7 @@ Record the six lines. Expected: fixture M normalizes `blocking` in at least 2 of
 
 If M normalizes `approved` in 2 or more of 3, the defect does not reproduce with this reviewer: append the null result to the evidence note as this arm's section, commit it, and skip to the next task.
 
-- [ ] **Step 4: Add the calibration to the focus text**
+- [ ] **Step 4: Add the calibration to all three focus strings**
 
 In `skills/requesting-code-review/recipe-code.md`, replace line 53 in full with this single line:
 
@@ -551,15 +554,38 @@ In `skills/requesting-code-review/recipe-code.md`, replace line 53 in full with 
 node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <BASE_SHA> --json "Task-scoped review. Requirements: <TASK_BRIEF_PATH>. Implementer report: <IMPLEMENTER_REPORT_PATH>. Review package: <REVIEW_PACKAGE_PATH>. Global constraints: <GLOBAL_CONSTRAINTS_PATH>. Review for task compliance and code quality. Severity is scoped to this diff: critical or high means a defect in the changed lines that yields a wrong result, a crash, data loss, or a reachable security hole. An untested path is medium unless the requirements named that test as a deliverable. Naming, style, and speculative hardening are low. You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills. Do not edit anything."
 ```
 
-Then replace line 57 in full with:
+Replace line 57 in full with:
 
 ```
 dispatched. Apart from the severity calibration, the focus text stays short because the task brief, implementer
 ```
 
-The treatment focus in `codex-focus-arm.sh` is this exact text with the placeholders filled; if you change one, change the other in the same commit.
+Replace line 71 in full with:
 
-- [ ] **Step 5: Add the two losslessness rows**
+```
+node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <MERGE_BASE_SHA> --json "Final whole-branch review. Branch review package: <BRANCH_REVIEW_PACKAGE_PATH>. Plan or requirements: <PLAN_OR_REQUIREMENTS_PATH>. Minor findings ledger, if present: <MINOR_LEDGER_PATH>. Tier-skip summary, if any: <TIER_SKIPS_PATH>. Review for correctness, requirements coverage, integration risk, and code quality. Severity is scoped to this diff: critical or high means a defect in the changed lines that yields a wrong result, a crash, data loss, or a reachable security hole. An untested path is medium unless the requirements named that test as a deliverable. Naming, style, and speculative hardening are low. You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills. Do not edit anything."
+```
+
+Replace line 81 in full with:
+
+```
+node "$CODEX_PATH/scripts/codex-companion.mjs" adversarial-review --base <BASE_SHA> --json "Code review. Requirements or review context: <PLAN_OR_REQUIREMENTS_CONTEXT>. Review for correctness, requirements alignment, integration risk, and code quality. Severity is scoped to this diff: critical or high means a defect in the changed lines that yields a wrong result, a crash, data loss, or a reachable security hole. An untested path is medium unless the requirements named that test as a deliverable. Naming, style, and speculative hardening are low. You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills. Do not edit anything."
+```
+
+Before editing, confirm each target line is what this plan expects (`sed -n '53p;57p;71p;81p'`); if a line has moved, stop and report rather than guess. The treatment focus in `codex-focus-arm.sh` is line 53's text with the placeholders filled; if you change one, change the other in the same commit.
+
+Then add one assertion to `tests/codex-review-gate/test-gate-contract.sh`, immediately before its final status block, so the three copies cannot drift apart:
+
+```bash
+n="$(grep -c 'Severity is scoped to this diff' "$GATE")"
+if [ "$n" -eq 3 ]; then
+  pass "all three code-review focus strings carry the severity calibration"
+else
+  fail "all three code-review focus strings carry the severity calibration (found $n)"
+fi
+```
+
+- [ ] **Step 5: Add the four losslessness rows**
 
 Do not retype the replacement lines. Extract them from the file you just edited, so the table's copy is byte-identical to the file's by construction — a single drifted character fails the proof.
 
@@ -571,17 +597,25 @@ printf '%s\t%s\t%s\n' 326 severity-calibration "$(sed -n '53p' skills/requesting
 printf '%s\t%s\t%s\n' 330 severity-calibration "$(sed -n '57p' skills/requesting-code-review/recipe-code.md)" >> tests/codex-review-gate/gate-post-split-edits.tsv
 ```
 
-Confirm both rows landed with exactly two tabs each:
-
 ```bash
-tail -2 tests/codex-review-gate/gate-post-split-edits.tsv | awk -F'\t' '{print NF, $1, $2}'
+printf '%s\t%s\t%s\n' 344 severity-calibration "$(sed -n '71p' skills/requesting-code-review/recipe-code.md)" >> tests/codex-review-gate/gate-post-split-edits.tsv
 ```
 
-Expected: `3 326 severity-calibration` and `3 330 severity-calibration`.
+```bash
+printf '%s\t%s\t%s\n' 354 severity-calibration "$(sed -n '81p' skills/requesting-code-review/recipe-code.md)" >> tests/codex-review-gate/gate-post-split-edits.tsv
+```
+
+Confirm all four rows landed with exactly two tabs each:
+
+```bash
+tail -4 tests/codex-review-gate/gate-post-split-edits.tsv | awk -F'\t' '{print NF, $1, $2}'
+```
+
+Expected: four rows reading `3 <srcline> severity-calibration` for 326, 330, 344, 354.
 
 - [ ] **Step 6: Bump the pinned edit count**
 
-Read the current pin: `grep -n 'post_edit_count" -eq' tests/codex-review-gate/test-gate-split-lossless.sh`. Call it N. This task appended two rows, so set the `-eq N` test and both adjacent `exactly N declared post-split edits` message strings to N plus 2. Do not copy a number from this plan: N is 10 only if no earlier task has added rows.
+Read the current pin: `grep -n 'post_edit_count" -eq' tests/codex-review-gate/test-gate-split-lossless.sh`. Call it N. This task appended four rows, so set the `-eq N` test and both adjacent `exactly N declared post-split edits` message strings to N plus 4. Do not copy a number from this plan: N is 10 only if no earlier task has added rows.
 
 - [ ] **Step 7: Prove the edit is lossless**
 
@@ -595,7 +629,7 @@ Expected: `STATUS: PASSED` with 28 PASS and 0 SKIP.
 bash tests/codex-review-gate/test-gate-contract.sh
 ```
 
-Expected: `STATUS: PASSED`.
+Expected: `STATUS: PASSED`, including the new three-copies assertion.
 
 - [ ] **Step 8: Run the treatment arm**
 
@@ -615,6 +649,7 @@ Record the six lines.
 git show HEAD:skills/requesting-code-review/recipe-code.md > skills/requesting-code-review/recipe-code.md
 git show HEAD:tests/codex-review-gate/gate-post-split-edits.tsv > tests/codex-review-gate/gate-post-split-edits.tsv
 git show HEAD:tests/codex-review-gate/test-gate-split-lossless.sh > tests/codex-review-gate/test-gate-split-lossless.sh
+git show HEAD:tests/codex-review-gate/test-gate-contract.sh > tests/codex-review-gate/test-gate-contract.sh
 bash tests/codex-review-gate/test-gate-split-lossless.sh
 ```
 
@@ -622,12 +657,12 @@ Then write the losing result into the evidence note and skip to Step 11. A rever
 
 - [ ] **Step 10: Append the evidence section**
 
-Add an `### Arm A — severity calibration in the focus text` section to `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md` recording: the defect and why the calibration cannot live in codex-plugin-cc's template; why the measurement is a direct reviewer run rather than a Quorum scenario; the Codex model and reasoning effort the runs used (from `${CODEX_HOME:-$HOME/.codex}/config.toml`); the twelve normalized results, fixture by fixture and arm by arm, with the capture paths; and the verdict against both sides of the decision rule. State H's numbers explicitly even when they are a clean 3 of 3 — an unstated guard is indistinguishable from an unrun one.
+Add an `### Arm A — severity calibration in the focus text` section to `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md` recording: the defect and why the calibration cannot live in codex-plugin-cc's template; that the same sentences went into all three code-review focus strings and the contract assertion that pins them; why the measurement is a direct reviewer run rather than a Quorum scenario; the Codex model and reasoning effort the runs used (from `${CODEX_HOME:-$HOME/.codex}/config.toml`); the twelve normalized results, fixture by fixture and arm by arm, with the capture paths; and the verdict against both sides of the decision rule. State H's numbers explicitly even when they are a clean 3 of 3 — an unstated guard is indistinguishable from an unrun one.
 
 - [ ] **Step 11: Commit**
 
 ```bash
-git add skills/requesting-code-review/recipe-code.md tests/codex-review-gate/gate-post-split-edits.tsv tests/codex-review-gate/test-gate-split-lossless.sh docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md
+git add skills/requesting-code-review/recipe-code.md tests/codex-review-gate/gate-post-split-edits.tsv tests/codex-review-gate/test-gate-split-lossless.sh tests/codex-review-gate/test-gate-contract.sh docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md
 git commit -m "feat(gate): the reviewer picked severities against a scope nobody had defined"
 ```
 

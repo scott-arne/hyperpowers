@@ -33,3 +33,27 @@ what a reviewer judges; each is checked by an offline assertion named in the
 plan. No before/after runs were made for them.
 
 ## Arms
+### Arm A — severity calibration in the focus text
+
+**Defect.** codex-plugin-cc's `prompts/adversarial-review.md` template wraps our focus text in a schema that enumerates severities (critical, high, medium, low, informational) without defining their scope, so the reviewer picks a severity with no anchor. Historical captures showed 30% of task-gate blocking runs carried nothing critical or high — the untested-branch finding was classified as high when it should have been medium, causing unnecessary rounds. The template is a plugin file a future version overwrites; the focus string is the only durable channel we own.
+
+**Calibration.** Add three sentences to all three code-review focus strings in `skills/requesting-code-review/recipe-code.md` (per-task line 326, final whole-branch line 344, code-review-request line 354): "Severity is scoped to this diff: critical or high means a defect in the changed lines that yields a wrong result, a crash, data loss, or a reachable security hole. An untested path is medium unless the requirements named that test as a deliverable. Naming, style, and speculative hardening are low." A contract assertion pins all three copies so none can drift apart.
+
+**Method.** Direct Codex review of two fixture diffs, each reviewed three times under the control focus (today's recipe text) and three times under the treatment focus (with the calibration). This arm uses a direct reviewer run rather than a Quorum scenario because the harness seeds a stub Codex whose verdicts are canned — it cannot classify severity — and asserting the calibration phrase in the launch made the control fail by construction. Fixtures: **M** adds a branch nobody tested and contains no defect (the calibration says medium); **H** adds the same branch with a reachable crash (high under either focus, the guard that the calibration scopes severity rather than suppressing it). Each capture normalized by `verdict-normalize`.
+
+**Reviewer.** gpt-5.6-sol at xhigh reasoning effort.
+
+**Control arm results** (capture directory: `$TMPDIR/focus-arm/control/`):
+- M control 1: approved
+- M control 2: approved
+- M control 3: approved
+- H control 1: blocking
+- H control 2: approved
+- H control 3: approved
+
+**Verdict.** The defect does not reproduce with this reviewer. Fixture M normalized `approved` in 3 of 3 control runs, meaning the untested-branch finding was not classified as high by this model configuration. Without the defect manifesting in the control, the calibration cannot be measured. Treatment arm not run.
+
+**Files changed.** None (arm not applied).
+
+**Commits.**
+- evals repo: 0614bc7 arm: the code-gate focus text reviewed by real Codex, with and without a severity scope

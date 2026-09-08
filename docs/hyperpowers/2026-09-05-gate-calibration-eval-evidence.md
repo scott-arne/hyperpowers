@@ -213,3 +213,86 @@ declined fixture engineering to reproduce the larger case.
 - evals repo (scenario): 26be30d scenario: the re-review focus string restates a ledger it already hands over as a path
 - evals repo (oracle fixes): fee1039, 4e48d1d, and 0a3aa61 fix(scenario): the shape oracle counted a ledger path the preamble already carried
 - hyperpowers repo: 31d0a79 (the pre-amendment line) and this commit
+
+### Consumed-round accounting
+
+**Mechanical; no arm.** The defect here is arithmetic in a script, not a
+judgment an agent makes about prose, so a bash suite proves it and no scenario
+was run. The prose changes that accompany it (`gate-fix-loop.md:87` and SDD's
+numbered list) only redirect the caller to a flag that now exists; they add no
+new instruction for an eval to measure.
+
+**Defect.** SDD's per-task Codex gate has no ceiling of its own — its rounds
+count against the task's shared five-round fix cap — so the controller was told
+to compute `5 - <non-gate fix rounds consumed>` by hand before every
+`gate-round` call. The subtraction did not survive contact.
+
+**Measurement.** `gate-telemetry` does not tabulate ceilings (it reads them only
+to decide whether a run backstopped) and the Baselines section above has no
+ceiling table, so the figures come from the counter's own state files. Read
+2026-09-08 over the same historical window the Baselines use — gate directories
+under `~/.cache/hyperpowers/codex-review/<key>/<run>/` whose mtime is before
+2026-09-06T22:45:00-07:00:
+
+```bash
+node -e 'const fs=require("fs"),p=require("path");const r=p.join(process.env.HOME,".cache/hyperpowers/codex-review");const until=Date.parse("2026-09-06T22:45:00-07:00");const h={};let n=0;for(const k of fs.readdirSync(r)){const kd=p.join(r,k);if(!fs.statSync(kd).isDirectory())continue;for(const run of fs.readdirSync(kd)){const rd=p.join(kd,run);const f=p.join(rd,"gate-round.json");if(!fs.existsSync(f))continue;if(fs.statSync(rd).mtimeMs>=until)continue;try{const j=JSON.parse(fs.readFileSync(f,"utf8"));if(j.gate!=="task")continue;n++;h[j.ceiling]=(h[j.ceiling]||0)+1}catch(e){}}}console.log(n,JSON.stringify(h))'
+```
+
+469 task gates, ceilings distributed `{1: 1, 2: 12, 3: 260, 4: 63, 5: 126, 6: 2,
+7: 5}`. Seven of those ceilings are impossible: 6 and 7 both exceed the shared
+cap, so two gates were granted one round more than the cap allows and five were
+granted two. Twenty gates in total sit in the 1, 2, 6, and 7 buckets — the
+values a correct subtraction reaches only from an unusual ledger, and in two
+cases cannot reach at all.
+
+The plan, and the wording it fixed into `gate-round`'s comment and SDD's
+instruction list, says nineteen. The measurement now says twenty. The
+twentieth is a single ceiling-7 run whose directory mtime is
+2026-09-07T05:06:02Z: inside the historical window, but recorded after the plan
+was written. No other bucket moved, and the argument is unchanged, so the
+skill text was left at the plan's figure rather than re-tuned for one run.
+Part 2's own task gates fall outside this window (4 runs, ceilings 3 and 4) and
+are excluded.
+
+**Fix.** `gate-round` grew `--consumed <n>`, mutually exclusive with
+`--ceiling`, which sets the ceiling to `5 - n` and records `consumed` in the
+state file beside `round`, `ceiling`, and `gate`. `--consumed` cannot express a
+ceiling above the cap, and a task gate that still passes `--ceiling` above 5 is
+now a usage error (exit 2, which the gate doc's step 0 already treats as
+backstop, so the failure is fail-closed rather than a stall).
+
+**A zero ceiling had to become reachable first.** `--consumed 5` yields a
+ceiling of 0, which the advance path already handled — `round=1` exceeds `0` —
+but the peek path did not, in two separate ways. Its verdict expression guarded
+with `[ "$c" -gt 0 ]`, which read a spent budget as "no ceiling known" and
+answered `proceed`; and its numeric-validation idiom, `expr "$c" + 0`, treats a
+zero *result* as failure, so it condemned a legitimate ceiling of 0 as an
+unreadable state file. The second defect was not in the plan: it also meant a
+peek on a fresh `GATE_DIR` with no `--ceiling` exited 2 with a state-file error
+naming a file that does not exist. Both are fixed by keeping "unknown" and
+"zero" distinct — unknown stays empty and proceeds, a recorded zero backstops —
+and by validating digits with a `case` pattern instead of `expr`.
+
+**What now pins it.** `tests/codex-review-gate/test-gate-round.sh` gained
+32 assertions (22 to 54): the derived ceilings for `--consumed` 0, 2, and 5; `consumed` in
+the state file; the spent cap backstopping on its first advance; a peek at
+ceiling 0 answering `backstop`; a peek with no ceiling known still answering
+`proceed`; the four usage errors (`--consumed` with `--ceiling`, `--consumed 6`,
+`--consumed -1`, `--consumed` with no value); a task `--ceiling 7` rejected while
+a final `--ceiling 7` still runs; and `--ceiling 4` unchanged for the spec,
+plan, final, and adhoc gates. The `proceed`-on-unknown case is the one that
+looks redundant and is not: reintroducing the collapse of unknown to zero flips
+it to `backstop`, which is a gate stopped before round 1 ever ran. That was
+verified by making the peek unconditional and watching only that assertion fail.
+
+**Files changed.**
+- `skills/requesting-code-review/scripts/gate-round` (the `--consumed` flag, the task-ceiling bound, the peek fix)
+- `skills/requesting-code-review/gate-fix-loop.md` (line 87: the step-0 command)
+- `skills/subagent-driven-development/SKILL.md` (the numbered list that mandated the hand computation)
+- `tests/codex-review-gate/test-gate-round.sh` (the new assertions)
+- `tests/codex-review-gate/gate-post-split-edits.tsv` (one new row for source line 628)
+- `tests/codex-review-gate/test-gate-split-lossless.sh` (pin raised from 16 to 17)
+- `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md` (this section)
+
+**Commits.**
+- hyperpowers repo: this commit. No evals-repo work: mechanical, no scenario.

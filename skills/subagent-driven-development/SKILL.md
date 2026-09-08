@@ -491,19 +491,24 @@ no-Codex notice once and run both gates as no-ops.
      reconstruct the consumed-round count from the ledger's fix-round
      entries and, if gate rounds cannot be established, surface via BLOCKED
      rather than restarting the count.
-  2. **State the ceiling in the counter's own coordinates.** `gate-round`
-     compares its LOCAL count — gate rounds only, monotonic within the
-     `GATE_DIR` — against `--ceiling`, so the ceiling must leave gate rounds
-     out; they are already in that count. Before EVERY `gate-round` call,
-     compute `ceiling = 5 - <NON-gate fix rounds this task has consumed so
-     far>` (all fix/re-review rounds, whatever the finding's origin — the gate's
-     own invocation rounds are excluded only because `gate-round`'s counter
-     already holds them) and pass that. Recompute at each
-     call: non-gate rounds may land between gate rounds.
-  3. **Check the shared cap before calling.** If `ceiling <= <gate rounds
-     already run>` — equivalently, the task's consumed rounds already total
-     five — do NOT call the gate: the cap is spent, so follow the breaker
-     below and surface the task as BLOCKED.
+  2. **Let the counter do the arithmetic.** `gate-round` compares its LOCAL
+     count — gate rounds only, monotonic within the `GATE_DIR` — against a
+     ceiling, so the ceiling must leave gate rounds out; they are already in
+     that count. Pass `--consumed <NON-gate fix rounds this task has consumed
+     so far>` (all fix/re-review rounds, whatever the finding's origin — the
+     gate's own invocation rounds are excluded only because `gate-round`'s
+     counter already holds them) and the script derives the ceiling from the
+     shared five-round cap itself. Recompute the consumed count at each call:
+     non-gate rounds may land between gate rounds. Do not hand-compute
+     `--ceiling` for a task gate — that is how nineteen measured task gates
+     recorded ceilings of 1, 2, 6, and 7, two of which the cap makes
+     impossible. `--consumed` cannot express them.
+  3. **A spent cap is BLOCKED, not a gate round.** When the task's consumed
+     rounds already total five, `--consumed 5` yields a ceiling of zero and
+     the gate backstops on its first call. That is the fail-closed floor, not
+     the intended path: check before calling, and when the cap is spent follow
+     the breaker below and surface the task as BLOCKED rather than spending a
+     gate invocation to learn it.
 
   The invariant in one line: **local gate rounds + non-gate fix rounds ≤ 5**,
   enforced because `gate-round` blocks (verdict `backstop`) the moment its

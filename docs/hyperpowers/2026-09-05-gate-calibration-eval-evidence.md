@@ -273,7 +273,7 @@ naming a file that does not exist. Both are fixed by keeping "unknown" and
 and by validating digits with a `case` pattern instead of `expr`.
 
 **What now pins it.** `tests/codex-review-gate/test-gate-round.sh` gained
-32 assertions (22 to 54): the derived ceilings for `--consumed` 0, 2, and 5; `consumed` in
+49 assertions (22 to 71): the derived ceilings for `--consumed` 0, 2, and 5; `consumed` in
 the state file; the spent cap backstopping on its first advance; a peek at
 ceiling 0 answering `backstop`; a peek with no ceiling known still answering
 `proceed`; the four usage errors (`--consumed` with `--ceiling`, `--consumed 6`,
@@ -283,6 +283,21 @@ plan, final, and adhoc gates. The `proceed`-on-unknown case is the one that
 looks redundant and is not: reintroducing the collapse of unknown to zero flips
 it to `backstop`, which is a gate stopped before round 1 ever ran. That was
 verified by making the peek unconditional and watching only that assertion fail.
+
+**What the review round added.** The Codex task gate blocked the first
+implementation on three defects that suite did not reach. The cap consulted the
+`--gate` argument alone, so a continuation that omitted `--gate`, inherited
+`task` from the state file, and would be written back as `task` could still pass
+`--ceiling 7` and advance; the cap now reads the effective gate, after state is
+loaded and before anything is written. Flag presence was inferred from a
+non-empty value, so `--consumed ''` read as an absent flag and skipped both its
+own range check and the exclusion with `--ceiling`; presence is now tracked
+apart from the value, and a flag left dangling at the end of the argument list
+is a usage error rather than a bash unbound-variable death at exit 1. And every
+negative assertion branched on a bare command status, which accepts 1, 126, 127
+or death by signal as proof of an exit-2 contract; each now captures `$?` and
+compares it to 2 exactly, and checks that the rejected call left no counter
+behind or left an existing one byte for byte unchanged.
 
 **Files changed.**
 - `skills/requesting-code-review/scripts/gate-round` (the `--consumed` flag, the task-ceiling bound, the peek fix)

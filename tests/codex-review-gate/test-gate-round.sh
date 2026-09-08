@@ -8,7 +8,25 @@ GR="$REPO_ROOT/skills/requesting-code-review/scripts/gate-round"
 FAILURES=0
 pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
-expect() { printf '%s' "$1" | grep -Fq "$2" && pass "$3" || fail "$3 (got: $1)"; }
+expect() { printf '%s' "$1" | grep -Fq -- "$2" && pass "$3" || fail "$3 (got: $1)"; }
+# A usage error must exit exactly 2, never merely nonzero. Branching on a bare
+# command status also accepts 1, 126, 127 and death by signal, so it cannot
+# tell the usage contract from a script that died on a typo before it ever
+# reached the check.
+exit2() {
+  e_label="$1"; shift
+  e_out="$("$@" 2>&1)"; e_rc=$?
+  [ "$e_rc" -eq 2 ] && pass "$e_label" || fail "$e_label (rc=$e_rc out=$e_out)"
+}
+# A rejected call writes nothing: no counter where there was none, and a counter
+# that was already there left byte for byte as it was.
+no_state() {
+  if [ -f "$2/gate-round.json" ]; then fail "$1 (wrote $(cat "$2/gate-round.json"))"; else pass "$1"; fi
+}
+same_state() {
+  s_now="$(cat "$3/gate-round.json" 2>/dev/null)"
+  if [ "$s_now" = "$2" ]; then pass "$1"; else fail "$1 (now: $s_now)"; fi
+}
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/gr-test.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
@@ -34,34 +52,39 @@ expect "$(cat "$gd/gate-round.json")" '"gate":"task"' "state file records gate t
 # damaged state fails closed (exit 2), never resets the counter
 gd2="$work/gate2"; mkdir -p "$gd2"
 printf 'not json' > "$gd2/gate-round.json"
-bash "$GR" "$gd2" --ceiling 3 >/dev/null 2>&1 && fail "corrupt state exits 2" || pass "corrupt state exits 2"
-bash "$GR" "$gd2" --peek >/dev/null 2>&1 && fail "corrupt state peek exits 2" || pass "corrupt state peek exits 2"
+snap="$(cat "$gd2/gate-round.json")"
+exit2 "corrupt state exits 2" bash "$GR" "$gd2" --ceiling 3
+exit2 "corrupt state peek exits 2" bash "$GR" "$gd2" --peek
+same_state "corrupt state is left as found" "$snap" "$gd2"
 rm -f "$gd2/gate-round.json"
 
 # non-numeric ceiling in persisted state fails closed on both advance and peek
 gd3="$work/gate3"; mkdir -p "$gd3"
 printf '{"round":3,"ceiling":"x","gate":"task"}' > "$gd3/gate-round.json"
-bash "$GR" "$gd3" --ceiling 3 >/dev/null 2>&1 && fail "non-numeric ceiling advance exits 2" || pass "non-numeric ceiling advance exits 2"
-bash "$GR" "$gd3" --peek >/dev/null 2>&1 && fail "non-numeric ceiling peek exits 2" || pass "non-numeric ceiling peek exits 2"
+snap="$(cat "$gd3/gate-round.json")"
+exit2 "non-numeric ceiling advance exits 2" bash "$GR" "$gd3" --ceiling 3
+exit2 "non-numeric ceiling peek exits 2" bash "$GR" "$gd3" --peek
+same_state "non-numeric ceiling state is left as found" "$snap" "$gd3"
 
 # missing or null round field in persisted state fails closed (damaged state, not round 0)
 gd4="$work/gate4"; mkdir -p "$gd4"
 printf '{"ceiling":3,"gate":"task"}' > "$gd4/gate-round.json"
-bash "$GR" "$gd4" --ceiling 3 >/dev/null 2>&1 && fail "missing round field exits 2" || pass "missing round field exits 2"
+exit2 "missing round field exits 2" bash "$GR" "$gd4" --ceiling 3
 printf '{"round":null,"ceiling":3}' > "$gd4/gate-round.json"
-bash "$GR" "$gd4" --peek >/dev/null 2>&1 && fail "null round peek exits 2" || pass "null round peek exits 2"
+exit2 "null round peek exits 2" bash "$GR" "$gd4" --peek
 
 # unwritable GATE_DIR -> exit 2, no verdict emitted
 ro="$work/ro"; mkdir -p "$ro"; chmod 555 "$ro"
 out="$(bash "$GR" "$ro" --ceiling 3 2>/dev/null)"; rc=$?
 chmod 755 "$ro"
-[ "$rc" -ne 0 ] && pass "unwritable dir exits 2" || fail "unwritable dir exits 2 (rc=$rc out=$out)"
+[ "$rc" -eq 2 ] && pass "unwritable dir exits 2" || fail "unwritable dir exits 2 (rc=$rc out=$out)"
 [ -z "$out" ] && pass "no verdict on failed write" || fail "no verdict on failed write (got $out)"
 
 # determinate answers exit 0, missing dir exits 2
 bash "$GR" "$gd" --ceiling 3 >/dev/null; [ $? -eq 0 ] && pass "backstop exits 0" || fail "backstop exits 0"
-bash "$GR" "$work/nope" --ceiling 3 >/dev/null 2>&1 && fail "missing dir exits 2" || pass "missing dir exits 2"
-bash "$GR" "$gd" >/dev/null 2>&1 && fail "missing ceiling exits 2" || pass "missing ceiling exits 2"
+exit2 "missing dir exits 2" bash "$GR" "$work/nope" --ceiling 3
+no_state "a rejected missing dir writes no counter" "$work/nope"
+exit2 "missing ceiling exits 2" bash "$GR" "$gd"
 
 # --consumed states the task's spent non-gate rounds; the script derives the
 # ceiling from the shared five-round cap so the caller never subtracts.
@@ -90,16 +113,47 @@ expect "$(bash "$GR" "$gd9" --peek)" '"verdict":"proceed"' "peek with no ceiling
 
 # --consumed usage errors: exclusive with --ceiling, bounded by the cap, needs a value
 gd10="$work/gate10"; mkdir -p "$gd10"
-bash "$GR" "$gd10" --consumed 2 --ceiling 3 >/dev/null 2>&1 && fail "--consumed with --ceiling exits 2" || pass "--consumed with --ceiling exits 2"
-bash "$GR" "$gd10" --consumed 6 --gate task >/dev/null 2>&1 && fail "--consumed 6 exits 2" || pass "--consumed 6 exits 2"
-bash "$GR" "$gd10" --consumed -1 --gate task >/dev/null 2>&1 && fail "--consumed -1 exits 2" || pass "--consumed -1 exits 2"
-bash "$GR" "$gd10" --consumed >/dev/null 2>&1 && fail "--consumed with no value exits 2" || pass "--consumed with no value exits 2"
+exit2 "--consumed with --ceiling exits 2" bash "$GR" "$gd10" --consumed 2 --ceiling 3
+exit2 "--consumed 6 exits 2" bash "$GR" "$gd10" --consumed 6 --gate task
+exit2 "--consumed -1 exits 2" bash "$GR" "$gd10" --consumed -1 --gate task
+exit2 "--consumed with no value exits 2" bash "$GR" "$gd10" --consumed
+# a flag left dangling at the end of the argument list is a usage error too,
+# not a bash unbound-variable death
+exit2 "--ceiling with no value exits 2" bash "$GR" "$gd10" --ceiling
+exit2 "--gate with no value exits 2" bash "$GR" "$gd10" --gate
 
 # a task-gate ceiling above the shared cap is arithmetically impossible
-bash "$GR" "$gd10" --ceiling 7 --gate task >/dev/null 2>&1 && fail "task ceiling above the cap exits 2" || pass "task ceiling above the cap exits 2"
+exit2 "task ceiling above the cap exits 2" bash "$GR" "$gd10" --ceiling 7 --gate task
+no_state "rejected calls leave gate10 with no counter" "$gd10"
 # the cap belongs to the task gate alone
 gd11="$work/gate11"; mkdir -p "$gd11"
 expect "$(bash "$GR" "$gd11" --ceiling 7 --gate final)" '"verdict":"proceed"' "final gate keeps a ceiling of 7"
+
+# The cap belongs to the gate being counted, and that is not always the gate
+# named on this call: a continuation may omit --gate and inherit task from the
+# state file, which is the gate the write would persist all the same.
+gd12="$work/gate12"; mkdir -p "$gd12"
+bash "$GR" "$gd12" --consumed 2 --gate task >/dev/null
+snap="$(cat "$gd12/gate-round.json")"
+exit2 "resumed task gate rejects an over-cap ceiling" bash "$GR" "$gd12" --ceiling 7
+expect "$(cat "$gd12/gate-round.json")" '"round":1' "rejected continuation leaves the counter at round 1"
+same_state "rejected continuation leaves state untouched" "$snap" "$gd12"
+exit2 "peek on a resumed task gate rejects an over-cap ceiling" bash "$GR" "$gd12" --peek --ceiling 7
+same_state "rejected peek leaves state untouched" "$snap" "$gd12"
+# an inherited gate that is not the task gate carries no cap
+gd12b="$work/gate12b"; mkdir -p "$gd12b"
+bash "$GR" "$gd12b" --ceiling 3 --gate final >/dev/null
+expect "$(bash "$GR" "$gd12b" --ceiling 7)" '"verdict":"proceed"' "resumed final gate keeps a ceiling of 7"
+
+# An explicitly empty --consumed is a value the caller supplied, not a flag the
+# caller omitted; reading it as absent skips both the range check and the
+# mutual exclusion.
+gd13="$work/gate13"; mkdir -p "$gd13"
+exit2 "empty --consumed exits 2" bash "$GR" "$gd13" --consumed ''
+expect "$(bash "$GR" "$gd13" --consumed '' 2>&1)" "--consumed must be a non-negative integer" "empty --consumed is rejected as invalid, not read as absent"
+exit2 "empty --consumed with --ceiling exits 2" bash "$GR" "$gd13" --consumed '' --ceiling 3 --gate task
+exit2 "empty --consumed with --ceiling peeks no further" bash "$GR" "$gd13" --consumed '' --ceiling 3 --gate task --peek
+no_state "a rejected empty --consumed writes no counter" "$gd13"
 
 # every pre-existing --ceiling behavior is unchanged for the other gate types
 for g in spec plan final adhoc; do

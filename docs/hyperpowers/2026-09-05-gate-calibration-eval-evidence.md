@@ -91,3 +91,105 @@ plan. No before/after runs were made for them.
 - evals repo (round 2 fixtures and runner): 6bfce16 arm: production round-1 focus shape (lens + recipe) on M (fixed), H, and O (omitted requirement)
 - evals repo (round 3 base fixes and assertions): af29254 arm: checked-in base fixtures; the runner asserts both revisions parse and pass before it reviews
 - hyperpowers repo: (this commit)
+
+### Arm B — the round 2+ invocation is a fixed recipe
+
+**Defect.** `gate-fix-loop.md:22` said only that the round 2+ invocation
+"prepends a round-aware preamble to the §3 prompt." That describes the front of
+the string and leaves the rest open, so what the agent actually launches is
+improvised each round. Fleet telemetry over real re-review launches (recorded in
+`docs/hyperpowers/specs/2026-09-05-gate-churn-and-skill-hardening-design.md:81`
+and the plan at `docs/hyperpowers/plans/2026-09-05-gate-calibration.md:694`)
+measured the round-2+ focus at a median of 464 words, a p90 of 1032, and a
+maximum of 35468, with 36% over 600 words. The overflow was the ledger's own
+content pasted inline — findings restated, the fix summarized, the diff quoted —
+in a string that already hands the ledger over as a path.
+
+**Calibration.** Source line 563 (`gate-fix-loop.md:22`) now states the whole
+shape rather than only its opening: "The round 2+ invocation has exactly three
+parts, in order: the round-aware preamble, the ledger path, and the §3 recipe's
+own focus string unchanged. The ledger file carries the findings, the fixes, and
+the diff references, so the focus string carries none of them — measured
+re-review focus strings that restated the ledger inline ran to a median of 464
+words and a maximum of 35468. The preamble is:"
+
+**Why a recipe and not a prohibition.** "Do not paste the ledger" tells the
+agent what to delete from a string it is still composing freely, which leaves
+every other addition licensed — and the observed drift is exactly such an
+addition. Naming the three parts and their order closes the composition instead
+of policing one filling: anything that is not one of the three has no place to
+go. The measured figures stay in the line because a bare rule invites the
+judgment call ("this summary is short, it is probably fine") that the numbers
+foreclose.
+
+**Method.** Quorum scenario `codex-gate-re-review-focus-is-fixed` (evals repo),
+`--coding-agent claude-auto` (the host is Vertex-backed; `claude` requires
+`ANTHROPIC_API_KEY` and fails at setup here). The fixture stages a spent round 1
+— `gate-round.json` at round 1, a round ledger with two resolved and one
+declined finding, a committed fix diff — plus the four task materials the §3
+per-task focus string names, and asks for the next Codex round. The story never
+describes the prompt's shape, length, or contents.
+
+**Instrument.** The seeded stub companion writes every `adversarial-review`
+focus argument to `.launches/<n>.txt`, so the checks measure the string the
+launch actually carried rather than the transcript's rendering of it. Five
+assertions run against that file: a launch was recorded; the focus is under 250
+words; a ledger path is present; the ledger's first finding title (planted with
+the distinctive phrase "orphaned retry sentinel") is absent; and the whole
+three-part shape holds with nothing before, between, or after. The expected
+preamble and expected recipe focus are re-derived at check time from
+`gate-fix-loop.md` and `recipe-code.md` under the plugin root the run used, so
+the check cannot drift from the skill text it judges.
+
+**Decision rule.** The arm wins if the treatment passes at least 2 of 3 while
+the control passed at most 1 of 3, and the treatment's median focus word count
+is below the control's.
+
+**Control results** (unmodified tree at e90784b, the Arm A commit; three runs):
+- control 1: FAIL, 218 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T070733Z-4466`
+- control 2: FAIL, 218 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T070756Z-4722`
+- control 3: FAIL, 218 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T070817Z-7995`
+
+All three failed the shape check only, and all three failed it the same way: an
+extra "Read the review dossier first — it is your delivered context: <path>"
+segment spliced between the preamble and the recipe focus. Median 218 words.
+
+**Treatment results** (working-tree edit to `gate-fix-loop.md:22`; three runs):
+- treatment 1: FAIL, 206 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T071726Z-0d3b`
+- treatment 2: PASS, 206 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T071745Z-b7e7`
+- treatment 3: PASS, 206 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T071806Z-fc37`
+
+Treatment 1's launch was structurally the intended three parts; it failed only
+because the agent retyped the preamble's em dashes as ASCII hyphens and the
+checker's normalizer folded quoting and emphasis but not dash style. The
+scenario now folds dashes too (evals `4e48d1d`); re-scored against the six
+recorded launch files with that normalizer, the control stays 0 of 3 and the
+treatment becomes 3 of 3. The verdict below uses the stricter as-run numbers.
+
+**Verdict.** The arm wins. Treatment passed 2 of 3 against a control that passed
+0 of 3, and the treatment median of 206 words is below the control median of
+218. Every treatment launch dropped the dossier segment and landed on exactly
+the three named parts.
+
+**What this arm did not measure.** The ledger-restatement drift the telemetry
+recorded did not reproduce in this fixture: all six runs handed the ledger over
+as a path, none restated the planted finding, and none came near the 250-word
+bound — the word, ledger, and no-restate checks passed in all six. What the
+control does reproduce is the same underlying cause in a smaller form: an
+open-ended composition instruction lets unrelated material into the focus
+string, here the dossier line that `gate-lenses.md` scopes to round-1 lens
+prompts. The fixed recipe closes that opening, which is the mechanism the
+telemetry figures argue for, but this arm's evidence for the 464-word case
+remains the fleet measurement rather than these runs.
+
+**Files changed.**
+- `skills/requesting-code-review/gate-fix-loop.md` (line 22: the three-part recipe)
+- `tests/codex-review-gate/gate-post-split-edits.tsv` (one new row for source line 563)
+- `tests/codex-review-gate/test-gate-split-lossless.sh` (pin raised from 15 to 16)
+- `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md` (this section)
+
+**Commits.**
+- evals repo (scenario): 26be30d scenario: the re-review focus string restates a ledger it already hands over as a path
+- evals repo (checker fix): fee1039 fix(scenario): the shape check demanded a ledger path the preamble had already delivered
+- evals repo (checker fix): 4e48d1d fix(scenario): an em dash retyped as a hyphen read as a different preamble
+- hyperpowers repo: (this commit)

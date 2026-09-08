@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# gate-round GATE_DIR --ceiling N [--peek] — mechanical round counter for
+# gate-round GATE_DIR (--ceiling N | --consumed N) [--gate T] [--peek] —
+# mechanical round counter for
 # one gate invocation (spec 4.2). The counter lives in GATE_DIR beside the
 # round ledger, so concurrent gates never share state. Counting is the ONLY
 # job: the ledger append on backstop belongs to the gate doc's backstop
@@ -8,16 +9,41 @@
 set -uo pipefail
 
 gd="${1:-}"; shift || true
-[ -n "$gd" ] && [ -d "$gd" ] || { echo "usage: gate-round GATE_DIR --ceiling N [--gate T] [--peek]" >&2; exit 2; }
-ceiling=""; peek=0; gate=""
+[ -n "$gd" ] && [ -d "$gd" ] || { echo "usage: gate-round GATE_DIR (--ceiling N | --consumed N) [--gate T] [--peek]" >&2; exit 2; }
+ceiling=""; peek=0; gate=""; consumed=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --ceiling) ceiling="$2"; shift 2 ;;
+    --consumed) [ $# -ge 2 ] || { echo "gate-round: --consumed needs a value" >&2; exit 2; }; consumed="$2"; shift 2 ;;
     --gate) gate="$2"; shift 2 ;;
     --peek) peek=1; shift ;;
     *) echo "gate-round: unknown arg $1" >&2; exit 2 ;;
   esac
 done
+
+# SDD's per-task gate has no ceiling of its own: its rounds count against the
+# task's shared five-round fix cap. Making the controller subtract did not
+# survive contact — 19 measured task gates recorded ceilings of 1, 2, 6, and 7,
+# and 6 and 7 exceed the cap outright. --consumed states the one number the
+# controller can read off its ledger and lets the script do the arithmetic.
+SDD_TASK_CAP=5
+if [ -n "$consumed" ]; then
+  [ -z "$ceiling" ] || { echo "gate-round: --consumed and --ceiling are mutually exclusive" >&2; exit 2; }
+  case "$consumed" in
+    ''|*[!0-9]*) echo "gate-round: --consumed must be a non-negative integer (got '$consumed')" >&2; exit 2 ;;
+  esac
+  [ "$consumed" -le "$SDD_TASK_CAP" ] || { echo "gate-round: --consumed $consumed exceeds the shared cap of $SDD_TASK_CAP" >&2; exit 2; }
+  ceiling=$((SDD_TASK_CAP - consumed))
+fi
+# A task-gate ceiling above the shared cap is arithmetically impossible. Exit 2
+# is fail-closed here: the gate doc's step 0 treats a non-zero gate-round exit
+# as backstop, so a bad ceiling stops the round rather than stalling the loop.
+if [ "${gate:-}" = "task" ] && [ -n "$ceiling" ]; then
+  case "$ceiling" in
+    ''|*[!0-9]*) echo "gate-round: --ceiling must be a non-negative integer (got '$ceiling')" >&2; exit 2 ;;
+  esac
+  [ "$ceiling" -le "$SDD_TASK_CAP" ] || { echo "gate-round: task-gate ceiling $ceiling exceeds the shared cap of $SDD_TASK_CAP" >&2; exit 2; }
+fi
 
 state="$gd/gate-round.json"
 round=0; prev_ceiling=""; prev_gate=""
@@ -43,15 +69,23 @@ if [ "$peek" -eq 1 ]; then
   # we exited 2 above. So peek here only runs on fresh or valid state.
   # Peek answers with what the NEXT advance would return; enum stays
   # proceed|backstop only.
-  c="${prev_ceiling:-${ceiling:-0}}"
-  # Defend against non-numeric ceiling in fallback (should not happen given sentinel,
-  # but fail closed if it does).
-  if ! expr "$c" + 0 >/dev/null 2>&1; then
-    echo "gate-round: state file exists but is unreadable: $state" >&2
-    exit 2
-  fi
+  # An unknown ceiling and a recorded ceiling of zero are different answers.
+  # The old form defaulted unknown to 0 and then had to guard with `-gt 0`,
+  # which swallowed a real zero along with it. Leave unknown empty: unknown
+  # proceeds, and a recorded zero means the budget is spent and backstops.
+  # A real zero was unreachable until --consumed 5 made it ordinary.
+  c="${prev_ceiling:-$ceiling}"
+  # Defend against a non-numeric ceiling that slipped past the sentinel.
+  # `expr "$c" + 0` cannot do this job: expr exits 1 whenever the expression
+  # evaluates to zero, so it condemned a legitimate ceiling of 0 as unreadable.
+  case "$c" in
+    '') : ;;
+    *[!0-9]*)
+      echo "gate-round: state file exists but is unreadable: $state" >&2
+      exit 2 ;;
+  esac
   next=$((round + 1))
-  verdict=$([ -n "$c" ] && [ "$c" -gt 0 ] && [ "$next" -gt "$c" ] && echo backstop || echo proceed)
+  if [ -n "$c" ] && [ "$next" -gt "$c" ]; then verdict=backstop; else verdict=proceed; fi
   printf '{"round":%s,"ceiling":%s,"verdict":"%s"}\n' "$round" "${c:-0}" "$verdict"
   exit 0
 fi
@@ -60,7 +94,7 @@ fi
 round=$((round + 1))
 g="${gate:-${prev_gate:-unknown}}"
 case "$g" in spec|plan|task|final|adhoc|unknown) : ;; *) g="unknown" ;; esac
-printf '{"round":%s,"ceiling":%s,"gate":"%s"}\n' "$round" "$ceiling" "$g" > "$state" || {
+printf '{"round":%s,"ceiling":%s,"gate":"%s","consumed":%s}\n' "$round" "$ceiling" "$g" "${consumed:-null}" > "$state" || {
   echo "gate-round: state write failed" >&2
   exit 2
 }

@@ -23,7 +23,7 @@ done
 
 # SDD's per-task gate has no ceiling of its own: its rounds count against the
 # task's shared five-round fix cap. Making the controller subtract did not
-# survive contact — 19 measured task gates recorded ceilings of 1, 2, 6, and 7,
+# survive contact — 20 measured task gates recorded ceilings of 1, 2, 6, and 7,
 # and 6 and 7 exceed the cap outright. --consumed states the one number the
 # controller can read off its ledger and lets the script do the arithmetic.
 SDD_TASK_CAP=5

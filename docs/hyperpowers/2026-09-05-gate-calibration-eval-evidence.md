@@ -245,14 +245,13 @@ granted two. Twenty gates in total sit in the 1, 2, 6, and 7 buckets — the
 values a correct subtraction reaches only from an unusual ledger, and in two
 cases cannot reach at all.
 
-The plan, and the wording it fixed into `gate-round`'s comment and SDD's
-instruction list, says nineteen. The measurement now says twenty. The
-twentieth is a single ceiling-7 run whose directory mtime is
+The plan's original figure was nineteen. The measurement is twenty, and the
+plan, `gate-round`'s comment, and SDD's instruction list were amended to match.
+The twentieth is a single ceiling-7 run whose directory mtime is
 2026-09-07T05:06:02Z: inside the historical window, but recorded after the plan
-was written. No other bucket moved, and the argument is unchanged, so the
-skill text was left at the plan's figure rather than re-tuned for one run.
-Part 2's own task gates fall outside this window (4 runs, ceilings 3 and 4) and
-are excluded.
+was first written. No other bucket moved and the argument is unchanged — only
+the count. Part 2's own task gates fall outside this window (4 runs, ceilings 3
+and 4) and are excluded.
 
 **Fix.** `gate-round` grew `--consumed <n>`, mutually exclusive with
 `--ceiling`, which sets the ceiling to `5 - n` and records `consumed` in the

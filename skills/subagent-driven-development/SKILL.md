@@ -500,7 +500,7 @@ no-Codex notice once and run both gates as no-ops.
      counter already holds them) and the script derives the ceiling from the
      shared five-round cap itself. Recompute the consumed count at each call:
      non-gate rounds may land between gate rounds. Do not hand-compute
-     `--ceiling` for a task gate — that is how nineteen measured task gates
+     `--ceiling` for a task gate — that is how twenty measured task gates
      recorded ceilings of 1, 2, 6, and 7, two of which the cap makes
      impossible. `--consumed` cannot express them.
   3. **A spent cap is BLOCKED, not a gate round.** When the task's consumed

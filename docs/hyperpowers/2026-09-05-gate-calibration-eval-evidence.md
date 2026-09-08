@@ -41,28 +41,28 @@ plan. No before/after runs were made for them.
 
 **Method.** Direct Codex review of fixture diffs, each reviewed three times per arm and normalized by `verdict-normalize`. This arm uses a direct reviewer run rather than a Quorum scenario because the harness seeds a stub Codex whose verdicts are canned — it cannot classify severity — and asserting the calibration phrase in the launch made the control fail by construction.
 
-**Task 2's Codex gate.** After the first implementation (round 1), this task's own three-lens code gate returned four blocking findings and one medium. The human partner amended the spec's D7 and the Part 2 success criteria on 2026-09-07: the arm is judged on classification accuracy over the production round-1 prompt shape. Key findings: (1) round-1 code reviews never received the calibration because the lens-composition clause said only "context paths the code recipes already require," not the complete focus string; (2) the calibration's "in the changed lines" scope excluded wholly omitted requirements and failures at unchanged consumers; (3) fixture M's % branch turned `"%"` and whitespace-only inputs from NaN into 0, so it was not defect-free; (4) measurement must use the production round-1 focus shape (lens skeleton + recipe focus) for both arms; (5) the contract assertion counted only the opening phrase, not the complete calibration text.
+**Task 2's Codex gates.** After the first implementation (round 1), this task's own three-lens code gate returned four blocking findings and one medium. The human partner amended the spec's D7 and the Part 2 success criteria on 2026-09-07: the arm is judged on classification accuracy over the production round-1 prompt shape. After the round 2 implementation, the gate's second run found one blocking defect: the runner's base-stripping filter tested each line after `trim()` while several alternatives still required leading spaces, so it left the inner closing brace and also left `return Number(body) / 100` in M and O. All three generated bases failed `node --check` (the reviewer reproduced it against the preserved round-2 worktrees). Every one of the 18 round-2 reviews therefore compared against a broken program, not the working pre-change module, invalidating the round 2 result. Round 3 fixed this with checked-in `lib.base.js` files and assertions that both revisions parse and pass tests before reviewing.
 
-**Prompt shape.** Round 2 measured the production round-1 focus: the correctness lens skeleton (dossier line, charter, exhaustiveness demand, required Coverage section) followed by the per-task recipe's complete adversarial-review focus string. Control = the original recipe text without calibration (from commit b015394, recipe-code.md line 53); treatment = with the reworded calibration.
+**Prompt shape.** Rounds 2 and 3 measured the production round-1 focus: the correctness lens skeleton (dossier line, charter, exhaustiveness demand, required Coverage section) followed by the per-task recipe's complete adversarial-review focus string. Control = the original recipe text without calibration (from commit b015394, recipe-code.md line 53); treatment = with the reworded calibration.
 
-**Fixtures (round 2).** **M**: defect-free implementation of the percent-string branch (trim and NaN on empty body, as required). **H**: crash-and-wrong-result defect (unanchored regex returns wrong values for `-25%`, `.5%`, `1e2%`, and throws on `"%"`). **O**: omitted requirement (parseRate is correct but formatRate is missing, a requirement the task was asked to meet and omits).
+**Fixtures (rounds 2 and 3).** **M**: defect-free implementation of the percent-string branch (trim and NaN on empty body, as required). **H**: crash-and-wrong-result defect (unanchored regex returns wrong values for `-25%`, `.5%`, `1e2%`, and throws on `"%"`). **O**: omitted requirement (parseRate is correct but formatRate is missing, a requirement the task was asked to meet and omits).
 
 **Reviewer.** gpt-5.6-sol at xhigh reasoning effort.
 
 **Decision rule (as amended 2026-09-07 with D7).** The arm wins if treatment H and treatment O each block 3 of 3 AND treatment M is approved in at least 2 of 3; control numbers are recorded beside them.
 
-**Round 2 control arm results** (capture directory: `$TMPDIR/focus-arm-r2/control/`):
+**Round 3 control arm results** (capture directory: `$TMPDIR/focus-arm-r3/control/`):
 - M control 1: approved
 - M control 2: approved
 - M control 3: approved
-- H control 1: blocking
+- H control 1: approved (defect found, rated non-blocking)
 - H control 2: approved (defect found, rated non-blocking)
-- H control 3: approved (defect found, rated non-blocking)
+- H control 3: blocking
 - O control 1: blocking
 - O control 2: blocking
 - O control 3: blocking
 
-**Round 2 treatment arm results** (capture directory: `$TMPDIR/focus-arm-r2/treatment/`):
+**Round 3 treatment arm results** (capture directory: `$TMPDIR/focus-arm-r3/treatment/`):
 - M treatment 1: approved
 - M treatment 2: approved
 - M treatment 3: approved
@@ -73,7 +73,9 @@ plan. No before/after runs were made for them.
 - O treatment 2: blocking
 - O treatment 3: blocking
 
-**Verdict (round 2).** The arm wins. Treatment H blocked 3 of 3 (vs. control H 1 of 3), treatment O blocked 3 of 3 (vs. control O 3 of 3, no change because the omitted-requirement defect was already classified correctly under control), and treatment M approved 3 of 3 (vs. control M 3 of 3, the guard that calibration must not introduce false positives on defect-free implementations). The calibration lifted the crash-and-wrong-result defect (H) from blocking in 1 of 3 to blocking in 3 of 3, achieving consistency in classification while maintaining clean approvals for the defect-free fixture.
+**Verdict (round 3, decisive).** The arm wins. Treatment H blocked 3 of 3 (vs. control H 1 of 3), treatment O blocked 3 of 3 (vs. control O 3 of 3, no change because the omitted-requirement defect was already classified correctly under control), and treatment M approved 3 of 3 (vs. control M 3 of 3, the guard that calibration must not introduce false positives on defect-free implementations). The calibration lifted the crash-and-wrong-result defect (H) from blocking in 1 of 3 to blocking in 3 of 3, achieving consistency in classification while maintaining clean approvals for the defect-free fixture.
+
+**Round 2 results (INVALID, broken bases).** The runner's base-stripping filter produced broken modules for all three fixtures (failed `node --check`). All 18 reviews compared against broken programs, not the working pre-change modules. The Codex gate's second run (2026-09-07) caught this; the reviewer reproduced the failure against the preserved worktrees. Round 2 results are recorded here for the audit trail but do not decide the arm. Control: M 3/3 approved, H 1/3 blocking, O 3/3 blocking. Treatment: M 3/3 approved, H 3/3 blocking, O 3/3 blocking. Capture directory: `$TMPDIR/focus-arm-r2/{control,treatment}/`.
 
 **Round 1 results (historical, non-production prompt shape).** Round 1 measured a bare recipe focus (no lens skeleton) on two fixtures (M with the NaN defect, H with the crash) using the original calibration wording ("in the changed lines" instead of "what this diff causes"). Control arm (capture directory: `$TMPDIR/focus-arm/control/`): M 3/3 approved, H 1/3 blocking (all three found the defect, one rated high, two rated medium). Treatment arm (capture directory: `$TMPDIR/focus-arm/treatment/`): M 2/3 approved + 1/3 blocking, H 3/3 blocking. Those numbers informed the round 2 design but do not decide the arm because the prompt shape did not match production.
 
@@ -87,4 +89,5 @@ plan. No before/after runs were made for them.
 **Commits.**
 - evals repo (round 1 fixtures and runner): 0614bc7 arm: the code-gate focus text reviewed by real Codex, with and without a severity scope
 - evals repo (round 2 fixtures and runner): 6bfce16 arm: production round-1 focus shape (lens + recipe) on M (fixed), H, and O (omitted requirement)
+- evals repo (round 3 base fixes and assertions): af29254 arm: checked-in base fixtures; the runner asserts both revisions parse and pass before it reviews
 - hyperpowers repo: (this commit)

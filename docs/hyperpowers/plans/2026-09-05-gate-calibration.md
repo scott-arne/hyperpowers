@@ -826,7 +826,7 @@ If the arm lost, commit only the evidence note, with the message `docs(evals): a
 Two details the implementation must get right:
 
 - **Ceiling zero is now reachable.** With `--consumed 5` the cap is fully spent and the ceiling is 0. The advance path handles that correctly, because `round=1` is greater than `0`. The peek path does not: its verdict expression tests `[ "$c" -gt 0 ]` first, so a zero ceiling short-circuits to `proceed`. Today that is a latent quirk reachable only by passing `--ceiling 0` explicitly; `--consumed` makes it reachable through ordinary use, so fix it in this task.
-- **A task ceiling above 5 is impossible.** Reject `--gate task` with `--ceiling` greater than 5 as a usage error. That is safe: the gate doc's step 0 already says a non-zero `gate-round` exit is treated as backstop, so the failure mode is fail-closed rather than a stall.
+- **A task ceiling above 5 is impossible.** Reject a task gate with `--ceiling` greater than 5 as a usage error — judged against the effective gate, which is the `--gate` argument or, when a later call omits it, the gate the state file recorded, so an inherited task gate cannot carry a ceiling past the cap. Flag presence is tracked apart from the flag's value: an explicitly empty `--consumed ''` is a supplied value and fails validation, and supplying both `--consumed` and `--ceiling` is rejected even when one of them is empty. That is safe: the gate doc's step 0 already says a non-zero `gate-round` exit is treated as backstop, so the failure mode is fail-closed rather than a stall.
 
 This task's evidence is mechanical, not an eval. The defect is arithmetic in a script, and a bash suite proves the arithmetic. No scenario is required.
 
@@ -845,6 +845,9 @@ Read `tests/codex-review-gate/test-gate-round.sh` first to learn its fixture hel
 9. `gate-round "$gd" --ceiling 7 --gate task` exits 2.
 10. `gate-round "$gd" --ceiling 7 --gate final` still succeeds — the cap applies to the task gate only.
 11. Every pre-existing `--ceiling` behavior is unchanged for the spec, plan, final, and adhoc gates.
+12. After `gate-round "$gd" --consumed 2 --gate task` has advanced once, `gate-round "$gd" --ceiling 7` with no `--gate` exits 2 and leaves `gate-round.json` at `"round":1`.
+13. `gate-round "$gd" --consumed ''` exits 2, and `gate-round "$gd" --consumed '' --ceiling 3 --gate task` exits 2.
+14. Every case that expects exit 2 captures `$?` and compares it to 2 exactly — a bare `command && fail || pass` accepts any failure and does not pin the contract — and, on a fresh directory, asserts that no `gate-round.json` was written.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1676,7 +1679,7 @@ Always covered, since Tasks 0, 4, and 5 are not eval-gated:
 - An approval reached through a `needs-attention` verdict now has a stated rule: its medium/low notes are read and recorded before the round converges.
 - Arm D: the two routing edits 6.13.0 shipped now carry before/after evidence (or a revert, if the measurement said so).
 
-- `gate-round --consumed <n>` computes the SDD per-task ceiling from the shared five-round cap, replacing a subtraction the controller performed by hand. Nineteen measured task gates recorded impossible ceilings.
+- `gate-round --consumed <n>` computes the SDD per-task ceiling from the shared five-round cap, replacing a subtraction the controller performed by hand. Twenty measured task gates recorded out-of-pattern ceilings (1, 2, 6, or 7), seven of them above the cap.
 - `gate-round --peek` reports backstop for a spent ceiling of zero, which `--consumed 5` makes reachable.
 - A task-gate ceiling above five is now a usage error.
 

@@ -27,6 +27,11 @@ same_state() {
   s_now="$(cat "$3/gate-round.json" 2>/dev/null)"
   if [ "$s_now" = "$2" ]; then pass "$1"; else fail "$1 (now: $s_now)"; fi
 }
+# The counter is only a counter if the next call can read it back.
+json_ok() {
+  if node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$2/gate-round.json" 2>/dev/null
+  then pass "$1"; else fail "$1 (unparseable: $(cat "$2/gate-round.json" 2>/dev/null))"; fi
+}
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/gr-test.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
@@ -154,6 +159,33 @@ expect "$(bash "$GR" "$gd13" --consumed '' 2>&1)" "--consumed must be a non-nega
 exit2 "empty --consumed with --ceiling exits 2" bash "$GR" "$gd13" --consumed '' --ceiling 3 --gate task
 exit2 "empty --consumed with --ceiling peeks no further" bash "$GR" "$gd13" --consumed '' --ceiling 3 --gate task --peek
 no_state "a rejected empty --consumed writes no counter" "$gd13"
+exit2 "empty --ceiling exits 2" bash "$GR" "$gd13" --ceiling ''
+expect "$(bash "$GR" "$gd13" --ceiling '' 2>&1)" "--ceiling must be a non-negative integer" "empty --ceiling is rejected as invalid, not read as absent"
+
+# printf writes every number into the state file unquoted, so a token bash
+# accepts but JSON does not replaces the counter with a file nothing can read
+# back: the call that wrote it exits 0, and every call after it exits 2 with the
+# round it was counting gone.
+gd15="$work/gate15"; mkdir -p "$gd15"
+bash "$GR" "$gd15" --consumed 01 --gate task >/dev/null 2>&1
+out="$(bash "$GR" "$gd15" --consumed 01 --gate task 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && pass "a leading-zero --consumed does not poison the next call" || fail "a leading-zero --consumed does not poison the next call (rc=$rc out=$out)"
+json_ok "leading-zero --consumed leaves parseable state" "$gd15"
+expect "$(cat "$gd15/gate-round.json")" '"consumed":1' "--consumed 01 is recorded as 1"
+expect "$(cat "$gd15/gate-round.json")" '"round":2' "the second advance under --consumed 01 reached round 2"
+expect "$out" '"ceiling":4' "--consumed 01 derives the ceiling --consumed 1 derives"
+
+# the same exposure on a gate type that never validated its ceiling at all
+gd15b="$work/gate15b"; mkdir -p "$gd15b"
+expect "$(bash "$GR" "$gd15b" --ceiling 03 --gate final)" '"ceiling":3' "--ceiling 03 answers with 3"
+json_ok "leading-zero --ceiling leaves parseable state" "$gd15b"
+expect "$(cat "$gd15b/gate-round.json")" '"ceiling":3' "--ceiling 03 is recorded as 3"
+expect "$(bash "$GR" "$gd15b" --ceiling 03 --gate final)" '"round":2' "the next call reads the state a leading zero used to break"
+
+# a ceiling that is not a number at all used to reach the file on any gate but task
+gd15c="$work/gate15c"; mkdir -p "$gd15c"
+exit2 "non-numeric --ceiling exits 2 on a non-task gate" bash "$GR" "$gd15c" --ceiling foo --gate final
+no_state "a rejected non-numeric --ceiling writes no counter" "$gd15c"
 
 # every pre-existing --ceiling behavior is unchanged for the other gate types
 for g in spec plan final adhoc; do

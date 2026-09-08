@@ -273,7 +273,7 @@ naming a file that does not exist. Both are fixed by keeping "unknown" and
 and by validating digits with a `case` pattern instead of `expr`.
 
 **What now pins it.** `tests/codex-review-gate/test-gate-round.sh` gained
-49 assertions (22 to 71): the derived ceilings for `--consumed` 0, 2, and 5; `consumed` in
+62 assertions (22 to 84): the derived ceilings for `--consumed` 0, 2, and 5; `consumed` in
 the state file; the spent cap backstopping on its first advance; a peek at
 ceiling 0 answering `backstop`; a peek with no ceiling known still answering
 `proceed`; the four usage errors (`--consumed` with `--ceiling`, `--consumed 6`,
@@ -298,6 +298,20 @@ negative assertion branched on a bare command status, which accepts 1, 126, 127
 or death by signal as proof of an exit-2 contract; each now captures `$?` and
 compares it to 2 exactly, and checks that the rejected call left no counter
 behind or left an existing one byte for byte unchanged.
+
+**And what the round after that added.** A number that survives validation still
+has to survive `printf`. Every numeric field is written into the state file
+unquoted, so `--consumed 01` produced `"consumed":01` -- a token bash's `test`
+accepts and JSON does not. That call exited 0 having replaced the counter with a
+file no later call could parse, so the next invocation exited 2 and the round it
+was counting was gone. `--ceiling 03` did the same, and on any gate but task the
+ceiling was never validated at all: `--ceiling foo` wrote `"ceiling":foo` and
+returned `proceed` with exit 0 after its own comparison had errored. Validation
+now covers the ceiling on every gate type, and each validated number is
+converted with an explicit base before it is compared or persisted -- which also
+settles a disagreement between bash's two numeric readers, since `test` reads
+`08` as eight while `$(( ))` reads the leading zero as octal and rejects the
+digit.
 
 **Files changed.**
 - `skills/requesting-code-review/scripts/gate-round` (the `--consumed` flag, the task-ceiling bound, the peek fix)

@@ -821,7 +821,7 @@ If the arm lost, commit only the evidence note, with the message `docs(evals): a
 - Consumes: Task 1's evidence note (this task appends a section).
 - Produces: a new `gate-round` flag, `--consumed <n>`. It sets the ceiling to `5 - n`, the SDD shared per-task cap minus the fix rounds already spent outside this gate. It is mutually exclusive with `--ceiling`; supplying both is a usage error, exit 2. The written state file gains a `consumed` field alongside `round`, `ceiling`, and `gate`. The stdout shape is otherwise unchanged.
 
-**Context the implementer needs.** SDD's per-task Codex gate has no ceiling of its own. Its rounds count against the task's shared five-round fix cap, so the controller must compute `5 - <non-gate fix rounds consumed>` before every `gate-round` call. In real runs, 19 task gates recorded ceilings of 1, 2, 6, and 7. Six and seven are impossible: they exceed the cap. The subtraction does not survive contact, so the script should do it.
+**Context the implementer needs.** SDD's per-task Codex gate has no ceiling of its own. Its rounds count against the task's shared five-round fix cap, so the controller must compute `5 - <non-gate fix rounds consumed>` before every `gate-round` call. In real runs (the counter's own state files over the historical window ending 2026-09-06T22:45:00-07:00), 20 task gates recorded ceilings of 1, 2, 6, and 7. Six and seven are impossible: they exceed the cap. The subtraction does not survive contact, so the script should do it.
 
 Two details the implementation must get right:
 
@@ -886,7 +886,7 @@ done
 
 # SDD's per-task gate has no ceiling of its own: its rounds count against the
 # task's shared five-round fix cap. Making the controller subtract did not
-# survive contact — 19 measured task gates recorded ceilings of 1, 2, 6, and 7,
+# survive contact — 20 measured task gates recorded ceilings of 1, 2, 6, and 7,
 # and 6 and 7 exceed the cap outright. --consumed states the one number the
 # controller can read off its ledger and lets the script do the arithmetic.
 SDD_TASK_CAP=5
@@ -940,10 +940,14 @@ with:
   # A real zero was unreachable until --consumed 5 made it ordinary.
   c="${prev_ceiling:-$ceiling}"
   # Defend against a non-numeric ceiling that slipped past the sentinel.
-  if [ -n "$c" ] && ! expr "$c" + 0 >/dev/null 2>&1; then
-    echo "gate-round: state file exists but is unreadable: $state" >&2
-    exit 2
-  fi
+  # `expr "$c" + 0` cannot do this job: expr exits 1 whenever the expression
+  # evaluates to zero, so it condemned a legitimate ceiling of 0 as unreadable.
+  case "$c" in
+    '') : ;;
+    *[!0-9]*)
+      echo "gate-round: state file exists but is unreadable: $state" >&2
+      exit 2 ;;
+  esac
   next=$((round + 1))
   if [ -n "$c" ] && [ "$next" -gt "$c" ]; then verdict=backstop; else verdict=proceed; fi
 ```
@@ -1015,7 +1019,7 @@ Replace item 2 in full — lines 491 through 499, running from `2. **State the c
      counter already holds them) and the script derives the ceiling from the
      shared five-round cap itself. Recompute the consumed count at each call:
      non-gate rounds may land between gate rounds. Do not hand-compute
-     `--ceiling` for a task gate — that is how nineteen measured task gates
+     `--ceiling` for a task gate — that is how twenty measured task gates
      recorded ceilings of 1, 2, 6, and 7, two of which the cap makes
      impossible. `--consumed` cannot express them.
 ```
@@ -1063,13 +1067,13 @@ Expected: `STATUS: PASSED` from all three.
 
 - [ ] **Step 10: Append the evidence section**
 
-Add `### Consumed-round accounting` to the evidence note recording: the 19 impossible ceilings and their values, why the fix is arithmetic in the script rather than an eval-gated prose change, and the test cases that now pin it.
+Add `### Consumed-round accounting` to the evidence note recording: the 20 out-of-pattern task-gate ceilings (values 1, 2, 6, and 7; seven of them above the cap) with the window and the command that counted them, why the fix is arithmetic in the script rather than an eval-gated prose change, and the test cases that now pin it.
 
 - [ ] **Step 11: Commit**
 
 ```bash
 git add skills/requesting-code-review/scripts/gate-round skills/requesting-code-review/gate-fix-loop.md skills/subagent-driven-development/SKILL.md tests/codex-review-gate/gate-post-split-edits.tsv tests/codex-review-gate/test-gate-split-lossless.sh tests/codex-review-gate/test-gate-round.sh docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md
-git commit -m "fix(gate): nineteen task gates recorded ceilings the shared cap makes impossible"
+git commit -m "fix(gate): task gates recorded ceilings the shared cap makes impossible"
 ```
 
 ---

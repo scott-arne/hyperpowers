@@ -37,42 +37,54 @@ plan. No before/after runs were made for them.
 
 **Defect.** codex-plugin-cc's `prompts/adversarial-review.md` template wraps our focus text in a schema that enumerates severities (critical, high, medium, low, informational) without defining their scope, so the reviewer picks a severity with no anchor. Historical captures showed 30% of task-gate blocking runs carried nothing critical or high — findings were over-classified (untested branches called high) or under-classified (genuine defects called medium). The template is a plugin file a future version overwrites; the focus string is the only durable channel we own.
 
-**Calibration.** Three sentences added to all three code-review focus strings in `skills/requesting-code-review/recipe-code.md` (per-task source line 326, final whole-branch line 344, code-review-request line 354): "Severity is scoped to this diff: critical or high means a defect in the changed lines that yields a wrong result, a crash, data loss, or a reachable security hole. An untested path is medium unless the requirements named that test as a deliverable. Naming, style, and speculative hardening are low." A contract assertion pins all three copies so none can drift apart.
+**Calibration.** Three sentences added to all three code-review focus strings in `skills/requesting-code-review/recipe-code.md` (per-task source line 326, final whole-branch line 344, code-review-request line 354): "Severity is scoped to what this diff causes: critical or high means a defect the change introduces — in its changed lines, in an unchanged caller it breaks, or in a requirement it was asked to meet and omits — that yields a wrong result, a crash, data loss, or a reachable security hole. An untested path is medium unless the requirements named that test as a deliverable. Naming, style, and speculative hardening are low." A contract assertion in `test-gate-contract.sh` pins all three copies (checking the complete three-sentence text with `grep -F -c`) so none can drift apart. The lens-composition clause in `gate-lenses.md:214` was amended to require lens focuses carry "the code recipe's complete adversarial-review focus string for that gate type — its context paths and its severity calibration sentences, verbatim from recipe-code.md; a lens focus that carries the paths without the calibration is the defect this clause exists to prevent."
 
-**Method.** Direct Codex review of two fixture diffs, each reviewed three times under the control focus (the original recipe text without calibration) and three times under the treatment focus (with the calibration sentences). This arm uses a direct reviewer run rather than a Quorum scenario because the harness seeds a stub Codex whose verdicts are canned — it cannot classify severity — and asserting the calibration phrase in the launch made the control fail by construction. Fixtures: **M** adds a branch nobody tested and contains no defect (the calibration says medium); **H** adds the same branch with a reachable crash and wrong-result defect (high under either focus, the guard that the calibration scopes severity rather than suppressing it). Each capture normalized by `verdict-normalize`.
+**Method.** Direct Codex review of fixture diffs, each reviewed three times per arm and normalized by `verdict-normalize`. This arm uses a direct reviewer run rather than a Quorum scenario because the harness seeds a stub Codex whose verdicts are canned — it cannot classify severity — and asserting the calibration phrase in the launch made the control fail by construction.
+
+**Task 2's Codex gate.** After the first implementation (round 1), this task's own three-lens code gate returned four blocking findings and one medium. The human partner amended the spec's D7 and the Part 2 success criteria on 2026-09-07: the arm is judged on classification accuracy over the production round-1 prompt shape. Key findings: (1) round-1 code reviews never received the calibration because the lens-composition clause said only "context paths the code recipes already require," not the complete focus string; (2) the calibration's "in the changed lines" scope excluded wholly omitted requirements and failures at unchanged consumers; (3) fixture M's % branch turned `"%"` and whitespace-only inputs from NaN into 0, so it was not defect-free; (4) measurement must use the production round-1 focus shape (lens skeleton + recipe focus) for both arms; (5) the contract assertion counted only the opening phrase, not the complete calibration text.
+
+**Prompt shape.** Round 2 measured the production round-1 focus: the correctness lens skeleton (dossier line, charter, exhaustiveness demand, required Coverage section) followed by the per-task recipe's complete adversarial-review focus string. Control = the original recipe text without calibration (from commit b015394, recipe-code.md line 53); treatment = with the reworded calibration.
+
+**Fixtures (round 2).** **M**: defect-free implementation of the percent-string branch (trim and NaN on empty body, as required). **H**: crash-and-wrong-result defect (unanchored regex returns wrong values for `-25%`, `.5%`, `1e2%`, and throws on `"%"`). **O**: omitted requirement (parseRate is correct but formatRate is missing, a requirement the task was asked to meet and omits).
 
 **Reviewer.** gpt-5.6-sol at xhigh reasoning effort.
 
-**Decision rule.** The original rule expected M to block under control (over-classification of untested paths) and approve under treatment. The control runs showed M approved 3 of 3, so the over-classification half is null with this reviewer. However, all three H control reviews found the crash-and-wrong-result defect in the fixture, yet only one rated it high while two rated it medium — the under-classification half the calibration sentence names as high. The human partner amended the rule on 2026-09-07 after reading the control results: the arm wins if treatment H blocks 3 of 3 AND treatment M stays approved in at least 2 of 3 (the calibration must not reintroduce blocking on the untested path). Any other outcome is a loss and is reverted.
+**Decision rule (as amended 2026-09-07 with D7).** The arm wins if treatment H and treatment O each block 3 of 3 AND treatment M is approved in at least 2 of 3; control numbers are recorded beside them.
 
-**Control arm results** (capture directory: `$TMPDIR/focus-arm/control/`):
+**Round 2 control arm results** (capture directory: `$TMPDIR/focus-arm-r2/control/`):
 - M control 1: approved
 - M control 2: approved
 - M control 3: approved
-- H control 1: blocking (defect found, rated high)
-- H control 2: approved (defect found, rated medium)
-- H control 3: approved (defect found, rated medium)
+- H control 1: blocking
+- H control 2: approved (defect found, rated non-blocking)
+- H control 3: approved (defect found, rated non-blocking)
+- O control 1: blocking
+- O control 2: blocking
+- O control 3: blocking
 
-All three H control reviews identified the same crash-and-wrong-result defect (the unanchored digit regex returns wrong values for `-25%`, `.5%`, `1e2%`, and `"%"` throws). The severity inconsistency for one defect — high once, medium twice — is evidence about the reviewer's classification behavior without calibration guidance.
-
-**Treatment arm results** (capture directory: `$TMPDIR/focus-arm/treatment/`):
+**Round 2 treatment arm results** (capture directory: `$TMPDIR/focus-arm-r2/treatment/`):
 - M treatment 1: approved
 - M treatment 2: approved
-- M treatment 3: blocking
+- M treatment 3: approved
 - H treatment 1: blocking
 - H treatment 2: blocking
 - H treatment 3: blocking
+- O treatment 1: blocking
+- O treatment 2: blocking
+- O treatment 3: blocking
 
-All three H treatment reviews rated the defect high (3 of 3 blocking). M treatment approved 2 of 3, with one run blocking on the untested path.
+**Verdict (round 2).** The arm wins. Treatment H blocked 3 of 3 (vs. control H 1 of 3), treatment O blocked 3 of 3 (vs. control O 3 of 3, no change because the omitted-requirement defect was already classified correctly under control), and treatment M approved 3 of 3 (vs. control M 3 of 3, the guard that calibration must not introduce false positives on defect-free implementations). The calibration lifted the crash-and-wrong-result defect (H) from blocking in 1 of 3 to blocking in 3 of 3, achieving consistency in classification while maintaining clean approvals for the defect-free fixture.
 
-**Verdict.** The arm wins under the amended rule's under-classification half. Treatment H blocked 3 of 3 (vs. control H 1 of 3), and treatment M approved 2 of 3 (meeting the guard that calibration must not reintroduce over-classification). The calibration lifted a genuine crash-and-wrong-result defect from medium to high in 2 of 3 runs, while keeping the untested-branch finding below blocking in 2 of 3 runs.
+**Round 1 results (historical, non-production prompt shape).** Round 1 measured a bare recipe focus (no lens skeleton) on two fixtures (M with the NaN defect, H with the crash) using the original calibration wording ("in the changed lines" instead of "what this diff causes"). Control arm (capture directory: `$TMPDIR/focus-arm/control/`): M 3/3 approved, H 1/3 blocking (all three found the defect, one rated high, two rated medium). Treatment arm (capture directory: `$TMPDIR/focus-arm/treatment/`): M 2/3 approved + 1/3 blocking, H 3/3 blocking. Those numbers informed the round 2 design but do not decide the arm because the prompt shape did not match production.
 
 **Files changed.**
-- `skills/requesting-code-review/recipe-code.md` (three focus strings at source lines 326, 330, 344, 354)
-- `tests/codex-review-gate/gate-post-split-edits.tsv` (four rows added)
-- `tests/codex-review-gate/test-gate-split-lossless.sh` (pin raised from 10 to 14)
-- `tests/codex-review-gate/test-gate-contract.sh` (contract assertion that all three focus strings carry the calibration)
+- `skills/requesting-code-review/recipe-code.md` (three focus strings at source lines 326, 330, 344, 354, with reworded calibration)
+- `skills/requesting-code-review/gate-lenses.md` (line 214: lens-composition clause amended to require calibration in lens focuses)
+- `tests/codex-review-gate/gate-post-split-edits.tsv` (five rows: four updated for 326/330/344/354, one new for 214)
+- `tests/codex-review-gate/test-gate-split-lossless.sh` (pin raised from 10 to 15)
+- `tests/codex-review-gate/test-gate-contract.sh` (assertion checks complete three-sentence calibration text occurs exactly 3 times)
 
 **Commits.**
-- evals repo: 0614bc7 arm: the code-gate focus text reviewed by real Codex, with and without a severity scope
+- evals repo (round 1 fixtures and runner): 0614bc7 arm: the code-gate focus text reviewed by real Codex, with and without a severity scope
+- evals repo (round 2 fixtures and runner): 6bfce16 arm: production round-1 focus shape (lens + recipe) on M (fixed), H, and O (omitted requirement)
 - hyperpowers repo: (this commit)

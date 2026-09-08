@@ -305,13 +305,14 @@ assert_contains "$GATE" "<TIER_SKIPS_PATH>" \
 assert_contains "$GATE" "include it among the final dossier's --adjudications inputs" \
   "tier-skip summary reaches the final dossier"
 
-
-n="$(grep -c 'Severity is scoped to this diff' "$GATE")"
+full_cal='Severity is scoped to what this diff causes: critical or high means a defect the change introduces — in its changed lines, in an unchanged caller it breaks, or in a requirement it was asked to meet and omits — that yields a wrong result, a crash, data loss, or a reachable security hole. An untested path is medium unless the requirements named that test as a deliverable. Naming, style, and speculative hardening are low.'
+n="$(grep -F -c "$full_cal" "$GATE")"
 if [ "$n" -eq 3 ]; then
   pass "all three code-review focus strings carry the severity calibration"
 else
   fail "all three code-review focus strings carry the severity calibration (found $n)"
 fi
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

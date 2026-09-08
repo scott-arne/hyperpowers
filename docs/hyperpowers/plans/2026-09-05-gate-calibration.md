@@ -903,12 +903,31 @@ if [ "$consumed_set" -eq 1 ] && [ "$ceiling_set" -eq 1 ]; then
   echo "gate-round: --consumed and --ceiling are mutually exclusive" >&2
   exit 2
 fi
+# Every number here is printed unquoted into the state file and into the
+# verdict, so a token that bash accepts but JSON does not is not a cosmetic
+# defect: `--consumed 01` wrote "consumed":01, the call exited 0, and every
+# later call exited 2 on a counter nothing could parse. Validate digits first,
+# then convert with an explicit base, which also settles a disagreement between
+# bash's two numeric readers -- `test` reads 08 as eight while `$(( ))` reads a
+# leading zero as octal and rejects the digit outright.
 if [ "$consumed_set" -eq 1 ]; then
   case "$consumed" in
     ''|*[!0-9]*) echo "gate-round: --consumed must be a non-negative integer (got '$consumed')" >&2; exit 2 ;;
   esac
+  consumed=$((10#$consumed))
   [ "$consumed" -le "$SDD_TASK_CAP" ] || { echo "gate-round: --consumed $consumed exceeds the shared cap of $SDD_TASK_CAP" >&2; exit 2; }
   ceiling=$((SDD_TASK_CAP - consumed))
+fi
+# The ceiling gets the same treatment on EVERY gate type. Only the task gate
+# validated it before, so `--ceiling 03` and even `--ceiling foo` reached the
+# file on the others -- the latter exiting 0 with a proceed verdict after its
+# own comparison had errored. A ceiling derived from --consumed skips this: it
+# is already the result of arithmetic.
+if [ "$ceiling_set" -eq 1 ]; then
+  case "$ceiling" in
+    ''|*[!0-9]*) echo "gate-round: --ceiling must be a non-negative integer (got '$ceiling')" >&2; exit 2 ;;
+  esac
+  ceiling=$((10#$ceiling))
 fi
 ```
 
@@ -922,10 +941,9 @@ Then, after the state file has been read — immediately after the `fi` that clo
 # effective gate, after state is loaded and before anything is written. Exit 2
 # is fail-closed here: the gate doc's step 0 treats a non-zero gate-round exit
 # as backstop, so a bad ceiling stops the round rather than stalling the loop.
+# The ceiling is already canonical decimal by this point, so only the bound is
+# left to check.
 if [ "${gate:-$prev_gate}" = "task" ] && [ -n "$ceiling" ]; then
-  case "$ceiling" in
-    ''|*[!0-9]*) echo "gate-round: --ceiling must be a non-negative integer (got '$ceiling')" >&2; exit 2 ;;
-  esac
   [ "$ceiling" -le "$SDD_TASK_CAP" ] || { echo "gate-round: task-gate ceiling $ceiling exceeds the shared cap of $SDD_TASK_CAP" >&2; exit 2; }
 fi
 ```

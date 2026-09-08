@@ -226,8 +226,20 @@ Ceilings, the five-round cap, and the lens charters do not change.
 **D7. Calibration goes in the focus text, because the template is not ours.**
 codex-plugin-cc's `prompts/adversarial-review.md` is a plugin file that a
 future version overwrites. The focus string is the only durable channel, so the
-severity definition lives there: what "high" means in this diff's scope, and
-that an untested path is medium unless testing it was the task's deliverable.
+severity definition lives there: what "high" means for what this diff causes —
+in its changed lines, in an unchanged caller it breaks, or in a requirement it
+omits — and that an untested path is medium unless testing it was the task's
+deliverable. The calibration reaches the reviewer only if the round-1 lens
+composition carries the recipe's complete focus string, calibration included,
+not merely its context paths.
+
+*Amended 2026-09-07, after Task 2's Codex gate.* Arm A's success is judged on
+classification accuracy, not rounds-to-convergence: fixture diffs reviewed by
+real Codex through the production round-1 prompt shape, where a genuine defect
+(a reachable crash; an omitted requirement) is rated high in 3 of 3 treatment
+reviews and a defect-free change is not blocked in at least 2 of 3. One-shot
+reviews cannot measure rounds; the post-release cohort read at release carries
+that number.
 
 **D8. Round 2+ gets a fixed recipe.** Preamble, ledger path, the short recipe
 focus, and nothing else — the exhaustiveness demand is round-1 language and is
@@ -268,6 +280,9 @@ the dead-file guard. `docs/testing.md` describes quorum rather than Drill.
 
 **Part 2.** Per arm, a control and treatment run on the same scenario with
 distributions reported, kept in a dated evidence note under
-`docs/hyperpowers/`. The calibration arm's target is a measurable drop in code-gate
-rounds without a drop in real findings caught; the fixed-recipe arm's target is
-re-review prompts back inside the recipe's stated shape.
+`docs/hyperpowers/`. The calibration arm's target is classification accuracy on the
+production round-1 prompt shape (real defects rated high 3 of 3; a defect-free
+change not blocked in at least 2 of 3), per the D7 amendment of 2026-09-07,
+with rounds-to-convergence tracked in the post-release cohort at release; the
+fixed-recipe arm's target is re-review prompts back inside the recipe's stated
+shape.

@@ -241,9 +241,12 @@ reviews and a defect-free change is not blocked in at least 2 of 3. One-shot
 reviews cannot measure rounds; the post-release cohort read at release carries
 that number.
 
-**D8. Round 2+ gets a fixed recipe.** Preamble, ledger path, the short recipe
-focus, and nothing else — the exhaustiveness demand is round-1 language and is
-dropped from re-reviews.
+**D8. Round 2+ gets a fixed recipe.** Two textual parts and nothing else: the
+round-aware preamble, which names the ledger path, and the short recipe focus
+unchanged — the exhaustiveness demand is round-1 language and is dropped from
+re-reviews. (Amended 2026-09-08: the ledger path travels inside the preamble;
+listing it as a third part made every compliant prompt fail an exact-shape
+check, so the contract now names the two textual parts a prompt actually has.)
 
 **D9. `gate-round` carries the consumed-round total.** A new
 `--consumed <n>` records non-gate fix rounds in the counter's own state, so the

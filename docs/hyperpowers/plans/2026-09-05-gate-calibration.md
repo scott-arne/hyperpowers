@@ -706,7 +706,7 @@ Create `evals/scenarios/codex-gate-re-review-focus-is-fixed/`. It must:
 - Assert in `post()` that the launched focus string is under 250 words, by counting words in the recorded launch argument.
 - Assert in `post()` that the focus string contains the ledger path.
 - Assert in `post()` that the focus string does not restate a finding title from the ledger, by grepping the launch for a distinctive noun phrase planted in the ledger's first finding.
-- Assert in `post()` the complete fixed shape, structurally: the recorded focus string, with whitespace normalized, is exactly three parts in this order — the round-aware preamble (`This is re-review round 2.` through `Do not raise new Minor (medium/low) findings on a re-review.`), the ledger path line, and the §3 per-task focus string verbatim as `recipe-code.md:53` renders it with the paths filled in — and nothing else. Anything between or after those parts is a failure.
+- Assert in `post()` the complete fixed shape, structurally: the recorded focus string, with whitespace normalized, is exactly two parts in this order — the round-aware preamble (`This is re-review round 2.` through `Do not raise new Minor (medium/low) findings on a re-review.`, with the ledger path filled in where the preamble names it) and the §3 per-task focus string verbatim as `recipe-code.md:53` renders it with the paths filled in — and nothing else. Anything before, between, or after those parts is a failure, including a second copy of the ledger path.
 - Put in the story's Acceptance Criteria that the agent handed the findings over as a file path rather than pasting them.
 
 Validate: `cd evals && bun run quorum check codex-gate-re-review-focus-is-fixed`
@@ -735,7 +735,7 @@ If all three pass, STOP: append the null result to the evidence note as this arm
 In `skills/requesting-code-review/gate-fix-loop.md`, replace line 22 in full with this single line:
 
 ```
-The round 2+ invocation has exactly three parts, in order: the round-aware preamble, the ledger path, and the §3 recipe's own focus string unchanged. The ledger file carries the findings, the fixes, and the diff references, so the focus string carries none of them — measured re-review focus strings that restated the ledger inline ran to a median of 464 words and a maximum of 35468. The preamble is:
+The round 2+ invocation has exactly two parts, in order: the round-aware preamble, which names the ledger path, and the §3 recipe's own focus string unchanged. The ledger file carries the findings, the fixes, and the diff references, so the focus string carries none of them — measured re-review focus strings that restated the ledger inline ran to a median of 464 words and a maximum of 35468. The preamble is:
 ```
 
 - [ ] **Step 5: Add the losslessness row**

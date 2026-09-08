@@ -106,19 +106,30 @@ content pasted inline — findings restated, the fix summarized, the diff quoted
 in a string that already hands the ledger over as a path.
 
 **Calibration.** Source line 563 (`gate-fix-loop.md:22`) now states the whole
-shape rather than only its opening: "The round 2+ invocation has exactly three
-parts, in order: the round-aware preamble, the ledger path, and the §3 recipe's
-own focus string unchanged. The ledger file carries the findings, the fixes, and
-the diff references, so the focus string carries none of them — measured
-re-review focus strings that restated the ledger inline ran to a median of 464
-words and a maximum of 35468. The preamble is:"
+shape rather than only its opening: "The round 2+ invocation has exactly two
+parts, in order: the round-aware preamble, which names the ledger path, and the
+§3 recipe's own focus string unchanged. The ledger file carries the findings,
+the fixes, and the diff references, so the focus string carries none of them —
+measured re-review focus strings that restated the ledger inline ran to a median
+of 464 words and a maximum of 35468. The preamble is:"
+
+**The contract was amended before it was accepted.** The first version of this
+arm listed the ledger path as a part of its own alongside the preamble and the
+recipe focus. The gate blocked on it: the preamble template already embeds
+`<LEDGER_PATH>`, so a compliant prompt names the ledger once, inside the
+preamble, and an exact-shape oracle built from the original wording rejected
+every compliant prompt for a missing segment. Rather than loosen the oracle to
+tolerate the gap, the human partner amended the contract to name the two textual
+parts a prompt actually has (spec D8, amended 2026-09-08). The scenario's shape
+check now requires exactly those two segments and fails on anything before,
+between, or after — including a second copy of the ledger path.
 
 **Why a recipe and not a prohibition.** "Do not paste the ledger" tells the
 agent what to delete from a string it is still composing freely, which leaves
 every other addition licensed — and the observed drift is exactly such an
-addition. Naming the three parts and their order closes the composition instead
-of policing one filling: anything that is not one of the three has no place to
-go. The measured figures stay in the line because a bare rule invites the
+addition. Naming the parts and their order closes the composition instead of
+policing one filling: anything that is not one of the named parts has no place
+to go. The measured figures stay in the line because a bare rule invites the
 judgment call ("this summary is short, it is probably fine") that the numbers
 foreclose.
 
@@ -135,61 +146,70 @@ focus argument to `.launches/<n>.txt`, so the checks measure the string the
 launch actually carried rather than the transcript's rendering of it. Five
 assertions run against that file: a launch was recorded; the focus is under 250
 words; a ledger path is present; the ledger's first finding title (planted with
-the distinctive phrase "orphaned retry sentinel") is absent; and the whole
-three-part shape holds with nothing before, between, or after. The expected
-preamble and expected recipe focus are re-derived at check time from
-`gate-fix-loop.md` and `recipe-code.md` under the plugin root the run used, so
-the check cannot drift from the skill text it judges.
+the distinctive phrase "orphaned retry sentinel") is absent; and the whole shape
+holds. The expected preamble and expected recipe focus are re-derived at check
+time from `gate-fix-loop.md` and `recipe-code.md` under the plugin root the run
+used, so the check cannot drift from the skill text it judges. The normalizer
+folds backticks, emphasis markers, quotes, and dash style before comparing, so
+typography is never mistaken for content.
 
 **Decision rule.** The arm wins if the treatment passes at least 2 of 3 while
 the control passed at most 1 of 3, and the treatment's median focus word count
 is below the control's.
 
-**Control results** (unmodified tree at e90784b, the Arm A commit; three runs):
-- control 1: FAIL, 218 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T070733Z-4466`
-- control 2: FAIL, 218 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T070756Z-4722`
-- control 3: FAIL, 218 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T070817Z-7995`
+**Control results** (decisive; pre-arm line restored from e90784b into the
+working tree, the only working-tree change during these runs):
+- control 1: FAIL, 218 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T175127Z-a31e`
+- control 2: FAIL, 218 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T175152Z-15c9`
+- control 3: FAIL, 218 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T175212Z-335f`
 
 All three failed the shape check only, and all three failed it the same way: an
 extra "Read the review dossier first — it is your delivered context: <path>"
 segment spliced between the preamble and the recipe focus. Median 218 words.
 
-**Treatment results** (working-tree edit to `gate-fix-loop.md:22`; three runs):
-- treatment 1: FAIL, 206 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T071726Z-0d3b`
-- treatment 2: PASS, 206 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T071745Z-b7e7`
-- treatment 3: PASS, 206 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T071806Z-fc37`
+**Treatment results** (decisive; the amended line in the working tree,
+uncommitted at run time):
+- treatment 1: PASS, 206 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T180137Z-13b7`
+- treatment 2: PASS, 206 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T180157Z-5266`
+- treatment 3: PASS, 206 words — `codex-gate-re-review-focus-is-fixed-claude-auto-20260908T180216Z-fa95`
 
-Treatment 1's launch was structurally the intended three parts; it failed only
-because the agent retyped the preamble's em dashes as ASCII hyphens and the
-checker's normalizer folded quoting and emphasis but not dash style. The
-scenario now folds dashes too (evals `4e48d1d`); re-scored against the six
-recorded launch files with that normalizer, the control stays 0 of 3 and the
-treatment becomes 3 of 3. The verdict below uses the stricter as-run numbers.
-
-**Verdict.** The arm wins. Treatment passed 2 of 3 against a control that passed
+**Verdict.** The arm wins. Treatment passed 3 of 3 against a control that passed
 0 of 3, and the treatment median of 206 words is below the control median of
 218. Every treatment launch dropped the dossier segment and landed on exactly
-the three named parts.
+the two named parts.
+
+**Superseded runs (audit trail).** Six earlier runs measured the pre-amendment
+wording against the pre-amendment oracle and are kept for the record, not for
+the verdict: control 218/218/218 words, 0 of 3 passing
+(`...20260908T070733Z-4466`, `...20260908T070756Z-4722`,
+`...20260908T070817Z-7995`); treatment 206/206/206 words, 2 of 3 passing
+(`...20260908T071726Z-0d3b`, `...20260908T071745Z-b7e7`,
+`...20260908T071806Z-fc37`). The one treatment failure there was typography —
+the agent retyped the preamble's em dashes as ASCII hyphens and the normalizer
+of the day did not fold dash style. Four earlier pilot runs against a still
+earlier oracle are archived alongside them. The direction and the word counts
+match the decisive runs; only the oracle changed.
 
 **What this arm did not measure.** The ledger-restatement drift the telemetry
-recorded did not reproduce in this fixture: all six runs handed the ledger over
-as a path, none restated the planted finding, and none came near the 250-word
-bound — the word, ledger, and no-restate checks passed in all six. What the
-control does reproduce is the same underlying cause in a smaller form: an
+recorded did not reproduce in this fixture: all six decisive runs handed the
+ledger over as a path, none restated the planted finding, and none came near the
+250-word bound — the word, ledger, and no-restate checks passed in all six. What
+the control does reproduce is the same underlying cause in a smaller form: an
 open-ended composition instruction lets unrelated material into the focus
 string, here the dossier line that `gate-lenses.md` scopes to round-1 lens
 prompts. The fixed recipe closes that opening, which is the mechanism the
 telemetry figures argue for, but this arm's evidence for the 464-word case
-remains the fleet measurement rather than these runs.
+remains the fleet measurement rather than these runs. The human partner accepted
+the arm under the plan's decision rule with that limitation recorded, and
+declined fixture engineering to reproduce the larger case.
 
 **Files changed.**
-- `skills/requesting-code-review/gate-fix-loop.md` (line 22: the three-part recipe)
+- `skills/requesting-code-review/gate-fix-loop.md` (line 22: the fixed recipe)
 - `tests/codex-review-gate/gate-post-split-edits.tsv` (one new row for source line 563)
 - `tests/codex-review-gate/test-gate-split-lossless.sh` (pin raised from 15 to 16)
 - `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md` (this section)
 
 **Commits.**
 - evals repo (scenario): 26be30d scenario: the re-review focus string restates a ledger it already hands over as a path
-- evals repo (checker fix): fee1039 fix(scenario): the shape check demanded a ledger path the preamble had already delivered
-- evals repo (checker fix): 4e48d1d fix(scenario): an em dash retyped as a hyphen read as a different preamble
-- hyperpowers repo: (this commit)
+- evals repo (oracle fixes): fee1039, 4e48d1d, and 0a3aa61 fix(scenario): the shape oracle counted a ledger path the preamble already carried
+- hyperpowers repo: 31d0a79 (the pre-amendment line) and this commit

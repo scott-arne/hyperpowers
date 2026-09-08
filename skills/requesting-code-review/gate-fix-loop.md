@@ -19,7 +19,7 @@ completed round it records:
 
 Each later round appends a new section; the ledger is the cumulative record.
 
-The round 2+ invocation has exactly three parts, in order: the round-aware preamble, the ledger path, and the §3 recipe's own focus string unchanged. The ledger file carries the findings, the fixes, and the diff references, so the focus string carries none of them — measured re-review focus strings that restated the ledger inline ran to a median of 464 words and a maximum of 35468. The preamble is:
+The round 2+ invocation has exactly two parts, in order: the round-aware preamble, which names the ledger path, and the §3 recipe's own focus string unchanged. The ledger file carries the findings, the fixes, and the diff references, so the focus string carries none of them — measured re-review focus strings that restated the ledger inline ran to a median of 464 words and a maximum of 35468. The preamble is:
 
 > This is re-review round N. The prior-round findings and how each was resolved
 > or declined are in `<LEDGER_PATH>`. Confirm the resolved findings are actually

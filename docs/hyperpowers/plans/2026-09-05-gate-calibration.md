@@ -848,6 +848,7 @@ Read `tests/codex-review-gate/test-gate-round.sh` first to learn its fixture hel
 12. After `gate-round "$gd" --consumed 2 --gate task` has advanced once, `gate-round "$gd" --ceiling 7` with no `--gate` exits 2 and leaves `gate-round.json` at `"round":1`.
 13. `gate-round "$gd" --consumed ''` exits 2, and `gate-round "$gd" --consumed '' --ceiling 3 --gate task` exits 2.
 14. Every case that expects exit 2 captures `$?` and compares it to 2 exactly — a bare `command && fail || pass` accepts any failure and does not pin the contract — and, on a fresh directory, asserts that no `gate-round.json` was written.
+15. Numeric values are persisted in canonical decimal form: `gate-round "$gd" --consumed 01 --gate task` advanced twice leaves a `gate-round.json` that parses as JSON with `"consumed":1` and `"round":2`, and `gate-round "$gd" --ceiling 03 --gate final` writes `"ceiling":3` and is readable by the next call. A leading-zero token written unquoted is invalid JSON and turns the counter into an unreadable file that every later call rejects.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 

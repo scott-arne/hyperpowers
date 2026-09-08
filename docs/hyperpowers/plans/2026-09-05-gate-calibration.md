@@ -876,12 +876,17 @@ done
 with:
 
 ```bash
-ceiling=""; peek=0; gate=""; consumed=""
+# Presence and value are separate facts. Treating an empty value as an absent
+# flag let --consumed '' skip both its own range check and the exclusion with
+# --ceiling. Every flag that takes a value also refuses to run off the end of
+# the argument list: an unbound $2 under `set -u` dies with a bash diagnostic
+# and exit 1, which is not the exit-2 usage contract callers are promised.
+ceiling=""; ceiling_set=0; peek=0; gate=""; consumed=""; consumed_set=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --ceiling) ceiling="$2"; shift 2 ;;
-    --consumed) [ $# -ge 2 ] || { echo "gate-round: --consumed needs a value" >&2; exit 2; }; consumed="$2"; shift 2 ;;
-    --gate) gate="$2"; shift 2 ;;
+    --ceiling) [ $# -ge 2 ] || { echo "gate-round: --ceiling needs a value" >&2; exit 2; }; ceiling="$2"; ceiling_set=1; shift 2 ;;
+    --consumed) [ $# -ge 2 ] || { echo "gate-round: --consumed needs a value" >&2; exit 2; }; consumed="$2"; consumed_set=1; shift 2 ;;
+    --gate) [ $# -ge 2 ] || { echo "gate-round: --gate needs a value" >&2; exit 2; }; gate="$2"; shift 2 ;;
     --peek) peek=1; shift ;;
     *) echo "gate-round: unknown arg $1" >&2; exit 2 ;;
   esac
@@ -893,18 +898,30 @@ done
 # and 6 and 7 exceed the cap outright. --consumed states the one number the
 # controller can read off its ledger and lets the script do the arithmetic.
 SDD_TASK_CAP=5
-if [ -n "$consumed" ]; then
-  [ -z "$ceiling" ] || { echo "gate-round: --consumed and --ceiling are mutually exclusive" >&2; exit 2; }
+if [ "$consumed_set" -eq 1 ] && [ "$ceiling_set" -eq 1 ]; then
+  echo "gate-round: --consumed and --ceiling are mutually exclusive" >&2
+  exit 2
+fi
+if [ "$consumed_set" -eq 1 ]; then
   case "$consumed" in
     ''|*[!0-9]*) echo "gate-round: --consumed must be a non-negative integer (got '$consumed')" >&2; exit 2 ;;
   esac
   [ "$consumed" -le "$SDD_TASK_CAP" ] || { echo "gate-round: --consumed $consumed exceeds the shared cap of $SDD_TASK_CAP" >&2; exit 2; }
   ceiling=$((SDD_TASK_CAP - consumed))
 fi
-# A task-gate ceiling above the shared cap is arithmetically impossible. Exit 2
+```
+
+Then, after the state file has been read — immediately after the `fi` that closes `if [ -f "$state" ]; then` and before `if [ "$peek" -eq 1 ]; then` — insert the task-cap check. It reads the EFFECTIVE gate, because a continuation call may omit `--gate` and inherit `task` from the state file:
+
+```bash
+# A task-gate ceiling above the shared cap is arithmetically impossible. The
+# gate to hold to the cap is the one being counted, which is not always the one
+# named on this call: a continuation may omit --gate, inherit task from the
+# state file, and be written back as task all the same. So the check reads the
+# effective gate, after state is loaded and before anything is written. Exit 2
 # is fail-closed here: the gate doc's step 0 treats a non-zero gate-round exit
 # as backstop, so a bad ceiling stops the round rather than stalling the loop.
-if [ "${gate:-}" = "task" ] && [ -n "$ceiling" ]; then
+if [ "${gate:-$prev_gate}" = "task" ] && [ -n "$ceiling" ]; then
   case "$ceiling" in
     ''|*[!0-9]*) echo "gate-round: --ceiling must be a non-negative integer (got '$ceiling')" >&2; exit 2 ;;
   esac

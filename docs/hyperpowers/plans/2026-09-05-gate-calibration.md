@@ -861,7 +861,21 @@ Expected: FAIL. `--consumed` is an unknown argument today, so cases 1 through 4,
 
 - [ ] **Step 3: Add the flag, the validation, and the peek fix**
 
-In `skills/requesting-code-review/scripts/gate-round`, extend the argument loop. Replace:
+In `skills/requesting-code-review/scripts/gate-round`, first add the helper every bound relies on. Immediately above the `gd="${1:-}"; shift || true` line, insert:
+
+```bash
+# Leading zeros are padding, not magnitude. Stripping them first means the
+# bounds below measure the number the caller meant, and leaves a string that is
+# already canonical decimal -- so nothing downstream has to convert it.
+strip_leading_zeros() {
+  local s
+  s="${1#"${1%%[!0]*}"}"
+  [ -n "$s" ] || s=0
+  printf '%s' "$s"
+}
+```
+
+Then extend the argument loop. Replace:
 
 ```bash
 ceiling=""; peek=0; gate=""
@@ -907,28 +921,43 @@ fi
 # Every number here is printed unquoted into the state file and into the
 # verdict, so a token that bash accepts but JSON does not is not a cosmetic
 # defect: `--consumed 01` wrote "consumed":01, the call exited 0, and every
-# later call exited 2 on a counter nothing could parse. Validate digits first,
-# then convert with an explicit base, which also settles a disagreement between
-# bash's two numeric readers -- `test` reads 08 as eight while `$(( ))` reads a
-# leading zero as octal and rejects the digit outright.
+# later call exited 2 on a counter nothing could parse.
+#
+# Digits alone are not a bound, and neither is a numeric comparison, because
+# `$(( ))` is fixed-width signed: 18446744073709551616 wraps to 0, sailed past
+# `-le 5`, and spent none of the cap. So every bound below is decided on the
+# STRING, before arithmetic ever sees the value. For --consumed the whole
+# accepted range is a single digit, which a character class settles outright.
+# That class and SDD_TASK_CAP state the same bound -- change them together.
 if [ "$consumed_set" -eq 1 ]; then
   case "$consumed" in
     ''|*[!0-9]*) echo "gate-round: --consumed must be a non-negative integer (got '$consumed')" >&2; exit 2 ;;
   esac
-  consumed=$((10#$consumed))
-  [ "$consumed" -le "$SDD_TASK_CAP" ] || { echo "gate-round: --consumed $consumed exceeds the shared cap of $SDD_TASK_CAP" >&2; exit 2; }
+  consumed="$(strip_leading_zeros "$consumed")"
+  case "$consumed" in
+    [0-5]) : ;;
+    *) echo "gate-round: --consumed $consumed exceeds the shared cap of $SDD_TASK_CAP" >&2; exit 2 ;;
+  esac
   ceiling=$((SDD_TASK_CAP - consumed))
 fi
 # The ceiling gets the same treatment on EVERY gate type. Only the task gate
 # validated it before, so `--ceiling 03` and even `--ceiling foo` reached the
 # file on the others -- the latter exiting 0 with a proceed verdict after its
-# own comparison had errored. A ceiling derived from --consumed skips this: it
-# is already the result of arithmetic.
+# own comparison had errored. The non-task gates have no cap to enforce, so the
+# width bound is the only thing standing between them and a wrapped number.
+# Measuring the stripped string is safe arithmetic: a length is bounded by the
+# argument list, not by what the caller wrote in it.
+# A ceiling derived from --consumed skips this -- it is arithmetic on a digit.
+GATE_CEILING_MAX_DIGITS=9
 if [ "$ceiling_set" -eq 1 ]; then
   case "$ceiling" in
     ''|*[!0-9]*) echo "gate-round: --ceiling must be a non-negative integer (got '$ceiling')" >&2; exit 2 ;;
   esac
-  ceiling=$((10#$ceiling))
+  ceiling="$(strip_leading_zeros "$ceiling")"
+  [ "${#ceiling}" -le "$GATE_CEILING_MAX_DIGITS" ] || {
+    echo "gate-round: --ceiling must be at most $GATE_CEILING_MAX_DIGITS digits (got '$ceiling')" >&2
+    exit 2
+  }
 fi
 ```
 
@@ -942,10 +971,14 @@ Then, after the state file has been read — immediately after the `fi` that clo
 # effective gate, after state is loaded and before anything is written. Exit 2
 # is fail-closed here: the gate doc's step 0 treats a non-zero gate-round exit
 # as backstop, so a bad ceiling stops the round rather than stalling the loop.
-# The ceiling is already canonical decimal by this point, so only the bound is
-# left to check.
+# The ceiling is canonical decimal by this point and no wider than the bound
+# above, so only the cap is left -- decided on the string for the same reason
+# --consumed is.
 if [ "${gate:-$prev_gate}" = "task" ] && [ -n "$ceiling" ]; then
-  [ "$ceiling" -le "$SDD_TASK_CAP" ] || { echo "gate-round: task-gate ceiling $ceiling exceeds the shared cap of $SDD_TASK_CAP" >&2; exit 2; }
+  case "$ceiling" in
+    [0-5]) : ;;
+    *) echo "gate-round: task-gate ceiling $ceiling exceeds the shared cap of $SDD_TASK_CAP" >&2; exit 2 ;;
+  esac
 fi
 ```
 
@@ -1022,6 +1055,13 @@ with:
 ```
 # gate-round GATE_DIR (--ceiling N | --consumed N) [--gate T] [--peek] —
 # mechanical round counter for
+```
+
+and append these two lines to the header comment block, immediately above `set -uo pipefail`:
+
+```
+# A ceiling is at most 9 digits wide once leading zeros are stripped; wider is a
+# usage error, because bash arithmetic is fixed-width and a wider number wraps.
 ```
 
 - [ ] **Step 5: Run the tests to verify they pass**

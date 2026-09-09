@@ -1026,9 +1026,20 @@ worse than the defect. A rewrite is still worth attempting; it needs a
 conditional an agent cannot read as satisfied on a harness that has subagents,
 and it needs to be measured against this same pair before it ships.
 
+**This pair was not re-run when the other one was.** Its scenario id,
+`executing-plans-keeps-inline-request`, names the behavior under test the same
+way edit 2's original id did, and Quorum puts the id in the working-directory
+path the agent echoes — so this control carries a cue too. It does not change
+the reading. A path cue can only push an arm toward the behavior it names, and
+this verdict does not rest on the control: the treatment passed 0 of 3, failing
+on the affirmative check that the run never re-opened the user's choice, in a
+condition where the cue was pointing at keeping it. Removing the cue can only
+make the treatment's failure easier to reproduce. The control's 3 of 3 is the
+part that is unreadable, and nothing here depends on it.
+
 #### Edit 2 — the `receiving-code-review` routing pointer
 
-**Scenario.** `requesting-code-review-hands-off-to-receiving` (evals repo). The
+**Scenario.** `code-review-of-a-committed-change` (evals repo). The
 fixture is a feature branch carrying a committed config loader with one genuine
 seeded defect (`indexOf('=')` returns `-1` for a bare `DEBUG` line, so the key
 is silently mangled) and an `app.conf` that exercises it. The scripted user says
@@ -1038,99 +1049,156 @@ branch against main" if asked for a base, and replies to the findings with
 exactly "Go ahead." — no instruction to use judgement, verify, or push back,
 since any of those would supply the behavior under test.
 
-**Instrument.** Six deterministic post-checks: both skills invoked, the `Agent`
+**The scenario had to be renamed before it could measure anything.** It was
+first called `requesting-code-review-hands-off-to-receiving`, which names the
+routing under test. Quorum puts the scenario id in the run's working-directory
+path, so the agent read that name back to itself in every absolute path it
+echoed — 2, 3 and 5 times before the hand-off in the three original control
+runs. A control that is told the answer cannot measure whether the skill's
+description alone would have produced it, and that control was the entire basis
+of the original negative verdict. The scenario id, directory and story title now
+contain no skill name and neither "receiving" nor "hands off". The re-run
+control trajectories reproduce the new id 69, 38 and 59 times and name
+`receiving-code-review` zero times before the hand-off; the word "receiving"
+does not appear at all.
+
+**Instrument.** Five deterministic post-checks: both skills invoked, the `Agent`
 tool called, `tool-match-before-tool-match Agent '[Rr]eview' Skill
-'receiving-code-review'` for the ordering, and
-`skill-before-implementation-tool hyperpowers:receiving-code-review` against
-`Edit` and against `Write`. The ordering is asserted deterministically rather
-than left to prose, with one caveat recorded here: `tool-match-before-tool-match`
-passes vacuously if the agent enters the skill by reading its `SKILL.md` instead
-of through the native `Skill` tool, and in that case `skill-called` is what
-carries presence. The Codex gate is deliberately *not* asserted — it runs at
-step 4, after the hand-off under test — though the stub's ledger is archived so
-a degraded session would be visible. The core signal is again a Gauntlet-graded
-criterion: findings were treated as claims to evaluate, with at least one
-explicitly weighed rather than executed. Discrimination was hand-verified the
-same way as edit 1: a trace with no hand-off fails `skill-called
-receiving-code-review` and the `Edit` ordering check, and a trace that loads
-`receiving-code-review` before the review is even requested fails
-`tool-match-before-tool-match`.
+'receiving-code-review'` for the ordering, and `skill-before-mutation
+hyperpowers:receiving-code-review` for the "before any fix" requirement. The
+ordering is asserted deterministically rather than left to prose, with one
+caveat recorded here: `tool-match-before-tool-match` passes vacuously if the
+agent enters the skill by reading its `SKILL.md` instead of through the native
+`Skill` tool, and in that case `skill-called` is what carries presence. The
+Codex gate is deliberately *not* asserted — it runs at step 4, after the
+hand-off under test — though the stub's ledger is archived so a degraded
+session would be visible. The core signal is again a Gauntlet-graded criterion:
+findings were treated as claims to evaluate, with at least one explicitly
+weighed rather than executed. Discrimination was hand-verified the same way as
+edit 1: a trace with no hand-off fails `skill-called receiving-code-review` and
+the ordering check, and a trace that loads `receiving-code-review` before the
+review is even requested fails `tool-match-before-tool-match`.
+
+**The ordering check had to be widened too.** It was originally
+`skill-before-implementation-tool` against `Edit` and against `Write`, which
+orders the skill only before those two tools. A run that rewrote the reviewed
+files through the shell — `sed -i`, a redirection, `perl -pi` — would have
+passed a check whose whole purpose is "no fixes before the hand-off", and
+`skill-before-implementation-tool ... Bash` could not close the gap because the
+underlying detector recognises only tools that name their target in a path
+argument. `skill-before-mutation` is a new check-transcript verb that treats
+Edit, Write, NotebookEdit and write-capable shell commands as one class. It
+tracks `cd`, so reproducing a file in a scratch directory to reason about it
+does not read as editing the original — a false positive found live in a
+control run, not in review.
 
 **Control results** (step 3 with no pointer, exactly 6.12.0's shape):
 
 | run | result path | Gauntlet | post-checks | final |
 | --- | --- | --- | --- | --- |
-| control-1 | `...-20260909T195119Z-c7e9` | pass | 6 of 6 | PASS |
-| control-2 | `...-20260909T195329Z-9aac` | pass | 6 of 6 | PASS |
-| control-3 | `...-20260909T200740Z-fbec` | pass | 6 of 6 | PASS |
+| control-1 | `...-20260909T213151Z-2891` | fail | 3 of 5 | FAIL |
+| control-2 | `...-20260909T213304Z-1a7d` | fail | 3 of 5 | FAIL |
+| control-3 | `...-20260909T213310Z-cd8a` | fail | 3 of 5 | FAIL |
+
+All three failed the same two checks: `skill-called
+hyperpowers:receiving-code-review` never fired, and the first change to the
+reviewed code therefore preceded a hand-off that never happened
+(`Write(src/config.js)`, `Edit(src/config.js)`, `Edit(src/config.js)`). Every
+control run's witness records the control worktree as the plugin root and `0`
+occurrences of the pointer text.
 
 **Treatment results** (step 3 carrying the `REQUIRED SUB-SKILL:` pointer):
 
 | run | result path | Gauntlet | post-checks | final |
 | --- | --- | --- | --- | --- |
-| treatment-1 | `...-20260909T201403Z-f5fa` | pass | 6 of 6 | PASS |
-| treatment-2 | `...-20260909T202108Z-19b5` | pass | 6 of 6 | PASS |
-| treatment-3 | `...-20260909T202942Z-c87c` | pass | 6 of 6 | PASS |
+| treatment-1 | `...-20260909T215236Z-12f1` | pass | 5 of 5 | PASS |
+| treatment-2 | `...-20260909T215324Z-0bbb` | pass | 5 of 5 | PASS |
+| treatment-3 | `...-20260909T215414Z-2b43` | pass | 5 of 5 | PASS |
 
-**Mechanism: the pointer is redundant on this harness.** All three control runs
-invoked `hyperpowers:receiving-code-review` through the native `Skill` tool
-while running against a tree in which no skill, hook, or test named it — control
-runs' witness files record `0` occurrences of the pointer text and one reference
-to the control tree's `skills/receiving-code-review` directory. Claude Code
-indexes every skill's frontmatter `description` and offers it for auto-trigger,
-so "review findings have arrived, now what" already reaches the skill without a
-textual route from `requesting-code-review`. The premise the edit was built on —
-recorded in `docs/hyperpowers/plans/2026-09-05-mechanical-hardening.md` — was
-that the skill "is referenced by no skill, no hook, and no test." That is true of
-the *text* and false of the *behavior*, and only the behavior was ever the point.
+Every treatment witness records the live tree as the plugin root, `1` occurrence
+of the pointer text, and one reference to `skills/receiving-code-review`.
 
-**Verdict: unsupported. Reverted.** Control passed 3 of 3 against the rule's
-ceiling of 1. The treatment is not worse — it passed 3 of 3 too — but a change
-that cannot be distinguished from its absence has no measured benefit to set
-against the cost of the added prose and the topology assertion that pins it.
-The paragraph was deleted by hand, leaving Task 0's
-`BASE_SHA` change in the same file untouched (`git diff v6.12.0 --
-skills/requesting-code-review/SKILL.md` now shows only that change), and the
-`requesting-code-review routes to receiving-code-review` assertion was removed
-from `tests/codex-review-gate/test-gate-topology.sh`, which returns to
-`STATUS: PASSED`.
+**Verdict: supported. The revert is itself reverted.** Treatment passed 3 of 3
+against the rule's floor of 2, control 0 of 3 against its ceiling of 1 — the
+widest separation any pair in this document produced. `c94c5fa` was reverted
+(`d52a82b`), restoring the `REQUIRED SUB-SKILL:` paragraph to step 3 and the
+`requesting-code-review routes to receiving-code-review` assertion to
+`tests/codex-review-gate/test-gate-topology.sh`, which returns to
+`STATUS: PASSED` with the assertion present.
 
-Two caveats on the negative result, both worth keeping. First, it is
-harness-specific: the auto-trigger index that makes the pointer redundant is a
-Claude Code feature, and a harness without one may well need the textual route.
-Second, this scenario measures the *presence and ordering* of the hand-off, not
-its reliability under pressure — a fixture with adversarial or wrong findings
-might separate the arms where a fixture with one real defect and two weak ones
-did not. Neither caveat justifies shipping the pointer on evidence that does not
-exist; both say what a future attempt would have to measure.
+**What the first measurement got wrong, and why it is instructive.** The
+original pair recorded control 3 of 3 and treatment 3 of 3 and concluded the
+pointer was redundant, reasoning that Claude Code indexes every skill's
+frontmatter `description` and auto-triggers on it, so the textual route added
+nothing. The auto-trigger index is real; it just was not what fired. Removing
+the scenario's name from the path — changing nothing else about the fixture, the
+prompt, the actor or the tree — took the control from 3 of 3 to 0 of 3. The
+skill's description alone does not reach `receiving-code-review` from "review
+findings have arrived"; the pointer does. The three original control runs and
+their three treatments are kept under
+`task-8-runs/requesting-code-review-hands-off-to-receiving/` as superseded: they
+measured a path cue, and the six runs under
+`task-8-runs/code-review-of-a-committed-change/round2/` replace them.
 
-**A note on what this arm cost and what it bought.** Twelve live runs to remove
-one rewritten line and one three-line paragraph. That is the intended trade:
-the alternative is carrying behavior-shaping prose whose only warrant is that
-it looked obviously right, which is exactly what the "mechanically checkable
-contradiction" label was doing. One of the two edits turned out to make things
-actively worse, and no amount of reading the diff would have shown that.
+The generalisable lesson is not about this pointer. A null result from a
+scenario whose id names the behavior under test is unreadable in one direction:
+a control that passes may be reading the id. The treatment arm is not exposed
+the same way — a cue can only help an arm pass — which is why edit 1 was not
+re-run. Its verdict rests on treatment 0 of 3, and no control-side cue can
+rescue a treatment that fails. That asymmetry is worth stating as a rule:
+**a contaminated control invalidates a "no difference" finding and a
+"treatment is worse" finding, but leaves "treatment failed on its own" intact.**
+
+Two caveats on the positive result, both worth keeping. First, this measures the
+*presence and ordering* of the hand-off, not its quality under pressure — a
+fixture with adversarial or wrong findings might separate the arms further, or
+show that the hand-off happens but does not change what the agent does with the
+findings. Second, the arms are separated by a Gauntlet judgement as well as by
+deterministic checks, and the two agreed in all six runs; a pair where they
+disagreed would need reading before it was scored.
+
+**A note on what this arm cost and what it bought.** Eighteen live runs across
+two rounds, to remove one rewritten line and keep one three-line paragraph. That
+is the intended trade: the alternative is carrying behavior-shaping prose whose
+only warrant is that it looked obviously right, which is exactly what the
+"mechanically checkable contradiction" label was doing. One of the two edits
+turned out to make things actively worse and the other turned out to be load-
+bearing, and no amount of reading the diff would have shown either. The six runs
+that had to be thrown away are the cost of an instrument built without asking
+what the agent can see of the instrument.
 
 **Files changed.**
 - `skills/executing-plans/SKILL.md` — reverted to the v6.12.0 note.
 - `skills/requesting-code-review/SKILL.md` — the `REQUIRED SUB-SKILL:` paragraph
-  removed from step 3; Task 0's `BASE_SHA` change retained.
+  removed and then restored; net unchanged from 6.13.0, with Task 0's `BASE_SHA`
+  change retained throughout.
 - `tests/codex-review-gate/test-gate-topology.sh` — the routing assertion
-  removed.
+  removed and then restored; net unchanged.
 - `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md` (this section)
 - evals repo: `scenarios/executing-plans-keeps-inline-request/{story.md,setup.sh,checks.sh}`,
-  `scenarios/requesting-code-review-hands-off-to-receiving/{story.md,setup.sh,checks.sh}`,
-  `test/scenario-pinning.test.ts`
+  `scenarios/code-review-of-a-committed-change/{story.md,setup.sh,checks.sh}`
+  (renamed from `requesting-code-review-hands-off-to-receiving`),
+  `test/scenario-pinning.test.ts`, `src/detect/mutation.ts`,
+  `src/detect/implementation.ts`, `src/check/verbs.ts`,
+  `src/check/transcript-dispatch.ts`, `src/composer.ts`,
+  `docs/scenario-authoring.md`, `test/check-transcript.test.ts`,
+  `test/composer.test.ts`, `test/scenario-code-review-routing.test.ts`
 
-`CHANGELOG.md`'s 6.13.0 section still describes both edits as shipped. It is a
-record of what that release contained and is left as written; the reverts are
-6.14.0's business.
+`CHANGELOG.md`'s 6.13.0 section describes both edits as shipped. For the routing
+pointer that is now simply accurate. For the inline-path note it is a record of
+what that release contained and is left as written; the revert is 6.14.0's
+business.
 
 **Commits.**
 - evals repo: 0017631 scenario: the two routing edits 6.13.0 shipped, each with
   an inline-request or review fixture; 2adb953 test(pinning): the two Arm D
-  scenarios were not in the frozen allowlist
+  scenarios were not in the frozen allowlist; 766a1b9 fix(scenario): the review
+  scenario's own name told the control what to invoke; 307f680 fix(scenario):
+  the pre-fix ordering check ignored edits made through the shell; 83a4a10
+  fix(mutation): a cd out of the working copy made scratch writes look like
+  edits
 - hyperpowers repo: d6b418f revert(executing-plans): the inline-path note did
   not beat its control; c94c5fa revert(requesting-code-review): the
-  receiving-code-review pointer did not beat its control; this commit, the
-  evidence.
+  receiving-code-review pointer did not beat its control (superseded); d52a82b
+  the revert of c94c5fa, once the pointer beat an uncontaminated control; this
+  commit, the evidence.

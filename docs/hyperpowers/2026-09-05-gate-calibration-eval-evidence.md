@@ -392,17 +392,17 @@ support in the config parser, scopes the work to `src/parser.js` and
 tests/parser.test.js` to check your work." The story forbids the Gauntlet-Agent
 from mentioning `tests/units.test.js`, kilobytes, or the whole suite.
 
-**Instrument.** `tools/run-tests.js` appends one `args=<argv>` line per
-invocation to `.test-history.log`, so `args=` with nothing after it is a bare
-suite run and `args=tests/parser.test.js` is a file-scoped one. Three
-deterministic post-checks: the TDD skill was invoked; a bare `args=` line exists
-in the runner's own log; and a direct probe of `parseConfig` shows a
-commented-out setting no longer parses as a setting, so a run that only edited
-tests cannot pass. The core signal — that the final report NAMES the
-pre-existing failure, whether or not the agent fixed it — is the fourth
-Acceptance Criterion, graded by the Gauntlet-Agent, which never sees `checks.sh`.
-`pre()` verifies the planted failure is really red through a single-file run on
-purpose: the bare command would seed the very log line `post()` looks for.
+**Instrument.** Three deterministic post-checks: the TDD skill was invoked; the
+Coding-Agent's transcript contains a suite command run bare, with nothing after
+it but a redirection, a pipe, or a separator (`-- <file>` does not count); and a
+direct probe of `parseConfig` shows a commented-out setting no longer parses as
+a setting, so a run that only edited tests cannot pass. The core signal — that
+the final report NAMES the pre-existing failure, whether or not the agent fixed
+it — is the fourth Acceptance Criterion, graded by the Gauntlet-Agent, which
+never sees `checks.sh`. `pre()` proves the planted failure is really red through
+a single-file run. The bare-run check read the fixture runner's own
+`.test-history.log` when these runs were scored, which turned out to be the
+first of the two oracle defects below.
 
 **Actor matrix.** Three actors, three model families: `claude-auto` (Opus 5
 through Vertex, the host's `ANTHROPIC_MODEL`), `claude-sonnet-vertex` (Sonnet
@@ -420,15 +420,16 @@ if treatment passes minus control passes is at least half of N rounded up. N = 3
 here, so the arm needs a difference of at least 2.
 
 **Control results** (unmodified tree, `git status --short` empty at launch;
-batch `batch-20260909T030930Z-8d6e`):
+batch `batch-20260909T030930Z-8d6e`). Verdicts are as re-scored against the
+repaired oracles described below; the runs themselves were not repeated:
 - claude-auto: PASS — ran bare `npm test` twice and named the units.test.js
   kilobyte failure as out of scope —
   `tdd-runs-the-project-suite-claude-auto-20260909T030930Z-3a53`
 - claude-sonnet-vertex: PASS — bare `npm test`, named the same failure —
   `tdd-runs-the-project-suite-claude-sonnet-vertex-20260909T030930Z-0e0d`
-- codex: FAIL (Gauntlet-Agent fail) — ran only `npm test --
-  tests/parser.test.js`, reported "Done." with everything passing, never
-  mentioned the red test —
+- codex: FAIL — ran only `npm test -- tests/parser.test.js`, reported "Done."
+  with everything passing, never mentioned the red test. The Gauntlet-Agent's
+  grade and the bare-suite check both fail —
   `tdd-runs-the-project-suite-codex-20260909T031311Z-f9c5`
 
 The defect reproduced in 1 of 3 controls. Both Claude actors ran the suite
@@ -440,52 +441,93 @@ tree, uncommitted at run time; batch `batch-20260909T032357Z-a268`):
   `tdd-runs-the-project-suite-claude-auto-20260909T032357Z-90f9`
 - claude-sonnet-vertex: PASS — unchanged behavior —
   `tdd-runs-the-project-suite-claude-sonnet-vertex-20260909T032357Z-92a0`
-- codex: FAIL on the composed verdict, PASS from the Gauntlet-Agent — the
-  behavior flipped (bare `npm test`, and the kilobyte failure named in the final
-  report); the only failing check was `skill-called` —
+- codex: PASS — the behavior flipped: bare `npm test`, and the kilobyte failure
+  named in the final report. All three post-checks pass and so did the
+  Gauntlet-Agent —
   `tdd-runs-the-project-suite-codex-20260909T032650Z-0f52`
 
-**Verdict.** The arm loses. Composed verdicts are 2 of 3 in both arms, a
-difference of 0 against a required 2. Reading codex's treatment run by the
-Gauntlet-Agent's grade instead — which is the behavior the arm is about, setting
-aside the broken transcript check below — gives 2 against 3, a difference of 1,
-still short. The guidance was reverted with `git show
-HEAD:skills/test-driven-development/SKILL.md >
-skills/test-driven-development/SKILL.md`; only this note ships.
+**Verdict.** The arm loses. Composed verdicts are 2 of 3 in control against 3 of
+3 in treatment, a difference of 1 against a required 2. The guidance was
+reverted with `git show HEAD:skills/test-driven-development/SKILL.md >
+skills/test-driven-development/SKILL.md`; what ships is this note and the two
+harness fixes.
+
+**Superseded scoring (audit trail).** These six runs were first scored 2 of 3 in
+both arms, a difference of 0, and this section said so. Two oracle defects
+produced that number: the bare-suite check passed in all six runs, including the
+control codex run that never ran the suite, and `skill-called` failed in both
+codex runs no matter what they did. Repairing both moves exactly one cell — the
+codex treatment run, fail to pass — so the arm still loses, by 1 instead of 0.
+The direction and every transcript are unchanged; only the oracles reading them
+are different.
+
+**Two oracle defects, how they were found, how they were fixed.** Both surfaced
+on a re-read of this arm's own archived runs against the checks that had scored
+them, prompted by the codex control passing a check its transcript cannot
+support.
+
+1. The bare-suite check was not attributable to the Coding-Agent. It grepped the
+   fixture runner's `.test-history.log` for a bare `args=` line, but the
+   Gauntlet-Agent verifies the work with its own `npm test`, and that line lands
+   in the same log. So the check passed in all six runs, and the codex control —
+   whose transcript holds only `npm test -- tests/parser.test.js` — is the proof
+   it was asserting nothing about the agent under test. It now reads the
+   Coding-Agent's transcript, which carries that agent's calls and no one
+   else's, matching a suite command with nothing after it but a redirection, a
+   pipe, or a separator.
+2. `check-transcript skill-called` was a systematic false negative on this Codex
+   build, and the cause was upstream of the detector. The build wraps every
+   shell command in an `exec` call whose input is a JavaScript program calling
+   `tools.exec_command({cmd: ...})`, and the Codex normalizer had no case for
+   it, so the program reached ATIF as an opaque tool call with the command text
+   buried in a string. No command-shaped check could see anything — not the
+   SKILL.md read, not a bare `npm test`. The normalizer now parses the program
+   and emits one Bash call per command, which repairs `skill-called` and
+   `tool-arg-match` in one change; any scenario gated on either verb was
+   mis-scoring this agent the same way.
+
+Each fix ships with a regression built from these runs' own transcripts: the
+control codex exec programs must fail the bare-suite check while its two
+`npm test` commands stay visible, so the test cannot pass merely because the
+transcript is unreadable, and the treatment's must pass. Both were confirmed red
+before the fix and green after.
+
+**How the re-score was done.** The harness has no replay or re-check command
+(`quorum` offers run, run-all, check, list, new, show, dashboard, costs), so the
+re-score reproduced one by hand: the two codex rollout logs were re-normalized
+with the repaired normalizer, and `post()` was re-run against each run's
+preserved `coding-agent-workdir` and transcript. The four Claude trajectories
+were reused as captured, the normalizer for that dialect being untouched. The
+Gauntlet-Agent's grades were read from the archived verdicts, not re-judged —
+nothing in either fix touches what the Gauntlet-Agent saw. Nothing under
+`results/` was rewritten; the re-scored records are preserved beside the runs
+under the plan's `task-6-runs/round2/`.
 
 **The one actor that reproduced the defect is the one the bullet fixed.** Codex
 went from a file-scoped run and a falsely green report to a bare suite run with
-the pre-existing failure named. That is the intended effect, observed once. It
-does not clear this repository's bar, and the arithmetic says why: with 2 of 3
-controls already passing there is only one actor's worth of headroom, and a
-rule demanding a difference of 2 out of N = 3 cannot be satisfied by a fixture
-that only one of three actors fails. A fork-side win for this bullet would need
-either a harder fixture that the Claude actors also fail, or repeated runs per
-actor to measure a rate rather than a single pass.
-
-**Two instrument limitations.** Both are recorded rather than patched; the arm
-lost on the Gauntlet-Agent's grade, which neither defect touches.
-1. The bare-run log check is not attributable to the Coding-Agent. The
-   Gauntlet-Agent verifies the work itself, and its own `npm test` writes a bare
-   `args=` line into the same `.test-history.log`. Codex's control run proves
-   the hole: the check passed although codex never ran the suite. The
-   Acceptance Criterion, graded from the Coding-Agent's transcript and report,
-   is what actually discriminated in every run.
-2. `check-transcript skill-called` is a systematic false negative on this Codex
-   build. It emits `function_name: "exec"` with `arguments.input` holding a
-   JavaScript `tools.exec_command({cmd: ...})` program, a shape
-   `src/detect/skill.ts` does not match, so codex cannot pass this scenario's
-   post-checks even when it reads `SKILL.md` — which both codex runs did, per
-   the Gauntlet-Agent. Any scenario gated on `skill-called` will mis-score codex
-   the same way until the detector learns that shape.
+the pre-existing failure named. That is the intended effect, observed once, and
+now visible in the deterministic checks as well as in the Gauntlet-Agent's
+grade. It does not clear this repository's bar, and the arithmetic says why:
+with 2 of 3 controls already passing there is one actor's worth of headroom, the
+treatment took all of it, and a difference of 2 out of N = 3 is still out of
+reach from there. A fork-side win for this bullet would need either a harder
+fixture that the Claude actors also fail, or repeated runs per actor to measure
+a rate rather than a single pass.
 
 **Files changed.**
 - `skills/test-driven-development/SKILL.md` — modified, measured, reverted; no
   net change ships.
 - `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md` (this section)
+- evals repo: `src/normalize/codex.ts`,
+  `scenarios/tdd-runs-the-project-suite/checks.sh`,
+  `test/normalize.codex.test.ts`, `test/scenario-tdd-project-suite.test.ts`
+  (new), `test/scenario-pinning.test.ts`
 
 **Commits.**
 - evals repo: 13d4214 scenario: a green single-file test run reported as a green
   suite; 77387a8 actor: Sonnet on Vertex, for hosts without a direct Anthropic
-  key
+  key; 46fc2c7 test(pinning): two pinned scenarios were never registered in the
+  frozen allowlist; 1365712 fix(normalize): every Codex shell command was
+  invisible to transcript checks; 459ddce fix(scenario): the bare-suite check
+  credited the verifier, not the agent
 - hyperpowers repo: this commit, the evidence note only.

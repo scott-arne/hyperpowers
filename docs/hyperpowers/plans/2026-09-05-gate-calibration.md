@@ -1288,7 +1288,7 @@ cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun 
 
 Record each result. Expected: most fail.
 
-If all four pass, STOP: append the null result to the evidence note as this arm's section, commit it, and skip to the next task. Upstream's measurement does not license shipping into this fork without fork-side evidence.
+If every agent that ran passes in the control, STOP: append the null result to the evidence note as this arm's section, commit it, and skip to the next task. Upstream's measurement does not license shipping into this fork without fork-side evidence.
 
 - [ ] **Step 4: Add the guidance**
 
@@ -1322,7 +1322,7 @@ cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun 
 
 Record each result.
 
-**Decision rule:** the arm wins if the treatment's pass count exceeds the control's by at least half the runs: with three agents, a control of at most 1 and a treatment of 3, or a control of 0 and a treatment of at least 2; with two agents, a control of 0 and a treatment of 2. Fewer than two agents is a null result (record it; do not ship the port).
+**Decision rule:** let N be the number of agents that completed BOTH arms. The arm wins if treatment passes minus control passes is at least half of N, rounded up: N = 3 requires a difference of at least 2 (0 to 2, 0 to 3, or 1 to 3); N = 2 requires a difference of at least 1 (0 to 1, 0 to 2, or 1 to 2). A control in which every agent passed is the null result of Step 3, not a loss. N below 2 is also a null result: record it and do not ship the port.
 
 - [ ] **Step 6: If the arm lost, revert it**
 

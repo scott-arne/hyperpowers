@@ -313,6 +313,10 @@ else
   fail "all three code-review focus strings carry the severity calibration (found $n)"
 fi
 
+
+assert_contains "$GATE" "the capture carries medium/low notes: read them and record each in the round ledger" \
+  "approved-with-notes findings are recorded, not dropped"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

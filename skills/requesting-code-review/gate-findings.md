@@ -45,7 +45,7 @@ WITHOUT the flag, exactly as today.
 Its tri-state `.result` is the review outcome: `approved`, `blocking`, or
 `incomplete`. Only a `verdict-normalize` result of `approved` counts as
 approval — never your own reading of the raw output, and never the absence
-of output. On `blocking`, read the raw findings text as usual to do the
+of output. On `approved` reached through a `needs-attention` verdict, the capture carries medium/low notes: read them and record each in the round ledger (and in the skill's Minor ledger, if it keeps one) before treating the round as converged. On `blocking`, read the raw findings text as usual to do the
 fixing; normalization gates only the decision. On `incomplete`, follow the
 recovery steps below, re-capture, and re-normalize; if it remains
 `incomplete`, surface "Codex review did not complete — not an approval."

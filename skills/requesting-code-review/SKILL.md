@@ -43,6 +43,11 @@ Dispatch a `general-purpose` subagent, filling the template at [code-reviewer.md
 - `{HEAD_SHA}` - Ending commit
 
 **3. Act on feedback:**
+
+**REQUIRED SUB-SKILL:** Use hyperpowers:receiving-code-review. Findings arrive
+as claims to evaluate, not instructions to execute, and that skill is where the
+evaluation discipline lives.
+
 - Fix Critical issues immediately
 - Fix Important issues before proceeding
 - Note Minor issues for later

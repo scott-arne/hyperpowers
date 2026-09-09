@@ -1223,18 +1223,18 @@ The three-lens round-1 fan-out (correctness, contracts-and-integration, tests-an
 **Post-6.13.0 cohort** (since `2026-09-06T22:45:00-07:00`):
 
 ```
-complete round-1 batches: 20
+complete round-1 batches: 21
 excluded batches: 2 — run-vTvF2CDw: [correctness, integration-and-requirements-coverage, tests-and-evidence]; run-Indqebq1: [contracts, correctness, tests]
-contracts-and-integration: approved 10, blocking 10, incomplete 0; blocking rate 10/20 = 50.0% (below-60%-threshold); blocking findings 18, duplicated by another lens 5/18 = 27.8% (below-80%-threshold)
-correctness: approved 10, blocking 10, incomplete 0; blocking rate 10/20 = 50.0% (below-60%-threshold); blocking findings 16, duplicated by another lens 2/16 = 12.5% (below-80%-threshold)
-tests-and-evidence: approved 5, blocking 15, incomplete 0; blocking rate 15/20 = 75.0% (meets-60%-threshold); blocking findings 24, duplicated by another lens 3/24 = 12.5% (below-80%-threshold)
+contracts-and-integration: approved 11, blocking 10, incomplete 0; blocking rate 10/21 = 47.6% (below-60%-threshold); blocking findings 18, duplicated by another lens 5/18 = 27.8% (below-80%-threshold)
+correctness: approved 11, blocking 10, incomplete 0; blocking rate 10/21 = 47.6% (below-60%-threshold); blocking findings 16, duplicated by another lens 2/16 = 12.5% (below-80%-threshold)
+tests-and-evidence: approved 5, blocking 16, incomplete 0; blocking rate 16/21 = 76.2% (meets-60%-threshold); blocking findings 26, duplicated by another lens 3/26 = 11.5% (below-80%-threshold)
 ```
 
 The extractor counts only canonical code-gate batches (exactly {correctness, contracts-and-integration, tests-and-evidence}). Two batches with three or more lens captures were excluded: the 6.13.0 whole-branch FINAL gate (run-vTvF2CDw, whose second lens is integration-and-requirements-coverage by design) and one task gate from another repository key (run-Indqebq1) whose controller named its lenses contracts and tests. Excluded batches are reported separately with their lens sets; nothing is dropped silently.
 
 The gate's round counts for the same cohort (from `gate-telemetry --all --since "$since"`; frozen snapshot at task-9-runs/round2/): 49 runs with round data across 64 repositories, mean 2.17 rounds-to-convergence for tasks (30 task gates, 7 converged in round 1), mean 3.63 for specs (8 spec gates, 0 converged in round 1), mean 4 for plans (7 plan gates, 0 converged in round 1). Backstop rate 2/49 (4%).
 
-**Application of the decision rule.** The cohort contains 20 complete round-1 batches, below the minimum of 30. The decision rule does not apply.
+**Application of the decision rule.** The cohort contains 21 complete round-1 batches, below the minimum of 30. The decision rule does not apply.
 
 **Conclusion.** Insufficient post-release data; the historical rates (55/59/69%) are pre-Part-1 and do not license a change. The three-lens fan-out is retained.
 

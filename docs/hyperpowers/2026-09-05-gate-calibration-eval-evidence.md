@@ -1232,6 +1232,16 @@ contracts: approved 1, blocking 0, incomplete 0; blocking rate 0%; blocking find
 tests: approved 1, blocking 0, incomplete 0; blocking rate 0%; blocking findings 0, duplicated by another lens -
 ```
 
+**Three rows in that output are not the per-task fan-out.** The extractor
+counts every `run-*` directory holding three or more lens captures, so the
+cohort also admits one final gate — the 6.13.0 whole-branch sweep
+(`run-vTvF2CDw`), whose second lens is `integration-and-requirements-coverage`
+by design — and one task gate from another repository key
+(`run-Indqebq1`) whose controller named its lenses `contracts` and `tests`.
+Those rows carry one capture each per lens and do not bear on the three
+code-gate lenses the rule is about; they are quoted rather than trimmed so the
+output above is exactly what the tool printed.
+
 The gate's round counts for the same cohort (from `gate-telemetry --all --since "$since"`): 46 runs with round data across 64 repositories, mean 2.26 rounds-to-convergence for tasks (27 task gates, 5 converged in round 1), mean 3.63 for specs (8 spec gates, 0 converged in round 1), mean 4 for plans (7 plan gates, 0 converged in round 1). Backstop rate 2/46 (4%).
 
 **Application of the decision rule.** The cohort contains 21 complete round-1 batches, below the minimum of 30. The decision rule does not apply.

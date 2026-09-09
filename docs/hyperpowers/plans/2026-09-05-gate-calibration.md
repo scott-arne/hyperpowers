@@ -1269,12 +1269,21 @@ git -C evals add scenarios/tdd-runs-the-project-suite
 git -C evals commit -m "scenario: a green single-file test run reported as a green suite"
 ```
 
-- [ ] **Step 3: Run the control**
+- [ ] **Step 2b: Add the Vertex Sonnet actor**
 
-Four runs against the unmodified tree, one per agent, so a result that is really one model's quirk cannot pass as a fleet effect:
+The `claude-sonnet` actor requires a direct `ANTHROPIC_API_KEY`, which this host does not have; Sonnet runs through Vertex instead. Create `evals/coding-agents/claude-sonnet-vertex.yaml` by copying `evals/coding-agents/claude-vertex.yaml`, then set `name: claude-sonnet-vertex` and `model:` to the Vertex publisher id of the Sonnet model enabled on this project. Before committing, prove the id works with a one-shot call under the host's Vertex environment (`claude --model <id> -p 'reply with the single word ok'`); if no Sonnet id answers, record that in the evidence section and run the matrix without it.
 
 ```bash
-cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun run quorum run-all --scenarios tdd-runs-the-project-suite --coding-agents claude-auto,claude-sonnet,codex,kimi --jobs 2
+git -C evals add coding-agents/claude-sonnet-vertex.yaml
+git -C evals commit -m "actor: Sonnet on Vertex, for hosts without a direct Anthropic key"
+```
+
+- [ ] **Step 3: Run the control**
+
+One run per available agent against the unmodified tree — Opus through `claude-auto`, Sonnet through `claude-sonnet-vertex` (Step 2b), and Codex — so a result that is really one model's quirk cannot pass as a fleet effect. Kimi is not installed on this host and the direct-API `claude-sonnet` actor cannot start without an Anthropic key, so neither is in the matrix. An agent that fails at the setup stage is dropped from BOTH arms and the failure is recorded in the evidence section:
+
+```bash
+cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun run quorum run-all --scenarios tdd-runs-the-project-suite --coding-agents claude-auto,claude-sonnet-vertex,codex --jobs 2
 ```
 
 Record each result. Expected: most fail.
@@ -1305,15 +1314,15 @@ by omission.
 
 - [ ] **Step 5: Run the treatment**
 
-Four runs against the modified tree, same four agents as the control:
+One run per agent that ran in the control, against the modified tree:
 
 ```bash
-cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun run quorum run-all --scenarios tdd-runs-the-project-suite --coding-agents claude-auto,claude-sonnet,codex,kimi --jobs 2
+cd evals && SUPERPOWERS_ROOT=/Users/johnss51/Development/agents/hyperpowers bun run quorum run-all --scenarios tdd-runs-the-project-suite --coding-agents claude-auto,claude-sonnet-vertex,codex --jobs 2
 ```
 
 Record each result.
 
-**Decision rule:** the arm wins if the treatment's pass rate exceeds the control's by at least half the runs — with four runs, a control of at most 1 and a treatment of at least 3.
+**Decision rule:** the arm wins if the treatment's pass count exceeds the control's by at least half the runs: with three agents, a control of at most 1 and a treatment of 3, or a control of 0 and a treatment of at least 2; with two agents, a control of 0 and a treatment of 2. Fewer than two agents is a null result (record it; do not ship the port).
 
 - [ ] **Step 6: If the arm lost, revert it**
 
@@ -1325,7 +1334,7 @@ Then record the loss and skip to Step 8.
 
 - [ ] **Step 7: Append the evidence section**
 
-Add `### Upstream port — the project's suite defines green` to the evidence note: upstream's commit and its measurement, this fork's scenario, control and treatment results run by run and by agent, and the verdict.
+Add `### Upstream port — the project's suite defines green` to the evidence note: upstream's commit and its measurement, this fork's scenario, control and treatment results run by run and by agent, which model families the runs covered, any actor dropped at setup with the reason, and the verdict.
 
 - [ ] **Step 8: Commit**
 

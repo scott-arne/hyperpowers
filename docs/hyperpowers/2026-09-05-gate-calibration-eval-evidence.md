@@ -619,16 +619,23 @@ forbids it from mentioning linting, formatting, ruff, pytest, test runners, test
 infrastructure, coverage or CI until the agent asks first. Without that
 prohibition the control contaminates itself.
 
-**Instrument.** Three deterministic post-checks: the brainstorming skill was
+**Instrument.** Four deterministic post-checks: the brainstorming skill was
 invoked; a `*-design.md` spec exists under `docs/hyperpowers/specs/` (or the
-`docs/superpowers/` namespace); and the spec's Global Constraints section names
-a tooling selection. That third check is the one that carries the arm: it awks
-out the lines under a heading matching `global constraints` and requires a
-tooling token inside them, so it fails when the section is absent and when the
-section exists but names none. The core signal — that the question was ASKED
-during the design presentation, before the spec was written, and that "how
-should we test this?" does not count — is the third Acceptance Criterion, graded
-by the Gauntlet-Agent, which never sees `checks.sh`.
+`docs/superpowers/` namespace); the spec's Global Constraints section names a
+tooling selection; and the Codex spec gate actually fired. The third check is
+the one that carries the arm: it awks out the lines under a heading matching
+`global constraints` and requires a tooling token inside them, so it fails when
+the section is absent and when the section exists but names none. The fourth
+guards the environment rather than the behavior — it greps the seeded stub's
+call log for a document-review invocation, so a session whose gates silently
+degraded cannot be scored. That check exists because round 1 was measured on
+exactly that failure; see "Two rounds" below. It deliberately does not assert
+the approach gate: a design space the agent judges trivial may legitimately skip
+it, so approach-gate calls are reported, not required. The core signal — that
+the question was ASKED during the design presentation, before the spec was
+written, and that "how should we test this?" does not count — is the third
+Acceptance Criterion, graded by the Gauntlet-Agent, which never sees
+`checks.sh`.
 
 The oracle's discrimination was hand-verified before the runs rather than
 assumed. Three negatives exit 1: no spec at all; a spec naming `pytest` and
@@ -642,6 +649,15 @@ containing "global constraints" and a `*-design.md` filename, so a run that asks
 the question and records the answer under some other heading fails the
 post-check even if the Gauntlet-Agent passes it.
 
+One positive was missing from that list and it cost a run. The heading pattern
+did not tolerate a section number, so `## 2. Global Constraints` never opened
+the awk range. Round-2 treatment-1 recorded the selection correctly under
+exactly that heading, the Gauntlet-Agent passed it, and the post-check scored it
+a miss. The pattern now allows an optional `2.` or `4.2` ordinal between the
+hashes and the title; the three negatives still fail. The repair is pinned by
+`test/scenario-brainstorming-tooling-question.test.ts` in the evals repo, which
+also runs the seeded stub for real and covers the gate-fired check.
+
 **Actor matrix.** One actor: `claude-auto` (Opus 5 through Vertex, the host's
 `ANTHROPIC_MODEL`), pinned by the scenario's `# coding-agents:` directive. The
 direct-API `claude` and `claude-sonnet` actors need an `ANTHROPIC_API_KEY` this
@@ -651,6 +667,20 @@ arm on one actor instead of one run per actor on three.
 
 **Decision rule.** The arm wins if treatment passes at least 2 of 3 while
 control passed at most 1 of 3.
+
+**Two rounds were run; only the second is evidence.** Round 1 measured 0 of 3
+against 3 of 3, but all six of its sessions ran the degraded-gate path. The
+scenario's seeded Codex stub implemented `task-reviewer`, `review` and
+`adversarial-review` — the shape the sibling brainstorming scenarios seed — but
+not `task`, which is the one subcommand both the approach gate
+(`skills/brainstorming/codex-approach-gate.md`) and the spec gate
+(`skills/requesting-code-review/recipe-document.md`) on this path actually call.
+The stub fell through to `{}`, `verdict-normalize` reduces `{}` to `incomplete`,
+which is never approval, and the skill took its degrade branch every time. Round
+2 reran both arms after the stub was taught to answer `task`. Round 1 is kept
+below for the record and is not scored.
+
+#### Round 1 (superseded — the gates never answered)
 
 **Control results** (unmodified tree, `git status --short` empty at launch; all
 runs `brainstorming-asks-tooling-question-claude-auto-*`):
@@ -667,18 +697,6 @@ runs `brainstorming-asks-tooling-question-claude-auto-*`):
   entered the conversation or the spec —
   `...-20260909T170135Z-d9c6`
 
-The defect reproduced in 3 of 3 controls. Every control loaded the skill, ran
-the architectural path and wrote a spec; the only failing post-check in each was
-the Global Constraints oracle.
-
-Three earlier control launches (`...-20260909T065255Z-502a`,
-`...-20260909T065428Z-16eb`, `...-20260909T065454Z-ba76`) ended `indeterminate:
-Gauntlet-Agent did not complete` when the corporate proxy became unresolvable
-mid-session ("The socket connection was closed unexpectedly" in each
-`gauntlet-stderr.log`). They are discarded, not scored: an outage is not a
-behavior. The three control runs above are reruns launched after the network was
-confirmed back.
-
 **Treatment results** (the bullet inserted after `SKILL.md:228` in the working
 tree, uncommitted at run time):
 - PASS — asked which tooling to stand up before writing the spec; the answer
@@ -690,20 +708,87 @@ tree, uncommitted at run time):
 - PASS — same, question asked mid-design before the spec was written —
   `...-20260909T172802Z-dd7c`
 
-No treatment run wrote implementation code, so the behavior change is the
-question and the constraint, not extra work.
+**Which path the gates took in round 1: the degraded one, in all six sessions.**
+Counted from each run's session transcript, no run produced a single approving
+`verdict-normalize` result. The three treatment runs each show two tool results
+whose entire content is `{}` — the stub's fall-through — and zero
+`{"result":"approved",...}` lines. Two controls (`70a7`, `d9c6`) show
+`{"result":"incomplete"}` four times apiece and, again, zero approvals. Whatever
+those numbers measured, it was not the architectural path this arm claims to be
+testing, so they are superseded rather than combined with round 2.
 
-**Verdict.** The arm wins. Composed verdicts are 0 of 3 in control against 3 of
-3 in treatment, against a required treatment of at least 2. The bullet ships,
-and the fork-side numbers reproduce upstream's exactly.
+Three earlier control launches (`...-20260909T065255Z-502a`,
+`...-20260909T065428Z-16eb`, `...-20260909T065454Z-ba76`) ended `indeterminate:
+Gauntlet-Agent did not complete` when the corporate proxy became unresolvable
+mid-session ("The socket connection was closed unexpectedly" in each
+`gauntlet-stderr.log`). They are discarded, not scored: an outage is not a
+behavior. The round-1 control runs above are reruns launched after the network
+was confirmed back.
+
+#### Round 2 (decisive — the gates answered)
+
+Same scenario, same actor, same decision rule, run against a stub that
+implements `task`: a three-approach block for the approach gate, and the
+Required document-review output with `Verdict: approve`, an empty `Blocking
+Findings:` and a populated `Coverage:` section for the spec gate. The canned
+document review was validated against
+`skills/requesting-code-review/scripts/verdict-normalize` before the runs, with
+and without `--require-coverage`, and normalizes to `approved` both ways — the
+`--require-coverage` case matters because the round-1 lens fan-out
+(`gate-lenses.md`) normalizes with that flag, and a response without a Coverage
+section would have been `incomplete`. The canned approaches are deliberately
+domain-neutral and contain no tooling words, so the stub cannot answer the
+question under test on the agent's behalf.
+
+The control arm ran first, with the shipped bullet removed from the working tree
+(`git show a196600:skills/brainstorming/SKILL.md > skills/brainstorming/SKILL.md`,
+`git status --short` showing only that file), then HEAD's version was restored
+and the tree verified clean before the treatments.
+
+| run | result path | Gauntlet | post-checks | final |
+| --- | --- | --- | --- | --- |
+| control-1 | `...-20260909T181135Z-d032` | fail | GC oracle fail, other 3 pass | FAIL |
+| control-2 | `...-20260909T181223Z-dc66` | fail | GC oracle fail, other 3 pass | FAIL |
+| control-3 | `...-20260909T181310Z-3e0e` | fail | GC oracle fail, other 3 pass | FAIL |
+| treatment-1 | `...-20260909T183224Z-ca13` | pass | GC oracle fail (oracle defect), other 3 pass | FAIL as measured, PASS re-scored |
+| treatment-2 | `...-20260909T183310Z-c1d6` | pass | 4 of 4 pass | PASS |
+| treatment-3 | `...-20260909T183358Z-b38f` | pass | 4 of 4 pass | PASS |
+
+**Which path the gates took in round 2: the normal one, in all six sessions.**
+Every run's transcript contains exactly four approving normalizations
+(`{"result":"approved","verdict":"approve","blockingCount":0`) and zero `{}`
+tool results — the mirror image of round 1. The stub's call log agrees: each of
+the six logged two `task kind=document-review` invocations whose prompts open
+"Read the review dossier first", which is the round-1 two-lens fan-out of the
+spec gate, and the gate-fired post-check passed in all six. Five of the six also
+logged one `task kind=approaches` call; treatment-2 skipped the approach gate,
+which the instrument permits and does not score.
+
+**Treatment-1 is an oracle miss, not a behavior miss, and the correction cannot
+reach the controls.** Its spec has `## 2. Global Constraints` at line 25 naming
+pytest and ruff, the Gauntlet-Agent passed it, and only the numbered heading
+defeated the awk range. Both oracle versions were replayed over all six round-2
+workdirs: the widened pattern changes exactly one verdict. No control spec
+contains a Global Constraints heading of any form — old and new patterns both
+extract zero tooling hits from all three — so the repair cannot manufacture a
+control pass, which is the direction that would have mattered.
+
+**Verdict.** The arm wins, on either scoring. As measured, 0 of 3 control
+against 2 of 3 treatment; re-scored with the repaired oracle, 0 of 3 against 3
+of 3. The rule requires treatment at least 2 and control at most 1, and both
+scorings clear it, so the outcome does not depend on the oracle repair. The
+bullet stays. Round 1's headline numbers happened to match upstream's 0/3 to 3/3
+exactly, but they were produced on the degraded path; it is round 2, with the
+gates answering, that reproduces upstream's result.
 
 **The controls' specs did name ruff and pytest, which is why the oracle is
-anchored to Global Constraints.** Every control spec mentioned the same tools
-the treatment runs were told to use — under `## Project Setup` or `## Project
-Tooling`, never under Global Constraints, and never as something the user chose.
-A check that merely grepped the spec for `ruff` would have scored all three
-controls green and measured nothing. The distinction the arm is actually making
-is between an agent asserting tooling and a user selecting it, and the section
+anchored to Global Constraints.** Every control spec in both rounds mentioned
+the same tools the treatment runs were told to use — round 2's three put them
+under `## Toolchain`, `## Project setup` and `## 9. Project layout and tooling`
+— never under Global Constraints, and never as something the user chose. A check
+that merely grepped the spec for `ruff` would have scored all three controls
+green and measured nothing. The distinction the arm is actually making is
+between an agent asserting tooling and a user selecting it, and the section
 heading is where that distinction is legible on disk.
 
 **Two controls justified skipping the question by citing a `CLAUDE.md` that does
@@ -717,23 +802,48 @@ filename are the agent's own output plus the bootstrap's "User instructions
 authority was confabulated. The third control asserted the same defaults without
 citing anything, so the failure mode does not depend on the confabulation, but
 it is worth recording that an agent will invent a user instruction to avoid
-asking a question.
+asking a question. It recurred in round 2: one of the three controls (`dc66`)
+told the user "your `CLAUDE.md` already settles some of this" and listed "house
+conventions that apply (from the user's `CLAUDE.md`)" in a repo that has no such
+file. The other two round-2 controls asserted their defaults with no citation at
+all.
 
-**Limits.** One actor, one scenario, three runs per arm. The separation is as
-clean as this design can produce — no control passed and no treatment failed —
-but it is a single model family, and a bullet that works on Opus 5 through
-Vertex has not been shown to work on Sonnet or Codex. The scenario is pinned in
-the evals allowlist for exactly that reason: its arms are only comparable across
-the actor that was measured.
+**Limits.** One actor, one scenario, three runs per arm, one decisive round. On
+the behavior the arm is about, the separation is as clean as this design can
+produce: no round-2 control asked the question and every round-2 treatment did,
+graded by a Gauntlet-Agent that never sees `checks.sh`. But it is a single model
+family, and a bullet that works on Opus 5 through Vertex has not been shown to
+work on Sonnet or Codex. The scenario is pinned in the evals allowlist for
+exactly that reason: its arms are only comparable across the actor that was
+measured. Round 1's numbers are not available as corroboration — they were
+measured on the degraded path and are superseded, not pooled.
+
+**The same stub gap exists in sibling scenarios and was left alone.** Seven
+scenarios seed the `task`-less stub shape while sitting on a path that calls
+`task`: `brainstorming-bounded-fires-approach-gate`,
+`brainstorming-router-escalates-b1-userid-param`, `-b2-config-module`,
+`-b3-logging`, `-b4-reusable-validation`, `-b5-prefs-storage`, and
+`brainstorming-router-no-downgrade`. Three gate scenarios already implement
+`task` (`codex-approach-gate-fires-on-architecture`,
+`codex-doc-gate-foreground-await`,
+`codex-plan-gate-algorithm-locked-after-round1`), and the remaining
+`codex-gate-*` scenarios only ever call `adversarial-review`, so they have no
+gap. Whether the seven are measuring the degraded path the way round 1 did has
+not been checked; fixing them is out of scope for this arm and is recorded here
+so it is not lost.
 
 **Files changed.**
 - `skills/brainstorming/SKILL.md` — one bullet added after line 228; ships.
 - `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md` (this section)
 - evals repo: `scenarios/brainstorming-asks-tooling-question/{story.md,setup.sh,checks.sh}`,
-  `test/scenario-pinning.test.ts`
+  `test/scenario-pinning.test.ts`,
+  `test/scenario-brainstorming-tooling-question.test.ts`
 
 **Commits.**
 - evals repo: f21b573 scenario: a new project's design never asks which tooling
   to stand up; 7538c63 test(pinning): the new tooling-question scenario was not
-  in the frozen allowlist
-- hyperpowers repo: this commit, the skill bullet and this note.
+  in the frozen allowlist; 41cf1e3 fix(scenario): the seeded Codex stub answered
+  the gates the skill actually calls with nothing; ef14f99 fix(scenario): a
+  numbered Global Constraints heading read as no section at all
+- hyperpowers repo: 4816529, the skill bullet and the round-1 note; this commit,
+  the round-2 re-measurement.

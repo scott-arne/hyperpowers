@@ -92,6 +92,17 @@ plan. No before/after runs were made for them.
 - evals repo (round 3 base fixes and assertions): af29254 arm: checked-in base fixtures; the runner asserts both revisions parse and pass before it reviews
 - hyperpowers repo: (this commit)
 
+**Follow-up edit to the composition clause (57ae224).** The clause added to
+`gate-lenses.md:38` originally named `recipe-code.md` literally. Task 4 was the
+first task to run `tests/codex-review-gate/test-gate-topology.sh`, whose route
+rule forbids a file on the document-gate route from naming a file that route
+excludes, and the suite had been red since this arm landed. The literal name was
+replaced by "that recipe" — the sentence already names the code recipe by role
+two clauses earlier, so the meaning is unchanged — and the losslessness row for
+source line 214 was re-extracted in place. No measurement depends on the
+wording: Arm A's runner composes its focus from `recipe-code.md` itself, not
+from this clause. Lossless, contract, and topology suites pass.
+
 ### Arm B — the round 2+ invocation is a fixed recipe
 
 **Defect.** `gate-fix-loop.md:22` said only that the round 2+ invocation

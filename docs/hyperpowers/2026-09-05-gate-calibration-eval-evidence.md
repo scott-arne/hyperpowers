@@ -1202,3 +1202,35 @@ business.
   receiving-code-review pointer did not beat its control (superseded); d52a82b
   the revert of c94c5fa, once the pointer beat an uncontaminated control; this
   commit, the evidence.
+
+### Lens count
+
+The three-lens round-1 fan-out (correctness, contracts-and-integration, tests-and-evidence) carries a structural convergence cost: round 1 converges only when every capture approves. The historical needs-attention rates were 55%, 59%, and 69% at 0.94 findings per capture, making convergence structurally unlikely. This measurement checks whether the post-6.13.0 gate as it now runs supports merging a lens whose blocking findings are largely duplicated by the other two.
+
+**Decision rule (stated before measuring).** A lens is a merge candidate only if, over the post-release cohort, its blocking rate (captures normalizing to `blocking` divided by captures normalizing to `blocking` or `approved`; `incomplete` captures excluded) is at or above 60% AND at least 80% of its blocking findings are duplicated by another lens in the same round-1 batch (word-Jaccard of titles at or above 0.5). Minimum sample: 30 complete round-1 batches in the cohort.
+
+**Post-6.13.0 cohort** (since `2026-09-06T22:45:00-07:00`):
+
+```
+complete round-1 batches: 21
+contracts-and-integration: approved 10, blocking 9, incomplete 0; blocking rate 47%; blocking findings 15, duplicated by another lens 27%
+correctness: approved 11, blocking 10, incomplete 0; blocking rate 48%; blocking findings 17, duplicated by another lens 6%
+tests-and-evidence: approved 5, blocking 15, incomplete 0; blocking rate 75%; blocking findings 25, duplicated by another lens 12%
+integration-and-requirements-coverage: approved 0, blocking 1, incomplete 0; blocking rate 100%; blocking findings 2, duplicated by another lens 0%
+contracts: approved 1, blocking 0, incomplete 0; blocking rate 0%; blocking findings 0, duplicated by another lens -
+tests: approved 1, blocking 0, incomplete 0; blocking rate 0%; blocking findings 0, duplicated by another lens -
+```
+
+The gate's round counts for the same cohort (from `gate-telemetry --all --since "$since"`): 46 runs with round data across 64 repositories, mean 2.26 rounds-to-convergence for tasks (27 task gates, 5 converged in round 1), mean 3.63 for specs (8 spec gates, 0 converged in round 1), mean 4 for plans (7 plan gates, 0 converged in round 1). Backstop rate 2/46 (4%).
+
+**Application of the decision rule.** The cohort contains 21 complete round-1 batches, below the minimum of 30. The decision rule does not apply.
+
+**Conclusion.** Insufficient post-release data; the historical rates (55/59/69%) are pre-Part-1 and do not license a change. The three-lens fan-out is retained.
+
+**Files changed.**
+- `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md` (this section)
+- evals repo: `scripts/lens-cohort.sh`, `scripts/lens-cohort.test.sh`
+
+**Commits.**
+- evals repo: 7c59a9f tool: per-lens outcomes and within-batch overlap over a bounded cohort, with an mtime-selection test
+- hyperpowers repo: this commit, the measurement

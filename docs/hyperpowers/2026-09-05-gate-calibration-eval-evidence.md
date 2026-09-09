@@ -25,6 +25,9 @@ out to move. The post-release cohort is re-read at release so the note
 carries the fleet state after this plan's arms shipped. Each arm's verdict
 rests on its own control and treatment runs, recorded in its section.
 
+Post-release cohort re-read at release (gate-telemetry --all --since 2026-09-06T22:45:00-07:00, read 2026-09-09; 50 runs, backstops 2/50):
+- Rounds by gate — plan: mean 4, first-round 0/7, backstops 1/7 [4, 3, 4, 4, 4, 5, 4]; task: mean 2.16, first-round 7/31, backstops 0/31 [2, 2, 2, 2, 2, 3, 2, 3, 2, 2, 1, 1, 1, 2, 4, 2, 1, 1, 2, 2, 1, 2, 2, 2, 1, 5, 4, 2, 2, 5, 2]; adhoc: mean 1.5, first-round 1/2, backstops 0/2 [1, 2]; final: mean 1, first-round 2/2, backstops 0/2 [1, 1]; spec: mean 3.63, first-round 0/8, backstops 1/8 [2, 4, 5, 2, 4, 4, 4, 4]
+
 ## Task 0 follow-ups (mechanical; no arm)
 
 Task 0 corrected the testing guide, the review-base default, and the fleet

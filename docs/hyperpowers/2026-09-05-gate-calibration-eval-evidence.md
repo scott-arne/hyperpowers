@@ -586,3 +586,154 @@ directly, which is why the audit reads the transcripts.
   bare-suite check counted mentions of the command; 137cef4 fix(scenario): an
   empty argument logged like a bare suite run
 - hyperpowers repo: this commit, the evidence note only.
+
+### Upstream port — the tooling question
+
+**Defect.** An agent designing a brand-new project walks the architectural path,
+presents the design, and writes the spec without ever asking which tooling to
+stand up. The cheapest moment to choose linting, formatting and test
+infrastructure — before any code exists — passes unused, and whatever the agent
+assumed never reaches the spec as a constraint the later plans inherit.
+
+**Upstream's measurement.** Upstream Superpowers commit `537d649` adds a bullet
+to the design presentation asking which tooling to set up from the start, with
+the user's selections landing in the spec's Global Constraints. Upstream
+measured 0 of 3 controls passing against 3 of 3 with the change. This
+repository's rule is fork-side before/after evidence regardless of what upstream
+measured, so this arm ran its own control and treatment before deciding whether
+to ship the port.
+
+**Method.** Quorum scenario `brainstorming-asks-tooling-question` (evals repo).
+The fixture is an empty directory: `git init -b main`, zero commits, zero
+tracked files, no `pyproject.toml`, no `package.json`, no linter config and no
+test runner. None of the setup helpers could be used — `create_base_repo` seeds
+a `package.json`, a README and two JS modules, which would answer the question
+under test — so the repository is initialized inline and only the stub
+codex-plugin-cc is seeded, so the approach and spec gates can fire. The scripted
+request asks to design `csvsink`, a Python CLI that watches a directory for CSV
+exports and loads new rows into SQLite, in a directory where "nothing exists
+yet." The story scripts every answer the Gauntlet-Agent may give, including the
+tooling answer if the question is asked — "ruff with format on, and pytest with
+a first passing fixture. No end-to-end and no fuzz testing for now." — and
+forbids it from mentioning linting, formatting, ruff, pytest, test runners, test
+infrastructure, coverage or CI until the agent asks first. Without that
+prohibition the control contaminates itself.
+
+**Instrument.** Three deterministic post-checks: the brainstorming skill was
+invoked; a `*-design.md` spec exists under `docs/hyperpowers/specs/` (or the
+`docs/superpowers/` namespace); and the spec's Global Constraints section names
+a tooling selection. That third check is the one that carries the arm: it awks
+out the lines under a heading matching `global constraints` and requires a
+tooling token inside them, so it fails when the section is absent and when the
+section exists but names none. The core signal — that the question was ASKED
+during the design presentation, before the spec was written, and that "how
+should we test this?" does not count — is the third Acceptance Criterion, graded
+by the Gauntlet-Agent, which never sees `checks.sh`.
+
+The oracle's discrimination was hand-verified before the runs rather than
+assumed. Three negatives exit 1: no spec at all; a spec naming `pytest` and
+`ruff` under `## Testing` with no Global Constraints section; and a Global
+Constraints section naming no tooling. The positives tolerate the formatting
+variation a real spec shows: `### Global Constraints`, `## **Global
+Constraints**`, `## Global Constraints (inherited by every plan)`, the section
+appearing last in the file, and the `docs/superpowers/specs/` namespace. It
+stays deliberately strict in one direction: it requires a real markdown heading
+containing "global constraints" and a `*-design.md` filename, so a run that asks
+the question and records the answer under some other heading fails the
+post-check even if the Gauntlet-Agent passes it.
+
+**Actor matrix.** One actor: `claude-auto` (Opus 5 through Vertex, the host's
+`ANTHROPIC_MODEL`), pinned by the scenario's `# coding-agents:` directive. The
+direct-API `claude` and `claude-sonnet` actors need an `ANTHROPIC_API_KEY` this
+host does not have and kimi is not installed, so the three-family matrix the TDD
+arm used is not available here; this arm buys its confidence from three runs per
+arm on one actor instead of one run per actor on three.
+
+**Decision rule.** The arm wins if treatment passes at least 2 of 3 while
+control passed at most 1 of 3.
+
+**Control results** (unmodified tree, `git status --short` empty at launch; all
+runs `brainstorming-asks-tooling-question-claude-auto-*`):
+- FAIL — the architectural path ran end-to-end (6 questions, sectioned design,
+  spec written) but the agent never asked; it asserted tooling unilaterally
+  ("Project tooling follows your `CLAUDE.md`: ... pytest/ruff/mypy as a dev
+  extra") and the spec has no Global Constraints section —
+  `...-20260909T165928Z-9b78`
+- FAIL — same shape; the agent asserted ruff/mypy/pytest as its own defaults
+  ("Unless you say otherwise, I'll also write these into the spec as defaults
+  rather than spend questions on them") and never offered a choice —
+  `...-20260909T170105Z-70a7`
+- FAIL — 7 questions, 4 design sections, spec written; the tooling answer never
+  entered the conversation or the spec —
+  `...-20260909T170135Z-d9c6`
+
+The defect reproduced in 3 of 3 controls. Every control loaded the skill, ran
+the architectural path and wrote a spec; the only failing post-check in each was
+the Global Constraints oracle.
+
+Three earlier control launches (`...-20260909T065255Z-502a`,
+`...-20260909T065428Z-16eb`, `...-20260909T065454Z-ba76`) ended `indeterminate:
+Gauntlet-Agent did not complete` when the corporate proxy became unresolvable
+mid-session ("The socket connection was closed unexpectedly" in each
+`gauntlet-stderr.log`). They are discarded, not scored: an outage is not a
+behavior. The three control runs above are reruns launched after the network was
+confirmed back.
+
+**Treatment results** (the bullet inserted after `SKILL.md:228` in the working
+tree, uncommitted at run time):
+- PASS — asked which tooling to stand up before writing the spec; the answer
+  landed in the spec's Global Constraints on disk —
+  `...-20260909T172627Z-7702`
+- PASS — asked the tooling question during design and recorded the answer
+  (ruff+format, pytest with first fixture, no e2e/fuzz) in Global Constraints —
+  `...-20260909T172715Z-116c`
+- PASS — same, question asked mid-design before the spec was written —
+  `...-20260909T172802Z-dd7c`
+
+No treatment run wrote implementation code, so the behavior change is the
+question and the constraint, not extra work.
+
+**Verdict.** The arm wins. Composed verdicts are 0 of 3 in control against 3 of
+3 in treatment, against a required treatment of at least 2. The bullet ships,
+and the fork-side numbers reproduce upstream's exactly.
+
+**The controls' specs did name ruff and pytest, which is why the oracle is
+anchored to Global Constraints.** Every control spec mentioned the same tools
+the treatment runs were told to use — under `## Project Setup` or `## Project
+Tooling`, never under Global Constraints, and never as something the user chose.
+A check that merely grepped the spec for `ruff` would have scored all three
+controls green and measured nothing. The distinction the arm is actually making
+is between an agent asserting tooling and a user selecting it, and the section
+heading is where that distinction is legible on disk.
+
+**Two controls justified skipping the question by citing a `CLAUDE.md` that does
+not exist in the run.** This was checked rather than assumed, because a leaked
+user-instruction file would have handed the Coding-Agent the answer and
+invalidated the control. It had not: the agent's HOME is the per-run throwaway,
+no `CLAUDE.md` exists anywhere under the run directory, no ancestor of the
+workdir contains that content, and the session log's only mentions of the
+filename are the agent's own output plus the bootstrap's "User instructions
+(CLAUDE.md, AGENTS.md, ...)" line — there is no read of such a file. The
+authority was confabulated. The third control asserted the same defaults without
+citing anything, so the failure mode does not depend on the confabulation, but
+it is worth recording that an agent will invent a user instruction to avoid
+asking a question.
+
+**Limits.** One actor, one scenario, three runs per arm. The separation is as
+clean as this design can produce — no control passed and no treatment failed —
+but it is a single model family, and a bullet that works on Opus 5 through
+Vertex has not been shown to work on Sonnet or Codex. The scenario is pinned in
+the evals allowlist for exactly that reason: its arms are only comparable across
+the actor that was measured.
+
+**Files changed.**
+- `skills/brainstorming/SKILL.md` — one bullet added after line 228; ships.
+- `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md` (this section)
+- evals repo: `scenarios/brainstorming-asks-tooling-question/{story.md,setup.sh,checks.sh}`,
+  `test/scenario-pinning.test.ts`
+
+**Commits.**
+- evals repo: f21b573 scenario: a new project's design never asks which tooling
+  to stand up; 7538c63 test(pinning): the new tooling-question scenario was not
+  in the frozen allowlist
+- hyperpowers repo: this commit, the skill bullet and this note.

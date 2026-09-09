@@ -847,3 +847,290 @@ so it is not lost.
   numbered Global Constraints heading read as no section at all
 - hyperpowers repo: 4816529, the skill bullet and the round-1 note; this commit,
   the round-2 re-measurement.
+
+### Arm D — the routing edits 6.13.0 shipped
+
+**Why this arm exists.** 6.13.0 shipped two edits to skill routing text and
+justified both as "mechanically checkable contradictions" — a class the release
+treats as safe to change without measurement. The 6.13.0 Codex sweep disagreed:
+both are behavior-shaping prose, and this repository's rule ("Skill Changes
+Require Evaluation") wants before/after evidence for behavior-shaping prose
+regardless of how obvious the defect looked. The two edits are:
+
+- `skills/executing-plans/SKILL.md:14` — the note that told every session with
+  subagents to use SDD instead was rewritten to say the skill *is* the inline
+  path by request, with a "do not re-open the choice they already made"
+  instruction and a conditional one-time mention for subagent-less harnesses.
+- `skills/requesting-code-review/SKILL.md` step 3 — a `**REQUIRED SUB-SKILL:**`
+  paragraph pointing at `hyperpowers:receiving-code-review`, which no skill,
+  hook, or test had referenced before.
+
+This arm supplies the evidence after the fact. Each edit is judged on its own
+control/treatment pair; they share only the checkout and the actor.
+
+**The control is a second checkout, not a working-tree edit.** The
+tooling-question arm above measures its control by restoring one file in the
+working tree and running. That does not work here. Quorum bakes
+`--plugin-dir "$SUPERPOWERS_ROOT"` into the per-run launcher at process level,
+so a scenario's `setup.sh` cannot swap plugin text; and both treatments had
+already shipped, so the treatment arm has to run against the live tree at HEAD
+while the control runs against something else. The control is therefore a
+detached worktree:
+
+```
+git worktree add --detach "$TMPDIR/arm-d-control" HEAD
+git show v6.12.0:skills/executing-plans/SKILL.md \
+  > "$TMPDIR/arm-d-control/skills/executing-plans/SKILL.md"
+# then, by hand in the control tree only, delete the REQUIRED SUB-SKILL
+# paragraph from requesting-code-review step 3
+```
+
+`$TMPDIR` resolves differently between shells, so the absolute path was printed
+once and used everywhere:
+`/private/var/folders/dk/nb_vhq1s6xggs22mtl34dc2m0000gp/T/arm-d-control`.
+
+The control tree diverges from HEAD in exactly two files and nowhere else
+(`git diff --stat` inside it: `executing-plans/SKILL.md` 1 line changed,
+`requesting-code-review/SKILL.md` 5 lines deleted). Both edits reproduce 6.12.0
+exactly: `git diff v6.12.0 HEAD -- skills/executing-plans/SKILL.md` is a
+one-line diff, so the whole-file restore is faithful, and the step-3 block
+diffed against `v6.12.0` printed nothing. A grep for `receiving-code-review`
+across the control's `skills/`, excluding the skill's own directory, returned
+nothing — the control genuinely removes the only route to it, which is the
+property the second edit claims to create.
+
+**Which tree each run loaded, proved twice per run.** A control that silently
+loaded the treatment tree is not a control, so every run carries two independent
+witnesses, archived beside its verdict:
+
+1. The launcher's own `--plugin-dir` line from the run record.
+2. The skill directory paths named in the raw session log, plus a count of three
+   distinguishing sentences: 6.12.0's `Tell your human partner that Superpowers
+   works much better with access to subagents`, 6.13.0's `This skill is the
+   inline path`, and the `REQUIRED SUB-SKILL:` pointer.
+
+All six control runs report the `arm-d-control` path with counts `1 / 0 / 0`
+(scenario A) or `0 / 0 / 0` (scenario B, which never opens `executing-plans`);
+all six treatment runs report `/Users/johnss51/Development/agents/hyperpowers`
+with `0 / 1 / 0` and `0 / 0 / 1`. No run mixed them.
+
+**Actor matrix.** One actor: `claude-auto` (Opus 5 through Vertex), pinned by
+each scenario's `# coding-agents:` directive to the Claude family. The
+direct-API `claude` and `claude-sonnet` actors need an `ANTHROPIC_API_KEY` this
+host does not have, so — as in the tooling-question arm — the confidence comes
+from three runs per arm on one actor rather than one run per actor on three.
+
+**Decision rule, per edit.** The edit is supported if its treatment passes at
+least 2 of 3 while its control passed at most 1 of 3.
+
+**The Codex stub.** Both scenarios seed the shared `seed_codex_plugin_cc` helper
+with the detached job protocol enabled (a `.codex-stub-job-protocol` marker in
+the run's `home/`), because the review path under test calls
+`adversarial-review`, `status --json`, `status <id> --wait --json` and
+`result <id> --json`, and a stub missing any of them sends the session down the
+degraded-gate path instead of the one being measured. Four `command-succeeds`
+pre-checks assert the stub is installed and answers `setup --json` before any
+run is scored. The shared helper keeps a job ledger rather than a `calls.log`,
+so the archived per-run evidence substitutes that ledger plus the
+`codex-companion.mjs` command lines recovered from the transcript. All six
+scenario-B runs show 3 or 4 review jobs registered and every one of them
+`completed` — the gate answered in every session, in both arms.
+
+#### Edit 1 — the `executing-plans` inline-path note
+
+**Scenario.** `executing-plans-keeps-inline-request` (evals repo). The fixture
+is a base repo carrying a committed two-task plan; the scripted user asks for it
+to be executed "inline, in this session, without subagents - don't dispatch one
+for any part of it, reviews included." The story gives the Gauntlet-Agent one
+pushback line for the case where the agent re-opens the question — "I've already
+told you what I want. Please go ahead." — and forbids it from restating the
+constraint, since restating it hands the agent the answer.
+
+**Instrument.** Four deterministic post-checks: `skill-called
+hyperpowers:executing-plans`, `skill-not-called
+hyperpowers:subagent-driven-development`, `tool-not-called Agent`, and
+`tool-not-called Task`. The core signal is the third Acceptance Criterion,
+graded by the Gauntlet-Agent, which never sees `checks.sh`: the agent executed
+the plan in this session and never proposed switching, argued subagents would do
+better, or asked to dispatch one — with the explicit rider that a run which
+*opens* by telling the user SDD is the better path fails even if it then
+complies. The post-checks and the criterion measure different things on purpose:
+the checks catch a hand-off, the criterion catches a recommendation.
+
+Discrimination was hand-verified before the runs. Each assertion was replayed
+against synthetic ATIF trajectories through `QUORUM_TRANSCRIPT_PATH`: a
+compliant trace passes all four; a trace that loads
+`subagent-driven-development` and dispatches an `Agent` fails
+`skill-called executing-plans`, `skill-not-called
+subagent-driven-development` and `tool-not-called Agent`.
+
+**Control results** (6.12.0 text: "Tell your human partner that Superpowers
+works much better with access to subagents … use
+hyperpowers:subagent-driven-development instead of this skill"):
+
+| run | result path | Gauntlet | post-checks | final |
+| --- | --- | --- | --- | --- |
+| control-1 | `...-20260909T194645Z-263d` | pass | 4 of 4 | PASS |
+| control-2 | `...-20260909T195119Z-5d8f` | pass | 4 of 4 | PASS |
+| control-3 | `...-20260909T195606Z-80f2` | pass | 4 of 4 | PASS |
+
+The 6.12.0 text is a blunter recommendation than the one that replaced it, and
+in all three runs the agent simply dropped it in favor of the user's explicit
+instruction. Across the three control transcripts the only assistant sentences
+containing "subagent" echo the user's own constraint back ("no subagents were
+dispatched at any point"); not one recommends SDD. The Gauntlet-Agent never
+needed to send the pushback line in any control run.
+
+**Treatment results** (6.13.0 text, the shipped edit):
+
+| run | result path | Gauntlet | post-checks | final |
+| --- | --- | --- | --- | --- |
+| treatment-1 | `...-20260909T200740Z-bb9f` | fail | 4 of 4 | FAIL |
+| treatment-2 | `...-20260909T200743Z-c328` | fail | 4 of 4 | FAIL |
+| treatment-3 | `...-20260909T201331Z-d03f` | fail | 4 of 4 | FAIL |
+
+All three treatment runs executed the plan inline and dispatched nothing — the
+four deterministic checks passed every time — and all three opened by
+recommending the workflow the user had just ruled out:
+
+- treatment-1: "Note for future runs: on Claude Code,
+  `hyperpowers:subagent-driven-development` is normally the stronger default —
+  but you explicitly asked for inline execution here, so I'll stay in-session
+  and not dispatch anything."
+- treatment-2: "Note: hyperpowers:subagent-driven-development is normally the
+  stronger default on Claude Code, but you explicitly asked for inline
+  execution, so I'll do it all in this session."
+- treatment-3: "Note, once: on a harness with subagents like this one,
+  `hyperpowers:subagent-driven-development` is the stronger default. You asked
+  for inline, so I'm executing inline."
+
+**Mechanism.** The edit's final clause reads: "If your harness has no subagents
+(see the per-platform tool refs in `../using-hyperpowers/references/`; Claude
+Code, Codex CLI, Codex App, and Copilot CLI all have them), mention once that
+hyperpowers:subagent-driven-development is the stronger default on a harness
+that does." The parenthetical names four harnesses that *do* have subagents, so
+an agent reading the sentence on one of them finds its own harness listed and
+fires the mention — inverted from the conditional's intent. The mention it fires
+is precisely the re-opening the first half of the same paragraph forbids. The
+edit did not fail to help; it introduced the behavior it was written to prevent,
+and it did so in 3 of 3 runs while its own control was clean in 3 of 3.
+
+**Verdict: unsupported. Reverted.** Control passed 3 of 3, which alone fails the
+rule, and the treatment passed 0 of 3.
+`git show v6.12.0:skills/executing-plans/SKILL.md > skills/executing-plans/SKILL.md`
+restores the one differing line and nothing else. What the sweep called a
+"mechanically checkable contradiction" was real — 6.12.0's text does contradict
+an explicit inline request — but the contradiction was inert: the agent resolved
+it in the user's favor unprompted, every time, and the fix for it measured
+worse than the defect. A rewrite is still worth attempting; it needs a
+conditional an agent cannot read as satisfied on a harness that has subagents,
+and it needs to be measured against this same pair before it ships.
+
+#### Edit 2 — the `receiving-code-review` routing pointer
+
+**Scenario.** `requesting-code-review-hands-off-to-receiving` (evals repo). The
+fixture is a feature branch carrying a committed config loader with one genuine
+seeded defect (`indexOf('=')` returns `-1` for a bare `DEBUG` line, so the key
+is silently mangled) and an `app.conf` that exercises it. The scripted user says
+"I've made some changes on this branch. Please review them before I finish up -
+use the requesting-code-review skill," answers "review the commits on this
+branch against main" if asked for a base, and replies to the findings with
+exactly "Go ahead." — no instruction to use judgement, verify, or push back,
+since any of those would supply the behavior under test.
+
+**Instrument.** Six deterministic post-checks: both skills invoked, the `Agent`
+tool called, `tool-match-before-tool-match Agent '[Rr]eview' Skill
+'receiving-code-review'` for the ordering, and
+`skill-before-implementation-tool hyperpowers:receiving-code-review` against
+`Edit` and against `Write`. The ordering is asserted deterministically rather
+than left to prose, with one caveat recorded here: `tool-match-before-tool-match`
+passes vacuously if the agent enters the skill by reading its `SKILL.md` instead
+of through the native `Skill` tool, and in that case `skill-called` is what
+carries presence. The Codex gate is deliberately *not* asserted — it runs at
+step 4, after the hand-off under test — though the stub's ledger is archived so
+a degraded session would be visible. The core signal is again a Gauntlet-graded
+criterion: findings were treated as claims to evaluate, with at least one
+explicitly weighed rather than executed. Discrimination was hand-verified the
+same way as edit 1: a trace with no hand-off fails `skill-called
+receiving-code-review` and the `Edit` ordering check, and a trace that loads
+`receiving-code-review` before the review is even requested fails
+`tool-match-before-tool-match`.
+
+**Control results** (step 3 with no pointer, exactly 6.12.0's shape):
+
+| run | result path | Gauntlet | post-checks | final |
+| --- | --- | --- | --- | --- |
+| control-1 | `...-20260909T195119Z-c7e9` | pass | 6 of 6 | PASS |
+| control-2 | `...-20260909T195329Z-9aac` | pass | 6 of 6 | PASS |
+| control-3 | `...-20260909T200740Z-fbec` | pass | 6 of 6 | PASS |
+
+**Treatment results** (step 3 carrying the `REQUIRED SUB-SKILL:` pointer):
+
+| run | result path | Gauntlet | post-checks | final |
+| --- | --- | --- | --- | --- |
+| treatment-1 | `...-20260909T201403Z-f5fa` | pass | 6 of 6 | PASS |
+| treatment-2 | `...-20260909T202108Z-19b5` | pass | 6 of 6 | PASS |
+| treatment-3 | `...-20260909T202942Z-c87c` | pass | 6 of 6 | PASS |
+
+**Mechanism: the pointer is redundant on this harness.** All three control runs
+invoked `hyperpowers:receiving-code-review` through the native `Skill` tool
+while running against a tree in which no skill, hook, or test named it — control
+runs' witness files record `0` occurrences of the pointer text and one reference
+to the control tree's `skills/receiving-code-review` directory. Claude Code
+indexes every skill's frontmatter `description` and offers it for auto-trigger,
+so "review findings have arrived, now what" already reaches the skill without a
+textual route from `requesting-code-review`. The premise the edit was built on —
+recorded in `docs/hyperpowers/plans/2026-09-05-mechanical-hardening.md` — was
+that the skill "is referenced by no skill, no hook, and no test." That is true of
+the *text* and false of the *behavior*, and only the behavior was ever the point.
+
+**Verdict: unsupported. Reverted.** Control passed 3 of 3 against the rule's
+ceiling of 1. The treatment is not worse — it passed 3 of 3 too — but a change
+that cannot be distinguished from its absence has no measured benefit to set
+against the cost of the added prose and the topology assertion that pins it.
+The paragraph was deleted by hand, leaving Task 0's
+`BASE_SHA` change in the same file untouched (`git diff v6.12.0 --
+skills/requesting-code-review/SKILL.md` now shows only that change), and the
+`requesting-code-review routes to receiving-code-review` assertion was removed
+from `tests/codex-review-gate/test-gate-topology.sh`, which returns to
+`STATUS: PASSED`.
+
+Two caveats on the negative result, both worth keeping. First, it is
+harness-specific: the auto-trigger index that makes the pointer redundant is a
+Claude Code feature, and a harness without one may well need the textual route.
+Second, this scenario measures the *presence and ordering* of the hand-off, not
+its reliability under pressure — a fixture with adversarial or wrong findings
+might separate the arms where a fixture with one real defect and two weak ones
+did not. Neither caveat justifies shipping the pointer on evidence that does not
+exist; both say what a future attempt would have to measure.
+
+**A note on what this arm cost and what it bought.** Twelve live runs to remove
+one rewritten line and one three-line paragraph. That is the intended trade:
+the alternative is carrying behavior-shaping prose whose only warrant is that
+it looked obviously right, which is exactly what the "mechanically checkable
+contradiction" label was doing. One of the two edits turned out to make things
+actively worse, and no amount of reading the diff would have shown that.
+
+**Files changed.**
+- `skills/executing-plans/SKILL.md` — reverted to the v6.12.0 note.
+- `skills/requesting-code-review/SKILL.md` — the `REQUIRED SUB-SKILL:` paragraph
+  removed from step 3; Task 0's `BASE_SHA` change retained.
+- `tests/codex-review-gate/test-gate-topology.sh` — the routing assertion
+  removed.
+- `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md` (this section)
+- evals repo: `scenarios/executing-plans-keeps-inline-request/{story.md,setup.sh,checks.sh}`,
+  `scenarios/requesting-code-review-hands-off-to-receiving/{story.md,setup.sh,checks.sh}`,
+  `test/scenario-pinning.test.ts`
+
+`CHANGELOG.md`'s 6.13.0 section still describes both edits as shipped. It is a
+record of what that release contained and is left as written; the reverts are
+6.14.0's business.
+
+**Commits.**
+- evals repo: 0017631 scenario: the two routing edits 6.13.0 shipped, each with
+  an inline-request or review fixture; 2adb953 test(pinning): the two Arm D
+  scenarios were not in the frozen allowlist
+- hyperpowers repo: d6b418f revert(executing-plans): the inline-path note did
+  not beat its control; c94c5fa revert(requesting-code-review): the
+  receiving-code-review pointer did not beat its control; this commit, the
+  evidence.

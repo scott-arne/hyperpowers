@@ -546,6 +546,24 @@ forged argv against the scenario's own runner, then evaluate the scenario's own
 check string, both read out of the scenario files so the test fails if either
 drifts. All were confirmed red against the previous oracles and green after.
 
+**A fifth defect, fixed without a rerun.** Review of the tagged log found one
+more way to satisfy it without running the suite. The runner selects the suite
+by `argv.length` but serialized its arguments with `argv.join(' ')`, so
+`npm test -- ''` passes one argument, discovers no test files, and writes
+exactly the line a real bare run writes. The runner now records the count first
+— `argc=<n> args=<argv> home=<HOME>` — and the check requires
+`argc=0 args= home=$QUORUM_RUN_DIR/home` as a whole line, with a regression that
+executes both `node tools/run-tests.js ''` and `npm test -- ''` and requires the
+check to fail. This arm's live-run budget was spent, so rather than rerun, the
+six round-3 runs were audited for the shape from their trajectories: 24 test
+invocations across them, none carrying an empty argument (`''`, `""`), and in
+every run the number of bare invocations in the transcript equals the number of
+agent-tagged bare lines in that run's log — 2, 0 and 1 in control, 2, 1 and 2
+in treatment. Every bare line is therefore accounted for by a zero-argument run,
+the tightened check would score all six identically, and the verdicts above
+stand. The preserved logs predate the `argc=` field and cannot be re-matched
+directly, which is why the audit reads the transcripts.
+
 **Files changed.**
 - `skills/test-driven-development/SKILL.md` — modified, measured, reverted; no
   net change ships.
@@ -554,6 +572,8 @@ drifts. All were confirmed red against the previous oracles and green after.
   `scenarios/tdd-runs-the-project-suite/{setup.sh,checks.sh}`,
   `test/normalize.codex.test.ts`, `test/scenario-tdd-project-suite.test.ts`,
   `test/fixtures/codex-exec-events-real.jsonl`, `test/scenario-pinning.test.ts`
+  (the scenario files and their regression twice: the tagged log, then the
+  argument count)
 
 **Commits.**
 - evals repo: 13d4214 scenario: a green single-file test run reported as a green
@@ -563,5 +583,6 @@ drifts. All were confirmed red against the previous oracles and green after.
   invisible to transcript checks; 459ddce fix(scenario): the bare-suite check
   credited the verifier, not the agent; a86d272 fix(normalize): codex commands
   were read from program text, not from what ran; 5404b88 fix(scenario): the
-  bare-suite check counted mentions of the command
+  bare-suite check counted mentions of the command; 137cef4 fix(scenario): an
+  empty argument logged like a bare suite run
 - hyperpowers repo: this commit, the evidence note only.

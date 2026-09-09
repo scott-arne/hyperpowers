@@ -1667,7 +1667,7 @@ mk() { # <run-name> <verdict> <title>
 mkbare() { # <run-name> <verdict> <title> -- the bare payload shape the code gates store
   mkdir -p "$cache/$1"
   for lens in correctness contracts-and-integration tests-and-evidence; do
-    printf '{"verdict":"%s","findings":[%s],"summary":"Coverage: documents read - d; adjudicated decisions considered - none; changed surfaces reviewed - all; test evidence inspected - yes"}\n' \
+    printf '{"verdict":"%s","findings":[%s],"summary":"Coverage: all"}\n' \
       "$2" "$( [ "$2" = needs-attention ] && printf '{"severity":"high","title":"%s"}' "$3" )" > "$cache/$1/lens-$lens-capture"
   done
 }
@@ -1688,31 +1688,43 @@ mk run-new needs-attention "null dereference in parseRate"
 mkbare run-bare needs-attention "null dereference in parseRate"
 mkfinal
 mkalias
-# Build a just-below-60% threshold case: 25 blocking / 42 total = 59.52% rounds to 60%, but 25*100 < 60*42
-for i in $(seq 1 25); do
+# Build below-threshold case: 23 synthetic blocking + run-new + run-bare = 25 blocking, 17 approved = 42 total.
+# 25/42 = 59.52% rounds to 60%, but 25*100 < 60*42 so it's below threshold.
+for i in $(seq 1 23); do
   mkdir -p "$cache/run-below-$i"
   for lens in correctness contracts-and-integration tests-and-evidence; do
     printf '{"verdict":"needs-attention","findings":[{"severity":"high","title":"finding %d"}],"summary":"Coverage: all"}\n' "$i" > "$cache/run-below-$i/lens-$lens-capture"
   done
 done
-for i in $(seq 26 42); do
+for i in $(seq 24 40); do
   mkdir -p "$cache/run-below-$i"
   for lens in correctness contracts-and-integration tests-and-evidence; do
     printf '{"verdict":"approve","findings":[],"summary":"Coverage: all"}\n' > "$cache/run-below-$i/lens-$lens-capture"
   done
 done
+# Build meets-threshold case: add one more blocking batch so 26/43 = 60.47% meets threshold (26*100 >= 60*43).
+mkdir -p "$cache/run-meets-1"
+for lens in correctness contracts-and-integration tests-and-evidence; do
+  printf '{"verdict":"needs-attention","findings":[{"severity":"high","title":"meets finding"}],"summary":"Coverage: all"}\n' > "$cache/run-meets-1/lens-$lens-capture"
+done
 touch -t 202001010000 "$cache/run-old"
 out="$(bash "$here/lens-cohort.sh" "$root" 2025-01-01T00:00:00Z "$work/codex-review")"
 printf '%s\n' "$out"
-printf '%s' "$out" | grep -q 'complete round-1 batches: 44' || { echo "FAIL: expected 44 canonical batches (2 from original test + 42 threshold-test batches)"; exit 1; }
+printf '%s' "$out" | grep -q 'complete round-1 batches: 43' || { echo "FAIL: expected 43 canonical batches (2 original + 40 below + 1 meets)"; exit 1; }
 printf '%s' "$out" | grep -q 'excluded batches: 2' || { echo "FAIL: expected 2 excluded batches (final-gate and alias)"; exit 1; }
 printf '%s' "$out" | grep -q 'run-final: \[correctness, integration-and-requirements-coverage, tests-and-evidence\]' || { echo "FAIL: final-gate batch must be reported as excluded"; exit 1; }
 printf '%s' "$out" | grep -q 'run-alias: \[contracts, correctness, tests\]' || { echo "FAIL: alias batch must be reported as excluded"; exit 1; }
-printf '%s' "$out" | grep -q 'correctness: approved 17, blocking 27' || { echo "FAIL: both capture shapes and threshold batches must count"; exit 1; }
-printf '%s' "$out" | grep -q 'blocking rate 27/44 = 61.4% (meets-60%-threshold)' || { echo "FAIL: exact rate with threshold flag must be shown"; exit 1; }
-printf '%s' "$out" | grep -q 'duplicated by another lens 27/27 = 100.0% (meets-80%-threshold)' || { echo "FAIL: exact duplication rate with threshold flag must be shown"; exit 1; }
+printf '%s' "$out" | grep -q 'correctness: approved 17, blocking 26' || { echo "FAIL: both capture shapes and threshold batches must count"; exit 1; }
+printf '%s' "$out" | grep -q 'blocking rate 26/43 = 60.5% (meets-60%-threshold)' || { echo "FAIL: exact rate with meets threshold flag must be shown"; exit 1; }
+printf '%s' "$out" | grep -q 'duplicated by another lens 26/26 = 100.0% (meets-80%-threshold)' || { echo "FAIL: exact duplication rate with threshold flag must be shown"; exit 1; }
+# Test the below-threshold case by making run-meets-1 old so it's excluded from the 2025 cutoff
+touch -t 202001010000 "$cache/run-meets-1"
+out_below="$(bash "$here/lens-cohort.sh" "$root" 2025-01-01T00:00:00Z "$work/codex-review")"
+printf '\n--- Below-threshold test ---\n%s\n' "$out_below"
+printf '%s' "$out_below" | grep -q 'complete round-1 batches: 42' || { echo "FAIL: expected 42 canonical batches (2 original + 40 below)"; exit 1; }
+printf '%s' "$out_below" | grep -q 'blocking rate 25/42 = 59.5% (below-60%-threshold)' || { echo "FAIL: exact rate with below threshold flag must be shown"; exit 1; }
 out2="$(bash "$here/lens-cohort.sh" "$root" 2000-01-01T00:00:00Z "$work/codex-review")"
-printf '%s' "$out2" | grep -q 'complete round-1 batches: 45' || { echo "FAIL: an early cutoff must include all 45 canonical batches (including run-old)"; exit 1; }
+printf '%s' "$out2" | grep -q 'complete round-1 batches: 44' || { echo "FAIL: an early cutoff must include all 44 canonical batches (including run-old and run-meets-1)"; exit 1; }
 printf '%s' "$out2" | grep -q 'excluded batches: 2' || { echo "FAIL: excluded count must be consistent"; exit 1; }
 echo "PASS: lens-cohort selects by mtime, reads both capture shapes, scores overlap, excludes non-canonical batches, and shows exact threshold flags"
 ```

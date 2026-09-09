@@ -1609,7 +1609,8 @@ for (const key of fs.readdirSync(base)) {
       let res = "incomplete";
       try { res = JSON.parse(cp.execFileSync("bash", [normalize, "--require-coverage", cap], { encoding: "utf8" })).result; } catch (e) { res = "incomplete"; }
       let titles = [];
-      try { const j = JSON.parse(fs.readFileSync(cap, "utf8")); const r = j.storedJob.result.result; titles = (r.findings || []).filter(x => /^(critical|high)$/i.test(String(x.severity))).map(x => String(x.title)); } catch (e) { titles = []; }
+      // A capture is either the companion's result envelope or the bare review payload (its rawOutput); both carry verdict and findings.
+      try { const j = JSON.parse(fs.readFileSync(cap, "utf8")); const r = (j.storedJob && j.storedJob.result && j.storedJob.result.result) || j; titles = (r.findings || []).filter(x => /^(critical|high)$/i.test(String(x.severity))).map(x => String(x.title)); } catch (e) { titles = []; }
       rows.push({ run: rd, lens: m[1], res, titles });
     }
   }
@@ -1653,17 +1654,25 @@ mk() { # <run-name> <verdict> <title>
       "$2" "$( [ "$2" = needs-attention ] && printf '{"severity":"high","title":"%s"}' "$3" )" > "$cache/$1/lens-$lens-capture"
   done
 }
+mkbare() { # <run-name> <verdict> <title> -- the bare payload shape the code gates store
+  mkdir -p "$cache/$1"
+  for lens in correctness contracts-and-integration tests-and-evidence; do
+    printf '{"verdict":"%s","findings":[%s],"summary":"Coverage: documents read - d; adjudicated decisions considered - none; changed surfaces reviewed - all; test evidence inspected - yes"}\n' \
+      "$2" "$( [ "$2" = needs-attention ] && printf '{"severity":"high","title":"%s"}' "$3" )" > "$cache/$1/lens-$lens-capture"
+  done
+}
 mk run-old approve ""
 mk run-new needs-attention "null dereference in parseRate"
+mkbare run-bare needs-attention "null dereference in parseRate"
 touch -t 202001010000 "$cache/run-old"
 out="$(bash "$here/lens-cohort.sh" "$root" 2025-01-01T00:00:00Z "$work/codex-review")"
 printf '%s\n' "$out"
-printf '%s' "$out" | grep -q 'complete round-1 batches: 1' || { echo "FAIL: expected exactly the new batch"; exit 1; }
-printf '%s' "$out" | grep -q 'correctness: approved 0, blocking 1' || { echo "FAIL: new batch not counted as blocking"; exit 1; }
+printf '%s' "$out" | grep -q 'complete round-1 batches: 2' || { echo "FAIL: expected exactly the two new batches (envelope and bare payload)"; exit 1; }
+printf '%s' "$out" | grep -q 'correctness: approved 0, blocking 2' || { echo "FAIL: both capture shapes must count as blocking"; exit 1; }
 printf '%s' "$out" | grep -q 'duplicated by another lens 100%' || { echo "FAIL: identical titles across lenses should read as duplicated"; exit 1; }
 out2="$(bash "$here/lens-cohort.sh" "$root" 2000-01-01T00:00:00Z "$work/codex-review")"
-printf '%s' "$out2" | grep -q 'complete round-1 batches: 2' || { echo "FAIL: an early cutoff must include both batches"; exit 1; }
-echo "PASS: lens-cohort selects by mtime and scores overlap"
+printf '%s' "$out2" | grep -q 'complete round-1 batches: 3' || { echo "FAIL: an early cutoff must include all three batches"; exit 1; }
+echo "PASS: lens-cohort selects by mtime, reads both capture shapes, and scores overlap"
 ```
 
 Make both executable, run `bash evals/scripts/lens-cohort.test.sh /Users/johnss51/Development/agents/hyperpowers` (expected: the PASS line), then commit both in the evals repo: `git -C evals add scripts/lens-cohort.sh scripts/lens-cohort.test.sh && git -C evals commit -m "tool: per-lens outcomes and within-batch overlap over a bounded cohort, with an mtime-selection test"`.

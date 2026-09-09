@@ -341,3 +341,28 @@ the capped task path, and it was not run.
 
 **Commits.**
 - hyperpowers repo: this commit. No evals-repo work: mechanical, no scenario.
+
+### Approved-with-notes bookkeeping
+
+**The defect.** The whole-branch sweep (run-vTvF2CDw) raised this as finding 8 (medium, correctness lens): "Approval-with-notes: the gate workflow reads raw findings only on blocking, so an approved needs-attention's medium/low findings have no required path into the round or Minor ledger (verdict-normalize:78-93 + gate-fix-loop)."
+
+**Demonstrated in the wild.** The 6.13.0 release-commit review (run-9WOZfFdk) converged through exactly this path: the tests-and-evidence lens returned needs-attention with two medium findings; verdict-normalize judged the result approved; the round converged. The round ledger contains the two medium findings:
+
+1. CHANGELOG.md overstates the accuracy of docs/testing.md (matches whole-branch sweep finding 3).
+2. The Windows half of run-hook.cmd is untested (matches the whole-branch reviewers' cannot-verify note).
+
+Those notes reached the ledger only because the controller chose to write them down. The gate's completion-check prose (gate-findings.md:48, source line 441 of the pre-split original) told the controller to read raw findings only on `blocking`, so the approved-with-notes capture could converge with its notes unread. Spec D2 claimed the findings still travel to the round ledger, contrary to what the instructions actually required.
+
+**The fix.** One sentence in the completion check (line 48): `On 'approved' reached through a 'needs-attention' verdict, the capture carries medium/low notes: read them and record each in the round ledger (and in the skill's Minor ledger, if it keeps one) before treating the round as converged.`
+
+**No eval arm.** This instruction is bookkeeping the controller performs after the reviewer has spoken. The contract suite checks its presence; a disagreeing plan gate would have surfaced before this task ran.
+
+**Files changed.**
+- `skills/requesting-code-review/gate-findings.md` (line 48)
+- `tests/codex-review-gate/gate-post-split-edits.tsv` (one new row for source line 441)
+- `tests/codex-review-gate/test-gate-split-lossless.sh` (pin raised from 17 to 18)
+- `tests/codex-review-gate/test-gate-contract.sh` (one new assertion)
+- `docs/hyperpowers/2026-09-05-gate-calibration-eval-evidence.md` (this section)
+
+**Commit.**
+- hyperpowers repo: this commit. No evals-repo work: no scenario.

@@ -187,6 +187,35 @@ gd15c="$work/gate15c"; mkdir -p "$gd15c"
 exit2 "non-numeric --ceiling exits 2 on a non-task gate" bash "$GR" "$gd15c" --ceiling foo --gate final
 no_state "a rejected non-numeric --ceiling writes no counter" "$gd15c"
 
+# Digits are not a bound. `$(( ))` is fixed-width signed, so a token wider than
+# the machine word wraps -- and it wraps INTO the accepted range on the one path
+# that has a range to enforce, spending none of the shared cap.
+gd16="$work/gate16"; mkdir -p "$gd16"
+exit2 "a --consumed wider than the machine word exits 2" bash "$GR" "$gd16" --consumed 18446744073709551616 --gate task
+no_state "a wrapped --consumed writes no counter" "$gd16"
+gd16b="$work/gate16b"; mkdir -p "$gd16b"
+exit2 "a task --ceiling wider than the machine word exits 2" bash "$GR" "$gd16b" --ceiling 18446744073709551619 --gate task
+no_state "a wrapped task --ceiling writes no counter" "$gd16b"
+# the untapped gates have no cap to wrap into, so the width bound is their only guard
+gd16c="$work/gate16c"; mkdir -p "$gd16c"
+exit2 "an over-wide --ceiling exits 2 on a non-task gate" bash "$GR" "$gd16c" --ceiling 18446744073709551619 --gate final
+no_state "an over-wide --ceiling writes no counter" "$gd16c"
+expect "$(bash "$GR" "$gd16c" --ceiling 18446744073709551619 --gate final 2>&1)" "at most 9 digits" "the width bound names itself in the error"
+expect "$(bash "$GR" "$gd16c" --ceiling 1234567890 --gate final 2>&1)" "at most 9 digits" "ten digits is over the bound"
+expect "$(bash "$GR" "$gd16c" --ceiling 999999999 --gate final)" '"ceiling":999999999' "nine digits is within the bound"
+json_ok "a nine-digit ceiling leaves parseable state" "$gd16c"
+
+# padding is not width: a stripped token is measured, so leading zeros neither
+# inflate the count nor survive into the file
+gd16d="$work/gate16d"; mkdir -p "$gd16d"
+out="$(bash "$GR" "$gd16d" --consumed 05 --gate task)"
+expect "$out" '"ceiling":0' "--consumed 05 derives ceiling 0"
+expect "$out" '"verdict":"backstop"' "--consumed 05 backstops on the first advance"
+gd16e="$work/gate16e"; mkdir -p "$gd16e"
+expect "$(bash "$GR" "$gd16e" --ceiling 0000003 --gate final)" '"ceiling":3' "--ceiling 0000003 answers with 3"
+expect "$(cat "$gd16e/gate-round.json")" '"ceiling":3' "--ceiling 0000003 is recorded as 3"
+expect "$(bash "$GR" "$gd16e" --ceiling 0000000000000003 --gate final)" '"round":2' "a token wide only in padding is within the bound"
+
 # every pre-existing --ceiling behavior is unchanged for the other gate types
 for g in spec plan final adhoc; do
   gdg="$work/gate-$g"; mkdir -p "$gdg"

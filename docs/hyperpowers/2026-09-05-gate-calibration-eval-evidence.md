@@ -273,7 +273,7 @@ naming a file that does not exist. Both are fixed by keeping "unknown" and
 and by validating digits with a `case` pattern instead of `expr`.
 
 **What now pins it.** `tests/codex-review-gate/test-gate-round.sh` gained
-62 assertions (22 to 84): the derived ceilings for `--consumed` 0, 2, and 5; `consumed` in
+77 assertions (22 to 99): the derived ceilings for `--consumed` 0, 2, and 5; `consumed` in
 the state file; the spent cap backstopping on its first advance; a peek at
 ceiling 0 answering `backstop`; a peek with no ceiling known still answering
 `proceed`; the four usage errors (`--consumed` with `--ceiling`, `--consumed 6`,
@@ -312,6 +312,23 @@ converted with an explicit base before it is compared or persisted -- which also
 settles a disagreement between bash's two numeric readers, since `test` reads
 `08` as eight while `$(( ))` reads the leading zero as octal and rejects the
 digit.
+
+**And one more, after the cap was spent.** Canonicalizing before bounding left
+the bound reading a number the machine had already mangled. `$(( ))` is
+fixed-width signed, so `--consumed 18446744073709551616 --gate task` wrapped to
+0 and answered `proceed` with exit 0, spending none of the shared cap, and
+`--ceiling 18446744073709551619 --gate task` wrapped to 3 and proceeded under a
+cap of five. A value far above the cap does not merely evade the check -- it
+wraps into the range the check accepts. Every bound is now decided on the
+digit-validated string with leading zeros stripped: `--consumed` and a task
+ceiling must match a single-digit character class, and a ceiling on any gate
+type is rejected past nine digits, a width stated in the script header and
+named in the error. Arithmetic runs only after the string has been bounded,
+where the stripped token is already canonical decimal -- the explicit-base
+conversion round 2 added went with it, redundant once the zeros are gone. Round 2 saw this wrap
+and set it aside as harmless, on the strength of a probe run only against the
+uncapped final gate, which has no cap to wrap into; the probe that mattered was
+the capped task path, and it was not run.
 
 **Files changed.**
 - `skills/requesting-code-review/scripts/gate-round` (the `--consumed` flag, the task-ceiling bound, the peek fix)

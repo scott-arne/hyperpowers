@@ -59,6 +59,8 @@ Skills are not prose — they are code that shapes agent behavior. If you modify
 
 Skill-behavior evals live in [hyperpowers-evals](https://github.com/scott-arne/hyperpowers-evals/) — this fork's fork of upstream [superpowers-evals](https://github.com/prime-radiant-inc/superpowers-evals/) — cloned into `evals/` (see `evals/README.md` for setup). The fork carries hyperpowers-specific changes (the skill-invocation detector also matches the `hyperpowers:` namespace, plus fork-specific scenarios) and tracks upstream through a fetch-only `upstream` remote. The harness (quorum) drives real agent CLI sessions of Claude Code / Codex and judges skill compliance with an LLM verifier. Plugin-infrastructure tests still live at `tests/`.
 
+**Run artifacts an evidence note cites live in the evals repository, not in the SDD workspace.** When a plan preserves live-run verdicts, captures, or transcripts that its evidence note will cite, copy them into `evals/evidence/<YYYY-MM-DD-plan-slug>/task-<N>-runs/` (committed in hyperpowers-evals; see `evals/evidence/README.md`) and cite that path. The SDD workspace under the user cache is scratch: Finish deletes it and the reaper reclaims idle siblings, so a citation into it rots. Name the evidence directory in the plan's Global Constraints before the first run.
+
 ## New Harness Support
 
 If you add support for a new harness (IDE, CLI tool, agent runner), verify the integration end-to-end. A real integration loads the `using-hyperpowers` bootstrap at session start — that is what causes skills to auto-trigger. Without it, the skills are present on disk but never invoked.

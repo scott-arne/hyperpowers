@@ -512,7 +512,7 @@ no-Codex notice once and run both gates as no-ops.
 
   The invariant in one line: **local gate rounds + non-gate fix rounds ≤ 5**,
   enforced because `gate-round` blocks (verdict `backstop`) the moment its
-  local count would exceed the ceiling you supplied. Count every round the
+  local count would exceed the ceiling. Count every round the
   gate runs against the task's shared budget — each gate round consumes one
   of the five, exactly like a reviewer round. After a Codex-triggered fix,
   the scoped re-review verifies it; the gate re-runs only once that

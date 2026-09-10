@@ -81,13 +81,29 @@ const cwdState = (dir) => {
   if (dir === null) return "unknown";
   try { fs.statSync(dir); return "live"; } catch (e) { return (e && (e.code === "ENOENT" || e.code === "ENOTDIR")) ? "dead" : "unknown"; }
 };
+// `ps` flattens argv, so identity is decided on text -- but a substring is not
+// an identity. The script token's basename must be exactly app-server-broker.mjs
+// (`not-app-server-broker.mjs serve` is a different program), and `serve` must
+// be the token that follows it.
+const BROKER_CMD = /(?:^|[\s/])app-server-broker\.mjs serve(?:\s|$)/;
+// Is `ep` a whole --endpoint value on this command line, rather than a prefix of
+// one? unix:/tmp/x is a prefix of unix:/tmp/x-new, and treating the two as the
+// same endpoint is how a signal aimed at one broker lands on another.
+const hasEndpoint = (cmd, ep) => {
+  const needle = `--endpoint ${ep}`;
+  for (let i = cmd.indexOf(needle); i !== -1; i = cmd.indexOf(needle, i + 1)) {
+    const after = cmd.slice(i + needle.length);
+    if ((i === 0 || /\s/.test(cmd[i - 1])) && (after === "" || /^\s/.test(after))) return true;
+  }
+  return false;
+};
 // Does this pid still present as the broker that was classified? Anything else
-// -- a different command, an unreadable process, an exited one -- is not a
-// signalling target.
+// -- a different command, a different endpoint, an unreadable process, an exited
+// one -- is not a signalling target.
 const isBroker = (pid, ep) => {
   let cmd; try { cmd = cp.execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 4 * 1024 * 1024 }).trim(); }
   catch { return false; }
-  return /app-server-broker\.mjs serve/.test(cmd) && cmd.includes(ep);
+  return BROKER_CMD.test(cmd) && hasEndpoint(cmd, ep);
 };
 // "stopped" | "still-running" | "identity-changed". The identity check runs
 // before EVERY signal rather than once at the top: a broker that exits on
@@ -175,7 +191,9 @@ const stopPid = async (pid, ep) => {
       if (!alive(pid)) continue;
       unverifiable++; console.log(`unverifiable-broker pid=${pid} reason=inspect-failed (${e && e.code ? e.code : e})`); continue;
     }
-    if (!/app-server-broker\.mjs serve/.test(cmd)) continue;
+    // pgrep above is a coarse net -- its pattern also catches a process whose
+    // command line merely contains the broker's name. This is the exact filter.
+    if (!BROKER_CMD.test(cmd)) continue;
     // ps joins argv with spaces, so a value containing a space cannot be told
     // apart from a value followed by another token. A state record resolves
     // that — but only if the process itself confirms the record's endpoint,
@@ -185,9 +203,9 @@ const stopPid = async (pid, ep) => {
     // next option and refuse to act on it if it contains whitespace.
     const recorded = endpointByPid.get(pid) ?? null;
     let ep = null, epTrusted = false;
-    if (recorded !== null && cmd.includes(`--endpoint ${recorded}`)) { ep = recorded; epTrusted = true; }
+    if (recorded !== null && hasEndpoint(cmd, recorded)) { ep = recorded; epTrusted = true; }
     else {
-      const m = /--endpoint (.+?)(?=\s--[a-z][\w-]*(?:\s|$)|$)/.exec(cmd);
+      const m = /(?:^|\s)--endpoint (.+?)(?=\s--[a-z][\w-]*(?:\s|$)|$)/.exec(cmd);
       ep = m ? m[1].trim() : null;
       epTrusted = ep !== null && !/\s/.test(ep);
     }

@@ -86,6 +86,32 @@ chmod 000 "$T/locked"
 node -e 'try { require("fs").statSync(process.argv[1]); process.exit(1) } catch (e) { process.exit(e.code === "EACCES" ? 0 : 1) }' \
   "$T/locked/lockedcwd-cwd" || { echo "cannot make a working directory unstattable on this host"; exit 1; }
 
+# 13. A process whose script is NOT the broker but whose command line contains
+#     the broker's name as a substring. pgrep's coarse pattern finds it, so the
+#     exact identity check is the only thing between it and a signal.
+mkdir -p "$T/lookalike-bin" "$T/lookalike-cwd"
+cp "$FAKE" "$T/lookalike-bin/not-app-server-broker.mjs"
+( cd "$T/lookalike-cwd" && exec node "$T/lookalike-bin/not-app-server-broker.mjs" serve \
+    --endpoint "unix:$T/lookalike.sock" --pid-file "$T/lookalike.pid" \
+    --shutdown-marker "$T/lookalike.shutdown" >/dev/null 2>&1 ) &
+disown 2>/dev/null
+i=0
+while [ ! -s "$T/lookalike.pid" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+[ -s "$T/lookalike.pid" ] || { echo "the lookalike process never started"; exit 1; }
+lookalike_pid=$(cat "$T/lookalike.pid"); pids="$pids $lookalike_pid"
+rmdir "$T/lookalike-cwd" || { echo "cannot remove the lookalike's cwd on this host"; exit 1; }
+# 14. Two brokers whose endpoints differ only by a suffix, with a record naming
+#     the shorter endpoint against the longer broker's pid — fixture 11's
+#     pid-reuse shape, but where a prefix match makes the record look confirmed.
+#     Acting on the recorded endpoint sends broker/shutdown to the healthy peer
+#     that actually owns it.
+spawn pfx "$T/pfx.sock"
+spawn pfxb "$T/pfx.sock-b"
+pfx_pid=$(cat "$T/pfx.pid"); pfxb_pid=$(cat "$T/pfxb.pid")
+mkdir -p "$state/prefix-8888888888888888"
+printf '{"endpoint":"unix:%s/pfx.sock","pid":%s,"sessionDir":"%s"}\n' "$T" "$pfxb_pid" "$T" > "$state/prefix-8888888888888888/broker.json"
+rmdir "$T/pfxb-cwd" || { echo "cannot remove the suffixed orphan's cwd on this host"; exit 1; }
+
 peer_pid=$(cat "$T/peer.pid"); orphan_pid=$(cat "$T/orphan.pid"); wedged_pid=$(cat "$T/wedged.pid")
 unref_pid=$(cat "$T/unref.pid"); spacey_pid=$(cat "$T/spacey.pid"); reused_pid=$(cat "$T/reused.pid")
 starting_pid=$(cat "$T/starting.pid"); recdead_pid=$(cat "$T/recdead.pid")
@@ -115,6 +141,9 @@ printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$starting_pid .*reason=u
 printf '%s\n' "$out" | grep -q "orphan-broker pid=$recdead_pid .*reason=endpoint-dead" && pass "a recorded broker whose socket is gone is an orphan" || fail "recorded dead-endpoint broker reported: $out"
 printf '%s\n' "$out" | grep -q "orphan-broker pid=$lockedcwd_pid" && fail "a working directory that cannot be statted must not read as deleted" || pass "a working directory that cannot be statted does not read as deleted"
 printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$lockedcwd_pid .*reason=cwd-unverifiable" && pass "a working directory that cannot be statted is reported as unverifiable" || fail "unstattable cwd unverifiable: $out"
+printf '%s\n' "$out" | grep -q "pid=$lookalike_pid" && fail "a process whose script only resembles the broker must not be classified as one" || pass "a process whose script only resembles the broker is not classified as one"
+printf '%s\n' "$out" | grep -q "orphan-broker pid=$pfxb_pid endpoint=unix:$T/pfx.sock-b reason=cwd-missing" && pass "a broker's endpoint is read from its own command line, not from a record that merely prefixes it" || fail "suffixed endpoint classification: $out"
+printf '%s\n' "$out" | grep -q "orphan-broker pid=$pfxb_pid endpoint=unix:$T/pfx.sock reason=" && fail "a record whose endpoint is a prefix of the running broker's must not be treated as confirming it" || pass "a record whose endpoint is a prefix of the running broker's does not confirm it"
 [ -f "$state/stale-1111111111111111/broker.json" ] && pass "dry run removes nothing" || fail "dry run must not remove records"
 kill -0 "$orphan_pid" 2>/dev/null && pass "dry run kills nothing" || fail "dry run must not stop brokers"
 [ ! -f "$T/orphan.shutdown" ] && pass "dry run sends no shutdown" || fail "dry run must not send broker/shutdown"
@@ -157,6 +186,10 @@ kill -0 "$peer_pid" 2>/dev/null && pass "--kill leaves the peer broker running" 
 kill -0 "$unref_pid" 2>/dev/null && pass "--kill leaves an unreferenced broker running unless asked" || fail "--kill must not stop an unreferenced broker unless asked"
 kill -0 "$lockedcwd_pid" 2>/dev/null && pass "--kill leaves a broker whose cwd could not be inspected" || fail "--kill must not stop a broker whose cwd it could not inspect"
 kill -0 "$spacey_pid" 2>/dev/null && pass "--kill leaves an unverifiable broker running" || fail "--kill must never stop a broker it could not verify"
+kill -0 "$lookalike_pid" 2>/dev/null && pass "--kill leaves a process whose script only resembles the broker" || fail "--kill stopped a process whose script only resembles the broker"
+kill -0 "$pfx_pid" 2>/dev/null && pass "--kill leaves the peer that owns the prefixed endpoint" || fail "--kill must not stop the peer that owns the prefixed endpoint"
+[ ! -f "$T/pfx.shutdown" ] && pass "--kill sends no shutdown to the peer that owns the prefixed endpoint" || fail "--kill sent broker/shutdown to the peer that owns the prefixed endpoint"
+kill -0 "$pfxb_pid" 2>/dev/null && fail "--kill must retire the orphan whose endpoint carries the suffix" || pass "--kill retires the orphan whose endpoint carries the suffix"
 [ -f "$state/peer-2222222222222222/broker.json" ] && pass "--kill keeps the peer's record" || fail "--kill must keep the peer's record"
 printf '%s\n' "$out" | grep -q "0 failure(s)" && pass "a clean retirement reports no failures" || fail "a clean retirement must report 0 failures: $out"
 
@@ -216,6 +249,54 @@ sleep 1
 kill -0 "$swapkill_pid" 2>/dev/null && pass "the fallback signal is withheld from a pid that stopped looking like a broker" || fail "--kill sent the fallback signal to a pid that no longer looked like a broker"
 printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapkill_pid .*reason=identity-changed" && pass "an identity change between signals is reported" || fail "identity change between signals reported: $out"
 [ "$rc" -eq 0 ] && pass "withholding the fallback signal is not a failure" || fail "withholding the fallback signal must not be an error (rc=$rc)"
+
+echo "Identity revalidation rejects a lookalike command"
+# A pid reused by a process whose command line merely contains the broker's name
+# as a substring. `serve` and the endpoint are both present on that line, so only
+# an exact match on the script token tells the two apart.
+spawn swapname "$T/swapname.sock" --ignore-shutdown
+swapname_pid=$(cat "$T/swapname.pid")
+rmdir "$T/swapname-cwd" || { echo "cannot remove the swapname orphan's cwd"; exit 1; }
+mkdir -p "$T/bin4"
+cat > "$T/bin4/ps" <<PSEOF
+#!/bin/sh
+case " \$* " in
+  *" command= "*" $swapname_pid "*)
+    n=0; [ -f "$T/pscount4" ] && n=\$(cat "$T/pscount4"); n=\$((n + 1)); echo "\$n" > "$T/pscount4"
+    if [ "\$n" -ge 2 ]; then echo "node /opt/not-app-server-broker.mjs serve --endpoint unix:$T/swapname.sock"; exit 0; fi ;;
+esac
+exec /bin/ps "\$@"
+PSEOF
+chmod +x "$T/bin4/ps"
+out="$(PATH="$T/bin4:$PATH" bash "$SWEEP" --kill --state-root "$state" 2>&1)"; rc=$?
+sleep 1
+kill -0 "$swapname_pid" 2>/dev/null && pass "a pid running a lookalike script name is not signalled" || fail "--kill signalled a pid whose script name only resembles the broker"
+printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapname_pid .*reason=identity-changed" && pass "a lookalike script name at signal time is an identity change" || fail "lookalike identity change reported: $out"
+[ "$rc" -eq 0 ] && pass "declining to signal a lookalike is not a failure" || fail "declining to signal a lookalike must not be an error (rc=$rc)"
+
+echo "Identity revalidation rejects an endpoint prefix"
+# The replacement broker's endpoint has the classified one as a strict prefix, so
+# a substring test cannot tell them apart and the fallback signal hits the
+# newcomer. This one switches before SIGKILL, the lookalike above before SIGTERM.
+spawn swapep "$T/swapep.sock" --ignore-shutdown
+swapep_pid=$(cat "$T/swapep.pid")
+rmdir "$T/swapep-cwd" || { echo "cannot remove the swapep orphan's cwd"; exit 1; }
+mkdir -p "$T/bin5"
+cat > "$T/bin5/ps" <<PSEOF
+#!/bin/sh
+case " \$* " in
+  *" command= "*" $swapep_pid "*)
+    n=0; [ -f "$T/pscount5" ] && n=\$(cat "$T/pscount5"); n=\$((n + 1)); echo "\$n" > "$T/pscount5"
+    if [ "\$n" -ge 3 ]; then echo "node /opt/app-server-broker.mjs serve --endpoint unix:$T/swapep.sock-new"; exit 0; fi ;;
+esac
+exec /bin/ps "\$@"
+PSEOF
+chmod +x "$T/bin5/ps"
+out="$(PATH="$T/bin5:$PATH" bash "$SWEEP" --kill --state-root "$state" 2>&1)"; rc=$?
+sleep 1
+kill -0 "$swapep_pid" 2>/dev/null && pass "the fallback signal is withheld when only an endpoint prefix matches" || fail "--kill signalled a pid whose endpoint merely shares a prefix with the classified one"
+printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapep_pid .*reason=identity-changed" && pass "an endpoint-prefix-only match between signals is an identity change" || fail "endpoint prefix identity change reported: $out"
+[ "$rc" -eq 0 ] && pass "declining to signal an endpoint-prefix match is not a failure" || fail "declining an endpoint-prefix match must not be an error (rc=$rc)"
 
 echo "Degenerate inputs"
 out="$(bash "$SWEEP" --state-root "$T/does-not-exist" 2>&1)"; rc=$?

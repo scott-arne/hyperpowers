@@ -85,8 +85,10 @@ Not causes, checked and rejected: re-raising of declined findings (2% on
 document gates, 0% on code gates), and low-confidence findings driving rounds
 (zero blocking captures had all findings below 0.7 confidence).
 
-One accounting defect surfaced alongside: 19 task gates recorded ceilings of 1,
-2, 6, or 7, which the five-round shared cap cannot produce. The cap requires the
+One accounting defect surfaced alongside: over the historical window ending
+2026-09-06T22:45:00-07:00, twenty task gates recorded ceilings of 1, 2, 6, or
+7, which the five-round shared cap cannot produce; seven of them (the 6s and
+7s) exceed the cap outright. The cap requires the
 controller to compute `ceiling = 5 - <non-gate fix rounds>` before *every*
 `gate-round` call, in a coordinate system that deliberately excludes the gate's
 own rounds because the counter already holds them.
@@ -251,9 +253,10 @@ check, so the contract now names the two textual parts a prompt actually has.)
 **D9. `gate-round` carries the consumed-round total.** A new
 `--consumed <n>` records non-gate fix rounds in the counter's own state, so the
 controller states one number it can read off the ledger instead of performing a
-subtraction in a coordinate system it must first reason about. The 19
-impossible ceilings are the evidence that the subtraction does not survive
-contact.
+subtraction in a coordinate system it must first reason about. The twenty
+out-of-pattern ceilings measured over the historical window ending
+2026-09-06T22:45:00-07:00 are the evidence that the subtraction does not
+survive contact.
 
 **D10. Upstream prose ports carry fork-side evidence.** Upstream measured both
 (TDD 1/12 → 8/12; tooling 0/3 → 3/3), but this repo's rule is fork-side

@@ -5,7 +5,8 @@
 # tasks intact.
 #
 # Usage: review-package PLAN_FILE BASE HEAD [OUTFILE]
-# Exit 2: usage or unresolvable ref. Exit 3: BASE..HEAD is empty or HEAD is
+# Exit 2: usage, an unresolvable ref, or an ancestry check git itself cannot
+# answer (missing or corrupt object). Exit 3: BASE..HEAD is empty or HEAD is
 # not a descendant of BASE (a wrong-branch commit, upstream #2050).
 # Default OUTFILE: <sdd-dir PLAN_FILE>/review-<base7>..<head7>.diff — unique per
 # plan and per range, so concurrent sessions cannot collide and a re-review
@@ -31,7 +32,16 @@ git rev-parse --verify --quiet "$head" >/dev/null || { echo "bad HEAD: $head" >&
 # Range guards (exit 3): a wrong-branch HEAD yields a range that is empty or
 # not rooted at BASE; either would silently produce a bogus review package,
 # and an empty one reads to a reviewer as clean work that was never done.
-git merge-base --is-ancestor "$base" "$head" || { echo "HEAD is not a descendant of BASE: ${base}..${head}" >&2; exit 3; }
+# merge-base --is-ancestor exits 1 for "not an ancestor" and higher for an
+# error (a missing or corrupt object, an unreadable repository); only the
+# first is a range verdict. Collapsing both into exit 3 turned a mistyped SHA
+# into a wrong-branch report.
+ancestry_err=$(git merge-base --is-ancestor "$base" "$head" 2>&1 >/dev/null) && ancestry_rc=0 || ancestry_rc=$?
+case "$ancestry_rc" in
+  0) ;;
+  1) echo "HEAD is not a descendant of BASE: ${base}..${head}" >&2; exit 3 ;;
+  *) echo "cannot determine ancestry for ${base}..${head} (git merge-base exit ${ancestry_rc}): ${ancestry_err}" >&2; exit 2 ;;
+esac
 [ "$(git rev-list --count "${base}..${head}")" -gt 0 ] || { echo "empty commit range: ${base}..${head}" >&2; exit 3; }
 
 if [ $# -eq 4 ]; then

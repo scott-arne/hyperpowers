@@ -74,6 +74,13 @@ const cwdOf = (pid) => {
     const n = out.split("\n").find((l) => l.startsWith("n")); return n ? n.slice(1).replace(/ \(deleted\)$/, "") : null;
   } catch { return null; }
 };
+// live | dead | unknown, the same discipline as probe(). existsSync answers
+// false for EACCES and EIO exactly as it does for a deleted directory, and
+// "I was not allowed to look" is not evidence that a workspace is gone.
+const cwdState = (dir) => {
+  if (dir === null) return "unknown";
+  try { fs.statSync(dir); return "live"; } catch (e) { return (e && (e.code === "ENOENT" || e.code === "ENOTDIR")) ? "dead" : "unknown"; }
+};
 // Does this pid still present as the broker that was classified? Anything else
 // -- a different command, an unreadable process, an exited one -- is not a
 // signalling target.
@@ -82,18 +89,22 @@ const isBroker = (pid, ep) => {
   catch { return false; }
   return /app-server-broker\.mjs serve/.test(cmd) && cmd.includes(ep);
 };
-// Returns true once the process is gone, false if it survived every signal.
-const stopPid = async (pid) => {
-  if (!Number.isInteger(pid) || pid <= 1) return false;  // 0 and -1 are whole process groups
+// "stopped" | "still-running" | "identity-changed". The identity check runs
+// before EVERY signal rather than once at the top: a broker that exits on
+// SIGTERM frees its pid inside the wait below, and the kernel can hand that
+// number to something else before the fallback SIGKILL is sent.
+const stopPid = async (pid, ep) => {
+  if (!Number.isInteger(pid) || pid <= 1) return "still-running";  // 0 and -1 are whole process groups
   for (const sig of ["SIGTERM", "SIGKILL"]) {
-    if (gone(pid)) return true;
-    try { process.kill(pid, sig); } catch (e) { if (e && e.code === "ESRCH") return true; }
+    if (gone(pid)) return "stopped";
+    if (!isBroker(pid, ep)) return "identity-changed";
+    try { process.kill(pid, sig); } catch (e) { if (e && e.code === "ESRCH") return "stopped"; }
     await sleep(500);
   }
-  return gone(pid);
+  return gone(pid) ? "stopped" : "still-running";
 };
 (async () => {
-  let records = 0, unknownRecords = 0, brokers = 0, unverifiable = 0, failures = 0;
+  let records = 0, unknownRecords = 0, brokers = 0, unverifiable = 0, failures = 0, cwdUnreadable = 0;
   const fail = (line) => { failures++; console.log(`failed ${line}`); };
   // 1. State records. Every endpoint a record names is "referenced": the
   // companion finds brokers only through these records, so a running broker no
@@ -102,12 +113,21 @@ const stopPid = async (pid) => {
   // A record is evidence about an endpoint, never a license to signal a pid.
   const referenced = new Set();
   const endpointByPid = new Map();
-  if (!fs.existsSync(root)) { console.log(`no state root at ${root}`); }
-  else for (const d of fs.readdirSync(root)) {
+  // "No record names this endpoint" only means something if every record was
+  // read. One unreadable record may be the record for the very broker about to
+  // be called unreferenced, so a gap here disarms --include-unreferenced.
+  let inventoryComplete = true;
+  let entries = [];
+  try { entries = fs.readdirSync(root); }
+  catch (e) {
+    if (e && (e.code === "ENOENT" || e.code === "ENOTDIR")) console.log(`no state root at ${root}`);
+    else { unverifiable++; inventoryComplete = false; console.log(`unverifiable-stateroot ${root} reason=${e && e.code ? e.code : e}`); }
+  }
+  for (const d of entries) {
     const dir = path.join(root, d), f = path.join(dir, "broker.json");
-    let raw; try { raw = fs.readFileSync(f, "utf8"); } catch (e) { if (e && e.code !== "ENOENT") { unknownRecords++; console.log(`unknown-record ${dir} reason=unreadable (${e.code ?? e})`); } continue; }
-    let rec; try { rec = JSON.parse(raw); } catch { unknownRecords++; console.log(`unknown-record ${dir} reason=unparseable`); continue; }
-    if (!rec || typeof rec.endpoint !== "string") { unknownRecords++; console.log(`unknown-record ${dir} reason=no-endpoint`); continue; }
+    let raw; try { raw = fs.readFileSync(f, "utf8"); } catch (e) { if (e && e.code !== "ENOENT") { unknownRecords++; inventoryComplete = false; console.log(`unknown-record ${dir} reason=unreadable (${e.code ?? e})`); } continue; }
+    let rec; try { rec = JSON.parse(raw); } catch { unknownRecords++; inventoryComplete = false; console.log(`unknown-record ${dir} reason=unparseable`); continue; }
+    if (!rec || typeof rec.endpoint !== "string") { unknownRecords++; inventoryComplete = false; console.log(`unknown-record ${dir} reason=no-endpoint`); continue; }
     referenced.add(rec.endpoint);
     const state = await probe(rec.endpoint);
     // Only a record whose endpoint still answers says anything about a live
@@ -127,10 +147,15 @@ const stopPid = async (pid) => {
     let held = null; try { held = fs.readFileSync(claim, "utf8"); } catch {}
     if (held === raw) { try { fs.unlinkSync(claim); } catch (e) { fail(`record ${dir} reason=${e && e.code ? e.code : e}`); } continue; }
     // Not what was probed. Put it back — linkSync fails EEXIST if the companion
-    // already wrote a newer record there, which must win over this one.
+    // already wrote a newer record there, which must win over this one. The
+    // claim holds the only copy until one of those two things is true, so a
+    // restore that fails for any other reason keeps it: an orphaned temp file
+    // is recoverable, and deleting it here would be the data loss this whole
+    // claim protocol exists to prevent.
     unverifiable++; console.log(`unverifiable-record ${dir} reason=changed-during-sweep`);
-    try { fs.linkSync(claim, f); } catch (e) { if (!e || e.code !== "EEXIST") fail(`record ${dir} reason=restore-${e && e.code ? e.code : e}`); }
-    try { fs.unlinkSync(claim); } catch {}
+    let restored = false;
+    try { fs.linkSync(claim, f); restored = true; } catch (e) { if (e && e.code === "EEXIST") restored = true; else fail(`record ${dir} reason=restore-${e && e.code ? e.code : e}, snapshot kept at ${claim}`); }
+    if (restored) { try { fs.unlinkSync(claim); } catch {} }
   }
   // 2. Running brokers.
   // pgrep narrows the process table to brokers; a full `ps -ax` listing on a
@@ -168,33 +193,43 @@ const stopPid = async (pid) => {
     }
     if (!epTrusted) { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep ?? "?"} reason=endpoint-unrecoverable`); continue; }
     const cwd = cwdOf(pid);
-    const cwdMissing = cwd !== null && !fs.existsSync(cwd);
+    const cwdSt = cwdState(cwd);
     const state = await probe(ep);
-    const unreferenced = sweepUnreferenced && !referenced.has(ep);
+    const unrefCandidate = sweepUnreferenced && !referenced.has(ep);
     let reason = null;
-    if (cwdMissing) reason = "cwd-missing";
+    if (cwdSt === "dead") reason = "cwd-missing";
     // A dead endpoint on a live broker means the socket died AFTER the broker
     // answered -- but only if a record names it. The companion writes the
     // record only once the endpoint answers, so an unrecorded dead endpoint is
     // just as likely a broker that has not finished starting, and killing those
     // would make this tool the thing that breaks other people's sessions.
     else if (state === "dead" && referenced.has(ep)) reason = "endpoint-dead";
-    else if (state === "dead" && !unreferenced) { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep} reason=unregistered-endpoint-dead cwd=${cwd ?? "?"}`); continue; }
+    else if (state === "dead" && !unrefCandidate) { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep} reason=unregistered-endpoint-dead cwd=${cwd ?? "?"}`); continue; }
     else if (state === "unknown") { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep} reason=endpoint-unverifiable cwd=${cwd ?? "?"}`); continue; }
-    else if (unreferenced) reason = "unreferenced";
-    if (!reason) continue;
+    // Below here the endpoint answers, so the working directory is the only
+    // thing that could still make this a leak -- and it could not be read.
+    else if (cwd !== null && cwdSt === "unknown") { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep} reason=cwd-unverifiable cwd=${cwd}`); continue; }
+    else if (unrefCandidate && !inventoryComplete) { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep} reason=unreferenced-inventory-incomplete cwd=${cwd ?? "?"}`); continue; }
+    else if (unrefCandidate) reason = "unreferenced";
+    if (!reason) { if (cwd === null) cwdUnreadable++; continue; }
     brokers++; console.log(`orphan-broker pid=${pid} endpoint=${ep} reason=${reason} cwd=${cwd ?? "?"}`);
     if (!kill) continue;
     // Protocol first: a broker asked over broker/shutdown closes its socket and
     // exits cleanly. Signals are the fallback for one that will not.
     if (state !== "dead") { await shutdown(ep); await sleep(1000); }
     if (gone(pid)) continue;
-    // Seconds have passed since the snapshot that classified this pid. Ask the
-    // process table again: a pid that no longer presents as this broker is a
-    // pid that was reused, and signalling it would hit a stranger.
-    if (!isBroker(pid, ep)) { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep} reason=identity-changed`); continue; }
-    if (!(await stopPid(pid))) fail(`retire pid=${pid} endpoint=${ep} reason=still-running`);
+    // Seconds have passed since the snapshot that classified this pid, so
+    // stopPid re-asks the process table before each signal it sends: a pid that
+    // no longer presents as this broker was reused, and signalling it would hit
+    // a stranger.
+    const outcome = await stopPid(pid, ep);
+    if (outcome === "identity-changed") { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep} reason=identity-changed`); }
+    else if (outcome !== "stopped") fail(`retire pid=${pid} endpoint=${ep} reason=still-running`);
   }
+  // A host with neither /proc nor lsof cannot answer the cwd question for any
+  // broker. That silently disables the leak this tool was written for, so it is
+  // reported -- once, because per-broker it would fire on every healthy peer.
+  if (cwdUnreadable > 0) { unverifiable++; console.log(`unverifiable-cwd brokers=${cwdUnreadable} reason=working-directory-not-readable`); }
   const incomplete = unverifiable > 0 || unknownRecords > 0;
   console.log(`swept: ${records} stale record(s), ${unknownRecords} unknown record(s), ${brokers} orphan broker(s), ${unverifiable} unverifiable, ${failures} failure(s) (${kill ? "retired" : "dry run"})`
     + (incomplete ? " - incomplete: some state could not be verified and was left alone" : ""));

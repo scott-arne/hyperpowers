@@ -272,6 +272,16 @@ rc=0
 ( cd "$TEST_ROOT/repo-range" && bash "$REVIEW_PACKAGE" docs/plan.md "$range_head" "$range_base" ) >/dev/null 2>&1 || rc=$?
 if [ "$rc" -eq 3 ]; then pass "non-descendant HEAD exits 3"; else fail "non-descendant HEAD exits 3 (got rc=$rc)"; fi
 
+# A full 40-hex name passes `rev-parse --verify` even when no such object
+# exists, so the ancestry check is the first place it can fail. That failure
+# (merge-base exit 128) is not "HEAD is not a descendant"; it must be reported
+# as an unresolvable base (exit 2) with git's own diagnostic, or a corrupt or
+# mistyped SHA reads as a wrong-branch commit.
+rc=0; err=""
+err=$( cd "$TEST_ROOT/repo-range" && bash "$REVIEW_PACKAGE" docs/plan.md 0000000000000000000000000000000000000000 "$range_head" 2>&1 >/dev/null ) || rc=$?
+if [ "$rc" -eq 2 ]; then pass "an unresolvable ancestry exits 2, not 3"; else fail "an unresolvable ancestry exits 2, not 3 (got rc=$rc)"; fi
+case "$err" in *"cannot determine ancestry"*"Not a valid commit name"*) pass "the unresolvable-ancestry message carries git's diagnostic";; *) fail "the unresolvable-ancestry message carries git's diagnostic (got: $err)";; esac
+
 rc=0
 ( cd "$TEST_ROOT/repo-range" && bash "$REVIEW_PACKAGE" docs/plan.md "$range_base" "$range_head" ) >/dev/null 2>&1 || rc=$?
 if [ "$rc" -eq 0 ]; then pass "a real range still produces a package"; else fail "a real range still produces a package (got rc=$rc)"; fi

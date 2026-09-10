@@ -59,12 +59,22 @@ spawn unref
 #    recovered unambiguously from ps output, so the sweep must not act on it.
 mkdir -p "$T/spacey dir"
 spawn spacey "$T/spacey dir/s.sock"
-# 9. A live, healthy broker that carries its own record and whose pid an older
+# 9. A broker that has not created its socket yet. The companion writes a state
+#    record only after the endpoint answers, so an unrecorded dead endpoint is
+#    a broker that is still starting, not one that died.
+spawn starting "$T/starting.sock" --no-listen
+# 10. The same shape, but a record names its endpoint: it answered once and its
+#     socket is gone now, which is a genuine orphan.
+spawn recdead "$T/recdead.sock" --no-listen
+# 11. A live, healthy broker that carries its own record and whose pid an older
 #    stale record ALSO names: the pid was reused after the broker that record
 #    described exited. Its endpoint must come from the process, not the record.
 spawn reused
 peer_pid=$(cat "$T/peer.pid"); orphan_pid=$(cat "$T/orphan.pid"); wedged_pid=$(cat "$T/wedged.pid")
 unref_pid=$(cat "$T/unref.pid"); spacey_pid=$(cat "$T/spacey.pid"); reused_pid=$(cat "$T/reused.pid")
+starting_pid=$(cat "$T/starting.pid"); recdead_pid=$(cat "$T/recdead.pid")
+mkdir -p "$state/recdead-7777777777777777"
+printf '{"endpoint":"unix:%s/recdead.sock","pid":%s,"sessionDir":"%s"}\n' "$T" "$recdead_pid" "$T" > "$state/recdead-7777777777777777/broker.json"
 mkdir -p "$state/reused-5555555555555555" "$state/stale-6666666666666666"
 printf '{"endpoint":"unix:%s/reused.sock","pid":%s,"sessionDir":"%s"}\n' "$T" "$reused_pid" "$T" > "$state/reused-5555555555555555/broker.json"
 printf '{"endpoint":"unix:%s/gone3.sock","pid":%s,"sessionDir":"%s/gone3"}\n' "$T" "$reused_pid" "$T" > "$state/stale-6666666666666666/broker.json"
@@ -84,6 +94,9 @@ printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$spacey_pid" && pass "an
 printf '%s\n' "$out" | grep -q "orphan-broker pid=$spacey_pid" && fail "an unrecoverable endpoint must never be an orphan" || pass "an unrecoverable endpoint is never treated as an orphan"
 printf '%s\n' "$out" | grep -q "stale-record .*stale-6666666666666666" && pass "a stale record naming a reused pid is still reported as stale" || fail "stale record on a reused pid reported: $out"
 printf '%s\n' "$out" | grep -qE "(orphan|unverifiable)-broker pid=$reused_pid" && fail "a healthy broker must not inherit the dead endpoint of a stale record naming its pid" || pass "a healthy broker does not inherit the dead endpoint of a stale record naming its pid"
+printf '%s\n' "$out" | grep -q "orphan-broker pid=$starting_pid" && fail "a broker that no record names yet must not be an orphan for having no socket" || pass "a broker that no record names yet is not an orphan for having no socket"
+printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$starting_pid .*reason=unregistered-endpoint-dead" && pass "a broker with no socket and no record is reported as unverifiable" || fail "starting broker unverifiable: $out"
+printf '%s\n' "$out" | grep -q "orphan-broker pid=$recdead_pid .*reason=endpoint-dead" && pass "a recorded broker whose socket is gone is an orphan" || fail "recorded dead-endpoint broker reported: $out"
 [ -f "$state/stale-1111111111111111/broker.json" ] && pass "dry run removes nothing" || fail "dry run must not remove records"
 kill -0 "$orphan_pid" 2>/dev/null && pass "dry run kills nothing" || fail "dry run must not stop brokers"
 [ ! -f "$T/orphan.shutdown" ] && pass "dry run sends no shutdown" || fail "dry run must not send broker/shutdown"
@@ -111,6 +124,9 @@ kill -0 "$bystander" 2>/dev/null && pass "--kill never signals a pid read from a
 kill -0 "$orphan_pid" 2>/dev/null && fail "--kill must stop the orphan" || pass "--kill stops the orphan"
 [ -f "$T/wedged.shutdown" ] && pass "--kill asks a wedged orphan to shut down first" || fail "--kill must try broker/shutdown on a wedged orphan"
 kill -0 "$wedged_pid" 2>/dev/null && fail "--kill must signal an orphan that ignores shutdown" || pass "--kill signals an orphan that ignores shutdown"
+kill -0 "$starting_pid" 2>/dev/null && pass "--kill leaves a broker that may still be starting" || fail "--kill killed a broker that may still be starting"
+kill -0 "$recdead_pid" 2>/dev/null && fail "--kill must retire a recorded broker whose socket is gone" || pass "--kill retires a recorded broker whose socket is gone"
+[ -z "$(find "$state" -name '*.sweep-*' 2>/dev/null)" ] && pass "--kill leaves no claimed record behind" || fail "--kill left a claimed record temp file behind"
 kill -0 "$reused_pid" 2>/dev/null && pass "--kill leaves a healthy broker whose pid a stale record names" || fail "--kill killed the healthy broker whose pid a stale record named"
 [ -f "$state/reused-5555555555555555/broker.json" ] && pass "--kill keeps the healthy broker's own record" || fail "--kill must keep the healthy broker's own record"
 [ ! -f "$state/stale-6666666666666666/broker.json" ] && pass "--kill clears the stale record that named the reused pid" || fail "--kill must clear the stale record that named the reused pid"
@@ -119,6 +135,29 @@ kill -0 "$unref_pid" 2>/dev/null && pass "--kill leaves an unreferenced broker r
 kill -0 "$spacey_pid" 2>/dev/null && pass "--kill leaves an unverifiable broker running" || fail "--kill must never stop a broker it could not verify"
 [ -f "$state/peer-2222222222222222/broker.json" ] && pass "--kill keeps the peer's record" || fail "--kill must keep the peer's record"
 printf '%s\n' "$out" | grep -q "0 failure(s)" && pass "a clean retirement reports no failures" || fail "a clean retirement must report 0 failures: $out"
+
+echo "Identity revalidation before signalling"
+# The pid could be reused between the ps snapshot and the signal. A ps that
+# reports a different command on the second call stands in for that window.
+spawn swapped "$T/swapped.sock" --ignore-shutdown
+swapped_pid=$(cat "$T/swapped.pid")
+rmdir "$T/swapped-cwd" || { echo "cannot remove the swapped orphan's cwd"; exit 1; }
+mkdir -p "$T/bin2"
+cat > "$T/bin2/ps" <<PSEOF
+#!/bin/sh
+case " \$* " in
+  *" command= "*" $swapped_pid "*)
+    n=0; [ -f "$T/pscount" ] && n=\$(cat "$T/pscount"); n=\$((n + 1)); echo "\$n" > "$T/pscount"
+    if [ "\$n" -ge 2 ]; then echo "/usr/bin/some-other-process --unrelated"; exit 0; fi ;;
+esac
+exec /bin/ps "\$@"
+PSEOF
+chmod +x "$T/bin2/ps"
+out="$(PATH="$T/bin2:$PATH" bash "$SWEEP" --kill --state-root "$state" 2>&1)"; rc=$?
+sleep 1
+printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapped_pid .*reason=identity-changed" && pass "a pid whose command no longer looks like a broker is not signalled" || fail "identity change reported: $out"
+kill -0 "$swapped_pid" 2>/dev/null && pass "--kill leaves a pid that stopped looking like a broker" || fail "--kill signalled a pid that no longer looked like a broker"
+[ "$rc" -eq 0 ] && pass "declining to signal an ambiguous pid is not a failure" || fail "declining to signal must not be an error (rc=$rc)"
 
 echo "Degenerate inputs"
 out="$(bash "$SWEEP" --state-root "$T/does-not-exist" 2>&1)"; rc=$?

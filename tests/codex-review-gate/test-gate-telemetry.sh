@@ -199,5 +199,70 @@ printf '{"round":1.5,"ceiling":5,"gate":"task"}\n' > "$cr3/run-frac/gate-round.j
 allbadjs="$(bash "$GT" "$churnrepo" --json)"
 node -e 'const d=JSON.parse(process.argv[1]);const g=d.repos[0].byGate.task;process.exit(g.meanRounds===2&&g.firstRound===2&&g.runs===12?0:1)' "$allbadjs" && pass "churn excludes all malformed rounds (12 total runs, 4 valid)" || fail "churn excludes all malformed rounds (12 total runs, 4 valid)"
 
+# --- The window bounds every walk, not just the gate-run walk ---
+# A windowed report must not mix a bounded run cohort with whole-history SDD
+# and ledger counters. Fixture: one artifact of each kind before the window,
+# one inside it, and one exactly at --until (excluded: the window is half-open).
+wrepo="$work/windowrepo"; mkdir -p "$wrepo"; git -C "$wrepo" init -q
+git -C "$wrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+key4="$(printf '%s' "$(git -C "$wrepo" rev-parse --absolute-git-dir)" | git -C "$wrepo" hash-object --stdin)"
+sddw="$XDG_CACHE_HOME/hyperpowers/sdd/$key4"; mkdir -p "$sddw"
+crw="$XDG_CACHE_HOME/hyperpowers/codex-review/$key4"
+mkdir -p "$crw/run-before" "$crw/run-inside" "$crw/run-edge"
+for n in 1 2 3; do echo brief > "$sddw/task-$n-brief.md"; done
+echo fix > "$sddw/task-1-codex-fix-brief.md"
+echo fix > "$sddw/task-2-codex-fix-brief.md"
+printf '{"round":1,"ceiling":5,"gate":"task"}\n' > "$crw/run-before/gate-round.json"
+printf '{"round":3,"ceiling":5,"gate":"task"}\n' > "$crw/run-inside/gate-round.json"
+printf '{"round":5,"ceiling":5,"gate":"task"}\n' > "$crw/run-edge/gate-round.json"
+touch -t 202401010000 "$sddw/task-2-brief.md" "$sddw/task-2-codex-fix-brief.md" "$crw/run-before"
+touch -t 202506010000 "$sddw/task-1-brief.md" "$sddw/task-1-codex-fix-brief.md" "$crw/run-inside"
+touch -t 202601010000 "$sddw/task-3-brief.md" "$crw/run-edge"
+# The bound is read back from the boundary artifact itself, so the exclusivity
+# check does not depend on the machine timezone.
+edge="$(node -e 'console.log(new Date(require("fs").statSync(process.argv[1]).mtimeMs).toISOString().replace(/\.000Z$/,"Z"))' "$crw/run-edge")"
+edgeplus="$(node -e 'console.log(new Date(Date.parse(process.argv[1])+1000).toISOString().replace(/\.000Z$/,"Z"))' "$edge")"
+LEDGERW="$XDG_CACHE_HOME/hyperpowers/ungated/$key4/ledger.jsonl"
+mkdir -p "$(dirname "$LEDGERW")"
+cat > "$LEDGERW" <<EOFEV
+{"v":1,"id":"w-before","event":"ungated","class":"degraded-gate","gate":"task","ts":"2024-06-01T00:00:00Z","sweepable":true,"status":"stale-broker","note":"x"}
+{"v":1,"id":"w-inside","event":"ungated","class":"degraded-gate","gate":"task","ts":"2025-06-01T00:00:00Z","sweepable":true,"status":"needs-attention","note":"y"}
+{"v":1,"id":"w-edge","event":"ungated","class":"degraded-gate","gate":"task","ts":"$edge","sweepable":true,"status":"edge-token","note":"z"}
+{"v":1,"id":"w-nots","event":"ungated","class":"degraded-gate","gate":"task","sweepable":true,"status":"no-timestamp","note":"q"}
+EOFEV
+
+wholejs="$(bash "$GT" "$wrepo" --json)"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===3&&r.fixBriefs===2&&r.byGate.task.runs===3&&r.pending===4&&(r.unwindowable||0)===0?0:1)' "$wholejs" \
+  && pass "an unwindowed report still counts every SDD artifact, run, and ledger event" || fail "an unwindowed report still counts every SDD artifact, run, and ledger event"
+
+winjs="$(bash "$GT" --since 2025-01-01 --until "$edge" "$wrepo" --json)"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===1?0:1)' "$winjs" \
+  && pass "the SDD walk is windowed: a task brief outside the window is excluded, one inside is counted" || fail "the SDD walk is windowed: a task brief outside the window is excluded, one inside is counted"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.fixBriefs===1?0:1)' "$winjs" \
+  && pass "a fix brief outside the window is excluded from the fix-cycle rate" || fail "a fix brief outside the window is excluded from the fix-cycle rate"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];const g=r.byGate.task;process.exit(g.runs===1&&g.rounds[0]===3?0:1)' "$winjs" \
+  && pass "the run walk keeps its window (only the in-window run)" || fail "the run walk keeps its window (only the in-window run)"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.pending===1&&r.degrades["needs-attention"]===1&&r.degrades["stale-broker"]===undefined?0:1)' "$winjs" \
+  && pass "the ungated walk is windowed by each event timestamp" || fail "the ungated walk is windowed by each event timestamp"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.unwindowable===1?0:1)' "$winjs" \
+  && pass "an event with no usable timestamp is excluded and counted as unwindowable" || fail "an event with no usable timestamp is excluded and counted as unwindowable"
+
+inclusivejs="$(bash "$GT" --since 2025-01-01 --until "$edgeplus" "$wrepo" --json)"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===2&&r.byGate.task.runs===2&&r.pending===2?0:1)' "$inclusivejs" \
+  && pass "--until is exclusive for the SDD and ledger walks too (boundary artifacts appear one second later)" || fail "--until is exclusive for the SDD and ledger walks too (boundary artifacts appear one second later)"
+
+alljsw="$(bash "$GT" --all --json --since 2025-01-01 --until "$edge")"
+node -e 'const d=JSON.parse(process.argv[1]);process.exit(d.repos.length===1&&d.aggregate.repos===1&&d.repos[0].key===process.argv[2]?0:1)' "$alljsw" "$key4" \
+  && pass "a key whose observations all fall outside the window is not counted in repos" || fail "a key whose observations all fall outside the window is not counted in repos"
+allnw="$(bash "$GT" --all --json)"
+node -e 'const d=JSON.parse(process.argv[1]);process.exit(d.repos.length===4&&d.aggregate.repos===4?0:1)' "$allnw" \
+  && pass "an unwindowed fleet read still enumerates every key" || fail "an unwindowed fleet read still enumerates every key"
+
+winmd="$(bash "$GT" --since 2025-01-01 --until "$edge" "$wrepo")"
+expect "$winmd" "Unwindowable events" "the unwindowable counter is visible in the markdown report"
+expect "$winmd" "Fix-cycle rate: 1/1" "windowed markdown reports the windowed fix-cycle rate"
+wholemd="$(bash "$GT" "$wrepo")"
+printf '%s' "$wholemd" | grep -q 'Unwindowable' && fail "an unwindowed report adds no unwindowable line" || pass "an unwindowed report adds no unwindowable line"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

@@ -264,5 +264,102 @@ expect "$winmd" "Fix-cycle rate: 1/1" "windowed markdown reports the windowed fi
 wholemd="$(bash "$GT" "$wrepo")"
 printf '%s' "$wholemd" | grep -q 'Unwindowable' && fail "an unwindowed report adds no unwindowable line" || pass "an unwindowed report adds no unwindowable line"
 
+
+# --- The SDD walk enters plan workspaces, and the window cuts a task cohort ---
+# Production layout (subagent-driven-development/scripts/sdd-dir): a plan's
+# briefs live in sdd/<key>/plans/<slug>-<hash8>/ with fix briefs beside them.
+# A non-recursive read of the key root saw only legacy root-level artifacts, so
+# every brief a current SDD run writes was invisible to the reporter.
+prepo="$work/planrepo"; mkdir -p "$prepo"; git -C "$prepo" init -q
+git -C "$prepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+key5="$(printf '%s' "$(git -C "$prepo" rev-parse --absolute-git-dir)" | git -C "$prepo" hash-object --stdin)"
+sddp="$XDG_CACHE_HOME/hyperpowers/sdd/$key5"
+wsA="$sddp/plans/2026-09-05-alpha-a1b2c3d4"
+wsB="$sddp/plans/2026-09-05-beta-b2c3d4e5"
+mkdir -p "$sddp" "$wsA" "$wsB"
+for n in 1 2 3 4; do echo brief > "$wsA/task-$n-brief.md"; done
+echo fix > "$wsA/task-1-codex-fix-brief.md"
+echo fix > "$wsA/task-2-codex-fix-brief.md"
+echo fix > "$wsA/task-4-codex-fix-brief.md"
+echo brief > "$wsB/task-3-brief.md"
+echo fix > "$wsB/task-3-codex-fix-brief.md"
+echo brief > "$sddp/task-7-brief.md"
+echo fix > "$sddp/task-7-codex-fix-brief.md"
+# Task A/2's brief predates the window while its fix brief lands inside it;
+# task A/4's brief is inside while its fix brief lands after --until.
+touch -t 202301010000 "$wsA/task-2-brief.md"
+touch -t 202506010000 "$wsA/task-1-brief.md" "$wsA/task-1-codex-fix-brief.md" \
+  "$wsA/task-2-codex-fix-brief.md" "$wsA/task-3-brief.md" "$wsA/task-4-brief.md" \
+  "$wsB/task-3-brief.md" "$wsB/task-3-codex-fix-brief.md" \
+  "$sddp/task-7-brief.md" "$sddp/task-7-codex-fix-brief.md"
+touch -t 202701010000 "$wsA/task-4-codex-fix-brief.md"
+
+pjs="$(bash "$GT" "$prepo" --json)"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===6&&r.fixBriefs===5?0:1)' "$pjs" \
+  && pass "plan-workspace briefs are counted alongside legacy root-level ones (6 tasks, 5 fix briefs)" || fail "plan-workspace briefs are counted alongside legacy root-level ones (6 tasks, 5 fix briefs)"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===6?0:1)' "$pjs" \
+  && pass "two workspaces each holding a task-3-brief.md are two tasks, not one" || fail "two workspaces each holding a task-3-brief.md are two tasks, not one"
+pmd="$(bash "$GT" "$prepo")"
+expect "$pmd" "Fix-cycle rate: 5/6 tasks" "unwindowed markdown reports the plan-scoped fix-cycle rate"
+
+# Windowed [2025-01-01, 2026-01-01): the cohort is the five tasks whose briefs
+# are in the window (A/2's is not), and only a cohort task's in-window fix
+# brief counts (A/4's fix brief is later than --until).
+pwjs="$(bash "$GT" --since 2025-01-01 --until 2026-01-01 "$prepo" --json)"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===5&&r.fixBriefs===3?0:1)' "$pwjs" \
+  && pass "a windowed plan-workspace read counts the in-window cohort (3/5)" || fail "a windowed plan-workspace read counts the in-window cohort (3/5)"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.fixBriefs<=r.tasks?0:1)' "$pwjs" \
+  && pass "the windowed fix-cycle numerator never exceeds its denominator" || fail "the windowed fix-cycle numerator never exceeds its denominator"
+pwmd="$(bash "$GT" --since 2025-01-01 --until 2026-01-01 "$prepo")"
+expect "$pwmd" "Fix-cycle rate: 3/5 tasks" "windowed markdown reports the cohort fix-cycle rate"
+# A legacy root-level layout keeps working on its own.
+lrepo="$work/legacyrepo"; mkdir -p "$lrepo"; git -C "$lrepo" init -q
+git -C "$lrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+key6="$(printf '%s' "$(git -C "$lrepo" rev-parse --absolute-git-dir)" | git -C "$lrepo" hash-object --stdin)"
+sddl="$XDG_CACHE_HOME/hyperpowers/sdd/$key6"; mkdir -p "$sddl"
+for n in 1 2 3; do echo brief > "$sddl/task-$n-brief.md"; done
+echo fix > "$sddl/task-2-codex-fix-brief.md"
+lmd="$(bash "$GT" "$lrepo")"
+expect "$lmd" "Fix-cycle rate: 1/3 tasks" "a cache with only root-level artifacts is counted as before"
+# One cohort rule, not a window special case: a fix brief with no task brief
+# beside it has no task to count against, so it raises neither side. Counting
+# it was how an unwindowed read could also print more fixes than tasks.
+echo fix > "$sddl/task-9-codex-fix-brief.md"
+lmd2="$(bash "$GT" "$lrepo")"
+expect "$lmd2" "Fix-cycle rate: 1/3 tasks" "an orphan fix brief with no task brief counts for neither side"
+
+# A task brief before --since with its fix brief inside the window belongs to
+# neither the numerator nor the denominator. Filtering the two file kinds by
+# their own mtimes printed "Fix-cycle rate: 1/0 tasks" for exactly this shape.
+orepo="$work/cohortrepo"; mkdir -p "$orepo"; git -C "$orepo" init -q
+git -C "$orepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+key7="$(printf '%s' "$(git -C "$orepo" rev-parse --absolute-git-dir)" | git -C "$orepo" hash-object --stdin)"
+sddo="$XDG_CACHE_HOME/hyperpowers/sdd/$key7"; mkdir -p "$sddo"
+echo brief > "$sddo/task-1-brief.md"
+echo fix > "$sddo/task-1-codex-fix-brief.md"
+touch -t 202301010000 "$sddo/task-1-brief.md"
+touch -t 202506010000 "$sddo/task-1-codex-fix-brief.md"
+ojs="$(bash "$GT" --since 2025-01-01 --until 2026-01-01 "$orepo" --json)"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===0&&r.fixBriefs===0?0:1)' "$ojs" \
+  && pass "a fix brief whose task brief predates --since counts for neither side" || fail "a fix brief whose task brief predates --since counts for neither side"
+omd="$(bash "$GT" --since 2025-01-01 --until 2026-01-01 "$orepo")"
+printf '%s' "$omd" | grep -q 'Fix-cycle rate: 1/0' && fail "no fix-cycle rate is reported over an empty cohort" || pass "no fix-cycle rate is reported over an empty cohort"
+onj="$(bash "$GT" "$orepo" --json)"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===1&&r.fixBriefs===1?0:1)' "$onj" \
+  && pass "the same cache is unchanged without --since/--until (1/1)" || fail "the same cache is unchanged without --since/--until (1/1)"
+
+# A task brief inside the window whose fix brief lands after --until counts the
+# task but not the fix cycle.
+lagrepo="$work/lagrepo"; mkdir -p "$lagrepo"; git -C "$lagrepo" init -q
+git -C "$lagrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+key8="$(printf '%s' "$(git -C "$lagrepo" rev-parse --absolute-git-dir)" | git -C "$lagrepo" hash-object --stdin)"
+sddg="$XDG_CACHE_HOME/hyperpowers/sdd/$key8/plans/2026-09-05-lag-c3d4e5f6"; mkdir -p "$sddg"
+echo brief > "$sddg/task-2-brief.md"
+echo fix > "$sddg/task-2-codex-fix-brief.md"
+touch -t 202506010000 "$sddg/task-2-brief.md"
+touch -t 202701010000 "$sddg/task-2-codex-fix-brief.md"
+gjs="$(bash "$GT" --since 2025-01-01 --until 2026-01-01 "$lagrepo" --json)"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===1&&r.fixBriefs===0?0:1)' "$gjs" \
+  && pass "a fix brief after --until leaves its in-cohort task counted alone (0/1)" || fail "a fix brief after --until leaves its in-cohort task counted alone (0/1)"
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

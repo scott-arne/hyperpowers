@@ -59,8 +59,15 @@ spawn unref
 #    recovered unambiguously from ps output, so the sweep must not act on it.
 mkdir -p "$T/spacey dir"
 spawn spacey "$T/spacey dir/s.sock"
+# 9. A live, healthy broker that carries its own record and whose pid an older
+#    stale record ALSO names: the pid was reused after the broker that record
+#    described exited. Its endpoint must come from the process, not the record.
+spawn reused
 peer_pid=$(cat "$T/peer.pid"); orphan_pid=$(cat "$T/orphan.pid"); wedged_pid=$(cat "$T/wedged.pid")
-unref_pid=$(cat "$T/unref.pid"); spacey_pid=$(cat "$T/spacey.pid")
+unref_pid=$(cat "$T/unref.pid"); spacey_pid=$(cat "$T/spacey.pid"); reused_pid=$(cat "$T/reused.pid")
+mkdir -p "$state/reused-5555555555555555" "$state/stale-6666666666666666"
+printf '{"endpoint":"unix:%s/reused.sock","pid":%s,"sessionDir":"%s"}\n' "$T" "$reused_pid" "$T" > "$state/reused-5555555555555555/broker.json"
+printf '{"endpoint":"unix:%s/gone3.sock","pid":%s,"sessionDir":"%s/gone3"}\n' "$T" "$reused_pid" "$T" > "$state/stale-6666666666666666/broker.json"
 rmdir "$T/orphan-cwd" "$T/wedged-cwd" || { echo "cannot remove an orphan's cwd on this host"; exit 1; }
 mkdir -p "$state/peer-2222222222222222"
 printf '{"endpoint":"unix:%s/peer.sock","pid":%s,"sessionDir":"%s"}\n' "$T" "$peer_pid" "$T" > "$state/peer-2222222222222222/broker.json"
@@ -75,6 +82,8 @@ printf '%s\n' "$out" | grep -q "pid=$peer_pid" && fail "a peer broker with a liv
 printf '%s\n' "$out" | grep -q "orphan-broker pid=$unref_pid" && fail "an unreferenced but healthy broker must not be an orphan by default" || pass "an unreferenced but healthy broker is not an orphan by default"
 printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$spacey_pid" && pass "an endpoint that cannot be recovered from ps is unverifiable" || fail "spacey endpoint unverifiable: $out"
 printf '%s\n' "$out" | grep -q "orphan-broker pid=$spacey_pid" && fail "an unrecoverable endpoint must never be an orphan" || pass "an unrecoverable endpoint is never treated as an orphan"
+printf '%s\n' "$out" | grep -q "stale-record .*stale-6666666666666666" && pass "a stale record naming a reused pid is still reported as stale" || fail "stale record on a reused pid reported: $out"
+printf '%s\n' "$out" | grep -qE "(orphan|unverifiable)-broker pid=$reused_pid" && fail "a healthy broker must not inherit the dead endpoint of a stale record naming its pid" || pass "a healthy broker does not inherit the dead endpoint of a stale record naming its pid"
 [ -f "$state/stale-1111111111111111/broker.json" ] && pass "dry run removes nothing" || fail "dry run must not remove records"
 kill -0 "$orphan_pid" 2>/dev/null && pass "dry run kills nothing" || fail "dry run must not stop brokers"
 [ ! -f "$T/orphan.shutdown" ] && pass "dry run sends no shutdown" || fail "dry run must not send broker/shutdown"
@@ -102,6 +111,9 @@ kill -0 "$bystander" 2>/dev/null && pass "--kill never signals a pid read from a
 kill -0 "$orphan_pid" 2>/dev/null && fail "--kill must stop the orphan" || pass "--kill stops the orphan"
 [ -f "$T/wedged.shutdown" ] && pass "--kill asks a wedged orphan to shut down first" || fail "--kill must try broker/shutdown on a wedged orphan"
 kill -0 "$wedged_pid" 2>/dev/null && fail "--kill must signal an orphan that ignores shutdown" || pass "--kill signals an orphan that ignores shutdown"
+kill -0 "$reused_pid" 2>/dev/null && pass "--kill leaves a healthy broker whose pid a stale record names" || fail "--kill killed the healthy broker whose pid a stale record named"
+[ -f "$state/reused-5555555555555555/broker.json" ] && pass "--kill keeps the healthy broker's own record" || fail "--kill must keep the healthy broker's own record"
+[ ! -f "$state/stale-6666666666666666/broker.json" ] && pass "--kill clears the stale record that named the reused pid" || fail "--kill must clear the stale record that named the reused pid"
 kill -0 "$peer_pid" 2>/dev/null && pass "--kill leaves the peer broker running" || fail "--kill must leave the peer broker running"
 kill -0 "$unref_pid" 2>/dev/null && pass "--kill leaves an unreferenced broker running unless asked" || fail "--kill must not stop an unreferenced broker unless asked"
 kill -0 "$spacey_pid" 2>/dev/null && pass "--kill leaves an unverifiable broker running" || fail "--kill must never stop a broker it could not verify"

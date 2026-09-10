@@ -101,9 +101,11 @@ const stopPid = async (pid) => {
     let rec; try { rec = JSON.parse(raw); } catch { unknownRecords++; console.log(`unknown-record ${dir} reason=unparseable`); continue; }
     if (!rec || typeof rec.endpoint !== "string") { unknownRecords++; console.log(`unknown-record ${dir} reason=no-endpoint`); continue; }
     referenced.add(rec.endpoint);
-    if (Number.isInteger(rec.pid) && rec.pid > 1) endpointByPid.set(rec.pid, rec.endpoint);
     const state = await probe(rec.endpoint);
-    if (state === "live") continue;
+    // Only a record whose endpoint still answers says anything about a live
+    // process. Registering a stale record's pid would hand the process pass a
+    // dead endpoint for whatever broker inherited that pid.
+    if (state === "live") { if (Number.isInteger(rec.pid) && rec.pid > 1) endpointByPid.set(rec.pid, rec.endpoint); continue; }
     if (state === "unknown") { unverifiable++; console.log(`unverifiable-record ${dir} endpoint=${rec.endpoint} reason=endpoint-unverifiable`); continue; }
     records++; console.log(`stale-record ${dir} endpoint=${rec.endpoint} pid=${rec.pid ?? "?"}`);
     if (!kill) continue;
@@ -133,11 +135,16 @@ const stopPid = async (pid) => {
     }
     if (!/app-server-broker\.mjs serve/.test(cmd)) continue;
     // ps joins argv with spaces, so a value containing a space cannot be told
-    // apart from a value followed by another token. The state record is the
-    // authority when one names this pid; otherwise take the text up to the next
-    // option and refuse to act on it if it turns out to contain whitespace.
-    let ep = endpointByPid.get(pid) ?? null, epTrusted = ep !== null;
-    if (!ep) {
+    // apart from a value followed by another token. A state record resolves
+    // that — but only if the process itself confirms the record's endpoint,
+    // because pids are reused and a record naming a pid that now belongs to a
+    // different broker would otherwise supply the wrong endpoint and get a
+    // healthy peer killed as endpoint-dead. Otherwise take the text up to the
+    // next option and refuse to act on it if it contains whitespace.
+    const recorded = endpointByPid.get(pid) ?? null;
+    let ep = null, epTrusted = false;
+    if (recorded !== null && cmd.includes(`--endpoint ${recorded}`)) { ep = recorded; epTrusted = true; }
+    else {
       const m = /--endpoint (.+?)(?=\s--[a-z][\w-]*(?:\s|$)|$)/.exec(cmd);
       ep = m ? m[1].trim() : null;
       epTrusted = ep !== null && !/\s/.test(ep);

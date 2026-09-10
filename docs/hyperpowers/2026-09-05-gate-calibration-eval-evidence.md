@@ -28,6 +28,8 @@ rests on its own control and treatment runs, recorded in its section.
 Post-release cohort re-read at release (gate-telemetry --all --since 2026-09-06T22:45:00-07:00, read 2026-09-09; 50 runs, backstops 2/50):
 - Rounds by gate — plan: mean 4, first-round 0/7, backstops 1/7 [4, 3, 4, 4, 4, 5, 4]; task: mean 2.16, first-round 7/31, backstops 0/31 [2, 2, 2, 2, 2, 3, 2, 3, 2, 2, 1, 1, 1, 2, 4, 2, 1, 1, 2, 2, 1, 2, 2, 2, 1, 5, 4, 2, 2, 5, 2]; adhoc: mean 1.5, first-round 1/2, backstops 0/2 [1, 2]; final: mean 1, first-round 2/2, backstops 0/2 [1, 1]; spec: mean 3.63, first-round 0/8, backstops 1/8 [2, 4, 5, 2, 4, 4, 4, 4]
 
+Every read above was made with a `gate-telemetry` whose window bounded the gate-run walk only, so the fleet header counted every repository key enumerated in the cache rather than the cohort's; re-read on 2026-09-09 with the windowed tool (frozen snapshot at `task-9-runs/round3/`), the post-release cohort spans 11 repositories. The round counts are unaffected by that fix — the run walk was already windowed — and stand as the tool printed them.
+
 ## Task 0 follow-ups (mechanical; no arm)
 
 Task 0 corrected the testing guide, the review-base default, and the fleet
@@ -54,7 +56,16 @@ plan. No before/after runs were made for them.
 
 **Decision rule (as amended 2026-09-07 with D7).** The arm wins if treatment H and treatment O each block 3 of 3 AND treatment M is approved in at least 2 of 3; control numbers are recorded beside them.
 
-**Round 3 control arm results** (capture directory: `$TMPDIR/focus-arm-r3/control/`):
+**Round 3 captures.** The 18 round-3 captures live in the plan workspace at
+`~/.cache/hyperpowers/sdd/193a951fd4f675975a919be372c5015a95aa0491/plans/2026-09-05-gate-calibration-55863419/task-2-runs/round3/`
+(`control/`, `treatment/`, and the two runner logs), the same place the other
+arms keep their `task-N-runs/` evidence; the gate directory
+`~/.cache/hyperpowers/codex-review/193a951fd4f675975a919be372c5015a95aa0491/run-EtQj4NIc/arm-r3/`
+holds a second copy. Re-normalized from the workspace copy on 2026-09-09 with
+`bash skills/requesting-code-review/scripts/verdict-normalize <capture>`: all
+18 reproduce the tallies recorded here.
+
+**Round 3 control arm results** (capture directory: `task-2-runs/round3/control/`):
 - M control 1: approved
 - M control 2: approved
 - M control 3: approved
@@ -65,7 +76,7 @@ plan. No before/after runs were made for them.
 - O control 2: blocking
 - O control 3: blocking
 
-**Round 3 treatment arm results** (capture directory: `$TMPDIR/focus-arm-r3/treatment/`):
+**Round 3 treatment arm results** (capture directory: `task-2-runs/round3/treatment/`):
 - M treatment 1: approved
 - M treatment 2: approved
 - M treatment 3: approved
@@ -77,6 +88,8 @@ plan. No before/after runs were made for them.
 - O treatment 3: blocking
 
 **Verdict (round 3, decisive).** The arm wins. Treatment H blocked 3 of 3 (vs. control H 1 of 3), treatment O blocked 3 of 3 (vs. control O 3 of 3, no change because the omitted-requirement defect was already classified correctly under control), and treatment M approved 3 of 3 (vs. control M 3 of 3, the guard that calibration must not introduce false positives on defect-free implementations). The calibration lifted the crash-and-wrong-result defect (H) from blocking in 1 of 3 to blocking in 3 of 3, achieving consistency in classification while maintaining clean approvals for the defect-free fixture.
+
+**Why round 2 and round 3 report the same 18 cells.** They do — every control and treatment cell is identical across the invalid round and the decisive one. The explanation is that the reviewer classifies from the diff it is handed and the head files it is shown, so the base module's parse state never entered its judgment — a broken base changed what the fixture *claimed* to be measuring, not what the reviewer read. That is why the round-3 numbers are trustworthy where round 2's were not: the measurement is the within-round control/treatment contrast, and round 3 is the first round in which both arms were reviewing a fixture whose stated premise held. It also bounds what this fixture demonstrates. Because the base made no difference to any of the 18 verdicts, these runs cannot show that the reviewer is sensitive to the pre-change program at all; they establish the severity contrast between the two focus strings and nothing about base-awareness. The verdict stands as recorded.
 
 **Round 2 results (INVALID, broken bases).** The runner's base-stripping filter produced broken modules for all three fixtures (failed `node --check`). All 18 reviews compared against broken programs, not the working pre-change modules. The Codex gate's second run (2026-09-07) caught this; the reviewer reproduced the failure against the preserved worktrees. Round 2 results are recorded here for the audit trail but do not decide the arm. Control: M 3/3 approved, H 1/3 blocking, O 3/3 blocking. Treatment: M 3/3 approved, H 3/3 blocking, O 3/3 blocking. Capture directory: `$TMPDIR/focus-arm-r2/{control,treatment}/`.
 
@@ -217,7 +230,7 @@ remains the fleet measurement rather than these runs. The human partner accepted
 the arm under the plan's decision rule with that limitation recorded, and
 declined fixture engineering to reproduce the larger case.
 
-**Files changed.**
+**Files changed.** (The list spans this arm's two commits: 31d0a79 moved the line, added the losslessness row, and raised the pin; 39cc96f rewrote the same line for the amended contract and updated that row in place.)
 - `skills/requesting-code-review/gate-fix-loop.md` (line 22: the fixed recipe)
 - `tests/codex-review-gate/gate-post-split-edits.tsv` (one new row for source line 563)
 - `tests/codex-review-gate/test-gate-split-lossless.sh` (pin raised from 15 to 16)
@@ -1235,7 +1248,7 @@ tests-and-evidence: approved 5, blocking 16, incomplete 0; blocking rate 16/21 =
 
 The extractor counts only canonical code-gate batches (exactly {correctness, contracts-and-integration, tests-and-evidence}). Two batches with three or more lens captures were excluded: the 6.13.0 whole-branch FINAL gate (run-vTvF2CDw, whose second lens is integration-and-requirements-coverage by design) and one task gate from another repository key (run-Indqebq1) whose controller named its lenses contracts and tests. Excluded batches are reported separately with their lens sets; nothing is dropped silently.
 
-The gate's round counts for the same cohort (from `gate-telemetry --all --since "$since"`; frozen snapshot at task-9-runs/round2/): 49 runs with round data across 64 repositories, mean 2.17 rounds-to-convergence for tasks (30 task gates, 7 converged in round 1), mean 3.63 for specs (8 spec gates, 0 converged in round 1), mean 4 for plans (7 plan gates, 0 converged in round 1). Backstop rate 2/49 (4%).
+The gate's round counts for the same cohort (from `gate-telemetry --all --since "$since"`; frozen snapshot at task-9-runs/round2/): 49 runs with round data across 64 repositories, mean 2.17 rounds-to-convergence for tasks (30 task gates, 7 converged in round 1), mean 3.63 for specs (8 spec gates, 0 converged in round 1), mean 4 for plans (7 plan gates, 0 converged in round 1). Backstop rate 2/49 (4%). The 64 there is every repository key the tool then enumerated, not the cohort's count: that `gate-telemetry` windowed the gate-run walk only, and re-read on 2026-09-09 with the windowed tool (frozen snapshot at `task-9-runs/round3/`) the same cohort spans 11 repositories — the run and round figures above are kept as printed, and the later snapshot's larger run count is elapsed time, not a correction.
 
 **Application of the decision rule.** The cohort contains 21 complete round-1 batches, below the minimum of 30. The decision rule does not apply.
 

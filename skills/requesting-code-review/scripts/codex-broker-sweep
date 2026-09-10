@@ -17,7 +17,9 @@
 # a peer session's broker and is never touched. --include-unreferenced widens
 # the second shape to brokers no state record names: the companion cannot reuse
 # those, but a record deleted by hand also makes a healthy peer look
-# unreferenced, so retiring them is opt-in.
+# unreferenced, so retiring them is opt-in. Because a broker only registers once
+# its endpoint answers, that widening also re-reads the records at the moment it
+# decides and skips any broker still young enough to be registering.
 #
 # The sweep signals other people's processes, so it fails closed. Every check
 # has three answers, not two — live, dead, or could-not-tell — and only a
@@ -105,6 +107,23 @@ const isBroker = (pid, ep) => {
   catch { return false; }
   return BROKER_CMD.test(cmd) && hasEndpoint(cmd, ep);
 };
+// How long a broker may be pgrep-visible before any record names it.
+// broker-lifecycle.mjs spawns the process, waits up to 2s for its endpoint to
+// answer, and only then writes broker.json -- so during that window a perfectly
+// healthy broker is running, listening, and unreferenced. Ten seconds is that
+// window with room for a loaded host.
+const REGISTRATION_WINDOW_S = 10;
+// Seconds this pid has been running, or null if that cannot be established.
+// `ps -o etime=` prints [[DD-]HH:]MM:SS; anything else is an answer this script
+// does not understand, which is not the same as a young process.
+const ageOf = (pid) => {
+  let out;
+  try { out = cp.execFileSync("ps", ["-o", "etime=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); }
+  catch { return null; }
+  const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(out);
+  if (!m) return null;
+  return ((Number(m[1] ?? 0) * 24 + Number(m[2] ?? 0)) * 60 + Number(m[3])) * 60 + Number(m[4]);
+};
 // "stopped" | "still-running" | "identity-changed". The identity check runs
 // before EVERY signal rather than once at the top: a broker that exits on
 // SIGTERM frees its pid inside the wait below, and the kernel can hand that
@@ -118,6 +137,23 @@ const stopPid = async (pid, ep) => {
     await sleep(500);
   }
   return gone(pid) ? "stopped" : "still-running";
+};
+// The endpoints named by state records right now, and whether every record was
+// readable. Step 1 below builds the same set, but it does so before probing
+// every endpoint -- seconds earlier, in whole-host terms -- and a record written
+// in that interval belongs to a broker this sweep has no other way to see.
+const readReferenced = () => {
+  const set = new Set();
+  let complete = true, dirs = [];
+  try { dirs = fs.readdirSync(root); }
+  catch (e) { if (!(e && (e.code === "ENOENT" || e.code === "ENOTDIR"))) complete = false; }
+  for (const d of dirs) {
+    let rec;
+    try { rec = JSON.parse(fs.readFileSync(path.join(root, d, "broker.json"), "utf8")); }
+    catch (e) { if (!(e && e.code === "ENOENT")) complete = false; continue; }
+    if (rec && typeof rec.endpoint === "string") set.add(rec.endpoint); else complete = false;
+  }
+  return { set, complete };
 };
 (async () => {
   let records = 0, unknownRecords = 0, brokers = 0, unverifiable = 0, failures = 0, cwdUnreadable = 0;
@@ -227,8 +263,25 @@ const stopPid = async (pid, ep) => {
     // Below here the endpoint answers, so the working directory is the only
     // thing that could still make this a leak -- and it could not be read.
     else if (cwd !== null && cwdSt === "unknown") { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep} reason=cwd-unverifiable cwd=${cwd}`); continue; }
-    else if (unrefCandidate && !inventoryComplete) { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep} reason=unreferenced-inventory-incomplete cwd=${cwd ?? "?"}`); continue; }
-    else if (unrefCandidate) reason = "unreferenced";
+    // "No record names this endpoint" was decided from a directory read taken
+    // before any endpoint was probed. Two healthy brokers hide behind that
+    // staleness: one still inside its registration window, and one that started
+    // AND registered while this sweep was probing. Re-ask, and treat every
+    // answer that is not a clean "still unreferenced" as unverifiable.
+    else if (unrefCandidate) {
+      const age = ageOf(pid);
+      let why = null;
+      if (!inventoryComplete) why = "unreferenced-inventory-incomplete";
+      else if (age === null) why = "unreferenced-age-unknown";
+      else if (age < REGISTRATION_WINDOW_S) why = "unreferenced-too-young";
+      else {
+        const fresh = readReferenced();
+        if (!fresh.complete) why = "unreferenced-recheck-incomplete";
+        else if (fresh.set.has(ep)) why = "unreferenced-record-appeared";
+      }
+      if (why) { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep} reason=${why} cwd=${cwd ?? "?"}`); continue; }
+      reason = "unreferenced";
+    }
     if (!reason) { if (cwd === null) cwdUnreadable++; continue; }
     brokers++; console.log(`orphan-broker pid=${pid} endpoint=${ep} reason=${reason} cwd=${cwd ?? "?"}`);
     if (!kill) continue;

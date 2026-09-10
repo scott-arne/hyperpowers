@@ -111,6 +111,15 @@ pfx_pid=$(cat "$T/pfx.pid"); pfxb_pid=$(cat "$T/pfxb.pid")
 mkdir -p "$state/prefix-8888888888888888"
 printf '{"endpoint":"unix:%s/pfx.sock","pid":%s,"sessionDir":"%s"}\n' "$T" "$pfxb_pid" "$T" > "$state/prefix-8888888888888888/broker.json"
 rmdir "$T/pfxb-cwd" || { echo "cannot remove the suffixed orphan's cwd on this host"; exit 1; }
+# 15. A healthy broker whose record does not exist when the sweep reads the
+#     state root, and does exist by the time the sweep decides about its pid.
+#     Spawned here so it is comfortably past the age floor when that happens.
+spawn late
+late_pid=$(cat "$T/late.pid")
+# Everything above is now running. The unreferenced sweep refuses to judge a
+# broker younger than the companion's registration window, so the blocks that
+# expect a verdict wait this clock out rather than racing it.
+spawn_epoch=$(date +%s)
 
 peer_pid=$(cat "$T/peer.pid"); orphan_pid=$(cat "$T/orphan.pid"); wedged_pid=$(cat "$T/wedged.pid")
 unref_pid=$(cat "$T/unref.pid"); spacey_pid=$(cat "$T/spacey.pid"); reused_pid=$(cat "$T/reused.pid")
@@ -154,6 +163,7 @@ echo "Opt-in unreferenced sweep"
 state_clean="$T/state-clean"
 cp -R "$state" "$state_clean"
 rm -rf "$state_clean/malformed-4444444444444444"
+for _ in $(seq 1 30); do [ $(( $(date +%s) - spawn_epoch )) -ge 11 ] && break; sleep 1; done
 out="$(bash "$SWEEP" --include-unreferenced --state-root "$state_clean" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && pass "--include-unreferenced exits 0" || fail "--include-unreferenced exits 0 (rc=$rc): $out"
 printf '%s\n' "$out" | grep -q "orphan-broker pid=$unref_pid .*reason=unreferenced" && pass "--include-unreferenced reports the unreferenced broker" || fail "--include-unreferenced must report the unreferenced broker: $out"
@@ -297,6 +307,57 @@ sleep 1
 kill -0 "$swapep_pid" 2>/dev/null && pass "the fallback signal is withheld when only an endpoint prefix matches" || fail "--kill signalled a pid whose endpoint merely shares a prefix with the classified one"
 printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapep_pid .*reason=identity-changed" && pass "an endpoint-prefix-only match between signals is an identity change" || fail "endpoint prefix identity change reported: $out"
 [ "$rc" -eq 0 ] && pass "declining to signal an endpoint-prefix match is not a failure" || fail "declining an endpoint-prefix match must not be an error (rc=$rc)"
+
+echo "Unreferenced retirement re-checks the inventory at the moment of decision"
+# broker-lifecycle.mjs makes a broker visible to pgrep and listening for up to
+# two seconds before it writes broker.json, and a sweep of a busy host spends
+# far longer than that probing endpoints. Both windows leave a healthy broker
+# absent from the record snapshot the sweep started with. `young` is inside the
+# first window; `late` covers the second — the ps stub writes its record when
+# the sweep inspects that pid, which is after the record pass and before the
+# decision, exactly where a re-read has to look. `unref` stands in for a pid
+# whose age cannot be read at all, and `starting` is the control that a genuine
+# leak is still retired.
+state_race="$T/state-race"
+cp -R "$state_clean" "$state_race"
+# This is the one block whose inventory is complete AND whose retirement is
+# armed, so it is the one that could reach past the fixtures: pgrep finds every
+# broker on the machine, and none of the developer's own are named by a record
+# under a throwaway state root. Name them, so the only brokers this run can call
+# unreferenced are the ones the test created.
+for hostpid in $(pgrep -f 'app-server-broker\.mjs serve' 2>/dev/null); do
+  case " $pids " in *" $hostpid "*) continue ;; esac
+  hostep=$(ps -o command= -p "$hostpid" 2>/dev/null | sed -n 's/.*--endpoint \([^ ]*\).*/\1/p')
+  [ -n "$hostep" ] || { echo "cannot read the endpoint of host broker $hostpid"; exit 1; }
+  mkdir -p "$state_race/host-$hostpid"
+  printf '{"endpoint":"%s","pid":%s,"sessionDir":"%s"}\n' "$hostep" "$hostpid" "$T" > "$state_race/host-$hostpid/broker.json"
+done
+spawn young
+young_pid=$(cat "$T/young.pid")
+mkdir -p "$T/bin6"
+cat > "$T/bin6/ps" <<PSEOF
+#!/bin/sh
+case " \$* " in
+  *" command= "*" $late_pid "*)
+    mkdir -p "$state_race/late-aaaaaaaaaaaaaaaa"
+    printf '{"endpoint":"unix:%s/late.sock","pid":%s,"sessionDir":"%s"}\n' "$T" "$late_pid" "$T" \
+      > "$state_race/late-aaaaaaaaaaaaaaaa/broker.json" ;;
+  *" etime= "*" $unref_pid "*) exit 1 ;;
+esac
+exec /bin/ps "\$@"
+PSEOF
+chmod +x "$T/bin6/ps"
+out="$(PATH="$T/bin6:$PATH" bash "$SWEEP" --include-unreferenced --kill --state-root "$state_race" 2>&1)"; rc=$?
+sleep 1
+printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$late_pid .*reason=unreferenced-record-appeared" && pass "a record written after the inventory snapshot fences unreferenced retirement" || fail "late record fence reported: $out"
+kill -0 "$late_pid" 2>/dev/null && pass "--kill leaves a broker whose record appeared during the sweep" || fail "--kill retired a broker whose record appeared during the sweep"
+printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$young_pid .*reason=unreferenced-too-young" && pass "a broker inside its registration window is too young to call unreferenced" || fail "young broker fence reported: $out"
+kill -0 "$young_pid" 2>/dev/null && pass "--kill leaves a broker still inside its registration window" || fail "--kill retired a broker still inside its registration window"
+printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$unref_pid .*reason=unreferenced-age-unknown" && pass "a broker whose age cannot be read is not called unreferenced" || fail "unreadable age fence reported: $out"
+kill -0 "$unref_pid" 2>/dev/null && pass "--kill leaves a broker whose age it could not read" || fail "--kill retired a broker whose age it could not read"
+printf '%s\n' "$out" | grep -q "orphan-broker pid=$starting_pid .*reason=unreferenced" && pass "the re-check still reports a genuinely unreferenced broker" || fail "genuine unreferenced broker reported: $out"
+kill -0 "$starting_pid" 2>/dev/null && fail "--include-unreferenced must still retire a genuinely unreferenced broker" || pass "--include-unreferenced still retires a genuinely unreferenced broker"
+[ "$rc" -eq 0 ] && pass "fencing an ambiguous unreferenced broker is not a failure" || fail "fencing an unreferenced broker must not be an error (rc=$rc)"
 
 echo "Degenerate inputs"
 out="$(bash "$SWEEP" --state-root "$T/does-not-exist" 2>&1)"; rc=$?

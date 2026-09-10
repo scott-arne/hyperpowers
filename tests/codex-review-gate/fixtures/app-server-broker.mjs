@@ -2,14 +2,23 @@
 // Test double for codex-plugin-cc's app-server-broker.mjs. It has the same
 // process shape the sweep looks for — `app-server-broker.mjs serve --endpoint
 // unix:<socket>` — listens on that socket, answers `broker/shutdown` with a
-// JSON-RPC result, and exits. With --pid-file it records its own pid there.
+// JSON-RPC result, and exits.
+//
+// Flags the real broker does not have, so tests can observe what the sweep did:
+//   --pid-file PATH        record this process's own pid
+//   --shutdown-marker PATH create this file when broker/shutdown arrives, so a
+//                          test can prove the protocol ran rather than inferring
+//                          it from the process being gone
+//   --ignore-shutdown      accept broker/shutdown and keep running (a wedged
+//                          broker), which is what makes the signal fallback
+//                          observable
 // Nothing else of the real broker is modeled.
 import fs from "node:fs";
 import net from "node:net";
 import process from "node:process";
 const argv = process.argv.slice(2);
-const i = argv.indexOf("--endpoint");
-const endpoint = i >= 0 ? argv[i + 1] : "";
+const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : null; };
+const endpoint = flag("--endpoint") ?? "";
 if (argv[0] !== "serve" || !endpoint.startsWith("unix:")) {
   process.stderr.write("usage: app-server-broker.mjs serve --endpoint unix:<path>\n");
   process.exit(2);
@@ -17,8 +26,10 @@ if (argv[0] !== "serve" || !endpoint.startsWith("unix:")) {
 const sock = endpoint.slice("unix:".length);
 // The test needs this process's own pid, not the pid of whatever shell
 // backgrounded it: `$!` on a compound command names the intermediate subshell.
-const pf = argv.indexOf("--pid-file");
-if (pf >= 0 && argv[pf + 1]) fs.writeFileSync(argv[pf + 1], `${process.pid}\n`);
+const pidFile = flag("--pid-file");
+if (pidFile) fs.writeFileSync(pidFile, `${process.pid}\n`);
+const marker = flag("--shutdown-marker");
+const ignoreShutdown = argv.includes("--ignore-shutdown");
 try { fs.unlinkSync(sock); } catch {}
 const server = net.createServer((c) => {
   c.setEncoding("utf8");
@@ -31,7 +42,9 @@ const server = net.createServer((c) => {
       let msg = null;
       try { msg = JSON.parse(line); } catch { continue; }
       if (msg && msg.method === "broker/shutdown") {
+        if (marker) { try { fs.writeFileSync(marker, `${Date.now()}\n`); } catch {} }
         c.end(`${JSON.stringify({ id: msg.id ?? 1, result: {} })}\n`);
+        if (ignoreShutdown) continue;
         server.close(() => process.exit(0));
         setTimeout(() => process.exit(0), 200).unref();
       } else {

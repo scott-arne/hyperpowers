@@ -2,21 +2,29 @@
 # codex-broker-sweep [--kill] [--include-unreferenced] [--state-root DIR]
 # Finds codex-plugin-cc brokers that nothing will ever use again and, with
 # --kill, retires them. Two shapes of leak, both seen in real runs:
-#   stale-record  — a <state-root>/<workspace>/broker.json whose endpoint no
-#                   longer answers (the broker died or the socket is gone);
-#                   with --kill the record is removed and a still-running pid
-#                   is stopped.
+#   stale-record  — a <state-root>/<workspace>/broker.json whose endpoint is
+#                   confirmed dead; with --kill the record is removed. The pid
+#                   inside a stale record is never signalled: the broker it
+#                   named is gone, and the kernel reuses pids, so that number
+#                   now belongs to whatever process inherited it.
 #   orphan-broker — a running `app-server-broker.mjs serve` whose working
 #                   directory has been deleted (a review launched from a
-#                   temporary working copy) or whose endpoint no longer answers;
-#                   with --kill it is asked to shut down over its own protocol
-#                   (`broker/shutdown`), then signalled if it lingers.
+#                   temporary working copy) or whose endpoint is confirmed
+#                   dead; with --kill it is asked to shut down over its own
+#                   protocol (`broker/shutdown`) and only signalled if it
+#                   ignores the request.
 # A running broker whose working directory exists and whose endpoint answers is
 # a peer session's broker and is never touched. --include-unreferenced widens
 # the second shape to brokers no state record names: the companion cannot reuse
 # those, but a record deleted by hand also makes a healthy peer look
-# unreferenced, so retiring them is opt-in. Without --kill nothing changes.
-# Exit 0 with a report; exit 2 for usage.
+# unreferenced, so retiring them is opt-in.
+#
+# The sweep signals other people's processes, so it fails closed. Every check
+# has three answers, not two — live, dead, or could-not-tell — and only a
+# confirmed-dead answer authorizes action. Anything it could not determine is
+# printed as `unverifiable-…`/`unknown-record` and left alone, and the summary
+# says the sweep was incomplete. Without --kill nothing changes.
+# Exit 0 with a report; exit 1 if a retirement failed; exit 2 for usage.
 set -uo pipefail
 kill=0; unref=0; root="${HOME}/.claude/plugins/data/codex-openai-codex/state"
 while [ $# -gt 0 ]; do
@@ -32,11 +40,25 @@ const fs = require("fs"), path = require("path"), net = require("net"), cp = req
 const [root, killArg, unrefArg] = process.argv.slice(2);
 const kill = killArg === "1", sweepUnreferenced = unrefArg === "1";
 const sockOf = (ep) => (typeof ep === "string" && ep.startsWith("unix:")) ? ep.slice(5) : null;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
-const answers = (ep) => new Promise((res) => {
-  const p = sockOf(ep); if (!p || !fs.existsSync(p)) return res(false);
-  const s = net.createConnection({ path: p }); const done = (v) => { try { s.destroy(); } catch {} res(v); };
-  s.setTimeout(500, () => done(false)); s.on("connect", () => done(true)); s.on("error", () => done(false));
+// A process that has been killed but not yet reaped still answers kill(0).
+const zombie = (pid) => {
+  try { return /^Z/.test(cp.execFileSync("ps", ["-o", "state=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim()); }
+  catch { return false; }
+};
+const gone = (pid) => !alive(pid) || zombie(pid);
+// live | dead | unknown. Only "dead" authorizes anything: a refused connection
+// or a missing socket file is proof, but a timeout or a permission error just
+// means this process could not ask, and a busy broker must not be shot for it.
+const probe = (ep) => new Promise((res) => {
+  const p = sockOf(ep); if (!p) return res("unknown");
+  try { fs.statSync(p); } catch (e) { return res(e && (e.code === "ENOENT" || e.code === "ENOTDIR") ? "dead" : "unknown"); }
+  const s = net.createConnection({ path: p });
+  const done = (v) => { try { s.destroy(); } catch {} res(v); };
+  s.setTimeout(1000, () => done("unknown"));
+  s.on("connect", () => done("live"));
+  s.on("error", (e) => done(e && e.code === "ECONNREFUSED" ? "dead" : "unknown"));
 });
 const shutdown = (ep) => new Promise((res) => {
   const p = sockOf(ep); if (!p) return res(false);
@@ -45,7 +67,6 @@ const shutdown = (ep) => new Promise((res) => {
   s.on("connect", () => s.write(`${JSON.stringify({ id: 1, method: "broker/shutdown", params: {} })}\n`));
   s.on("data", () => done(true)); s.on("error", () => done(false)); s.on("close", () => done(true));
 });
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const cwdOf = (pid) => {
   try { return fs.readlinkSync(`/proc/${pid}/cwd`); } catch {}
   try {
@@ -53,24 +74,44 @@ const cwdOf = (pid) => {
     const n = out.split("\n").find((l) => l.startsWith("n")); return n ? n.slice(1).replace(/ \(deleted\)$/, "") : null;
   } catch { return null; }
 };
+// Returns true once the process is gone, false if it survived every signal.
 const stopPid = async (pid) => {
-  for (const sig of ["SIGTERM", "SIGKILL"]) { if (!alive(pid)) return; try { process.kill(pid, sig); } catch {} await sleep(500); }
+  if (!Number.isInteger(pid) || pid <= 1) return false;  // 0 and -1 are whole process groups
+  for (const sig of ["SIGTERM", "SIGKILL"]) {
+    if (gone(pid)) return true;
+    try { process.kill(pid, sig); } catch (e) { if (e && e.code === "ESRCH") return true; }
+    await sleep(500);
+  }
+  return gone(pid);
 };
 (async () => {
-  let records = 0, brokers = 0;
+  let records = 0, unknownRecords = 0, brokers = 0, unverifiable = 0, failures = 0;
+  const fail = (line) => { failures++; console.log(`failed ${line}`); };
   // 1. State records. Every endpoint a record names is "referenced": the
   // companion finds brokers only through these records, so a running broker no
   // record names can never be reused — a leak, but only under
   // --include-unreferenced, because the record may simply have been deleted.
+  // A record is evidence about an endpoint, never a license to signal a pid.
   const referenced = new Set();
+  const endpointByPid = new Map();
   if (!fs.existsSync(root)) { console.log(`no state root at ${root}`); }
   else for (const d of fs.readdirSync(root)) {
-    const f = path.join(root, d, "broker.json"); if (!fs.existsSync(f)) continue;
-    let rec; try { rec = JSON.parse(fs.readFileSync(f, "utf8")); } catch { rec = {}; }
-    if (typeof rec.endpoint === "string") referenced.add(rec.endpoint);
-    if (await answers(rec.endpoint)) continue;
-    records++; console.log(`stale-record ${path.join(root, d)} endpoint=${rec.endpoint ?? "?"} pid=${rec.pid ?? "?"}`);
-    if (kill) { if (Number.isInteger(rec.pid) && alive(rec.pid)) await stopPid(rec.pid); try { fs.unlinkSync(f); } catch {} }
+    const dir = path.join(root, d), f = path.join(dir, "broker.json");
+    let raw; try { raw = fs.readFileSync(f, "utf8"); } catch (e) { if (e && e.code !== "ENOENT") { unknownRecords++; console.log(`unknown-record ${dir} reason=unreadable (${e.code ?? e})`); } continue; }
+    let rec; try { rec = JSON.parse(raw); } catch { unknownRecords++; console.log(`unknown-record ${dir} reason=unparseable`); continue; }
+    if (!rec || typeof rec.endpoint !== "string") { unknownRecords++; console.log(`unknown-record ${dir} reason=no-endpoint`); continue; }
+    referenced.add(rec.endpoint);
+    if (Number.isInteger(rec.pid) && rec.pid > 1) endpointByPid.set(rec.pid, rec.endpoint);
+    const state = await probe(rec.endpoint);
+    if (state === "live") continue;
+    if (state === "unknown") { unverifiable++; console.log(`unverifiable-record ${dir} endpoint=${rec.endpoint} reason=endpoint-unverifiable`); continue; }
+    records++; console.log(`stale-record ${dir} endpoint=${rec.endpoint} pid=${rec.pid ?? "?"}`);
+    if (!kill) continue;
+    // Re-read before unlinking: the companion may have rewritten the record
+    // with a fresh broker while this sweep was probing the old endpoint.
+    let now; try { now = fs.readFileSync(f, "utf8"); } catch { continue; }
+    if (now !== raw) { unverifiable++; console.log(`unverifiable-record ${dir} reason=changed-during-sweep`); continue; }
+    try { fs.unlinkSync(f); } catch (e) { fail(`record ${dir} reason=${e && e.code ? e.code : e}`); }
   }
   // 2. Running brokers.
   // pgrep narrows the process table to brokers; a full `ps -ax` listing on a
@@ -78,19 +119,50 @@ const stopPid = async (pid) => {
   // swallowed throw would read as "no brokers", which is the one answer this
   // tool must never give silently.
   let pids = [];
-  try { pids = cp.execFileSync("pgrep", ["-f", "app-server-broker\\.mjs serve"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n").map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0 && n !== process.pid); }
-  catch (e) { if (e && e.status === 1) pids = []; else { console.log(`warning: could not list processes (${e && e.code ? e.code : e})`); pids = []; } }
+  try { pids = cp.execFileSync("pgrep", ["-f", "app-server-broker\\.mjs serve"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n").map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 1 && n !== process.pid); }
+  catch (e) { if (e && e.status === 1) pids = []; else { unverifiable++; console.log(`unverifiable-processlist reason=${e && e.code ? e.code : e}`); pids = []; } }
   for (const pid of pids) {
-    let cmd = ""; try { cmd = cp.execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 }).trim(); } catch { continue; }
-    const m = /app-server-broker\.mjs serve .*--endpoint (\S+)/.exec(cmd); if (!m) continue;
-    const ep = m[1]; const cwd = cwdOf(pid);
-    const cwdMissing = cwd !== null && !fs.existsSync(cwd); const dead = !(await answers(ep));
+    let cmd;
+    try { cmd = cp.execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 4 * 1024 * 1024 }).trim(); }
+    catch (e) {
+      // The process exiting between pgrep and ps is the ordinary case and needs
+      // no report; ps failing while the process is still there is an outage,
+      // and reporting nothing would look identical to a clean host.
+      if (!alive(pid)) continue;
+      unverifiable++; console.log(`unverifiable-broker pid=${pid} reason=inspect-failed (${e && e.code ? e.code : e})`); continue;
+    }
+    if (!/app-server-broker\.mjs serve/.test(cmd)) continue;
+    // ps joins argv with spaces, so a value containing a space cannot be told
+    // apart from a value followed by another token. The state record is the
+    // authority when one names this pid; otherwise take the text up to the next
+    // option and refuse to act on it if it turns out to contain whitespace.
+    let ep = endpointByPid.get(pid) ?? null, epTrusted = ep !== null;
+    if (!ep) {
+      const m = /--endpoint (.+?)(?=\s--[a-z][\w-]*(?:\s|$)|$)/.exec(cmd);
+      ep = m ? m[1].trim() : null;
+      epTrusted = ep !== null && !/\s/.test(ep);
+    }
+    if (!epTrusted) { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep ?? "?"} reason=endpoint-unrecoverable`); continue; }
+    const cwd = cwdOf(pid);
+    const cwdMissing = cwd !== null && !fs.existsSync(cwd);
+    const state = await probe(ep);
     const unreferenced = sweepUnreferenced && !referenced.has(ep);
-    if (!cwdMissing && !dead && !unreferenced) continue;
-    const reason = cwdMissing ? "cwd-missing" : dead ? "endpoint-dead" : "unreferenced";
+    let reason = null;
+    if (cwdMissing) reason = "cwd-missing";
+    else if (state === "dead") reason = "endpoint-dead";
+    else if (state === "unknown") { unverifiable++; console.log(`unverifiable-broker pid=${pid} endpoint=${ep} reason=endpoint-unverifiable cwd=${cwd ?? "?"}`); continue; }
+    else if (unreferenced) reason = "unreferenced";
+    if (!reason) continue;
     brokers++; console.log(`orphan-broker pid=${pid} endpoint=${ep} reason=${reason} cwd=${cwd ?? "?"}`);
-    if (kill) { if (!dead) { await shutdown(ep); await sleep(1000); } await stopPid(pid); }
+    if (!kill) continue;
+    // Protocol first: a broker asked over broker/shutdown closes its socket and
+    // exits cleanly. Signals are the fallback for one that will not.
+    if (state !== "dead") { await shutdown(ep); await sleep(1000); }
+    if (!gone(pid) && !(await stopPid(pid))) fail(`retire pid=${pid} endpoint=${ep} reason=still-running`);
   }
-  console.log(`swept: ${records} stale record(s), ${brokers} orphan broker(s) (${kill ? "retired" : "dry run"})`);
+  const incomplete = unverifiable > 0 || unknownRecords > 0;
+  console.log(`swept: ${records} stale record(s), ${unknownRecords} unknown record(s), ${brokers} orphan broker(s), ${unverifiable} unverifiable, ${failures} failure(s) (${kill ? "retired" : "dry run"})`
+    + (incomplete ? " - incomplete: some state could not be verified and was left alone" : ""));
+  if (failures > 0) process.exitCode = 1;
 })();
 JS

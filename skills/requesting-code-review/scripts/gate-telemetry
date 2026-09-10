@@ -12,7 +12,11 @@
 # or an offset); anything else exits 2 rather than silently reporting the whole
 # history. The window bounds EVERY walk, on the timestamp each one has: gate
 # runs and SDD artifacts by file mtime, ledger events by the ts the event
-# records. A ledger event with no usable ts cannot be placed in or out of the
+# records. The SDD walk windows a cohort rather than each file on its own: a
+# task joins the cohort when its brief's mtime is in the window, and a fix
+# brief counts only against a task already in it, so the fix-cycle numerator
+# can never outrun the denominator it is reported over.
+# A ledger event with no usable ts cannot be placed in or out of the
 # window, so a windowed report excludes it and counts it as unwindowable
 # rather than reporting it as if it were in the cohort. A repository appears
 # in a windowed report only when it contributed at least one in-window
@@ -106,24 +110,47 @@ node -e '
     // Observations this key contributed inside the window; a key that
     // contributed none is not a repository this report is about.
     let observed = 0;
-    // SDD: fix-cycle rate. SDD artifacts carry no timestamp of their own, so
-    // the window cuts them by file mtime — the same basis the run walk uses,
-    // so both cohorts are cut on one clock.
+    // SDD: fix-cycle rate. Briefs sit in two layouts. Legacy runs wrote them
+    // straight into sdd/<key>; the live contract gives every plan its own
+    // workspace at sdd/<key>/plans/<slug>-<hash8>/ with the fix briefs beside
+    // the task briefs (subagent-driven-development/scripts/sdd-dir). Reading
+    // only the key root reported the legacy half of a cache and none of the
+    // tasks a current run writes.
     const sdd = path.join(base, "sdd", key);
-    const fixTasks = new Set();
-    if (fs.existsSync(sdd)) for (const f of fs.readdirSync(sdd)) {
-      const isBrief = /^task-\d+-brief\.md$/.test(f);
-      const m = f.match(/^task-(\d+)-.*codex-fix-brief/);
-      if (!isBrief && !m) continue;
-      if (windowed) {
-        let st; try { st = fs.statSync(path.join(sdd, f)); } catch (e) { continue; }
-        if (!inWindow(st.mtimeMs)) continue;
-      }
-      if (isBrief) r.tasks++;
-      if (m) fixTasks.add(m[1]);
-      observed++;
+    const workspaces = [];
+    if (fs.existsSync(sdd)) {
+      workspaces.push(sdd);
+      let plans = [];
+      try { plans = fs.readdirSync(path.join(sdd, "plans"), { withFileTypes: true }); } catch (e) { plans = []; }
+      for (const p of plans) if (p.isDirectory()) workspaces.push(path.join(sdd, "plans", p.name));
     }
-    r.fixBriefs = fixTasks.size;
+    // SDD artifacts carry no timestamp of their own, so the window cuts them
+    // by file mtime — the same basis the run walk uses, so both cohorts are
+    // cut on one clock. It cuts a cohort of tasks, not each file
+    // independently: a task is in the cohort when the mtime of its own brief
+    // is in the window, and a fix brief counts only for a task already in it.
+    // Filtering the two kinds apart let a fix brief whose task brief predated
+    // --since raise the numerator with nothing under it — "Fix-cycle rate:
+    // 1/0 tasks". A task is keyed by (workspace, number) because two plans
+    // each have a Task 3 and those are two tasks, not one.
+    const cohort = new Set(), fixed = new Set();
+    for (const ws of workspaces) {
+      let files = [];
+      try { files = fs.readdirSync(ws); } catch (e) { continue; }
+      for (const f of files) {
+        const brief = f.match(/^task-(\d+)-brief\.md$/);
+        const m = f.match(/^task-(\d+)-.*codex-fix-brief/);
+        if (!brief && !m) continue;
+        if (windowed) {
+          let st; try { st = fs.statSync(path.join(ws, f)); } catch (e) { continue; }
+          if (!inWindow(st.mtimeMs)) continue;
+        }
+        if (brief) { r.tasks++; cohort.add(ws + "\u0000" + brief[1]); }
+        if (m) fixed.add(ws + "\u0000" + m[1]);
+        observed++;
+      }
+    }
+    for (const id of fixed) if (cohort.has(id)) r.fixBriefs++;
     // Gate runs: rounds + backstops from gate-round.json, bucketed by gate
     // type; run dirs WITHOUT round data are counted, never silently ignored.
     const cr = path.join(base, "codex-review", key);

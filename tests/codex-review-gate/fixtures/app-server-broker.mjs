@@ -12,6 +12,9 @@
 //   --ignore-shutdown      accept broker/shutdown and keep running (a wedged
 //                          broker), which is what makes the signal fallback
 //                          observable
+//   --no-listen            run without ever creating the socket, the way a real
+//                          broker looks between spawn and listen (the companion
+//                          records it only once it answers)
 // Nothing else of the real broker is modeled.
 import fs from "node:fs";
 import net from "node:net";
@@ -53,5 +56,6 @@ const server = net.createServer((c) => {
     }
   });
 });
-server.listen(sock, () => { process.stdout.write("listening\n"); });
+if (argv.includes("--no-listen")) setInterval(() => {}, 1 << 30);  // stay up, socket never appears
+else server.listen(sock, () => { process.stdout.write("listening\n"); });
 process.on("SIGTERM", () => {}); // the real broker survives a bare SIGTERM too

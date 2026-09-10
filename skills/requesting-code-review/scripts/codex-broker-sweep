@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# codex-broker-sweep [--kill] [--include-unreferenced] [--state-root DIR]
+# Finds codex-plugin-cc brokers that nothing will ever use again and, with
+# --kill, retires them. Two shapes of leak, both seen in real runs:
+#   stale-record  — a <state-root>/<workspace>/broker.json whose endpoint no
+#                   longer answers (the broker died or the socket is gone);
+#                   with --kill the record is removed and a still-running pid
+#                   is stopped.
+#   orphan-broker — a running `app-server-broker.mjs serve` whose working
+#                   directory has been deleted (a review launched from a
+#                   temporary working copy) or whose endpoint no longer answers;
+#                   with --kill it is asked to shut down over its own protocol
+#                   (`broker/shutdown`), then signalled if it lingers.
+# A running broker whose working directory exists and whose endpoint answers is
+# a peer session's broker and is never touched. --include-unreferenced widens
+# the second shape to brokers no state record names: the companion cannot reuse
+# those, but a record deleted by hand also makes a healthy peer look
+# unreferenced, so retiring them is opt-in. Without --kill nothing changes.
+# Exit 0 with a report; exit 2 for usage.
+set -uo pipefail
+kill=0; unref=0; root="${HOME}/.claude/plugins/data/codex-openai-codex/state"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --kill) kill=1; shift ;;
+    --include-unreferenced) unref=1; shift ;;
+    --state-root) [ $# -ge 2 ] || { echo "codex-broker-sweep: --state-root needs a value" >&2; exit 2; }; root="$2"; shift 2 ;;
+    *) echo "usage: codex-broker-sweep [--kill] [--include-unreferenced] [--state-root DIR]" >&2; exit 2 ;;
+  esac
+done
+node - "$root" "$kill" "$unref" <<'JS'
+const fs = require("fs"), path = require("path"), net = require("net"), cp = require("child_process");
+const [root, killArg, unrefArg] = process.argv.slice(2);
+const kill = killArg === "1", sweepUnreferenced = unrefArg === "1";
+const sockOf = (ep) => (typeof ep === "string" && ep.startsWith("unix:")) ? ep.slice(5) : null;
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
+const answers = (ep) => new Promise((res) => {
+  const p = sockOf(ep); if (!p || !fs.existsSync(p)) return res(false);
+  const s = net.createConnection({ path: p }); const done = (v) => { try { s.destroy(); } catch {} res(v); };
+  s.setTimeout(500, () => done(false)); s.on("connect", () => done(true)); s.on("error", () => done(false));
+});
+const shutdown = (ep) => new Promise((res) => {
+  const p = sockOf(ep); if (!p) return res(false);
+  const s = net.createConnection({ path: p }); const done = (v) => { try { s.destroy(); } catch {} res(v); };
+  s.setTimeout(2000, () => done(false)); s.setEncoding("utf8");
+  s.on("connect", () => s.write(`${JSON.stringify({ id: 1, method: "broker/shutdown", params: {} })}\n`));
+  s.on("data", () => done(true)); s.on("error", () => done(false)); s.on("close", () => done(true));
+});
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const cwdOf = (pid) => {
+  try { return fs.readlinkSync(`/proc/${pid}/cwd`); } catch {}
+  try {
+    const out = cp.execFileSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const n = out.split("\n").find((l) => l.startsWith("n")); return n ? n.slice(1).replace(/ \(deleted\)$/, "") : null;
+  } catch { return null; }
+};
+const stopPid = async (pid) => {
+  for (const sig of ["SIGTERM", "SIGKILL"]) { if (!alive(pid)) return; try { process.kill(pid, sig); } catch {} await sleep(500); }
+};
+(async () => {
+  let records = 0, brokers = 0;
+  // 1. State records. Every endpoint a record names is "referenced": the
+  // companion finds brokers only through these records, so a running broker no
+  // record names can never be reused — a leak, but only under
+  // --include-unreferenced, because the record may simply have been deleted.
+  const referenced = new Set();
+  if (!fs.existsSync(root)) { console.log(`no state root at ${root}`); }
+  else for (const d of fs.readdirSync(root)) {
+    const f = path.join(root, d, "broker.json"); if (!fs.existsSync(f)) continue;
+    let rec; try { rec = JSON.parse(fs.readFileSync(f, "utf8")); } catch { rec = {}; }
+    if (typeof rec.endpoint === "string") referenced.add(rec.endpoint);
+    if (await answers(rec.endpoint)) continue;
+    records++; console.log(`stale-record ${path.join(root, d)} endpoint=${rec.endpoint ?? "?"} pid=${rec.pid ?? "?"}`);
+    if (kill) { if (Number.isInteger(rec.pid) && alive(rec.pid)) await stopPid(rec.pid); try { fs.unlinkSync(f); } catch {} }
+  }
+  // 2. Running brokers.
+  // pgrep narrows the process table to brokers; a full `ps -ax` listing on a
+  // busy host exceeds Node's default execFileSync buffer and would throw, and a
+  // swallowed throw would read as "no brokers", which is the one answer this
+  // tool must never give silently.
+  let pids = [];
+  try { pids = cp.execFileSync("pgrep", ["-f", "app-server-broker\\.mjs serve"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n").map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 0 && n !== process.pid); }
+  catch (e) { if (e && e.status === 1) pids = []; else { console.log(`warning: could not list processes (${e && e.code ? e.code : e})`); pids = []; } }
+  for (const pid of pids) {
+    let cmd = ""; try { cmd = cp.execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 }).trim(); } catch { continue; }
+    const m = /app-server-broker\.mjs serve .*--endpoint (\S+)/.exec(cmd); if (!m) continue;
+    const ep = m[1]; const cwd = cwdOf(pid);
+    const cwdMissing = cwd !== null && !fs.existsSync(cwd); const dead = !(await answers(ep));
+    const unreferenced = sweepUnreferenced && !referenced.has(ep);
+    if (!cwdMissing && !dead && !unreferenced) continue;
+    const reason = cwdMissing ? "cwd-missing" : dead ? "endpoint-dead" : "unreferenced";
+    brokers++; console.log(`orphan-broker pid=${pid} endpoint=${ep} reason=${reason} cwd=${cwd ?? "?"}`);
+    if (kill) { if (!dead) { await shutdown(ep); await sleep(1000); } await stopPid(pid); }
+  }
+  console.log(`swept: ${records} stale record(s), ${brokers} orphan broker(s) (${kill ? "retired" : "dry run"})`);
+})();
+JS

@@ -65,7 +65,31 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
         pass "$dir: frontmatter is a key: value mapping"
     fi
 
-    name_line="$(printf '%s\n' "$block" | grep -m1 -E '^name:([[:space:]]|$)')"
+    # A YAML loader resolves a duplicate key to its LAST occurrence (or
+    # rejects the document); every check below reads the FIRST. A block with
+    # two `name:` lines therefore certifies a name no loader will return.
+    dup_key="$(awk '
+        NR == 1 { next }
+        /^---$/ { exit }
+        /^[[:space:]]/ { next }
+        /^#/ { next }
+        match($0, /^[A-Za-z_][A-Za-z0-9_.-]*:/) {
+            k = substr($0, 1, RLENGTH - 1)
+            if (k in seen) { print k; exit }
+            seen[k] = 1
+        }
+    ' "$skill")"
+    if [ -n "$dup_key" ]; then
+        fail "$dir: frontmatter has no duplicate keys (got '$dup_key' twice)"
+    else
+        pass "$dir: frontmatter has no duplicate keys"
+    fi
+
+    # Last match, not first: a YAML loader resolves a duplicate key to its
+    # last occurrence, so reading the first would print a true-looking PASS
+    # for a name no loader returns. The duplicate-key check above already
+    # fails the run; this keeps every line it prints honest as well.
+    name_line="$(printf '%s\n' "$block" | grep -E '^name:([[:space:]]|$)' | tail -1)"
     name_value="${name_line#name:}"
     # Trim leading spaces without a bashism that macOS bash 3.2 lacks.
     name_value="$(printf '%s' "$name_value" | sed 's/^ *//; s/ *$//')"
@@ -77,7 +101,7 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
         pass "$dir: name matches the directory"
     fi
 
-    desc_line="$(printf '%s\n' "$block" | grep -m1 -E '^description:([[:space:]]|$)')"
+    desc_line="$(printf '%s\n' "$block" | grep -E '^description:([[:space:]]|$)' | tail -1)"
     desc_value="$(printf '%s' "${desc_line#description:}" | sed 's/^ *//')"
     if [ -z "$desc_line" ]; then
         fail "$dir: frontmatter declares a description"
@@ -92,21 +116,35 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
                 # A value that opens a YAML comment leaves the key null.
                 fail "$dir: description value is a comment, so the key is null"
                 ;;
+            '['* | '{'* | '&'* | '*'* | '!'* | '%'* | '@'* | '`'*)
+                # A flow collection, anchor, alias, tag, or reserved
+                # indicator — none of which load as a string.
+                fail "$dir: description is a plain or quoted scalar (got '$desc_value')"
+                ;;
             *)
-                # A plain scalar continues across blank lines, so scan past them
-                # to the next top-level key or the closing delimiter.
-                continuation="$(awk '
-                    NR == 1 { next }
-                    /^---$/ { exit }
-                    seen && /^[A-Za-z_][A-Za-z0-9_.-]*:/ { exit }
-                    seen && /^[[:space:]]*$/ { next }
-                    seen { print; exit }
-                    /^description:[[:space:]]/ { seen = 1 }
-                ' "$skill")"
-                if [ -n "$continuation" ]; then
-                    fail "$dir: description is on a single line (continuation follows)"
+                # YAML resolves an UNQUOTED scalar by its token shape, so a
+                # value can be present, single-line, and still reach a loader
+                # as null, a boolean, or a number rather than a string.
+                # Quoted values never reach this test: they start with a quote
+                # and are strings whatever they spell.
+                if awk -v v="$desc_value" 'BEGIN { exit !(v ~ /^(~|null|Null|NULL|true|True|TRUE|false|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|[+-]?[0-9][0-9_]*(\.[0-9_]*)?([eE][+-]?[0-9]+)?|[+-]?\.[0-9_]+([eE][+-]?[0-9]+)?|[+-]?\.(inf|Inf|INF|nan|NaN|NAN)|0x[0-9a-fA-F_]+|0o[0-7_]+)$/) }'; then
+                    fail "$dir: description resolves to a non-string YAML scalar (got '$desc_value')"
                 else
-                    pass "$dir: description is a single-line plain scalar"
+                    # A plain scalar continues across blank lines, so scan past
+                    # them to the next top-level key or the closing delimiter.
+                    continuation="$(awk '
+                        NR == 1 { next }
+                        /^---$/ { exit }
+                        seen && /^[A-Za-z_][A-Za-z0-9_.-]*:/ { exit }
+                        seen && /^[[:space:]]*$/ { next }
+                        seen { print; exit }
+                        /^description:[[:space:]]/ { seen = 1 }
+                    ' "$skill")"
+                    if [ -n "$continuation" ]; then
+                        fail "$dir: description is on a single line (continuation follows)"
+                    else
+                        pass "$dir: description is a single-line plain scalar"
+                    fi
                 fi
                 ;;
         esac

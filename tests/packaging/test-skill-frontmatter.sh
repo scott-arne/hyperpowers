@@ -44,7 +44,28 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
     fi
     pass "$dir: frontmatter block is delimited"
 
-    name_line="$(printf '%s\n' "$block" | grep -m1 '^name:')"
+    # The block must be a YAML mapping: one `key: value` per line. A colon with
+    # no separator whitespace is not a mapping separator, so `name:x` makes the
+    # whole block parse as one plain scalar and no key is reachable at all.
+    # Indented lines are continuations of the entry above; full-line comments
+    # and blank lines are legal YAML.
+    bad_line="$(awk '
+        NR == 1 { next }
+        /^---$/ { exit }
+        /^[[:space:]]*$/ { next }
+        /^[[:space:]]/ { next }
+        /^#/ { next }
+        /^[A-Za-z_][A-Za-z0-9_.-]*:[[:space:]]/ { next }
+        /^[A-Za-z_][A-Za-z0-9_.-]*:$/ { next }
+        { print; exit }
+    ' "$skill")"
+    if [ -n "$bad_line" ]; then
+        fail "$dir: frontmatter is a key: value mapping (got '$bad_line')"
+    else
+        pass "$dir: frontmatter is a key: value mapping"
+    fi
+
+    name_line="$(printf '%s\n' "$block" | grep -m1 -E '^name:([[:space:]]|$)')"
     name_value="${name_line#name:}"
     # Trim leading spaces without a bashism that macOS bash 3.2 lacks.
     name_value="$(printf '%s' "$name_value" | sed 's/^ *//; s/ *$//')"
@@ -56,7 +77,7 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
         pass "$dir: name matches the directory"
     fi
 
-    desc_line="$(printf '%s\n' "$block" | grep -m1 '^description:')"
+    desc_line="$(printf '%s\n' "$block" | grep -m1 -E '^description:([[:space:]]|$)')"
     desc_value="$(printf '%s' "${desc_line#description:}" | sed 's/^ *//')"
     if [ -z "$desc_line" ]; then
         fail "$dir: frontmatter declares a description"
@@ -67,6 +88,10 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
             '|'* | '>'*)
                 fail "$dir: description is a plain scalar, not a block scalar"
                 ;;
+            '#'*)
+                # A value that opens a YAML comment leaves the key null.
+                fail "$dir: description value is a comment, so the key is null"
+                ;;
             *)
                 # A plain scalar continues across blank lines, so scan past them
                 # to the next top-level key or the closing delimiter.
@@ -76,7 +101,7 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
                     seen && /^[A-Za-z_][A-Za-z0-9_.-]*:/ { exit }
                     seen && /^[[:space:]]*$/ { next }
                     seen { print; exit }
-                    /^description:/ { seen = 1 }
+                    /^description:[[:space:]]/ { seen = 1 }
                 ' "$skill")"
                 if [ -n "$continuation" ]; then
                     fail "$dir: description is on a single line (continuation follows)"

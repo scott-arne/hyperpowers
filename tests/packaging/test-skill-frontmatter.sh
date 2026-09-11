@@ -20,6 +20,14 @@ fail() {
     FAILURES=$((FAILURES + 1))
 }
 
+# YAML resolves an UNQUOTED scalar by its token shape, so a value can be
+# present, single-line, and still reach a loader as null, a boolean, or a
+# number rather than the string it looks like. Quoted values never reach this
+# test: they start with a quote and are strings whatever they spell.
+resolves_to_non_string() {
+    awk -v v="$1" 'BEGIN { exit !(v ~ /^(~|null|Null|NULL|true|True|TRUE|false|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|[+-]?[0-9][0-9_]*(\.[0-9_]*)?([eE][+-]?[0-9]+)?|[+-]?\.[0-9_]+([eE][+-]?[0-9]+)?|[+-]?\.(inf|Inf|INF|nan|NaN|NAN)|0x[0-9a-fA-F_]+|0o[0-7_]+)$/) }'
+}
+
 echo "=== skill frontmatter ==="
 echo ""
 
@@ -95,6 +103,10 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
     name_value="$(printf '%s' "$name_value" | sed 's/^ *//; s/ *$//')"
     if [ -z "$name_line" ]; then
         fail "$dir: frontmatter declares a name"
+    elif resolves_to_non_string "$name_value"; then
+        # A directory named `null`, `on`, or `123` would otherwise compare
+        # equal as raw text while a loader returns None, True, or an int.
+        fail "$dir: name resolves to a non-string YAML scalar (got '$name_value')"
     elif [ "$name_value" != "$dir" ]; then
         fail "$dir: name matches the directory (got '$name_value')"
     else
@@ -122,12 +134,7 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
                 fail "$dir: description is a plain or quoted scalar (got '$desc_value')"
                 ;;
             *)
-                # YAML resolves an UNQUOTED scalar by its token shape, so a
-                # value can be present, single-line, and still reach a loader
-                # as null, a boolean, or a number rather than a string.
-                # Quoted values never reach this test: they start with a quote
-                # and are strings whatever they spell.
-                if awk -v v="$desc_value" 'BEGIN { exit !(v ~ /^(~|null|Null|NULL|true|True|TRUE|false|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|[+-]?[0-9][0-9_]*(\.[0-9_]*)?([eE][+-]?[0-9]+)?|[+-]?\.[0-9_]+([eE][+-]?[0-9]+)?|[+-]?\.(inf|Inf|INF|nan|NaN|NAN)|0x[0-9a-fA-F_]+|0o[0-7_]+)$/) }'; then
+                if resolves_to_non_string "$desc_value"; then
                     fail "$dir: description resolves to a non-string YAML scalar (got '$desc_value')"
                 else
                     # A plain scalar continues across blank lines, so scan past

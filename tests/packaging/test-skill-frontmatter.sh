@@ -68,11 +68,17 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
                 fail "$dir: description is a plain scalar, not a block scalar"
                 ;;
             *)
-                # Check for continuation line after description.
-                desc_line_num="$(printf '%s\n' "$block" | grep -n '^description:' | head -1 | cut -d: -f1)"
-                next_line_num=$((desc_line_num + 1))
-                next_line="$(printf '%s\n' "$block" | sed -n "${next_line_num}p")"
-                if [ -n "$next_line" ] && ! printf '%s\n' "$next_line" | grep -q '^[A-Za-z_][A-Za-z0-9_.-]*:'; then
+                # A plain scalar continues across blank lines, so scan past them
+                # to the next top-level key or the closing delimiter.
+                continuation="$(awk '
+                    NR == 1 { next }
+                    /^---$/ { exit }
+                    seen && /^[A-Za-z_][A-Za-z0-9_.-]*:/ { exit }
+                    seen && /^[[:space:]]*$/ { next }
+                    seen { print; exit }
+                    /^description:/ { seen = 1 }
+                ' "$skill")"
+                if [ -n "$continuation" ]; then
                     fail "$dir: description is on a single line (continuation follows)"
                 else
                     pass "$dir: description is a single-line plain scalar"

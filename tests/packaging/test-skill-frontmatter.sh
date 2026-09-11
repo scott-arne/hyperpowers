@@ -68,12 +68,20 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
                 fail "$dir: description is a plain scalar, not a block scalar"
                 ;;
             *)
-                pass "$dir: description is a single-line plain scalar"
+                # Check for continuation line after description.
+                desc_line_num="$(printf '%s\n' "$block" | grep -n '^description:' | head -1 | cut -d: -f1)"
+                next_line_num=$((desc_line_num + 1))
+                next_line="$(printf '%s\n' "$block" | sed -n "${next_line_num}p")"
+                if [ -n "$next_line" ] && ! printf '%s\n' "$next_line" | grep -q '^[A-Za-z_][A-Za-z0-9_.-]*:'; then
+                    fail "$dir: description is on a single line (continuation follows)"
+                else
+                    pass "$dir: description is a single-line plain scalar"
+                fi
                 ;;
         esac
     fi
 
-    chars="$(printf '%s\n' "$block" | wc -c | tr -d ' ')"
+    chars="$(awk 'NR==1 {next} /^---$/ {exit} {print}' "$skill" | wc -m | tr -d ' ')"
     if [ "$chars" -le 1024 ]; then
         pass "$dir: frontmatter is within 1024 characters ($chars)"
     else

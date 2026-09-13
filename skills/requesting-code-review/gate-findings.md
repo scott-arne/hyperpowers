@@ -40,7 +40,7 @@ Deduplicate findings into the ONE round ledger: same file/section + same defect 
 — never one entry per lens — written once with every reporting lens's tag appended, e.g. `[lens:
 correctness] [lens: contracts-and-integration]`; every entry carries its source tag `[lens: <name>]`
 (plus `[out-of-lane]` where the lens said so). Re-review rounds normalize their single capture
-WITHOUT the flag, exactly as today.
+WITHOUT the flag, exactly as today. Two findings are the same defect when they cite the same file and the same offending code AND describe the same failure: the same violated requirement, trigger, and bad outcome. Titles and line numbers do not decide it: each lens phrases a title differently and line numbers drift, but the quoted evidence and the failure do not. Location alone is not identity: one fragment can carry two independent defects, and those stay separate. When entries merge, the strictest severity survives.
 
 Its tri-state `.result` is the review outcome: `approved`, `blocking`, or
 `incomplete`. Only a `verdict-normalize` result of `approved` counts as

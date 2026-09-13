@@ -384,6 +384,13 @@ The loop triggers when the review reports spec ❌, any Critical or Important
 finding, a ⚠️ item you confirmed as a real gap, or a blocking finding from
 the per-task Codex gate below.
 
+Task-reviewer findings are claims too. The resumed implementer verifies
+each finding against the code before fixing it
+(hyperpowers:receiving-code-review); a finding is declined only as
+refuted or corrected with file:line evidence, which the controller
+records in the ledger; a confirmed finding is fixed or carried open; a
+finding nobody can settle stays open and counts against the round cap.
+
 Before the loop starts, two routes leave it immediately:
 
 - Record Minor findings in the progress ledger as you go

@@ -346,10 +346,10 @@ fi
 # never ran — a failed redirection, an emptied table — reports 0 here instead of
 # leaving the assertion above vacuously clean. Growth of this channel must be a
 # deliberate bump, not a silent one.
-if [ "$post_edit_count" -eq 18 ]; then
-    pass "exactly 18 declared post-split edits"
+if [ "$post_edit_count" -eq 20 ]; then
+    pass "exactly 20 declared post-split edits"
 else
-    fail "exactly 18 declared post-split edits (got $post_edit_count)"
+    fail "exactly 20 declared post-split edits (got $post_edit_count)"
 fi
 
 # --- 5. Reconstruct each destination from the original, rewrites and edits. ---

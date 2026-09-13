@@ -342,5 +342,15 @@ assert_contains "$IMPL" "If your brief names a Mirror, read it before you write 
 assert_contains "$SDD" "A dispatched task that has not been collected and reconciled against the ledger is not a completed task; the controller does not end its turn holding one." \
   "SKILL.md requires collection before the turn ends"
 
+# --- A3 the fix loop has a decline verdict -------------------------------
+assert_contains "$REREVW" "ADDRESSED | NOT ADDRESSED | DECLINED, with file:line" \
+  "re-review-prompt.md offers a DECLINED verdict"
+assert_contains "$REREVW" "A decline whose evidence you cannot confirm is NOT ADDRESSED and stays open." \
+  "re-review-prompt.md keeps an unconfirmed decline open"
+assert_contains "$SDD" "verdicts each finding ADDRESSED, NOT ADDRESSED, or DECLINED" \
+  "SKILL.md names the three re-review verdicts"
+assert_contains "$SDD_RATIONALIZATIONS" "is declined only as refuted or corrected, with file:line evidence the re-reviewer confirms" \
+  "common-rationalizations.md narrows a disagreement to an evidenced decline"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

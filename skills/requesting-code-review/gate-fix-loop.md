@@ -13,7 +13,7 @@ completed round it records:
 
 - **Resolved** — each blocking finding and how it was addressed, with the fix
   commit/diff reference (code) or the spec/plan edit (documents).
-- **Declined** — each finding you declined, with the explicit reasoning (the
+- **Declined** — each finding you declined as *refuted* or *corrected* with file:line evidence, and each confirmed defect your human partner explicitly accepted as risk, in their own recorded words, labelled *accepted risk*; each with the explicit reasoning (the
   decision below to decline a finding, carried forward instead of lost).
 - **Still open** — any blocking finding not yet resolved, and why.
 

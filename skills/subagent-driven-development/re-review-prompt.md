@@ -84,9 +84,14 @@ Subagent (general-purpose):
     ### Finding Verdicts
 
     For each finding in The Findings Under Verification, in order:
-    - **[finding one-liner]** — ADDRESSED | NOT ADDRESSED, with file:line
+    - **[finding one-liner]** — ADDRESSED | NOT ADDRESSED | DECLINED, with file:line
       evidence. "Attempted" is not addressed: the specific defect must no
       longer exist.
+    - DECLINED means the implementer refuted the finding (the cited code
+      does not do what it says) or corrected it (real, but not blocking
+      severity or not this change's scope) with file:line evidence you have
+      read and confirmed. A decline whose evidence you cannot confirm is
+      NOT ADDRESSED and stays open.
 
     ### New Breakage in the Fix Diff
 
@@ -135,5 +140,5 @@ round was controller-applied under SKILL.md's de-minimis exception, read
 covering-command output land in the same task report file, and your job
 is unchanged — verify the named findings against the diff.
 
-**Re-reviewer returns:** per-finding verdicts (ADDRESSED / NOT ADDRESSED),
+**Re-reviewer returns:** per-finding verdicts (ADDRESSED / NOT ADDRESSED / DECLINED),
 new breakage in the fix diff, out-of-scope observations, and a round verdict.

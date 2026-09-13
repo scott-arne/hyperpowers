@@ -408,6 +408,8 @@ assert_contains "$GATE" "Uncertainty never clears a blocker." \
   "an unsettled finding stays blocking"
 assert_contains "$GATE" "You MAY decline a finding on those terms, with explicit reasoning recorded in the ledger, instead of fixing it." \
   "the decline permission is narrowed to those terms"
+assert_contains "$GATE" "**carry it to the hand-back as unresolved** — it stays blocking, ships no unverified change and buys no follow-on gate" \
+  "the backstop clause carries an unresolved blocker instead of declining it on cost"
 
 # --- A3 dedup identity ----------------------------------------------------
 assert_contains "$GATE" "Two findings are the same defect when they cite the same file and the same offending code AND describe the same failure: the same violated requirement, trigger, and bad outcome." \

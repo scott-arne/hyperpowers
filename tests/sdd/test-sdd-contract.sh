@@ -357,6 +357,14 @@ assert_contains "$SDD" '"All findings addressed or declined?" [shape=diamond];' 
   "SKILL.md flowchart exit node accepts a decline"
 assert_contains "$SDD" "every fix-loop finding is addressed or declined" \
   "SKILL.md completion accepts a declined finding"
+assert_contains "$SDD" "**A round that declines every finding changes no code.**" \
+  "an all-declined round is defined"
+assert_contains "$SDD" 'Skip `scripts/review-package` for that round' \
+  "an all-declined round skips review-package"
+assert_contains "$SDD" "The covering-tests precondition applies only to findings that were fixed." \
+  "the covering-tests precondition is scoped to fixed findings"
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "(2 addressed, 0 declined, 0 open; commits d4e5f6a..b7c8d9e)" \
+  "the example ledger line carries the declined counter"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

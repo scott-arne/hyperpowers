@@ -32,7 +32,7 @@ escape_for_json() {
 # both are swallowed. A terminal stdin means no payload at all.
 hook_input=""
 if [ ! -t 0 ]; then
-  IFS= read -r -d '' -t 2 hook_input || true
+  IFS= read -r -d '' -t 2 hook_input 2>/dev/null || true
 fi
 hook_source=""
 if [ -n "$hook_input" ] && command -v node >/dev/null 2>&1; then

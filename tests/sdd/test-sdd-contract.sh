@@ -197,7 +197,7 @@ assert_contains "$SDD" "consumes a fix round and ends in the same scoped re-revi
 assert_contains "$SDD" "Reaching for it twice in the same task means the findings are not de minimis" "carve-out two-strike rule"
 assert_contains "$SDD" "applies the edit and runs the fix's covering command FIRST" \
   "carve-out verifies before committing"
-assert_contains "$SDD" "controller-applied (de minimis) (<X> addressed, <Y> open" \
+assert_contains "$SDD" "controller-applied (de minimis) (<X> addressed, <Y> declined, <Z> open" \
   "carve-out ledger line keeps the fix-round schema"
 assert_contains "$SDD" "touching at most 3 lines in one file with no new logic" \
   "carve-out numeric and scope bounds are pinned"
@@ -351,6 +351,12 @@ assert_contains "$SDD" "verdicts each finding ADDRESSED, NOT ADDRESSED, or DECLI
   "SKILL.md names the three re-review verdicts"
 assert_contains "$SDD_RATIONALIZATIONS" "is declined only as refuted or corrected, with file:line evidence the re-reviewer confirms" \
   "common-rationalizations.md narrows a disagreement to an evidenced decline"
+assert_contains "$REREVW" "All findings addressed or declined, no new Critical/Important breakage" \
+  "re-review-prompt.md round verdict lets a decline close the round"
+assert_contains "$SDD" '"All findings addressed or declined?" [shape=diamond];' \
+  "SKILL.md flowchart exit node accepts a decline"
+assert_contains "$SDD" "every fix-loop finding is addressed or declined" \
+  "SKILL.md completion accepts a declined finding"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

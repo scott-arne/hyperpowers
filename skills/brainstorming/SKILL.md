@@ -294,6 +294,10 @@ Before opening the companion for the first time, read the detailed guide:
   - (User preferences for spec location override this default)
 - Use elements-of-style:writing-clearly-and-concisely skill if available
 - Do NOT commit the design document. Leave it as an uncommitted working file unless the user explicitly asks you to commit it.
+- Where the design rests on something nobody confirmed, write it as
+  `Assumption: <what>, validate via <method>` rather than as a fact; the
+  plan will attach the deadline. The placeholder scan accepts that form
+  and flags bare TBD or TODO.
 
 **Spec Self-Review:**
 After writing the spec document, look at it with fresh eyes:

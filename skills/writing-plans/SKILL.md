@@ -166,6 +166,12 @@ git commit -m "feat: add specific feature"
 ```
 ````
 
+The `**Mirror:**` line is optional: include it when a real analogue exists
+and omit it when none does. An omitted Mirror is not a placeholder. A Mirror
+cites the code as it stands when the plan is written; if earlier tasks have
+moved that range by the time it is read, re-locate it by the construct it
+names rather than imitating whatever now sits at those lines.
+
 ## No Placeholders
 
 Every step must contain the actual content an engineer needs. These are **plan failures** — never write them:

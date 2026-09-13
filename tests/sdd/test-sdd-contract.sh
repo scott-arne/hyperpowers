@@ -338,5 +338,9 @@ assert_contains "$SDD" "a finding nobody can settle stays open and counts agains
 assert_contains "$IMPL" "If your brief names a Mirror, read it before you write and imitate its shape." \
   "the implementer reads the brief's Mirror"
 
+# --- A8 collection contract in SDD ---------------------------------------
+assert_contains "$SDD" "A dispatched task that has not been collected and reconciled against the ledger is not a completed task; the controller does not end its turn holding one." \
+  "SKILL.md requires collection before the turn ends"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

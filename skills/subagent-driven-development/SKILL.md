@@ -234,7 +234,10 @@ minutes, where your platform allows), and between stretches post one
 line of status and reconcile your live children: list them, and chase
 any that finished without reporting. A bounded stretch keeps nearly
 all of a long wait's efficiency while guaranteeing a stuck or lost
-child is noticed within minutes, not at the end of the session.
+child is noticed within minutes, not at the end of the session. A
+dispatched task that has not been collected and reconciled against the
+ledger is not a completed task; the controller does not end its turn
+holding one.
 
 ### 1. Dispatch the implementer
 

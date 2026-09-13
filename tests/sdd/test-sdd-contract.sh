@@ -365,6 +365,16 @@ assert_contains "$SDD" "The covering-tests precondition applies only to findings
   "the covering-tests precondition is scoped to fixed findings"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "(2 addressed, 0 declined, 0 open; commits d4e5f6a..b7c8d9e)" \
   "the example ledger line carries the declined counter"
+assert_contains "$IMPL" "Every finding is a claim: verify it against the cited code before acting." \
+  "the resumed implementer verifies findings before fixing"
+assert_contains "$IMPL" "A round in which you decline every finding changes no code: report the evidence and return the short contract with no commit." \
+  "the implementer knows the all-declined round"
+assert_contains "$REREVW" "An all-declined round has no fix diff: the diff file above is then the previous review's package" \
+  "the re-review prompt defines the all-declined diff file"
+assert_contains "$REREVW" "a declined finding is confirmed from its file:line evidence, not from tests" \
+  "the re-review prompt scopes the covering-tests requirement"
+assert_contains "$SDD" "That precondition covers the findings the round fixed; a round that declines every finding is defined below." \
+  "the covering-tests precondition is scoped where it first appears"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

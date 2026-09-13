@@ -41,6 +41,11 @@ Subagent (general-purpose):
     `git diff --stat [FIX_BASE_SHA]..[HEAD_SHA]` and
     `git diff [FIX_BASE_SHA]..[HEAD_SHA]`.
 
+    An all-declined round has no fix diff: the diff file above is then the
+    previous review's package, and every finding's evidence lives in code that
+    diff did not change. Read the cited file:line for each declined finding
+    directly; nothing in this round is "outside the fix diff".
+
     Your review is read-only on this checkout. Do not mutate the working
     tree, the index, HEAD, or branch state in any way. Use tools like
     `git show`, `git diff`, and `git log` to inspect history. If you need a
@@ -64,17 +69,21 @@ Subagent (general-purpose):
     re-review code the fix did not touch: if you notice an issue entirely
     outside the fix diff, report it under Out-of-Scope Observations — it
     does not block this task and does not extend the loop. A broad
-    whole-branch review happens after all tasks are complete.
+    whole-branch review happens after all tasks are complete. When the round
+    declined a finding, the cited code is in scope whether or not the diff
+    touched it.
 
     ## Tests
 
     The implementer re-ran the tests covering the amended code and appended
     the results to the report file. Treat the report as unverified claims:
     confirm the fix report names the covering tests and shows their output,
-    and verify the claims against the diff. Do not re-run the suite to
-    confirm their report. Run a test only when reading the code raises a
-    specific doubt that no existing run answers — and then a focused test,
-    never a package-wide suite.
+    and verify the claims against the diff. That requirement covers the
+    findings the round fixed; a declined finding is confirmed from its
+    file:line evidence, not from tests. Do not re-run the suite to confirm
+    their report. Run a test only when reading the code raises a specific
+    doubt that no existing run answers — and then a focused test, never a
+    package-wide suite.
 
     ## Output Format
 

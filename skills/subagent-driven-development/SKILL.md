@@ -430,11 +430,13 @@ its own problem — fresh eyes and a capability bump in one move.
 covering the amended code, appends its fix report to the same report file,
 and returns the short contract. Before re-dispatching the reviewer, confirm
 the fix report contains the covering tests, the command run, and the
-output; dispatch the re-review once all three are present. Name the
-covering test files in the fix message — a one-line fix does not need the
-whole suite. The per-task loop resumes an implementer rather than dispatching
-a fixer, so it never uses [fix-subagent-prompt.md](fix-subagent-prompt.md) —
-that template belongs to the final review's one fix wave.
+output; dispatch the re-review once all three are present. That
+precondition covers the findings the round fixed; a round that declines
+every finding is defined below. Name the covering test files in the fix
+message — a one-line fix does not need the whole suite. The per-task loop
+resumes an implementer rather than dispatching a fixer, so it never uses
+[fix-subagent-prompt.md](fix-subagent-prompt.md) — that template belongs to
+the final review's one fix wave.
 
 **The re-review is scoped.** Run `scripts/review-package PLAN_FILE FIX_BASE HEAD`
 where FIX_BASE is the head the previous review saw, and dispatch

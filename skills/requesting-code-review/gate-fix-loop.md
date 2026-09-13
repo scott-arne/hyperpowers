@@ -92,7 +92,7 @@ and never converges the loop by itself.
 2. Otherwise address each blocking finding: for a document, edit the spec/plan; for
    code, dispatch a fix through the skill's existing fix path (for SDD's per-task
    gate that path resumes the implementer per SDD's fix loop, not a fix subagent).
-   You MAY decline a finding with explicit reasoning instead of fixing it.
+   Confirm before you fix. Every blocking finding is a claim about the change; read the cited code before acting on it. Each finding lands in exactly one state. **Confirmed** — the defect is real: fix it; a confirmed defect leaves the ledger only through a fix or through your human partner's explicit acceptance of the risk, recorded in the ledger with their words, and the controller does not accept risk on its own. **Declined** — reserved for two cases, each with file:line evidence in the ledger: *refuted*, the cited code does not do what the finding says; or *corrected*, the defect exists but not at blocking severity, or not in this change's scope, and the evidence shows why. A decline without evidence is a silent drop. **Unsettled** — you could not confirm or refute it: it stays blocking, so fix it defensively or carry it to the hand-back as unresolved. Uncertainty never clears a blocker. You MAY decline a finding on those terms, with explicit reasoning recorded in the ledger, instead of fixing it.
    Record resolutions, declines, and still-open items in the round ledger.
    After any code fix, re-run the same Claude reviewer gate before re-running Codex.
    For SDD per-task gates, that reviewer gate is SDD's scoped re-review.

@@ -440,12 +440,14 @@ that template belongs to the final review's one fix wave.
 where FIX_BASE is the head the previous review saw, and dispatch
 [re-review-prompt.md](re-review-prompt.md) with the findings list, the
 brief, the report file, and the printed diff path. The re-reviewer verdicts
-each finding ADDRESSED or NOT ADDRESSED and flags new breakage in the fix
-diff only. New Critical/Important breakage in the fix diff joins the open
-findings list. Out-of-scope observations go to the ledger as deferred
-minors — they never extend the loop. Every round in this loop ends with the
-scoped re-review — never a full task-reviewer re-run, whatever the finding's
-origin.
+each finding ADDRESSED, NOT ADDRESSED, or DECLINED — a refuted or corrected
+finding whose file:line evidence the re-reviewer has confirmed; an unconfirmed
+decline stays NOT ADDRESSED — and flags new breakage in the fix diff only. The
+controller records each DECLINED finding in the ledger with its evidence. New
+Critical/Important breakage in the fix diff joins the open findings list.
+Out-of-scope observations go to the ledger as deferred minors — they never
+extend the loop. Every round in this loop ends with the scoped re-review —
+never a full task-reviewer re-run, whatever the finding's origin.
 
 **After each round,** append to the ledger:
 `Task <N>: fix round <R>/5 (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`

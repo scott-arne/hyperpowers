@@ -34,6 +34,12 @@ Before defining tasks, map out which files will be created or modified and what 
 
 This structure informs the task decomposition. Each task should produce self-contained changes that make sense independently.
 
+Ground the plan before you write it. For each convention the work will
+touch, find one real example in the codebase and record it in the
+Grounding section with its path and line range. If no similar code
+exists, say so explicitly there. Never invent a pattern: an invented
+citation sends the implementer to imitate code that is not there.
+
 ## Task Right-Sizing
 
 A task is the smallest unit that carries its own test cycle and is worth a
@@ -76,6 +82,13 @@ naming and copy rules, platform requirements — one line each, with exact
 values copied verbatim from the spec. Every task's requirements implicitly
 include this section.]
 
+## Grounding
+
+[One line per convention the work touches, at minimum naming, error
+handling, and test shape: `path/to/file.py:40-72`, what it shows, or
+`none: no existing pattern for <convention>`. Every citation resolves to
+real code; an invented citation is a plan failure.]
+
 ---
 ```
 
@@ -116,6 +129,9 @@ whole-branch train never tier off.
 - Produces: [what later tasks rely on — exact function names, parameter
   and return types. A task's implementer sees only their own task; this
   block is how they learn the names and types neighboring tasks use.]
+
+**Mirror:** `path/to/existing.py:40-72`, what to imitate (error handling,
+test shape, naming)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -159,6 +175,17 @@ Every step must contain the actual content an engineer needs. These are **plan f
 - "Similar to Task N" (repeat the code — the engineer may be reading tasks out of order)
 - Steps that describe what to do without showing how (code blocks required for code steps)
 - References to types, functions, or methods not defined in any task
+- A Grounding or Mirror citation that does not resolve to real code
+
+The one sanctioned unknown names its own resolution and its deadline:
+`Unknown: <what>, validate via <method>, before Task N` or
+`Assumption: <what>, validate via <method>, before Task N`, where the
+method is a specific check (a named test, a probe command, a question to
+a named person) and Task N is the first task that depends on the answer.
+The task that performs the validation is named in the plan; a dependent
+task does not start until the unknown is resolved, and a validation that
+fails is a plan conflict surfaced to your human partner, not a value to
+guess. Bare TBD and TODO remain plan failures.
 
 
 ## Self-Review
@@ -170,6 +197,8 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 **2. Placeholder scan:** Search your plan for red flags — any of the patterns from the "No Placeholders" section above. Fix them.
 
 **3. Type consistency:** Do the types, method signatures, and property names you used in later tasks match what you defined in earlier tasks? A function called `clearLayers()` in Task 3 but `clearFullLayers()` in Task 7 is a bug.
+
+**4. Grounding is real:** every Grounding and Mirror citation resolves, and every convention the tasks touch has an entry or an explicit `none`.
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 

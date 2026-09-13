@@ -78,6 +78,7 @@ Subagent (general-purpose):
       and note it as a concern in your report
     - In existing codebases, follow established patterns. Improve code you're touching
       the way a good developer would, but don't restructure things outside your task.
+    - If your brief names a Mirror, read it before you write and imitate its shape.
 
     ## When You're in Over Your Head
 

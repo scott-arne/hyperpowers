@@ -334,5 +334,9 @@ assert_contains "$SDD" "a confirmed finding is fixed or carried open" \
 assert_contains "$SDD" "a finding nobody can settle stays open and counts against the round cap" \
   "SKILL.md keeps an unsettled finding open"
 
+# --- A5 Mirror ------------------------------------------------------------
+assert_contains "$IMPL" "If your brief names a Mirror, read it before you write and imitate its shape." \
+  "the implementer reads the brief's Mirror"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

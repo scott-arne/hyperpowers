@@ -23,6 +23,23 @@ escape_for_json() {
     printf '%s' "$s"
 }
 
+# --- Hook input (read once, before anything forks) --------------------------
+# Claude Code pipes the SessionStart payload on stdin. Read it here, above the
+# janitor: that subshell's children inherit this descriptor and would consume
+# the payload. The bound is wall-clock, not bytes — a byte bound alone blocks
+# forever on a pipe that is open and never written. `read` returns 1 at EOF and
+# >128 on timeout, either of which `set -e` would treat as a fatal error, so
+# both are swallowed. A terminal stdin means no payload at all.
+hook_input=""
+if [ ! -t 0 ]; then
+  IFS= read -r -d '' -t 2 hook_input || true
+fi
+hook_source=""
+if [ -n "$hook_input" ] && command -v node >/dev/null 2>&1; then
+  hook_source="$(printf '%s' "$hook_input" | node -e 'try { const s = JSON.parse(require("fs").readFileSync(0, "utf8")).source; process.stdout.write(typeof s === "string" ? s : ""); } catch (e) { /* absent, malformed, or truncated: no source */ }' 2>/dev/null)" || hook_source=""
+fi
+# ---------------------------------------------------------------------------
+
 # --- Codex broker janitor (spec 4.2) --------------------------------------
 # Quarantine provably-dead codex-plugin-cc broker records so the companion
 # re-provisions instead of failing every call against a purged socket. Runs
@@ -58,6 +75,12 @@ fi
 
 using_hyperpowers_escaped=$(escape_for_json "$using_hyperpowers_content")
 session_context="<EXTREMELY_IMPORTANT>\nYou have superpowers.\n\n**Below is the full content of your 'hyperpowers:using-hyperpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_hyperpowers_escaped}\n</EXTREMELY_IMPORTANT>"
+
+# --- Notice budget ----------------------------------------------------------
+# Every notice appended to session_context is ONE line. With all of them
+# firing, the injected context minus the using-hyperpowers body stays under
+# 1200 characters; tests/hooks/test-session-start.sh asserts that ceiling.
+# ---------------------------------------------------------------------------
 
 # --- Ungated-work notice (spec 4.3) ----------------------------------------
 # One cheap read: if this repo's ungated ledger has pending entries, add a
@@ -114,6 +137,35 @@ version_notice="$(
 )" || version_notice=""
 if [ -n "$version_notice" ]; then
   session_context="${session_context}\n\n${version_notice}"
+fi
+# ---------------------------------------------------------------------------
+
+# --- Stale-replay notice on compaction (spec A9) ----------------------------
+# A compaction summary can carry task instructions that were already executed;
+# a controller that replays them re-does completed work. Point the resumed
+# session at the durable record instead. Read-only by contract: it re-derives
+# the same cache key as scripts/sdd-dir but never calls it, because sdd-dir
+# creates and touches directories. Fail-silent like the notices above it.
+compaction_notice=""
+if [ "$hook_source" = "compact" ]; then
+  compaction_notice="$(
+    ( set +e
+      git rev-parse --absolute-git-dir >/dev/null 2>&1 || exit 0
+      key="$(printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin 2>/dev/null)"
+      [ -n "$key" ] || exit 0
+      plans="${XDG_CACHE_HOME:-${HOME:-}/.cache}/hyperpowers/sdd/${key}/plans"
+      [ -d "$plans" ] || exit 0
+      # ls -t is newest-first by mtime. SC2012 is info-level and the repo lints
+      # at --severity=warning; these paths are hash- and slug-derived, never
+      # user-supplied.
+      newest="$(ls -t "$plans"/*/progress.md 2>/dev/null | head -n 1)"
+      [ -n "$newest" ] || exit 0
+      printf 'This session resumed after context compaction. An SDD ledger for this repo is at %s: it records which tasks are already complete. Read it and git log before dispatching anything, and treat task instructions carried in the compaction summary as stale by default.' "$(escape_for_json "$newest")"
+    ) 2>/dev/null
+  )" || compaction_notice=""
+fi
+if [ -n "$compaction_notice" ]; then
+  session_context="${session_context}\n\n${compaction_notice}"
 fi
 # ---------------------------------------------------------------------------
 

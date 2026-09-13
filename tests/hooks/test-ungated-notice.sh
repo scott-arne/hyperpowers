@@ -20,7 +20,7 @@ b="$(git -C "$repo" rev-parse HEAD)"
 git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m two
 h="$(git -C "$repo" rev-parse HEAD)"
 
-run_hook() { (cd "$repo" && CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK" 2>/dev/null); }
+run_hook() { (cd "$repo" && CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK" </dev/null 2>/dev/null); }
 
 echo "ungated notice:"
 
@@ -39,7 +39,7 @@ printf '%s' "$out" | grep -q '1 ungated review item' && pass "notice present wit
 printf '%s' "$out" | grep -q 'hookSpecificOutput' && pass "bootstrap context intact" || fail "bootstrap context intact"
 
 # non-repo cwd -> hook still works, no notice, no crash
-out="$( (cd "$work" && CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK" 2>/dev/null) )"
+out="$( (cd "$work" && CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK" </dev/null 2>/dev/null) )"
 printf '%s' "$out" | grep -q 'hookSpecificOutput' && pass "non-repo cwd no-op" || fail "non-repo cwd no-op"
 
 echo

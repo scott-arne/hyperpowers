@@ -419,6 +419,48 @@ assert_contains "$GATE" "Location alone is not identity: one fragment can carry 
 assert_contains "$GATE" "When entries merge, the strictest severity survives." \
   "merged entries keep the strictest severity"
 
+# --- A5 grounding and Mirror ---------------------------------------------
+assert_contains "$WRITING_PLANS" "One line per convention the work touches, at minimum naming, error handling, and test shape" \
+  "the Grounding section names the minimum conventions"
+assert_contains "$WRITING_PLANS" "an invented citation is a plan failure" \
+  "an invented Grounding citation is a plan failure"
+assert_contains "$WRITING_PLANS" "Ground the plan before you write it." \
+  "File Structure requires grounding before writing"
+assert_contains "$WRITING_PLANS" "Never invent a pattern: an invented citation sends the implementer to imitate code that is not there." \
+  "File Structure forbids inventing a pattern"
+assert_contains "$WRITING_PLANS" '**Mirror:** `path/to/existing.py:40-72`, what to imitate (error handling, test shape, naming)' \
+  "the task template offers a Mirror line"
+assert_contains "$WRITING_PLANS" "A Grounding or Mirror citation that does not resolve to real code" \
+  "an unresolvable citation is listed as a plan failure"
+assert_contains "$WRITING_PLANS" '**4. Grounding is real:** every Grounding and Mirror citation resolves, and every convention the tasks touch has an entry or an explicit `none`.' \
+  "self-review checks that grounding resolves"
+
+# --- A6 named unknowns ----------------------------------------------------
+assert_contains "$WRITING_PLANS" "The one sanctioned unknown names its own resolution and its deadline:" \
+  "one unknown form is sanctioned"
+assert_contains "$WRITING_PLANS" '`Unknown: <what>, validate via <method>, before Task N`' \
+  "the sanctioned unknown syntax is given"
+assert_contains "$WRITING_PLANS" "Task N is the first task that depends on the answer" \
+  "the deadline is the first dependent task"
+assert_contains "$WRITING_PLANS" "a dependent task does not start until the unknown is resolved" \
+  "a dependent task waits on resolution"
+assert_contains "$WRITING_PLANS" "a validation that fails is a plan conflict surfaced to your human partner, not a value to guess" \
+  "a failed validation is escalated, not guessed"
+assert_contains "$WRITING_PLANS" "Bare TBD and TODO remain plan failures." \
+  "bare TBD stays a plan failure"
+assert_contains "$WRITING_PLANS" "For each convention the work will touch, find one real example in the codebase and record it in the Grounding section with its path and line range." \
+  "File Structure requires one real example per convention"
+assert_contains "$WRITING_PLANS" "If no similar code exists, say so explicitly there." \
+  "a missing pattern is recorded explicitly"
+assert_contains "$WRITING_PLANS" '`path/to/file.py:40-72`, what it shows, or `none: no existing pattern for <convention>`' \
+  "the Grounding template gives the citation shape and the none escape"
+assert_contains "$WRITING_PLANS" '`Assumption: <what>, validate via <method>, before Task N`' \
+  "the sanctioned Assumption syntax is given"
+assert_contains "$WRITING_PLANS" "the method is a specific check (a named test, a probe command, a question to a named person)" \
+  "the validation method must be a specific check"
+assert_contains "$WRITING_PLANS" "The task that performs the validation is named in the plan" \
+  "the plan names the task that validates the unknown"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

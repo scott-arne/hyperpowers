@@ -449,6 +449,17 @@ Out-of-scope observations go to the ledger as deferred minors — they never
 extend the loop. Every round in this loop ends with the scoped re-review —
 never a full task-reviewer re-run, whatever the finding's origin.
 
+**A round that declines every finding changes no code.** There is no fix
+diff and no covering test to confirm; the implementer's report is the
+artifact, carrying for each finding the refuted or corrected evidence at
+file:line. Skip `scripts/review-package` for that round — its range is
+empty — and dispatch the scoped re-review with the findings list, the brief,
+the report, and the previous review's package path, so the re-reviewer
+verdicts each finding DECLINED or NOT ADDRESSED from the evidence alone. The
+covering-tests precondition applies only to findings that were fixed. Record
+the round as `(0 addressed, <Y> declined, <Z> open)`; a NOT ADDRESSED verdict
+keeps that finding open and the round counts toward the cap as usual.
+
 **After each round,** append to the ledger:
 `Task <N>: fix round <R>/5 (<X> addressed, <Y> declined, <Z> open — <finding one-liners>; commits <a7>..<b7>)`
 

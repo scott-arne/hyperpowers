@@ -78,6 +78,14 @@ Multiple dispatch calls in one response = parallel execution. One per response =
 
 ### 4. Review and Integrate
 
+**You own collection.** A dispatched agent that has not been collected
+and integrated is not finished work. Never end your turn with children
+still running: a child that completes after your turn ends has no parent
+to report to, and its result is orphaned. Wait, reconcile, then return.
+Observed failure: agents that followed a parallel-dispatch rule spawned
+children and returned "waiting" as their final answer; every child
+finished, and every result was lost.
+
 When agents return:
 - Read each summary
 - Verify fixes don't conflict

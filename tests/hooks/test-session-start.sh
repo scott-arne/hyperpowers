@@ -369,10 +369,47 @@ write_hook_input() { # <path> <source>
     printf '{"session_id":"t","hook_event_name":"SessionStart","source":"%s"}' "$2" > "$1"
 }
 
+# Millisecond wall clock for the timed cases below. $SECONDS is a whole-second
+# counter, so it reports a 2.15s interval as either 2 or 3 depending on where
+# the interval falls against the shell's start — measured 3/12 runs. Bounds of
+# 3s and 1s need finer resolution than that or they flake. node is already a
+# hard dependency of every case in this suite (assert_command_output pipes to
+# it), and bash 3.2 has no EPOCHREALTIME.
+now_ms() {
+    node -e 'process.stdout.write(String(Date.now()))'
+}
+
+fmt_s() { # <milliseconds> -> "1.234s"
+    printf '%d.%03ds' "$(($1 / 1000))" "$(($1 % 1000))"
+}
+
+# Bounds for the two timed cases, and how many times a measurement may be
+# retried before it is believed.
+#
+# A single wall-clock sample measures the machine, not the hook. Over six
+# consecutive suite runs on one host the stalled-pipe path measured 2.398,
+# 2.427, 2.402, 2.537, 2.366 and then 5.316 seconds, with the EOF path doubling
+# in that same sixth run — a system-wide stall, not a regression. Retrying and
+# keeping the FASTEST attempt discards the machine's worst moments; a real
+# regression is deterministic, so every attempt is slow and the minimum still
+# trips the bound.
+#
+# The stalled-pipe bound is on the time the stall ADDS over the EOF baseline,
+# not on total wall time. Both paths pay the same hook overhead — which the EOF
+# case shows is itself 0.4-0.9s and load-dependent — so subtracting leaves the
+# quantity actually under test: how long the read waits before giving up. That
+# is ~2s as written and ~4s if the timeout regresses, so a 3s bound sits a full
+# second clear on either side. An absolute 3s bound on the total does not: it
+# leaves only a few hundred ms over the overhead and goes red on a busy
+# machine (measured 3.236s across three attempts while the hook was correct).
+EOF_BOUND_MS=1000
+WATCHDOG_STALL_BOUND_MS=3000
+TIMED_ATTEMPTS=3
+
 fires_repo="$(make_repo compact-fires)"
 fires_home="$(make_home compact-fires)"
 fires_cache="$TEST_ROOT/compact-fires/cache"
-fires_ledger="$(seed_ledger "$fires_cache" "$fires_repo" 'qu"o\te-1111aaaa')"
+fires_ledger="$(seed_ledger "$fires_cache" "$fires_repo" "alpha-1111aaaa")"
 fires_stdin="$TEST_ROOT/compact-fires/stdin.json"
 write_hook_input "$fires_stdin" compact
 HOOK_STDIN="$fires_stdin"
@@ -385,6 +422,37 @@ assert_command_output \
     XDG_CACHE_HOME="$fires_cache" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$fires_repo" "$HOOK_UNDER_TEST"
+
+# The same assertion over a ledger path carrying a double quote and a
+# backslash. This is what pins escape_for_json on the compaction path: without
+# it the hook emits invalid JSON, Claude Code injects nothing, and the session
+# silently loses its whole skill bootstrap — a mutation the clean-slug case
+# above cannot see. Windows forbids both characters in a path component and
+# this suite covers Windows Git Bash, so the fixture cannot be created there;
+# skip rather than fail on a documented platform.
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+        echo "  [SKIP] SessionStart escapes a ledger path containing a quote and a backslash (Windows path rules)"
+        ;;
+    *)
+        hostile_repo="$(make_repo compact-hostile)"
+        hostile_home="$(make_home compact-hostile)"
+        hostile_cache="$TEST_ROOT/compact-hostile/cache"
+        hostile_ledger="$(seed_ledger "$hostile_cache" "$hostile_repo" 'qu"o\te-1111aaaa')"
+        hostile_stdin="$TEST_ROOT/compact-hostile/stdin.json"
+        write_hook_input "$hostile_stdin" compact
+        HOOK_STDIN="$hostile_stdin"
+        assert_command_output \
+            "SessionStart escapes a ledger path containing a quote and a backslash" \
+            "nested" \
+            "${NOTICE_HEAD}${hostile_ledger}${NOTICE_TAIL}" \
+            "" \
+            "$hostile_home" \
+            XDG_CACHE_HOME="$hostile_cache" \
+            CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+            bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$hostile_repo" "$HOOK_UNDER_TEST"
+        ;;
+esac
 
 newest_repo="$(make_repo compact-newest)"
 newest_home="$(make_home compact-newest)"
@@ -506,36 +574,91 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$codex_compact_repo" "$CODEX_HOOK_UNDER_TEST"
 
-# The watchdog needs timing, so it runs the hook directly rather than through
-# the helper. A backgrounded sleep holds the write end of a fifo open and never
-# writes; the hook must return anyway.
+# Both timed cases run the hook directly rather than through the helper. The
+# EOF baseline is measured first because the stalled-pipe bound below is
+# expressed relative to it.
+
+# At EOF the read must return immediately rather than wait out its two seconds.
+# The per-case HOME keeps the janitor out of the measurement, so this is the
+# hook's own overhead and nothing else.
+eoftime_repo="$(make_repo compact-eof-timing)"
+eoftime_home="$(make_home compact-eof-timing)"
+eoftime_cache="$TEST_ROOT/compact-eof-timing/cache"
+mkdir -p "$eoftime_cache"
+eoftime_status=0
+eoftime_best=""
+eoftime_attempt=1
+while [ "$eoftime_attempt" -le "$TIMED_ATTEMPTS" ]; do
+    eoftime_status=0
+    eoftime_start="$(now_ms)"
+    env -i PATH="${PATH:-}" HOME="$eoftime_home" \
+        XDG_CACHE_HOME="$eoftime_cache" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+        bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$eoftime_repo" "$HOOK_UNDER_TEST" \
+        </dev/null >/dev/null 2>&1 || eoftime_status=$?
+    eoftime_elapsed=$(( $(now_ms) - eoftime_start ))
+    if [ -z "$eoftime_best" ] || [ "$eoftime_elapsed" -lt "$eoftime_best" ]; then
+        eoftime_best="$eoftime_elapsed"
+    fi
+    if [ "$eoftime_status" -ne 0 ] || [ "$eoftime_best" -lt "$EOF_BOUND_MS" ]; then
+        break
+    fi
+    eoftime_attempt=$((eoftime_attempt + 1))
+done
+
+if [ "$eoftime_status" -eq 0 ] && [ "$eoftime_best" -lt "$EOF_BOUND_MS" ]; then
+    pass "SessionStart returns in under a second on the EOF path ($(fmt_s "$eoftime_best"))"
+else
+    fail "SessionStart returns in under a second on the EOF path ($(fmt_s "$eoftime_best") over $eoftime_attempt attempts, exit $eoftime_status)"
+fi
+
+# The watchdog. A backgrounded sleep holds the write end of a fifo open and
+# never writes; the hook must return anyway, and must not sit there for longer
+# than the read's own timeout.
 watchdog_repo="$(make_repo compact-watchdog)"
 watchdog_home="$(make_home compact-watchdog)"
 watchdog_cache="$TEST_ROOT/compact-watchdog/cache"
 seed_ledger "$watchdog_cache" "$watchdog_repo" "watchdog-7777aaaa" >/dev/null
-watchdog_fifo="$TEST_ROOT/compact-watchdog/stall.fifo"
-mkfifo "$watchdog_fifo"
-sleep 30 > "$watchdog_fifo" &
-watchdog_writer=$!
-watchdog_start=$SECONDS
 watchdog_status=0
-watchdog_out="$(env -i PATH="${PATH:-}" HOME="$watchdog_home" \
-    XDG_CACHE_HOME="$watchdog_cache" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
-    bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$watchdog_repo" "$HOOK_UNDER_TEST" \
-    < "$watchdog_fifo" 2>/dev/null)" || watchdog_status=$?
-watchdog_elapsed=$((SECONDS - watchdog_start))
-kill "$watchdog_writer" 2>/dev/null || true
-wait "$watchdog_writer" 2>/dev/null || true
+watchdog_out=""
+watchdog_best=""
+watchdog_attempt=1
+while [ "$watchdog_attempt" -le "$TIMED_ATTEMPTS" ]; do
+    watchdog_fifo="$TEST_ROOT/compact-watchdog/stall-$watchdog_attempt.fifo"
+    mkfifo "$watchdog_fifo"
+    sleep 30 > "$watchdog_fifo" &
+    watchdog_writer=$!
+    watchdog_start="$(now_ms)"
+    watchdog_status=0
+    watchdog_out="$(env -i PATH="${PATH:-}" HOME="$watchdog_home" \
+        XDG_CACHE_HOME="$watchdog_cache" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+        bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$watchdog_repo" "$HOOK_UNDER_TEST" \
+        < "$watchdog_fifo" 2>/dev/null)" || watchdog_status=$?
+    watchdog_elapsed=$(( $(now_ms) - watchdog_start ))
+    kill "$watchdog_writer" 2>/dev/null || true
+    wait "$watchdog_writer" 2>/dev/null || true
+    if [ -z "$watchdog_best" ] || [ "$watchdog_elapsed" -lt "$watchdog_best" ]; then
+        watchdog_best="$watchdog_elapsed"
+    fi
+    # Exit status and the leaked-notice check are deterministic, so there is
+    # nothing to gain by re-running once the timing is satisfied.
+    if [ "$watchdog_status" -ne 0 ] || [ $((watchdog_best - eoftime_best)) -lt "$WATCHDOG_STALL_BOUND_MS" ]; then
+        break
+    fi
+    watchdog_attempt=$((watchdog_attempt + 1))
+done
+watchdog_stall=$((watchdog_best - eoftime_best))
 
 if [ "$watchdog_status" -eq 0 ]; then
     pass "SessionStart exits 0 with a stalled stdin pipe"
 else
     fail "SessionStart exits 0 with a stalled stdin pipe (exit $watchdog_status)"
 fi
-if [ "$watchdog_elapsed" -lt 5 ]; then
-    pass "SessionStart returns within five seconds with a stalled stdin pipe"
+# Three seconds of added wait, not five: the read gives up after two, so a
+# regression to -t 4 fails this and the old five-second bound did not.
+if [ "$watchdog_stall" -lt "$WATCHDOG_STALL_BOUND_MS" ]; then
+    pass "a stalled stdin pipe adds under three seconds ($(fmt_s "$watchdog_stall") over the $(fmt_s "$eoftime_best") baseline)"
 else
-    fail "SessionStart returns within five seconds with a stalled stdin pipe (${watchdog_elapsed}s)"
+    fail "a stalled stdin pipe adds under three seconds ($(fmt_s "$watchdog_stall") over the $(fmt_s "$eoftime_best") baseline, $watchdog_attempt attempts)"
 fi
 if printf '%s' "$watchdog_out" | grep -Fq 'This session resumed after context compaction'; then
     fail "SessionStart is silent when the source never arrives"
@@ -610,6 +733,18 @@ if grep -Fq "janitor: that subshell's children inherit this descriptor and would
     pass "session-start records why the stdin read sits above the janitor"
 else
     fail "session-start records why the stdin read sits above the janitor"
+fi
+
+# ...and the ordering itself, not just the comment explaining it. Moving the
+# read below the janitor would let its broker-health children eat the payload;
+# the comment grep above cannot catch that, because the comment travels with
+# the code it annotates.
+read_line="$(grep -n 'read -r -d' "$HOOK_UNDER_TEST" | head -1 | cut -d: -f1)" || read_line=""
+janitor_line="$(grep -n 'Codex broker janitor' "$HOOK_UNDER_TEST" | head -1 | cut -d: -f1)" || janitor_line=""
+if [ -n "$read_line" ] && [ -n "$janitor_line" ] && [ "$read_line" -lt "$janitor_line" ]; then
+    pass "the stdin read precedes the broker janitor (line $read_line before $janitor_line)"
+else
+    fail "the stdin read precedes the broker janitor (read at '${read_line:-none}', janitor at '${janitor_line:-none}')"
 fi
 
 if grep -Fq 'A terminal stdin means no payload at all.' "$HOOK_UNDER_TEST"; then

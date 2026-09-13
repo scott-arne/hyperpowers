@@ -31,7 +31,7 @@ make_home() {
     printf '%s\n' "$home"
 }
 
-# Stdin for the hook under test. A caller sets HOOK_STDIN to a file or fifo
+# Stdin for the hook under test. A caller sets HOOK_STDIN to a file
 # immediately before its assertion; the helper consumes it and resets to
 # /dev/null so no later case inherits it. The default keeps every case that
 # does not care about stdin from paying the hook's bounded read.
@@ -372,7 +372,7 @@ write_hook_input() { # <path> <source>
 fires_repo="$(make_repo compact-fires)"
 fires_home="$(make_home compact-fires)"
 fires_cache="$TEST_ROOT/compact-fires/cache"
-fires_ledger="$(seed_ledger "$fires_cache" "$fires_repo" "alpha-1111aaaa")"
+fires_ledger="$(seed_ledger "$fires_cache" "$fires_repo" 'qu"o\te-1111aaaa')"
 fires_stdin="$TEST_ROOT/compact-fires/stdin.json"
 write_hook_input "$fires_stdin" compact
 HOOK_STDIN="$fires_stdin"

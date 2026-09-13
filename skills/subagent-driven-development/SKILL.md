@@ -60,7 +60,7 @@ digraph process {
         "Ask your human partner which governs" [shape=box];
         "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [shape=box];
         "Dispatch scoped re-review (./re-review-prompt.md)" [shape=box];
-        "All findings addressed?" [shape=diamond];
+        "All findings addressed or declined?" [shape=diamond];
         "R = 5?" [shape=diamond];
         "Surface open findings to your human partner (BLOCKED)" [shape=box];
         "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" [shape=diamond];
@@ -91,9 +91,9 @@ digraph process {
     "Ask your human partner which governs" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model";
     "Finding conflicts with plan text?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="no"];
     "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" -> "Dispatch scoped re-review (./re-review-prompt.md)";
-    "Dispatch scoped re-review (./re-review-prompt.md)" -> "All findings addressed?";
-    "All findings addressed?" -> "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" [label="yes"];
-    "All findings addressed?" -> "R = 5?" [label="no"];
+    "Dispatch scoped re-review (./re-review-prompt.md)" -> "All findings addressed or declined?";
+    "All findings addressed or declined?" -> "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" [label="yes"];
+    "All findings addressed or declined?" -> "R = 5?" [label="no"];
     "R = 5?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="no - next round"];
     "R = 5?" -> "Surface open findings to your human partner (BLOCKED)" [label="yes - breaker trips"];
     "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Record tier-skip (ungated-ledger), skip Codex task gate" [label="yes"];
@@ -450,7 +450,7 @@ extend the loop. Every round in this loop ends with the scoped re-review —
 never a full task-reviewer re-run, whatever the finding's origin.
 
 **After each round,** append to the ledger:
-`Task <N>: fix round <R>/5 (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`
+`Task <N>: fix round <R>/5 (<X> addressed, <Y> declined, <Z> open — <finding one-liners>; commits <a7>..<b7>)`
 
 Never fix findings yourself in the controller session — your context stays
 clean for coordination, and controller fixes skip review. One narrow
@@ -467,7 +467,7 @@ uncommitted fix hands it nothing) and appends the fix report — the
 command, its output, and a diff summary — to the task's report file
 itself, exactly as an implementer would. Its ledger line keeps the
 fix-round schema with the marker inside it:
-`Task <N>: fix round <R>/5 controller-applied (de minimis) (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`.
+`Task <N>: fix round <R>/5 controller-applied (de minimis) (<X> addressed, <Y> declined, <Z> open — <finding one-liners>; commits <a7>..<b7>)`.
 Reaching for it twice in the same task means the findings are not de
 minimis — go back to the round's own rule: resume the implementer at
 rounds 1-3, dispatch the takeover at rounds 4-5.
@@ -528,7 +528,7 @@ no-Codex notice once and run both gates as no-ops.
   gate runs against the task's shared budget — each gate round consumes one
   of the five, exactly like a reviewer round. After a Codex-triggered fix,
   the scoped re-review verifies it; the gate re-runs only once that
-  re-review verdicts every finding ADDRESSED.
+  re-review verdicts every finding ADDRESSED or DECLINED.
 
 **The breaker.** When round 5's re-review — or a per-task Codex gate at the
 spent cap — still leaves blocking findings open, stop dispatching. The task
@@ -541,9 +541,9 @@ next.
 ### 5. Complete the task
 
 When the review comes back clean — the task reviewer approved, every
-fix-loop finding is addressed, and the per-task Codex gate approved or was
-skipped by tier — append the completion line to the ledger in the same
-message as your other bookkeeping:
+fix-loop finding is addressed or declined, and the per-task Codex gate
+approved or was skipped by tier — append the completion line to the ledger
+in the same message as your other bookkeeping:
 
 - `Task <N>: complete (commits <base7>..<head7>, review clean)`
 

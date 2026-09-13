@@ -1,11 +1,12 @@
 # Scoped Re-Review Prompt Template
 
 Use this template when dispatching a re-review after a fix round. The
-re-reviewer verifies the findings were addressed and checks the fix diff for
-new breakage. It is not a fresh review — the full review already happened.
+re-reviewer verifies the findings were addressed or declined with
+confirmed evidence and checks the fix diff for new breakage. It is not a
+fresh review — the full review already happened.
 
-**Purpose:** Verify each finding from the previous review was addressed, and
-that the fix itself broke nothing.
+**Purpose:** Verify each finding from the previous review was addressed or
+declined with confirmed evidence, and that the fix itself broke nothing.
 
 ```
 Subagent (general-purpose):
@@ -105,8 +106,9 @@ Subagent (general-purpose):
 
     ### Verdict
 
-    **Fix round:** [All findings addressed, no new Critical/Important
-    breakage | Findings remain open] — list the open ones.
+    **Fix round:** [All findings addressed or declined, no new
+    Critical/Important breakage | Findings remain open] — list the open
+    ones.
 ```
 
 **Placeholders:**

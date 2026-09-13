@@ -402,7 +402,15 @@ fmt_s() { # <milliseconds> -> "1.234s"
 # second clear on either side. An absolute 3s bound on the total does not: it
 # leaves only a few hundred ms over the overhead and goes red on a busy
 # machine (measured 3.236s across three attempts while the hook was correct).
-EOF_BOUND_MS=1000
+#
+# The EOF bound stays absolute — there is no baseline to subtract from it — so
+# it is set by the gap between the two things it must separate. Above it: the
+# hook's own overhead, which reaches ~1.1s when the host is busy (one failure
+# at 1.136s best-of-four against a 1000ms bound, while the hook was correct).
+# Below it: the smallest regression worth catching, the read waiting out its
+# own timeout at EOF, which costs that 2.0s timeout plus the same overhead.
+# 1500ms clears the first and leaves ~0.5s under the second.
+EOF_BOUND_MS=1500
 WATCHDOG_STALL_BOUND_MS=3000
 TIMED_ATTEMPTS=3
 
@@ -580,7 +588,9 @@ assert_command_output \
 
 # At EOF the read must return immediately rather than wait out its two seconds.
 # The per-case HOME keeps the janitor out of the measurement, so this is the
-# hook's own overhead and nothing else.
+# hook's own overhead and nothing else — which is why the bound is generous
+# relative to a healthy run: it is placed to clear that overhead under load,
+# not to track it.
 eoftime_repo="$(make_repo compact-eof-timing)"
 eoftime_home="$(make_home compact-eof-timing)"
 eoftime_cache="$TEST_ROOT/compact-eof-timing/cache"
@@ -606,9 +616,9 @@ while [ "$eoftime_attempt" -le "$TIMED_ATTEMPTS" ]; do
 done
 
 if [ "$eoftime_status" -eq 0 ] && [ "$eoftime_best" -lt "$EOF_BOUND_MS" ]; then
-    pass "SessionStart returns in under a second on the EOF path ($(fmt_s "$eoftime_best"))"
+    pass "SessionStart returns in under 1.5 s on the EOF path ($(fmt_s "$eoftime_best"))"
 else
-    fail "SessionStart returns in under a second on the EOF path ($(fmt_s "$eoftime_best") over $eoftime_attempt attempts, exit $eoftime_status)"
+    fail "SessionStart returns in under 1.5 s on the EOF path ($(fmt_s "$eoftime_best") over $eoftime_attempt attempts, exit $eoftime_status)"
 fi
 
 # The watchdog. A backgrounded sleep holds the write end of a fifo open and

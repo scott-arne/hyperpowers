@@ -461,6 +461,14 @@ assert_contains "$WRITING_PLANS" "the method is a specific check (a named test, 
 assert_contains "$WRITING_PLANS" "The task that performs the validation is named in the plan" \
   "the plan names the task that validates the unknown"
 
+# --- A6 brainstorming assumptions ----------------------------------------
+assert_contains "$BRAINSTORMING" 'Where the design rests on something nobody confirmed, write it as `Assumption: <what>, validate via <method>` rather than as a fact' \
+  "an unconfirmed premise is written as an Assumption"
+assert_contains "$BRAINSTORMING" "the plan will attach the deadline" \
+  "the plan supplies the assumption's deadline"
+assert_contains "$BRAINSTORMING" "The placeholder scan accepts that form and flags bare TBD or TODO." \
+  "the placeholder scan accepts the sanctioned form"
+
 if [ "$FAILURES" -gt 0 ]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

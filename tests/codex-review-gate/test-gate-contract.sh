@@ -432,6 +432,10 @@ assert_contains "$WRITING_PLANS" "Never invent a pattern: an invented citation s
   "File Structure forbids inventing a pattern"
 assert_contains "$WRITING_PLANS" '**Mirror:** `path/to/existing.py:40-72`, what to imitate (error handling, test shape, naming)' \
   "the task template offers a Mirror line"
+assert_contains "$WRITING_PLANS" "The \`**Mirror:**\` line is optional: include it when a real analogue exists and omit it when none does. An omitted Mirror is not a placeholder." \
+  "the Mirror line is optional and omission is not a placeholder"
+assert_contains "$WRITING_PLANS" "re-locate it by the construct it names rather than imitating whatever now sits at those lines" \
+  "a moved Mirror range is re-located by the construct it names"
 assert_contains "$WRITING_PLANS" "A Grounding or Mirror citation that does not resolve to real code" \
   "an unresolvable citation is listed as a plan failure"
 assert_contains "$WRITING_PLANS" '**4. Grounding is real:** every Grounding and Mirror citation resolves, and every convention the tasks touch has an entry or an explicit `none`.' \

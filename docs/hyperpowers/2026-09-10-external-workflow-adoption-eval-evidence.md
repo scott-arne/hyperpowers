@@ -318,9 +318,10 @@ whitespace and then greps for one fixed substring, so it proves a required
 clause is still present — or, for `assert_not_contains`, still absent — and not
 that the prose around it is unmodified; a contradicting qualification could be
 added beside a needle and every needle would still pass. A9's hook suite is
-different in kind: 29 of its 34 cases run the hook and assert on its output,
-exit status and timing, and only 5 are source-level greps. Neither suite is
-evidence that an agent acts on the wording.
+different in kind: 28 of its 34 cases run the hook and assert on its output,
+exit status and timing, one checks the `hooks.json` registration shape without
+running it, and 5 grep the hook's source. Neither suite is evidence that an
+agent acts on the wording.
 
 The six items that ship on tests alone do not all rest on the same evidence.
 Five of them — A3, A5, A6, A8 and A10 — rest on the fourteen contract suites at

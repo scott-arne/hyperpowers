@@ -344,8 +344,8 @@ actor-name limitation.
 
 The first pass failed `triggering-writing-plans`. Its Gauntlet-Agent passed the
 scenario's actual criterion; two deterministic `skill-before-tool` post-checks
-failed, and that verb fires on any `Write` or `Edit`. Every write in that run —
-tool calls 6, 8 and 19 — targeted one file, the design spec
+failed, and that verb fires on any `Write` or `Edit`. Every `Write` or `Edit`
+in that run — tool calls 6, 8 and 19 — targeted one file, the design spec
 `hyperpowers:brainstorming` instructs the agent to write. No implementation
 file was written at all.
 
@@ -364,9 +364,10 @@ instrument.** Two changes in the evals clone, committed there at `1652992`.
 `src/detect/skill.ts` and had been counting the fork's own spec path as
 implementation code. And the scenario was switched to the
 `skill-before-implementation-tool` verb that its own acceptance criterion
-already describes and its three green siblings already use. Both changes were
-made test-first. This is a recorded decision, not an implementer's judgement
-call.
+already describes and its three green siblings already use. The exclusion was
+added test-first; the verb swap is a two-line change, and the re-run below is
+what exercises it. Both changes come from that recorded decision, not from an
+implementer's judgement call.
 
 **The re-run is what closes the finding.** One run at the same treatment head
 `d0a187d` after both fixes, preserved at `task-19-runs/sentinel-rerun/` as
@@ -377,7 +378,7 @@ that failed rather than avoiding it — a `Write` to
 before the `writing-plans` load at call 7. Both halves of the fix are
 load-bearing for that run: the old verb fails on call 5 whatever the path, and
 the old regex fails on call 5 even with the new verb. The agent behaved the
-same way it had before; only the reading of it changed. The two failing runs
+same way it had before; only the reading of it changed. The two non-green runs
 from the first pass are preserved at `task-19-runs/sentinel-runs/`.
 
 **Two kinds of vacuous, and they are not interchangeable.** The control and the
@@ -423,8 +424,8 @@ are measurement the tier did not make.
 
 None required. The governing adjudication ends `Removals required: none`, so
 Task 20 was skipped and Task 21 with it, and Task 21 is recorded as a no-op.
-Nothing on this branch was superseded and the adjudication carries no
-superseded-runs table.
+No prose on this branch was superseded and taken back out, and the adjudication
+carries no superseded-runs table.
 
 That is not the same as saying all ten items shipped. Seven ship and three do
 not, but the three — A2, A4 and A7 — were settled as no-ships before

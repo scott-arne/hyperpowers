@@ -313,8 +313,14 @@ files, excluding the two helper definitions the new suite introduces.
 `tests/hooks/test-session-start.sh` covers the seventh, A9, with 34 cases
 including an open-pipe watchdog and a timed EOF-path case.
 
-These are regression guards, not behavioral evidence: they prove the sentences
-are present and unmodified, not that an agent acts on them.
+The two suites do not prove the same kind of thing. Each needle normalizes
+whitespace and then greps for one fixed substring, so it proves a required
+clause is still present — or, for `assert_not_contains`, still absent — and not
+that the prose around it is unmodified; a contradicting qualification could be
+added beside a needle and every needle would still pass. A9's hook suite is
+different in kind: 29 of its 34 cases run the hook and assert on its output,
+exit status and timing, and only 5 are source-level greps. Neither suite is
+evidence that an agent acts on the wording.
 
 The six items that ship on tests alone do not all rest on the same evidence.
 Five of them — A3, A5, A6, A8 and A10 — rest on the fourteen contract suites at
@@ -350,12 +356,16 @@ in that run — tool calls 6, 8 and 19 — targeted one file, the design spec
 file was written at all.
 
 **The control could not settle it.** One control run at the branch point
-`f5a9843` passed, but vacuously: its agent wrote no file, so both ordering
-checks returned "no Edit call — assertion is vacuous" and "no Write call —
-assertion is vacuous". That is evidence in neither direction, and it is
-recorded here as the reason the question needed a different answer rather than
-as a non-regression result. It is preserved at `task-19-runs/sentinel-control/`
-as `triggering-writing-plans-claude-auto-20260913T231141Z-c483`.
+`f5a9843` passed, but vacuously: its agent made no `Write` or `Edit` call, so
+both ordering checks returned "no Edit call — assertion is vacuous" and "no
+Write call — assertion is vacuous". The run was not inert — its sixth tool call
+was `npm install`, which left `package-lock.json` and `node_modules/` in the
+preserved workdir — but nothing it did went through a `Write` or `Edit` call,
+which is what those checks observe. That is evidence in neither direction, and
+it is recorded here as the reason the question needed a different answer rather
+than as a non-regression result. It is preserved at
+`task-19-runs/sentinel-control/` as
+`triggering-writing-plans-claude-auto-20260913T231141Z-c483`.
 
 **The fix was the human partner's call, made on 2026-09-13: fix the
 instrument.** Two changes in the evals clone, committed there at `1652992`.
@@ -383,12 +393,12 @@ from the first pass are preserved at `task-19-runs/sentinel-runs/`.
 
 **Two kinds of vacuous, and they are not interchangeable.** The control and the
 re-run both report vacuous ordering checks, and the resemblance is misleading.
-The control's vacuity is empty — nothing was written, so nothing was
-classified. The re-run's vacuity is a result — two files were written and both
-were classified as non-implementation, the spec by the exclusion added in this
-round and `.gitignore` by one that was already there. The classifier ran, on
-the exact input it used to misread, and got it right. Only the second is
-evidence.
+The control's vacuity is empty — no `Write` or `Edit` call reached the
+classifier, so it never ran. The re-run's vacuity is a result — two files were
+written and both were classified as non-implementation, the spec by the
+exclusion added in this round and `.gitignore` by one that was already there.
+The classifier ran, on the exact input it used to misread, and got it right.
+Only the second is evidence.
 
 **What the fix does not buy.** Each side is still a single configuration
 observed a handful of times. The treatment head has two observations of the

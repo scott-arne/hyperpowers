@@ -29,22 +29,11 @@ assert_contains() {
   fi
 }
 
-assert_file_exists() {
-  local file="$1"
-  local description="$2"
-  if [ -f "$file" ]; then
-    pass "$description"
-  else
-    fail "$description"
-    echo "    missing: $file"
-  fi
-}
-
 echo "=== skill prose contracts ==="
 echo ""
 
 # --- A8 delegation completion contract -----------------------------------
-assert_contains "$DPA" "**You own collection.**" \
+assert_contains "$DPA" "### 4. Review and Integrate **You own collection.**" \
   "section 4 opens with the collection contract"
 assert_contains "$DPA" "A dispatched agent that has not been collected and integrated is not finished work." \
   "an uncollected agent is not finished work"

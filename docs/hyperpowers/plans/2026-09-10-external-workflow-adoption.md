@@ -5926,7 +5926,7 @@ git commit -m "feat(skills): prune no-op prose and expire baselines with the mod
 - Test: `tests/hooks/test-broker-janitor.sh` (stdin redirection on two invocations)
 
 **Interfaces:**
-- Consumes: `escape_for_json` (defined at `hooks/session-start:16-24`) and the cache-key derivation in `skills/subagent-driven-development/scripts/sdd-dir:29`, which is `printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin`. The hook re-derives that key inline; it must never call `sdd-dir`, which creates and touches directories.
+- Consumes: `escape_for_json` (defined at `hooks/session-start:16-24`) and the cache-key derivation in `skills/subagent-driven-development/scripts/sdd-dir:28`, which is `printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin`. The hook re-derives that key inline; it must never call `sdd-dir`, which creates and touches directories.
 - Produces: nothing later tasks consume. `hooks/session-start-codex` is explicitly unchanged, and one test pins that.
 
 **Three constraints that make this task different from its neighbors.**

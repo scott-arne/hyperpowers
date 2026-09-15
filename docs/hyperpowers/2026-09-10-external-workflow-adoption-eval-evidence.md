@@ -22,8 +22,11 @@ and A7 as no-ships before a single treatment trial was spent. Their prose was
 never implemented on this branch, so they are recorded below as routing-line
 no-ships rather than as removals: there was nothing to remove.
 
-The Outcome column is copied from the governing adjudication's ship table, row
-for row.
+The Outcome column restates the governing adjudication's verdict for each
+item. The two tables do not share columns — the adjudication records
+`Item | Scenario | Verdict | Basis` — so each Outcome condenses that row's
+Verdict with the operative part of its Basis rather than reproducing a cell
+verbatim. Where the two differ, the adjudication governs.
 
 | Item | Surface | Evidence | Outcome |
 |---|---|---|---|

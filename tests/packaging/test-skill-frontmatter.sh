@@ -138,14 +138,15 @@ scalar_defect() {
 
 # The first non-blank line after KEY's entry that is neither the next
 # top-level key nor the closing delimiter. A plain scalar continues across
-# blank lines, so anything printed here is a second line a loader would fold
-# into the value.
+# blank lines and comment lines are not content, so both are skipped; anything
+# printed here is a second line a loader would fold into the value.
 continuation_after() {
     awk -v key="$1" '
         NR == 1 { next }
         /^---$/ { exit }
         seen && /^[A-Za-z_][A-Za-z0-9_.-]*:/ { exit }
         seen && /^[[:space:]]*$/ { next }
+        seen && /^#/ { next }
         seen { print; exit }
         index($0, key ":") == 1 && substr($0, length(key) + 2, 1) ~ /[[:space:]]/ { seen = 1 }
     ' "$2"

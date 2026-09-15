@@ -274,6 +274,12 @@ expect_reject_raw "control-fffe" \
     'Use when\357\277\276here' \
     "control characters"
 
+# U+2028 and U+2029 are line breaks to a YAML 1.1 loader; at the start of a
+# value both loaders refuse the document, so the gate forbids them anywhere.
+expect_reject_raw "control-line-separator" \
+    '\342\200\250Use when fine' \
+    "control characters"
+
 # The block must be UTF-8 as RFC 3629 defines it. A loader refuses the file
 # for a stray continuation byte, an overlong form, an encoded surrogate, a
 # code point above U+10FFFF, or a truncated sequence — none of which is a

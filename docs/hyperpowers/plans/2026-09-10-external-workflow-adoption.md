@@ -7614,7 +7614,9 @@ bash tests/hooks/test-ungated-notice.sh
 bash tests/hooks/test-broker-janitor.sh
 bash tests/hooks/test-no-heredocs-in-hooks.sh
 bash tests/packaging/test-no-orphan-skill-files.sh
+bash tests/packaging/test-package-skill.sh
 bash tests/packaging/test-skill-frontmatter.sh
+bash tests/packaging/test-skill-frontmatter-rejects.sh
 bash tests/shell-lint/test-lint-shell.sh
 ```
 

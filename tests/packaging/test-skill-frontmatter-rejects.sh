@@ -4,8 +4,9 @@
 # the validator degrades into accepting everything — that is exactly how an
 # unterminated quote, a bad escape, and a `: ` mapping separator shipped
 # unnoticed. Each case below is frontmatter a reference loader (PyYAML or Ruby
-# Psych) refuses — a value it resolves to a non-string, or a byte it will not
-# read at all — driven through the validator's optional [skills-root] argument.
+# Psych) refuses — a value it resolves to a non-string, a byte it will not read
+# at all, or bytes that are not UTF-8 — driven through the validator's optional
+# [skills-root] argument.
 #
 # Usage: test-skill-frontmatter-rejects.sh
 set -uo pipefail
@@ -129,9 +130,10 @@ expect_reject() {
 expect_accept() {
     local dirname="$1"
     local desc_line="$2"
+    local after_name_line="${3:-}"
     local root output status
 
-    root="$(write_fixture "$dirname" "$desc_line")"
+    root="$(write_fixture "$dirname" "$desc_line" "$after_name_line")"
     output="$(bash "$VALIDATOR" "$root" 2>&1)"
     status=$?
 
@@ -262,6 +264,58 @@ expect_reject_raw "control-fffe" \
     'Use when\357\277\276here' \
     "control characters"
 
+# The block must be UTF-8 as RFC 3629 defines it. A loader refuses the file
+# for a stray continuation byte, an overlong form, an encoded surrogate, a
+# code point above U+10FFFF, or a truncated sequence — none of which is a
+# control character, so the byte-count check alone never saw them.
+expect_reject_raw "utf8-lone-continuation" \
+    '"Use when \200 here"' \
+    "valid UTF-8"
+expect_reject_raw "utf8-overlong-two-byte" \
+    'Use when \300\201 here' \
+    "valid UTF-8"
+expect_reject_raw "utf8-overlong-three-byte" \
+    'Use when \340\200\200 here' \
+    "valid UTF-8"
+expect_reject_raw "utf8-encoded-surrogate" \
+    'Use when \355\240\200 here' \
+    "valid UTF-8"
+expect_reject_raw "utf8-above-max-code-point" \
+    'Use when \364\220\200\200 here' \
+    "valid UTF-8"
+expect_reject_raw "utf8-invalid-lead-byte" \
+    'Use when \365\200\200\200 here' \
+    "valid UTF-8"
+expect_reject_raw "utf8-truncated-sequence" \
+    'Use when \303 here' \
+    "valid UTF-8"
+
+# TAB is illegal as indentation everywhere in YAML, and PyYAML refuses it as
+# separation after a colon; a stray byte in a comment breaks the file just as
+# surely as one in a value.
+expect_reject "tab-indented-continuation" \
+    'description: Use when fine' \
+    "control characters" \
+    $'extra: okay\n\tbad'
+expect_reject "tab-after-colon-on-extra-key" \
+    'description: Use when fine' \
+    "control characters" \
+    $'extra:\tval'
+expect_reject "utf8-invalid-byte-in-comment" \
+    'description: Use when fine' \
+    "valid UTF-8" \
+    $'# comment with \xff byte'
+
+# YAML permits a TAB inside a quoted scalar, but the gate admits no TAB
+# anywhere in frontmatter (see the validator): tracking the exact positions
+# where a TAB is legal is how the earlier gaps arose, and no skill needs one.
+expect_reject "colon-tab-quoted" \
+    $'description: "Use when foo:\tbar"' \
+    "control characters"
+expect_reject "single-quoted-tab" \
+    $'description: \'Use when foo\tbar\'' \
+    "control characters"
+
 expect_accept "well-formed" \
     'description: Use when a thing happens and another thing is true'
 expect_accept "valid-hex-escapes" \
@@ -272,14 +326,19 @@ expect_accept "hash-without-space" \
     'description: Use when x#y is set'
 expect_accept "surrogate-range-edges" \
     'description: "Use when \uD7FF and \uE000 appear"'
-expect_accept "colon-tab-quoted" \
-    $'description: "Use when foo:\tbar"'
-expect_accept "single-quoted-tab" \
-    $'description: \'Use when foo\tbar\''
 expect_accept "bom-mid-string" \
     $'description: Use when \xef\xbb\xbf here'
 expect_accept "non-ascii-text" \
     'description: Use when é happens and ü follows'
+expect_accept "utf8-four-byte-character" \
+    $'description: Use when \xf0\x9f\x98\x80 appears'
+expect_accept "utf8-max-code-point" \
+    $'description: Use when \xf4\x8f\xbf\xbf appears'
+expect_accept "utf8-cjk-text" \
+    $'description: Use when \xe4\xb8\xad\xe6\x96\x87 appears'
+expect_accept "space-indented-continuation-on-extra-key" \
+    'description: Use when fine' \
+    $'extra: okay\n  more'
 
 echo ""
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

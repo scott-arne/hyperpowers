@@ -466,6 +466,11 @@ following the same fail-silent, no-quote, no-newline discipline. Contract:
   call `sdd-dir` (it creates and touches directories); the notice is
   read-only.
 - With several ledgers, the newest by modification time is named.
+- A ledger path that is not valid UTF-8 (legal on Linux file systems) has no
+  faithful spelling in a JSON string, so the notice is skipped for it rather
+  than naming a file the session could not open; the rest of the payload is
+  unaffected. This is the one case in which a ledger exists and no notice is
+  emitted.
 - Text, one line, the path routed through `escape_for_json`, asserted
   verbatim by the hook test apart from the path:
   `This session resumed after context compaction. An SDD ledger for this

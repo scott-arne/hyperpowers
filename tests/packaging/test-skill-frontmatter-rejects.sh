@@ -29,18 +29,27 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 
 # One fixture root per case: the validator reports every skill beneath the root
 # it is given, so a shared root would make one case's exit status unattributable.
+# The root is minted with `mktemp -d` rather than named after the case, because
+# macOS is case-insensitive by default: `hex-u-escape` and `hex-U-escape` would
+# otherwise be one directory, and the second case would inherit the first's
+# directory name and report a spurious name/directory mismatch.
 # The description line is written with `printf '%s\n'`, which copies its
 # argument verbatim — a `\q` in the fixture has to reach the file as a literal
 # backslash-q, or the bad-escape case silently becomes a well-formed string.
 write_fixture() {
     local dirname="$1"
     local desc_line="$2"
-    local root="$TEST_ROOT/$dirname"
+    local after_name_line="${3:-}"
+    local root
 
+    root="$(mktemp -d "$TEST_ROOT/case-XXXXXX")"
     mkdir -p "$root/$dirname"
     {
         echo "---"
         echo "name: $dirname"
+        if [ -n "$after_name_line" ]; then
+            printf '%s\n' "$after_name_line"
+        fi
         printf '%s\n' "$desc_line"
         echo "---"
         echo ""
@@ -55,9 +64,10 @@ expect_reject() {
     local dirname="$1"
     local desc_line="$2"
     local needle="$3"
+    local after_name_line="${4:-}"
     local root output status
 
-    root="$(write_fixture "$dirname" "$desc_line")"
+    root="$(write_fixture "$dirname" "$desc_line" "$after_name_line")"
     output="$(bash "$VALIDATOR" "$root" 2>&1)"
     status=$?
 
@@ -114,8 +124,60 @@ expect_reject "plain-mapping-colon" \
     'description: Use when something. Keywords: optimize, speed up' \
     "mapping separator"
 
+# An escape introducer is not an escape: \x, \u and \U owe 2, 4 and 8
+# hexadecimal digits, and \U must stay within Unicode.
+expect_reject "hex-x-escape" \
+    'description: "bad \xZZ escape"' \
+    "hexadecimal digits"
+expect_reject "hex-u-escape" \
+    'description: "bad \u12Q4 escape"' \
+    "hexadecimal digits"
+expect_reject "hex-U-escape" \
+    'description: "bad \U0000ZZZZ escape"' \
+    "hexadecimal digits"
+expect_reject "codepoint-above-max" \
+    'description: "\UFFFFFFFF"' \
+    "above U+10FFFF"
+
+# A plain scalar that does not begin with a letter can resolve to a date,
+# an integer in any base, or a sexagesimal; the rule rejects the shape
+# rather than enumerating every loader's grammar.
+expect_reject "date-scalar" \
+    'description: 2026-09-14' \
+    "begins with a letter"
+expect_reject "binary-scalar" \
+    'description: 0b101' \
+    "begins with a letter"
+expect_reject "sexagesimal-scalar" \
+    'description: 1:20' \
+    "begins with a letter"
+
+# YAML 1.1 reads y and n as booleans (PyYAML happens not to; the gate follows
+# the specification).
+expect_reject "yaml11-bool-word" \
+    'description: y' \
+    "resolves to a non-string"
+
+# A string, but not a description.
+expect_reject "empty-quoted" \
+    'description: ""' \
+    "empty string"
+
+# The loader folds an indented next line into name, so a first line that
+# matches the directory proves nothing.
+expect_reject "name-continuation" \
+    'description: Use when the name runs onto a second line' \
+    "name is on a single line" \
+    "  continued"
+
 expect_accept "well-formed" \
     'description: Use when a thing happens and another thing is true'
+expect_accept "valid-hex-escapes" \
+    'description: "Use when \x41é\U0001F600 appears in the input"'
+expect_accept "url-in-plain-scalar" \
+    'description: Use when http://example.com is down'
+expect_accept "hash-without-space" \
+    'description: Use when x#y is set'
 
 echo ""
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

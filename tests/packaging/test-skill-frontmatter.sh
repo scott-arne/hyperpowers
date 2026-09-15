@@ -166,7 +166,7 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
     # also excludes overlong forms, surrogates, and code points above
     # U+10FFFF; C1 controls and U+FFFE/U+FFFF are well-formed but forbidden.
     block_end="$(LC_ALL=C awk 'NR > 1 && /^---$/ { print NR; exit }' "$skill")"
-    [ -n "$block_end" ] || block_end="$(wc -l < "$skill" | tr -d ' ')"
+    [ -n "$block_end" ] || block_end="$(LC_ALL=C awk 'END { print NR }' "$skill")"
     raw_bytes="$(head -n "$block_end" "$skill" | wc -c | tr -d ' ')"
     kept_bytes="$(head -n "$block_end" "$skill" | LC_ALL=C tr -d '\000-\011\013-\037\177' | wc -c | tr -d ' ')"
     bad_lines="$(head -n "$block_end" "$skill" | LC_ALL=C awk '

@@ -20,12 +20,28 @@ fail() {
     FAILURES=$((FAILURES + 1))
 }
 
-# YAML resolves an UNQUOTED scalar by its token shape, so a value can be
-# present, single-line, and still reach a loader as null, a boolean, or a
-# number rather than the string it looks like. Quoted values never reach this
-# test: they start with a quote and are strings whatever they spell.
+# A plain scalar that begins with a letter is a string in every YAML schema
+# (1.1, 1.2 core, JSON) unless it is one of the boolean or null words below;
+# every other form a loader resolves to a non-string — integers in any base,
+# floats, .inf and .nan, dates and times, sexagesimals, `~`, `<<`, `=` —
+# begins with a digit, sign, dot, or indicator. Requiring a leading letter
+# therefore completes the classification without porting each loader's
+# number and date grammar, at the cost of rejecting a few digit- or
+# sign-initial strings a description never needs unquoted.
+begins_with_letter() {
+    case "$1" in
+        [[:alpha:]]*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# The letter-initial plain scalars a loader still resolves to something other
+# than a string: the YAML 1.1 boolean words (y and n included, per the 1.1
+# specification, although PyYAML itself loads them as strings) and the null
+# words. Quoted values never reach this test: they are strings whatever
+# they spell.
 resolves_to_non_string() {
-    awk -v v="$1" 'BEGIN { exit !(v ~ /^(~|null|Null|NULL|true|True|TRUE|false|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|[+-]?[0-9][0-9_]*(\.[0-9_]*)?([eE][+-]?[0-9]+)?|[+-]?\.[0-9_]+([eE][+-]?[0-9]+)?|[+-]?\.(inf|Inf|INF|nan|NaN|NAN)|0x[0-9a-fA-F_]+|0o[0-7_]+)$/) }'
+    awk -v v="$1" 'BEGIN { exit !(v ~ /^(y|Y|yes|Yes|YES|n|N|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF|null|Null|NULL)$/) }'
 }
 
 # A plain YAML scalar ends at an unquoted " #"; everything after is a comment.
@@ -43,7 +59,7 @@ strip_plain_comment() {
 # would eat the very escapes this is here to inspect.
 scalar_defect() {
     SCALAR="$1" awk '
-    function walk_double(  n, i, c, e, rest) {
+    function walk_double(  n, i, c, e, rest, need, hex) {
         n = length(s); i = 2
         while (i <= n) {
             c = substr(s, i, 1)
@@ -52,6 +68,17 @@ scalar_defect() {
                 if (e == "") return "double-quoted value ends in a dangling escape"
                 if (index(LEGAL, e) == 0)
                     return "double-quoted value carries an escape YAML does not define (\\" e ")"
+                # \x, \u and \U carry exactly 2, 4 and 8 hexadecimal digits;
+                # \U must also name a code point a loader can construct.
+                need = (e == "x") ? 2 : (e == "u") ? 4 : (e == "U") ? 8 : 0
+                if (need > 0) {
+                    hex = substr(s, i + 2, need)
+                    if (length(hex) != need || hex !~ /^[0-9a-fA-F]+$/)
+                        return "double-quoted value has a \\" e " escape without " need " hexadecimal digits"
+                    if (e == "U" && toupper(hex) > "0010FFFF")
+                        return "double-quoted value has a \\U escape above U+10FFFF"
+                    i += 2 + need; continue
+                }
                 i += 2; continue
             }
             if (c == "\"") {
@@ -90,6 +117,21 @@ scalar_defect() {
         if (s ~ /: / || s ~ /:$/)
             print "plain value contains a `: ` mapping separator, so YAML cannot scan it"
     }'
+}
+
+# The first non-blank line after KEY's entry that is neither the next
+# top-level key nor the closing delimiter. A plain scalar continues across
+# blank lines, so anything printed here is a second line a loader would fold
+# into the value.
+continuation_after() {
+    awk -v key="$1" '
+        NR == 1 { next }
+        /^---$/ { exit }
+        seen && /^[A-Za-z_][A-Za-z0-9_.-]*:/ { exit }
+        seen && /^[[:space:]]*$/ { next }
+        seen { print; exit }
+        index($0, key ":") == 1 && substr($0, length(key) + 2, 1) ~ /[[:space:]]/ { seen = 1 }
+    ' "$2"
 }
 
 echo "=== skill frontmatter ==="
@@ -168,10 +210,18 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
     name_body="$(strip_plain_comment "$name_value")"
     if [ -z "$name_line" ]; then
         fail "$dir: frontmatter declares a name"
+    elif ! begins_with_letter "$name_body"; then
+        # A directory named `123` or `2026-09-14` would otherwise compare
+        # equal as raw text while a loader returns an int or a date.
+        fail "$dir: name begins with a letter (got '$name_value')"
     elif resolves_to_non_string "$name_body"; then
-        # A directory named `null`, `on`, or `123` would otherwise compare
-        # equal as raw text while a loader returns None, True, or an int.
+        # A directory named `null` or `on` would otherwise compare equal as
+        # raw text while a loader returns None or True.
         fail "$dir: name resolves to a non-string YAML scalar (got '$name_value')"
+    elif [ -n "$(continuation_after name "$skill")" ]; then
+        # The loader folds an indented next line into the value, so the
+        # first line matching the directory proves nothing.
+        fail "$dir: name is on a single line (continuation follows)"
     elif [ "$name_body" != "$dir" ]; then
         fail "$dir: name matches the directory (got '$name_value')"
     else
@@ -202,9 +252,14 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
                     desc_defect="description is loadable YAML ($syntax)"
                 else
                     case "$desc_value" in
+                        '""' | "''")
+                            desc_defect="description is not the empty string" ;;
                         '"'* | "'"*) ;;   # quoted values are strings whatever they spell
                         *)
-                            if resolves_to_non_string "$(strip_plain_comment "$desc_value")"; then
+                            body="$(strip_plain_comment "$desc_value")"
+                            if ! begins_with_letter "$body"; then
+                                desc_defect="description begins with a letter or is quoted (got '$desc_value')"
+                            elif resolves_to_non_string "$body"; then
                                 desc_defect="description resolves to a non-string YAML scalar (got '$desc_value')"
                             fi ;;
                     esac
@@ -215,14 +270,7 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
         else
             # A plain scalar continues across blank lines, so scan past
             # them to the next top-level key or the closing delimiter.
-            continuation="$(awk '
-                NR == 1 { next }
-                /^---$/ { exit }
-                seen && /^[A-Za-z_][A-Za-z0-9_.-]*:/ { exit }
-                seen && /^[[:space:]]*$/ { next }
-                seen { print; exit }
-                /^description:[[:space:]]/ { seen = 1 }
-            ' "$skill")"
+            continuation="$(continuation_after description "$skill")"
             if [ -n "$continuation" ]; then
                 fail "$dir: description is on a single line (continuation follows)"
             else

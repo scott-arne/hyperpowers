@@ -29,19 +29,23 @@ fail() {
 # number and date grammar, at the cost of rejecting a few digit- or
 # sign-initial strings a description never needs unquoted.
 begins_with_letter() {
-    case "$1" in
-        [[:alpha:]]*) return 0 ;;
-        *) return 1 ;;
-    esac
+    # An ASCII letter, or the lead byte of any non-ASCII character (the block
+    # is valid UTF-8 by the time a value gets here, and every non-string form
+    # YAML resolves is ASCII), but never a byte-order mark. Byte-level under a
+    # pinned locale so the verdict is the same on every host.
+    V="$1" LC_ALL=C awk 'BEGIN { s = ENVIRON["V"]; exit !(s ~ /^[A-Za-z\302-\364]/ && s !~ /^\357\273\277/) }'
 }
 
 # The letter-initial plain scalars a loader still resolves to something other
 # than a string: the YAML 1.1 boolean words (y and n included, per the 1.1
 # specification, although PyYAML itself loads them as strings) and the null
 # words. Quoted values never reach this test: they are strings whatever
-# they spell.
+# they spell. Any capitalisation counts: Psych resolves these words
+# case-insensitively.
 resolves_to_non_string() {
-    awk -v v="$1" 'BEGIN { exit !(v ~ /^(y|Y|yes|Yes|YES|n|N|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF|null|Null|NULL)$/) }'
+    # Case-insensitive: Psych resolves tRuE and nUlL exactly as it does true
+    # and null, so any spelling of these words is a non-string somewhere.
+    V="$1" awk 'BEGIN { exit !(tolower(ENVIRON["V"]) ~ /^(y|yes|n|no|true|false|on|off|null)$/) }'
 }
 
 # A plain YAML scalar ends at an unquoted " #"; everything after is a comment.
@@ -359,7 +363,9 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
         done <<< "$others"
     fi
 
-    chars="$(awk 'NR==1 {next} /^---$/ {exit} {print}' "$skill" | wc -m | tr -d ' ')"
+    # Count characters, not bytes, whatever the locale: in valid UTF-8 every
+    # character has exactly one byte outside the continuation range 80-BF.
+    chars="$(awk 'NR==1 {next} /^---$/ {exit} {print}' "$skill" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')"
     if [ "$chars" -le 1024 ]; then
         pass "$dir: frontmatter is within 1024 characters ($chars)"
     else

@@ -4,11 +4,17 @@
 **Plan:** `docs/hyperpowers/plans/2026-09-10-external-workflow-adoption.md`
 **Plan date:** 2026-09-10
 **Measured:** baseline 2026-09-12, hardened baseline 2026-09-12, treatment
-2026-09-13, sentinel re-run 2026-09-14, read from the run-id timestamps
-**Shipping head:** `d0a187d64e62587131f9c9ff4f59988d257b6b26`
+2026-09-13, sentinel re-run 2026-09-14, sentinel tier re-measured 2026-09-15,
+read from the run-id timestamps
+**Treatment head (S1):** `d0a187d64e62587131f9c9ff4f59988d257b6b26`
+**Re-measured head (sentinel tier):** `bad92ad079783032c1e2431e624ea0c09cc67f31`
+— see "Re-measured at `bad92ad`" under Sentinel tier for why there are two
 **Governing adjudication:**
 `evidence/2026-09-10-external-workflow-adoption/task-19-runs/adjudication.md`,
-in hyperpowers-evals at `c615efc488a091f6be867f174c983c5353b7a252`
+in hyperpowers-evals at `c615efc488a091f6be867f174c983c5353b7a252`, restated
+for the re-measured head by
+`evidence/2026-09-10-external-workflow-adoption/task-23-reruns/adjudication-remeasurement.md`
+at `5a9f2c9`
 
 ## What was measured
 
@@ -328,16 +334,25 @@ agent acts on the wording.
 
 The six items that ship on tests alone do not all rest on the same evidence.
 Five of them — A3, A5, A6, A8 and A10 — rest on the fourteen contract suites at
-`d0a187d`, every one of which exited 0 at that head; A9 rests on the four hook
-suites among them, `test-session-start.sh`, `test-ungated-notice.sh`,
+`d0a187d`, every one of which exited 0 at that head, and again at `bad92ad`,
+where all fourteen exited 0 when the tier was re-measured; A9 rests on the four
+hook suites among them, `test-session-start.sh`, `test-ungated-notice.sh`,
 `test-broker-janitor.sh` and `test-no-heredocs-in-hooks.sh`. The governing
 adjudication names all fourteen suite paths against the head, so the set is
-re-runnable rather than reported.
+re-runnable rather than reported. Two of the fourteen grew between the heads:
+the frontmatter gate was rebuilt across two Codex gates and a review sweep,
+and the SDD contract suite gained an assertion that the two A1 template copies
+are byte-identical. Neither changes what the needles pin.
 
 ## Sentinel tier
 
+The tier was run twice: first against the treatment head `d0a187d`, described
+in the next four paragraphs and their subsections, and again on 2026-09-15
+against `bad92ad`, described under "Re-measured at `bad92ad`", which is the
+run the six contract-only items now rest on.
+
 `quorum run-all --tier sentinel --coding-agents claude-auto` against the
-shipping head. The full batch output is preserved at
+treatment head. The full batch output is preserved at
 `task-19-runs/sentinel-treatment-head-1.log`; the batch id that log records,
 `batch-20260913T215413Z-21b5`, points into the harness's gitignored `results/`
 tree and is named for provenance rather than as something a reader can open.
@@ -419,7 +434,11 @@ could plausibly change verdict in the direction that hides things:
 `worktree-creation-from-main`, whose `implementation-tool-not-called Write`
 check currently fails on a `docs/hyperpowers/` design document and would not
 after the change. It is outside the sentinel tier and was not re-run. The
-change was not verified against it.
+change was not verified against it. The predicate widened once more before
+the re-measurement — the detector now normalizes dot segments (evals
+`a79c600`), closing a gap a Codex lens had recorded — and the two worktree
+sentinel scenarios ran green under it; `worktree-creation-from-main` remains
+outside the tier and unverified.
 
 ### The actor gap is a coverage hole, not a result
 
@@ -432,7 +451,67 @@ limitation: `codex-tool-mapping-comprehension` requires codex,
 `worktree-creation-under-pressure` requires claude, and `worktree-no-drift-to-main`
 requires both. Only one of the three would have run with the literal claude
 actor available. None of these four is a behavior result at this head; all four
-are measurement the tier did not make.
+are measurement the tier did not make. Three of the four were closed before
+the re-measurement by harness fixes recorded in the subsection below; the
+codex-only scenario is the one that remains.
+
+### Re-measured at `bad92ad` (2026-09-15)
+
+The first pass of the plan's final review stopped at a hand-back: the final
+Codex gate found the packaging gate accepting frontmatter no YAML loader
+accepts, and among the fixes was quoting the description in
+`skills/optimizing-performance/SKILL.md`, a file whose unquoted form a
+standards-compliant loader rejects at column 210. The parsed text is
+byte-identical to what any loader that accepted the old form produced, and the
+one scenario that exercises that skill is outside the sentinel tier and has
+never run, but the plan's rule is mechanical — a `skills/` file moved after
+the measured head — so the release was not authorized and the human partner
+was asked. They authorized re-measurement.
+
+The plan's remediation command ran unchanged, sandboxed, from the evals clone
+at `452739a` with `SUPERPOWERS_ROOT` at hyperpowers `bad92ad`, tee'd with its
+heads and start time to `task-23-reruns/sentinel-remeasurement-1.log`. Batch
+line, verbatim:
+
+```
+batch done · 9 ✓ · 0 ✗ · 2 ⊘ · 69 — · wall 10m27s
+artifacts: results/batches/batch-20260915T183804Z-af55
+```
+
+Eleven scenarios were runnable rather than nine, and nine passed on the first
+pass: the seven that passed at `d0a187d`, `triggering-writing-plans` without
+needing a re-run, and `superpowers-bootstrap`, which had been indeterminate.
+The two indeterminates were `worktree-creation-under-pressure` and
+`worktree-no-drift-to-main`, refused at 0 s by the runner's own actor check —
+an instrument failure, not a trial: no agent started, so nothing was
+discarded. After that check was corrected (evals `906f573`, one commit past
+the batch head, touching the runner's directive gate and a unit test only),
+each was run individually at the same hyperpowers head: both `pass`, with two
+and three post-checks true respectively, preserved with their logs beside the
+batch. The tier at `bad92ad` therefore stands at **11 of 12 scenarios pass, 0
+fail, 0 indeterminate, 1 never ran** — `codex-tool-mapping-comprehension`,
+which needs the `codex` actor the plan's command does not name. At `d0a187d`
+the same tier stood at 7 pass, 1 pass on re-run, 1 indeterminate, 3 never ran.
+
+What changed in the instrument between the two runs, all in the evals clone
+and all committed before the batch: three scenarios (`superpowers-bootstrap`
+among them) moved from `skill-before-tool` to
+`skill-before-implementation-tool`, the verb `triggering-writing-plans` had
+already been moved to, so a design-spec write no longer counts as an
+implementation write; `bootstrap-installed` recognizes every Claude actor, which
+is why `superpowers-bootstrap` now runs to a verdict; and a scenario's
+`# coding-agents:` directive is matched against an agent's `runtime_family` in
+the run matrix and, after the batch, in the runner, which is why the two
+worktree scenarios entered the tier at all. These change which scenarios the
+instrument can read, not what the skills say; the skills under test are the
+same text at both heads except for the quoted description, which parses to
+the same string.
+
+This batch supersedes the `d0a187d` batch as the regression evidence behind
+the six contract-only items; `task-23-reruns/adjudication-remeasurement.md`
+restates the ship table with that substitution and leaves every verdict where
+it was. What it does not buy is the same as before: one run per scenario, no
+variance estimate, and one scenario the host cannot run.
 
 ## Removals
 

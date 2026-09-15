@@ -53,10 +53,10 @@ strip_plain_comment() {
 
 # Why a frontmatter value is not a loadable single-line string, or nothing if
 # it is one. A quoted scalar must close and may carry only escapes YAML
-# defines; a plain scalar must not contain a `: ` mapping separator, which
-# makes the whole document unscannable. The value arrives through the
-# environment, not `awk -v`: `-v` performs its own backslash processing and
-# would eat the very escapes this is here to inspect.
+# defines; a plain scalar must not contain a `:` followed by white space (a
+# mapping separator), nor a tab anywhere (PyYAML refuses it). The value
+# arrives through the environment, not `awk -v`: `-v` performs its own
+# backslash processing and would eat the very escapes this is here to inspect.
 scalar_defect() {
     SCALAR="$1" awk '
     function walk_double(  n, i, c, e, rest, need, hex) {
@@ -77,6 +77,11 @@ scalar_defect() {
                         return "double-quoted value has a \\" e " escape without " need " hexadecimal digits"
                     if (e == "U" && toupper(hex) > "0010FFFF")
                         return "double-quoted value has a \\U escape above U+10FFFF"
+                    # A lone UTF-16 surrogate is not a scalar value; some
+                    # loaders construct it and others refuse the document.
+                    if ((e == "u" && toupper(hex) >= "D800" && toupper(hex) <= "DFFF") ||
+                        (e == "U" && toupper(hex) >= "0000D800" && toupper(hex) <= "0000DFFF"))
+                        return "double-quoted value has a \\" e " escape naming a UTF-16 surrogate (U+D800-U+DFFF)"
                     i += 2 + need; continue
                 }
                 i += 2; continue
@@ -114,8 +119,10 @@ scalar_defect() {
         first = substr(s, 1, 1)
         if (first == "\"") { print walk_double(); exit }
         if (first == "'\''") { print walk_single(); exit }
-        if (s ~ /: / || s ~ /:$/)
-            print "plain value contains a `: ` mapping separator, so YAML cannot scan it"
+        if (s ~ /:[ \t]/ || s ~ /:$/)
+            print "plain value contains a `:` followed by white space, a mapping separator YAML cannot scan"
+        else if (s ~ /\t/)
+            print "plain value contains a tab, which a YAML loader does not accept inside an unquoted scalar"
     }'
 }
 

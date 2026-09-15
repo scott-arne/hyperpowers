@@ -3,8 +3,9 @@
 # Its positive suite only proves the shipped tree passes, which stays true if
 # the validator degrades into accepting everything — that is exactly how an
 # unterminated quote, a bad escape, and a `: ` mapping separator shipped
-# unnoticed. Each case below is a value pyyaml rejects or resolves to a
-# non-string, driven through the validator's optional [skills-root] argument.
+# unnoticed. Each case below is a value a reference loader (PyYAML or Ruby
+# Psych) rejects or resolves to a non-string, driven through the validator's
+# optional [skills-root] argument.
 #
 # Usage: test-skill-frontmatter-rejects.sh
 set -uo pipefail
@@ -170,6 +171,25 @@ expect_reject "name-continuation" \
     "name is on a single line" \
     "  continued"
 
+# A lone UTF-16 surrogate is not a scalar value: Psych refuses the document
+# (PyYAML happens to construct it, which is why a PyYAML-only probe missed it).
+expect_reject "surrogate-u-escape" \
+    'description: "Use when \uD800 appears"' \
+    "UTF-16 surrogate"
+expect_reject "surrogate-U-escape" \
+    'description: "Use when \U0000DFFF appears"' \
+    "UTF-16 surrogate"
+
+# The value indicator is a colon followed by ANY separation white space, so a
+# tab after the colon splits the plain scalar exactly as a space does; and
+# PyYAML refuses a tab anywhere inside an unquoted scalar.
+expect_reject "colon-tab" \
+    $'description: Use when foo:\tbar' \
+    "mapping separator"
+expect_reject "plain-tab" \
+    $'description: Use when ready\t# comment' \
+    "contains a tab"
+
 expect_accept "well-formed" \
     'description: Use when a thing happens and another thing is true'
 expect_accept "valid-hex-escapes" \
@@ -178,6 +198,12 @@ expect_accept "url-in-plain-scalar" \
     'description: Use when http://example.com is down'
 expect_accept "hash-without-space" \
     'description: Use when x#y is set'
+expect_accept "surrogate-range-edges" \
+    'description: "Use when \uD7FF and \uE000 appear"'
+expect_accept "colon-tab-quoted" \
+    $'description: "Use when foo:\tbar"'
+expect_accept "single-quoted-tab" \
+    $'description: \'Use when foo\tbar\''
 
 echo ""
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

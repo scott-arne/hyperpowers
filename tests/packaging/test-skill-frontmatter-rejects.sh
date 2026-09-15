@@ -357,6 +357,17 @@ expect_reject "extra-key-bare-number" \
     "begins with a letter" \
     'version: 1.2'
 
+# A key that is a YAML boolean or null word loads as True, False, or None,
+# so no reader finds it by name.
+expect_reject "extra-key-boolean-word" \
+    'description: Use when fine' \
+    "is a string key" \
+    'true: okay'
+expect_reject "extra-key-null-word" \
+    'description: Use when fine' \
+    "is a string key" \
+    'null: okay'
+
 # The frontmatter is a flat mapping of single-line scalars: an indented line
 # continues or nests the entry above, which the gate does not support, however
 # legal the YAML.

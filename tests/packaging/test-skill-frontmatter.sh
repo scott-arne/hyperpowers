@@ -340,6 +340,11 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
     if [ -n "$others" ]; then
         while IFS= read -r line; do
             key="${line%%:*}"
+            if resolves_to_non_string "$key"; then
+                # A loader reads this key as a boolean or null, not a string.
+                fail "$dir: $key is a string key"
+                continue
+            fi
             value="$(printf '%s' "${line#*:}" | sed 's/^ *//')"
             if [ -z "$value" ]; then
                 fail "$dir: $key has a value on its line"

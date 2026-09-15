@@ -206,14 +206,15 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
     # block's bytes rather than inspect a shell string (the shell drops NUL),
     # and match the UTF-8 grammar of RFC 3629 byte by byte, which
     # also excludes overlong forms, surrogates, and code points above
-    # U+10FFFF; C1 controls and U+FFFE/U+FFFF are well-formed but forbidden.
+    # U+10FFFF; C1 controls, the U+2028 and U+2029 line separators, and
+    # U+FFFE/U+FFFF are well-formed but forbidden.
     block_end="$(LC_ALL=C awk 'NR > 1 && /^---$/ { print NR; exit }' "$skill")"
     [ -n "$block_end" ] || block_end="$(LC_ALL=C awk 'END { print NR }' "$skill")"
     raw_bytes="$(head -n "$block_end" "$skill" | wc -c | tr -d ' ')"
     kept_bytes="$(head -n "$block_end" "$skill" | LC_ALL=C tr -d '\000-\011\013-\037\177' | wc -c | tr -d ' ')"
     bad_lines="$(head -n "$block_end" "$skill" | LC_ALL=C awk '
         !/^([\001-\177]|[\302-\337][\200-\277]|\340[\240-\277][\200-\277]|[\341-\354][\200-\277][\200-\277]|\355[\200-\237][\200-\277]|[\356-\357][\200-\277][\200-\277]|\360[\220-\277][\200-\277][\200-\277]|[\361-\363][\200-\277][\200-\277][\200-\277]|\364[\200-\217][\200-\277][\200-\277])*$/ { c++; next }
-        /\302[\200-\237]|\357\277[\276\277]/ { c++ }
+        /\302[\200-\237]|\357\277[\276\277]|\342\200[\250\251]/ { c++ }
         END { print c + 0 }')"
     if [ "$raw_bytes" -ne "$kept_bytes" ] || [ "$bad_lines" -ne 0 ]; then
         fail "$dir: frontmatter is valid UTF-8 with no control characters or tabs ($((raw_bytes - kept_bytes)) C0, TAB, or DEL byte(s); $bad_lines line(s) malformed or carrying a C1 control or U+FFFE/U+FFFF)"

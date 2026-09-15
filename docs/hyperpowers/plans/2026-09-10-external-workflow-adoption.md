@@ -110,19 +110,24 @@ Every task below cites live code. These are the anchors the plan was written aga
 
 **Evals clone — created:** four scenario directories under `scenarios/`, each with `story.md`, an executable `setup.sh`, and a non-executable `checks.sh`; and the evidence tree `evidence/2026-09-10-external-workflow-adoption/`.
 
+Outcome, 2026-09-15: A2, A4, and A7 did not ship, so the entries below name
+only the clauses that landed; the A2, A4, and A7 annotations the plan carried
+before execution are recorded in each skipped task's own note (Tasks 11 and
+13, the A2 half of Task 14, the A7 half of Task 15).
+
 **Hyperpowers — modified, fourteen skill files:**
 
-- `skills/requesting-code-review/code-reviewer.md` — A1 section, A2 reviewer clause
+- `skills/requesting-code-review/code-reviewer.md` — A1 section
 - `skills/requesting-code-review/gate-findings.md` — A3 dedup identity
 - `skills/requesting-code-review/gate-fix-loop.md` — A3 finding states
-- `skills/subagent-driven-development/task-reviewer-prompt.md` — A1 section, A2 reviewer clause
-- `skills/subagent-driven-development/re-review-prompt.md` — A2 reviewer clause
-- `skills/subagent-driven-development/implementer-prompt.md` — A2 implementer clause, A5 Mirror bullet
-- `skills/subagent-driven-development/SKILL.md` — A2 implementer clause, A3 paragraph, A8 sentence
+- `skills/subagent-driven-development/task-reviewer-prompt.md` — A1 section
+- `skills/subagent-driven-development/re-review-prompt.md` — A3 declined verdict and the all-declined round
+- `skills/subagent-driven-development/implementer-prompt.md` — A5 Mirror bullet
+- `skills/subagent-driven-development/SKILL.md` — A3 paragraph, A8 sentence
 - `skills/subagent-driven-development/common-rationalizations.md` — A3 decline verdict
 - `skills/subagent-driven-development/example-workflow.md` — A3 decline verdict in the ledger line
-- `skills/writing-plans/SKILL.md` — A2 table rows and Red-at-start, A5 Grounding and Mirror, A6 sanctioned unknowns
-- `skills/brainstorming/SKILL.md` — A6 assumption bullet, A7 facts bullet
+- `skills/writing-plans/SKILL.md` — A5 Grounding and Mirror, A6 sanctioned unknowns
+- `skills/brainstorming/SKILL.md` — A6 assumption bullet
 - `skills/dispatching-parallel-agents/SKILL.md` — A8 collection paragraph
 - `skills/writing-skills/SKILL.md` — A10 three rules
 - `skills/optimizing-performance/SKILL.md` — description quoted so the frontmatter parses (final-gate round 1)
@@ -5080,7 +5085,7 @@ git commit -m "feat(gate): confirm findings before fixing, dedup by evidence and
 
 ### Task 13: A4 — a loop that goes red is Phase 1's completion criterion
 
-**Skipped after Task 9's measurement (human partner's decision, 2026-09-12).** A4 does not ship: its scenario's unassisted baseline met acceptance in 3/3 determinate trials before hardening (Task 8) and again after one hardening (Task 9), so by A10's own rule the prose would be a no-op on this host's default model. The whole task is skipped. Task 20's removal matrix has nothing to remove for it. A weaker-model arm and a second hardening were offered and declined. **Two pieces of this task are infrastructure other tasks consume and are NOT skipped:** the `tests/skills/test-skill-contract.sh` scaffold (header, `pass`/`fail`/`assert_contains`/`assert_file_exists` helpers, banner, `STATUS:` terminator — without the `SYSDBG`/`RED_LOOP` variables and the A4 needles) and the `docs/testing.md` runner row. Task 16, the first consumer, creates both; Task 17 appends to the suite as planned.
+**Skipped after Task 9's measurement (human partner's decision, 2026-09-12).** A4 does not ship: its scenario's unassisted baseline met acceptance in 3/3 determinate trials before hardening (Task 8) and again after one hardening (Task 9), so by A10's own rule the prose would be a no-op on this host's default model. The whole task is skipped. Task 20's removal matrix has nothing to remove for it. A weaker-model arm and a second hardening were offered and declined. **Two pieces of this task are infrastructure other tasks consume and are NOT skipped:** the `tests/skills/test-skill-contract.sh` scaffold (header, `pass`/`fail`/`assert_contains` helpers, banner, `STATUS:` terminator — without the `SYSDBG`/`RED_LOOP` variables and the A4 needles); the `assert_file_exists` helper the plan also specified was removed as dead code in `361fc2d` once no task called it; and the `docs/testing.md` runner row. Task 16, the first consumer, creates both; Task 17 appends to the suite as planned.
 
 **Repository:** the hyperpowers feature worktree.
 

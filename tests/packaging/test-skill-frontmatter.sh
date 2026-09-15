@@ -297,6 +297,11 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
     name_syntax="$(scalar_defect "$name_body")"
     if [ -z "$name_line" ]; then
         fail "$dir: frontmatter declares a name"
+    elif [ "${name_value#[\"\']}" != "$name_value" ]; then
+        # A quoted name would need unquoting before the directory comparison;
+        # the gate keeps names bare by a recorded decision rather than admit
+        # a second form, and says so instead of blaming the letter rule.
+        fail "$dir: name is an unquoted scalar matching the directory (got '$name_value')"
     elif ! begins_with_letter "$name_body"; then
         # A directory named `123` or `2026-09-14` would otherwise compare
         # equal as raw text while a loader returns an int or a date.

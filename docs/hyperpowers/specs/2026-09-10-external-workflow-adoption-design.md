@@ -525,8 +525,15 @@ Outcome, 2026-09-15: A2, A4, and A7 did not ship (Task 9's hardened
 baselines met acceptance 3/3, so Tasks 11 and 13, the A2 half of Task 14,
 and the A7 half of Task 15 were skipped). The rows below for
 `fix-subagent-prompt.md`, `systematic-debugging/SKILL.md`, `red-loop.md`,
-and the A7 bullet describe pins that were planned, not landed; the plan's
-File Structure and the evidence note record what shipped.
+and the A7 bullet describe pins that were planned, not landed; and in the
+rows for `code-reviewer.md`, `task-reviewer-prompt.md`,
+`re-review-prompt.md`, `implementer-prompt.md`,
+`subagent-driven-development/SKILL.md`, `writing-plans/SKILL.md`, and
+`brainstorming/SKILL.md` the A2 and A7 clauses were never written, so only
+the remaining clauses in each Pinned cell landed (`re-review-prompt.md`'s
+change was A3's declined verdict and all-declined round, which the table
+does not list). The plan's File Structure and the evidence note record
+what shipped.
 
 | Changed file | Contract test | Pinned |
 |---|---|---|

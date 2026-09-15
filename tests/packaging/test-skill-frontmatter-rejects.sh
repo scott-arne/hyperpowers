@@ -280,6 +280,17 @@ expect_reject_raw "control-line-separator" \
     '\342\200\250Use when fine' \
     "control characters"
 
+# U+00A0 is not YAML separation white space; under a UTF-8 locale an
+# unpinned character class would call it one and admit a document no loader
+# accepts. An NBSP inside a value is ordinary text and stays accepted.
+expect_reject "nbsp-after-colon" \
+    $'description:\xc2\xa0Use when fine' \
+    "key: value mapping"
+expect_reject "nbsp-only-line" \
+    'description: Use when fine' \
+    "key: value mapping" \
+    $'\xc2\xa0'
+
 # The block must be UTF-8 as RFC 3629 defines it. A loader refuses the file
 # for a stray continuation byte, an overlong form, an encoded surrogate, a
 # code point above U+10FFFF, or a truncated sequence — none of which is a
@@ -452,6 +463,8 @@ expect_accept "non-ascii-initial-description" \
     'description: Übersicht when things happen'
 expect_accept "within-limit-multibyte" \
     "description: $(printf 'é%.0s' $(seq 1 900))"
+expect_accept "nbsp-inside-value" \
+    $'description: Use when\xc2\xa0here'
 
 echo ""
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

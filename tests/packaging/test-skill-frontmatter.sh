@@ -7,6 +7,12 @@
 #
 # Usage: test-skill-frontmatter.sh [skills-root]   (default: <repo>/skills)
 set -uo pipefail
+# Every tool below works on bytes: the block is valid UTF-8 or rejected before
+# anything else reads it, YAML separation white space is ASCII, and under a
+# UTF-8 locale awk, grep, and sed would otherwise count U+00A0 and its kin as
+# white space and admit `key:<NBSP>value`, which no loader accepts. Pinning
+# the locale once makes every verdict the same on every host.
+export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"

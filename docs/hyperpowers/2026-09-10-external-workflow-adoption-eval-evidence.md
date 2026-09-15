@@ -8,14 +8,16 @@
 read from the run-id timestamps
 **Treatment head (S1):** `d0a187d64e62587131f9c9ff4f59988d257b6b26`
 **Re-measured heads (sentinel tier):** `bad92ad079783032c1e2431e624ea0c09cc67f31`,
-then `7e8ba23f1d5f3acd3fa780b7bc4b5e930db24edf` — see "Re-measured at
-`bad92ad`" under Sentinel tier for why the tier ran three times
+then `7e8ba23f1d5f3acd3fa780b7bc4b5e930db24edf`, then
+`fd457d36ca3a507266784a4e14299229b09c36e2` and
+`65d77471704c38088be2dc79d55f1ee59285ad57` — see "Re-measured at
+`bad92ad`" under Sentinel tier for why the tier ran five times
 **Governing adjudication:**
 `evidence/2026-09-10-external-workflow-adoption/task-19-runs/adjudication.md`,
 in hyperpowers-evals at `c615efc488a091f6be867f174c983c5353b7a252`, restated
 for the re-measured heads by
 `evidence/2026-09-10-external-workflow-adoption/task-23-reruns/adjudication-remeasurement.md`
-at `b2ed9e1`
+at `b343150`
 
 ## What was measured
 
@@ -338,8 +340,8 @@ agent acts on the wording.
 
 The six items that ship on tests alone do not all rest on the same evidence.
 Five of them — A3, A5, A6, A8 and A10 — rest on the fourteen contract suites at
-`d0a187d`, every one of which exited 0 at that head, and again at `bad92ad`
-and at `7e8ba23`, where all fourteen exited 0 each time the tier was
+`d0a187d`, every one of which exited 0 at that head, and again at `bad92ad`,
+`7e8ba23` and `65d7747`, where all fourteen exited 0 each time the tier was
 re-measured; A9 rests on the four
 hook suites among them, `test-session-start.sh`, `test-ungated-notice.sh`,
 `test-broker-janitor.sh` and `test-no-heredocs-in-hooks.sh`. The governing
@@ -351,12 +353,13 @@ are byte-identical. Neither changes what the needles pin.
 
 ## Sentinel tier
 
-The tier was run three times: first against the treatment head `d0a187d`,
+The tier was run five times: first against the treatment head `d0a187d`,
 described in the next four paragraphs and their subsections; again on
-2026-09-15 against `bad92ad`; and once more the same evening against
-`7e8ba23`, after a hook fix — both re-runs are described under "Re-measured
-at `bad92ad`", and the last one is the run the six contract-only items now
-rest on.
+2026-09-15 against `bad92ad`; once more the same evening against `7e8ba23`,
+after a hook fix; and twice that night against `fd457d3` and `65d7747`,
+after the third-pass gate's fixes to the same hook — the re-runs are
+described under "Re-measured at `bad92ad`", and the last one is the run the
+six contract-only items now rest on.
 
 `quorum run-all --tier sentinel --coding-agents claude-auto` against the
 treatment head. The full batch output is preserved at
@@ -546,6 +549,42 @@ table at `7e8ba23` and leaves every verdict where it was; the fourteen
 contract suites were run at that head as well, 14 of 14 exit 0. What the
 batch does not buy is the same as before: one run per scenario, no variance
 estimate, and one scenario the host cannot run.
+
+That batch was superseded in turn. The third pass of the same gate found two
+more defects in the notice: the newest ledger was found through a
+line-oriented listing, so a newline in a plan directory name split the path
+and the second-pass guard silenced the notice instead of naming the newest
+ledger as A9 requires; and a ledger path that is not valid UTF-8, legal on
+Linux file systems, reached the payload as raw bytes. Both were fixed in
+`115f52e` (the newest ledger is chosen with `-nt` over the paths themselves,
+no listing and no fork; a path that fails an `iconv` UTF-8 check is skipped,
+since a JSON string cannot carry it) and refined in `ddbe0e2` (the check is
+a pipeline rather than a here-string, which on bash 5.1+ is the pre-fork
+pipe write the repo's heredoc fence exists to ban; the fence now bans
+here-strings too), with the newline case flipped to assert the real path is
+named and a new case for the skipped path; the spec's A9 section records
+that one skipped case (`65d7747`). The hook moved twice, so under the same
+standing decision the tier ran twice more, same command, from the evals
+clone at `b2ed9e1`: at `fd457d3`, tee'd to
+`task-23-reruns/sentinel-remeasurement-4.log` (`batch done · 11 ✓ · 0 ✗ ·
+0 ⊘ · 69 — · wall 10m45s`, `batch-20260915T224434Z-7266`; its log and batch
+view are kept, its run copies are not, since the head was superseded within
+the hour), and at `65d7747`, tee'd to
+`task-23-reruns/sentinel-remeasurement-5.log`. Batch line, verbatim:
+
+```
+batch done · 11 ✓ · 0 ✗ · 0 ⊘ · 69 — · wall 9m42s
+artifacts: results/batches/batch-20260915T231035Z-d6df
+```
+
+All eleven runnable scenarios passed in both batches. Run copies for the
+`65d7747` batch are under `task-23-reruns/sentinel-runs-3/`; the hook suite
+was also run on Linux, where the invalid-UTF-8 fixture can exist, 37 of 37
+pass. `task-23-reruns/adjudication-remeasurement.md` restates the ship table
+at `65d7747` and leaves every verdict where it was; the fourteen contract
+suites were run at that head as well, 14 of 14 exit 0. The limits are
+unchanged: one run per scenario, no variance estimate, and one scenario the
+host cannot run.
 
 ## Removals
 

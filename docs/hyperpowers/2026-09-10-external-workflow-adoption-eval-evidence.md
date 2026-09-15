@@ -324,9 +324,10 @@ files, excluding the two helper definitions the new suite introduces.
 
 `tests/hooks/test-session-start.sh` covers the seventh, A9, with 37 cases
 including an open-pipe watchdog, a timed EOF-path case, two cases that feed the
-hook a ledger path carrying a control byte or a newline and assert the payload
-still parses and names the real path, and one that skips the notice for a path
-that is not valid UTF-8 (it runs only where the file system accepts such names).
+hook a ledger path carrying a control byte or newlines and assert the payload
+still parses and names the path on one line, and one that skips the notice for
+a path that is not valid UTF-8 (it runs only where the file system accepts such
+names).
 
 The two suites do not prove the same kind of thing. Each needle normalizes
 whitespace and then greps for one fixed substring, so it proves a required
@@ -561,11 +562,11 @@ no listing and no fork; a path that fails an `iconv` UTF-8 check is skipped,
 since a JSON string cannot carry it) and refined in `ddbe0e2` (the check is
 a pipeline rather than a here-string, which on bash 5.1+ is the pre-fork
 pipe write the repo's heredoc fence exists to ban; the fence now bans
-here-strings too), with the newline case flipped to assert the real path is
-named and a new case for the skipped path; the spec's A9 section records
-that one skipped case (`65d7747`). The hook moved twice, so under the same
-standing decision the tier ran twice more, same command, from the evals
-clone at `b2ed9e1`: at `fd457d3`, tee'd to
+here-strings too), with the control-byte and newline cases asserting the
+path is named on one line in bash quoting and a new case for the skipped
+path; the spec's A9 section records that one skipped case (`65d7747`). The
+hook moved twice, so under the same standing decision the tier ran twice
+more, same command, from the evals clone at `b2ed9e1`: at `fd457d3`, tee'd to
 `task-23-reruns/sentinel-remeasurement-4.log` (`batch done · 11 ✓ · 0 ✗ ·
 0 ⊘ · 69 — · wall 10m45s`, `batch-20260915T224434Z-7266`; its log and batch
 view are kept, its run copies are not, since the head was superseded within

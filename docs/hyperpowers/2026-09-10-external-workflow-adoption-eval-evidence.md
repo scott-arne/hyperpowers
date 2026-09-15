@@ -7,14 +7,15 @@
 2026-09-13, sentinel re-run 2026-09-14, sentinel tier re-measured 2026-09-15,
 read from the run-id timestamps
 **Treatment head (S1):** `d0a187d64e62587131f9c9ff4f59988d257b6b26`
-**Re-measured head (sentinel tier):** `bad92ad079783032c1e2431e624ea0c09cc67f31`
-— see "Re-measured at `bad92ad`" under Sentinel tier for why there are two
+**Re-measured heads (sentinel tier):** `bad92ad079783032c1e2431e624ea0c09cc67f31`,
+then `7e8ba23f1d5f3acd3fa780b7bc4b5e930db24edf` — see "Re-measured at
+`bad92ad`" under Sentinel tier for why the tier ran three times
 **Governing adjudication:**
 `evidence/2026-09-10-external-workflow-adoption/task-19-runs/adjudication.md`,
 in hyperpowers-evals at `c615efc488a091f6be867f174c983c5353b7a252`, restated
-for the re-measured head by
+for the re-measured heads by
 `evidence/2026-09-10-external-workflow-adoption/task-23-reruns/adjudication-remeasurement.md`
-at `cb616b1`
+at `b2ed9e1`
 
 ## What was measured
 
@@ -334,8 +335,9 @@ agent acts on the wording.
 
 The six items that ship on tests alone do not all rest on the same evidence.
 Five of them — A3, A5, A6, A8 and A10 — rest on the fourteen contract suites at
-`d0a187d`, every one of which exited 0 at that head, and again at `bad92ad`,
-where all fourteen exited 0 when the tier was re-measured; A9 rests on the four
+`d0a187d`, every one of which exited 0 at that head, and again at `bad92ad`
+and at `7e8ba23`, where all fourteen exited 0 each time the tier was
+re-measured; A9 rests on the four
 hook suites among them, `test-session-start.sh`, `test-ungated-notice.sh`,
 `test-broker-janitor.sh` and `test-no-heredocs-in-hooks.sh`. The governing
 adjudication names all fourteen suite paths against the head, so the set is
@@ -346,10 +348,12 @@ are byte-identical. Neither changes what the needles pin.
 
 ## Sentinel tier
 
-The tier was run twice: first against the treatment head `d0a187d`, described
-in the next four paragraphs and their subsections, and again on 2026-09-15
-against `bad92ad`, described under "Re-measured at `bad92ad`", which is the
-run the six contract-only items now rest on.
+The tier was run three times: first against the treatment head `d0a187d`,
+described in the next four paragraphs and their subsections; again on
+2026-09-15 against `bad92ad`; and once more the same evening against
+`7e8ba23`, after a hook fix — both re-runs are described under "Re-measured
+at `bad92ad`", and the last one is the run the six contract-only items now
+rest on.
 
 `quorum run-all --tier sentinel --coding-agents claude-auto` against the
 treatment head. The full batch output is preserved at
@@ -512,11 +516,33 @@ scenarios the instrument can read, not what the skills say; the skills under
 test are the same text at both heads except for the quoted description, which
 parses to the same string.
 
-This batch supersedes the `d0a187d` batch as the regression evidence behind
-the six contract-only items; `task-23-reruns/adjudication-remeasurement.md`
-restates the ship table with that substitution and leaves every verdict where
-it was. What it does not buy is the same as before: one run per scenario, no
-variance estimate, and one scenario the host cannot run.
+This batch superseded the `d0a187d` batch as the regression evidence behind
+the six contract-only items, and was itself superseded the same evening.
+The second pass of the plan's final Codex gate found a real defect in
+`hooks/session-start`: the compaction notice interpolated the newest ledger
+path through a JSON escape that knew five characters, so a plan directory
+name carrying any other C0 byte, ESC for one, would have voided the whole
+SessionStart payload and lost the bootstrap after compaction. It was fixed
+(`044159a`, refined in `7e8ba23` to avoid a fork per escape code) with two
+new hook tests, and the gate converged on the fix. That moved a `hooks/` file
+after `bad92ad`, and the hook is A9's own surface, so under the same
+standing decision the tier ran a third time, same command, from the evals
+clone at `cb616b1` with `SUPERPOWERS_ROOT` at `7e8ba23`, tee'd to
+`task-23-reruns/sentinel-remeasurement-3.log`. Batch line, verbatim:
+
+```
+batch done · 11 ✓ · 0 ✗ · 0 ⊘ · 69 — · wall 10m29s
+artifacts: results/batches/batch-20260915T205208Z-1dbd
+```
+
+All eleven runnable scenarios passed inside the one batch this time, the two
+worktree scenarios included, because the runner's directive check had been
+corrected before the run; the codex-only scenario is still the one the host
+cannot run. `task-23-reruns/adjudication-remeasurement.md` restates the ship
+table at `7e8ba23` and leaves every verdict where it was; the fourteen
+contract suites were run at that head as well, 14 of 14 exit 0. What the
+batch does not buy is the same as before: one run per scenario, no variance
+estimate, and one scenario the host cannot run.
 
 ## Removals
 

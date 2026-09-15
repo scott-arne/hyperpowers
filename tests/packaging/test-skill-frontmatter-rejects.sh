@@ -215,6 +215,14 @@ expect_reject "name-continuation" \
     "name is on a single line" \
     "  continued"
 
+# A name that no loader can scan never gets to be compared with the directory.
+expect_reject "a: b" \
+    'description: Use when fine' \
+    "mapping separator"
+expect_reject "foo:" \
+    'description: Use when fine' \
+    "mapping separator"
+
 # A lone UTF-16 surrogate is not a scalar value: Psych refuses the document
 # (PyYAML happens to construct it, which is why a PyYAML-only probe missed it).
 expect_reject "surrogate-u-escape" \

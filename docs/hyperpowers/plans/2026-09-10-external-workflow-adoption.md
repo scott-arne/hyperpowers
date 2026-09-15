@@ -1298,18 +1298,73 @@ Report the commit SHA.
 **Interfaces:**
 - Produces: `bash tests/packaging/test-skill-frontmatter.sh [skills-root]`. The optional first argument overrides the skills root, defaulting to `<repo>/skills`. Later tasks do not consume it, but the argument is what makes the red demonstration in Step 2 possible.
 
+**Amended after execution.** Task 3's original contract asserted four rules
+and its Step 1 carried a script that had never been run. Five review rounds
+(one Claude task review, three Codex gate rounds, one scoped re-review) found
+seven defect classes in that one file. The sections below are the artifact
+that actually shipped at `f8b9796`, and every expected value in Step 2 and
+Step 3 was observed by running it, not predicted. The original four-rule
+contract is preserved in git history; what follows replaces it because a plan
+that describes something other than what shipped is worse than no plan.
+
 **Behavior contract (spec item B3):**
 
-For each `<root>/*/SKILL.md`, parse the YAML frontmatter — the block between the first line `---` and the next line `---` — with no YAML library, treating each frontmatter line as a single `key: value` pair. Assert four things:
+For each `<root>/*/SKILL.md`, parse the YAML frontmatter — the block between
+the first line `---` and the next line `---` — with no YAML library. Assert
+eight things:
 
-1. The file has a frontmatter block: line 1 is exactly `---` and a closing `---` exists.
-2. `name` is present and its value equals the containing directory's name exactly.
-3. `description` is present, on a single line, and is **not** a block scalar (its value must not begin with `|` or `>`).
-4. The whole frontmatter block, excluding the two `---` delimiters, is at most 1024 characters.
+1. The file has a frontmatter block: line 1 is exactly `---` and a closing
+   `---` exists. Detect the closing delimiter with `awk` over the whole file,
+   not `sed -n '2,$p' | grep -qx`: `grep -q` exits at its first match and
+   SIGPIPEs the upstream `sed`, and under `pipefail` without `-e` that
+   poisons the pipeline's status.
+2. The block is a YAML **mapping**: every non-blank, non-comment,
+   non-continuation line is `key: value` or `key:`. A colon with no
+   separator whitespace (`name:x`) is not a mapping separator — it makes the
+   whole block parse as one plain scalar, so no key is reachable at all.
+   Indented lines are continuations; full-line comments and blanks are legal.
+3. No key appears twice. A loader resolves a duplicate key to its LAST
+   occurrence, or rejects the document outright; a check that reads the first
+   would certify a value no loader ever returns.
+4. `name` is present and its value equals the containing directory's name
+   exactly. Read the LAST `name:` line, for the reason in rule 3.
+5. `name` does not resolve to a non-string YAML scalar. An unquoted `yes`,
+   `null`, `on`, `~`, or `123` reaches a loader as a boolean, None, or an
+   integer while comparing equal to the directory name as raw text.
+6. `description` is present with a value on the same line, and that value is
+   a plain or quoted scalar — not a block scalar (`|`, `>`), not a comment
+   (`#`, which leaves the key null), and not a flow collection, anchor,
+   alias, tag, or reserved indicator (`[`, `{`, `&`, `*`, `!`, `%`, `@`,
+   `` ` ``).
+7. `description` does not resolve to a non-string YAML scalar (rule 5's test
+   applied to the description), and occupies a single line. A plain scalar
+   continues across blank lines, so the continuation scan skips blanks and
+   stops only at the next top-level key or the closing delimiter.
+8. The whole frontmatter block, excluding the two `---` delimiters, is at
+   most 1024 characters — counted straight from the file, never from a shell
+   variable. Command substitution strips trailing newlines, so counting
+   `"$block"` undercounts by one character per block.
 
-Deliberately do **not** require the description to start with `Use when`. The `writing-skills` skill recommends that prefix; several shipped skills do not use it, and turning a recommendation into a gate is a behavior change this plan did not adjudicate.
+Rules 5 and 7 share one helper, `resolves_to_non_string`, holding a single
+YAML 1.1 scalar-shape regex. Two copies of that regex is a maintenance hazard
+the review gate flagged; keep it in one place.
 
-Use `set -uo pipefail` without `-e` so failures accumulate, `pass`/`fail` helpers in the style of `tests/sdd/test-sdd-contract.sh`, and the terminator `STATUS: PASSED` / `STATUS: FAILED (N)`.
+Deliberately do **not** require the description to start with `Use when`. The
+`writing-skills` skill recommends that prefix; several shipped skills do not
+use it, and turning a recommendation into a gate is a behavior change this
+plan did not adjudicate.
+
+Use `set -uo pipefail` without `-e` so failures accumulate, `pass`/`fail`
+helpers in the style of `tests/sdd/test-sdd-contract.sh`, and the terminator
+`STATUS: PASSED` / `STATUS: FAILED (N)`.
+
+**Known limitations, carried deliberately, not defects to fix here:**
+
+- CRLF line endings are not normalized. A `SKILL.md` saved with Windows line
+  endings carries `\r` into every value.
+- A quoted name is over-rejected: `name: "x"` in directory `x` fails on the
+  string comparison although a loader calls them equal. Offered to the human
+  partner and explicitly not selected.
 
 - [ ] **Step 1: Write the validator**
 
@@ -1336,6 +1391,14 @@ fail() {
     FAILURES=$((FAILURES + 1))
 }
 
+# YAML resolves an UNQUOTED scalar by its token shape, so a value can be
+# present, single-line, and still reach a loader as null, a boolean, or a
+# number rather than the string it looks like. Quoted values never reach this
+# test: they start with a quote and are strings whatever they spell.
+resolves_to_non_string() {
+    awk -v v="$1" 'BEGIN { exit !(v ~ /^(~|null|Null|NULL|true|True|TRUE|false|False|FALSE|yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF|[+-]?[0-9][0-9_]*(\.[0-9_]*)?([eE][+-]?[0-9]+)?|[+-]?\.[0-9_]+([eE][+-]?[0-9]+)?|[+-]?\.(inf|Inf|INF|nan|NaN|NAN)|0x[0-9a-fA-F_]+|0o[0-7_]+)$/) }'
+}
+
 echo "=== skill frontmatter ==="
 echo ""
 
@@ -1353,25 +1416,75 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
     # Body of the frontmatter block: everything after line 1 up to, but not
     # including, the next bare "---".
     block="$(awk 'NR==1 {next} /^---$/ {exit} {print}' "$skill")"
-    if ! sed -n '2,$p' "$skill" | grep -qx -- '---'; then
+    # Check for closing delimiter (avoids sed|grep pipeline SIGPIPE issue).
+    if ! awk 'NR >= 2 && /^---$/ {found=1; exit} END {exit !found}' "$skill"; then
         fail "$dir: frontmatter block is closed"
         continue
     fi
     pass "$dir: frontmatter block is delimited"
 
-    name_line="$(printf '%s\n' "$block" | grep -m1 '^name:')"
+    # The block must be a YAML mapping: one `key: value` per line. A colon with
+    # no separator whitespace is not a mapping separator, so `name:x` makes the
+    # whole block parse as one plain scalar and no key is reachable at all.
+    # Indented lines are continuations of the entry above; full-line comments
+    # and blank lines are legal YAML.
+    bad_line="$(awk '
+        NR == 1 { next }
+        /^---$/ { exit }
+        /^[[:space:]]*$/ { next }
+        /^[[:space:]]/ { next }
+        /^#/ { next }
+        /^[A-Za-z_][A-Za-z0-9_.-]*:[[:space:]]/ { next }
+        /^[A-Za-z_][A-Za-z0-9_.-]*:$/ { next }
+        { print; exit }
+    ' "$skill")"
+    if [ -n "$bad_line" ]; then
+        fail "$dir: frontmatter is a key: value mapping (got '$bad_line')"
+    else
+        pass "$dir: frontmatter is a key: value mapping"
+    fi
+
+    # A YAML loader resolves a duplicate key to its LAST occurrence (or
+    # rejects the document); every check below reads the FIRST. A block with
+    # two `name:` lines therefore certifies a name no loader will return.
+    dup_key="$(awk '
+        NR == 1 { next }
+        /^---$/ { exit }
+        /^[[:space:]]/ { next }
+        /^#/ { next }
+        match($0, /^[A-Za-z_][A-Za-z0-9_.-]*:/) {
+            k = substr($0, 1, RLENGTH - 1)
+            if (k in seen) { print k; exit }
+            seen[k] = 1
+        }
+    ' "$skill")"
+    if [ -n "$dup_key" ]; then
+        fail "$dir: frontmatter has no duplicate keys (got '$dup_key' twice)"
+    else
+        pass "$dir: frontmatter has no duplicate keys"
+    fi
+
+    # Last match, not first: a YAML loader resolves a duplicate key to its
+    # last occurrence, so reading the first would print a true-looking PASS
+    # for a name no loader returns. The duplicate-key check above already
+    # fails the run; this keeps every line it prints honest as well.
+    name_line="$(printf '%s\n' "$block" | grep -E '^name:([[:space:]]|$)' | tail -1)"
     name_value="${name_line#name:}"
     # Trim leading spaces without a bashism that macOS bash 3.2 lacks.
     name_value="$(printf '%s' "$name_value" | sed 's/^ *//; s/ *$//')"
     if [ -z "$name_line" ]; then
         fail "$dir: frontmatter declares a name"
+    elif resolves_to_non_string "$name_value"; then
+        # A directory named `null`, `on`, or `123` would otherwise compare
+        # equal as raw text while a loader returns None, True, or an int.
+        fail "$dir: name resolves to a non-string YAML scalar (got '$name_value')"
     elif [ "$name_value" != "$dir" ]; then
         fail "$dir: name matches the directory (got '$name_value')"
     else
         pass "$dir: name matches the directory"
     fi
 
-    desc_line="$(printf '%s\n' "$block" | grep -m1 '^description:')"
+    desc_line="$(printf '%s\n' "$block" | grep -E '^description:([[:space:]]|$)' | tail -1)"
     desc_value="$(printf '%s' "${desc_line#description:}" | sed 's/^ *//')"
     if [ -z "$desc_line" ]; then
         fail "$dir: frontmatter declares a description"
@@ -1382,13 +1495,40 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
             '|'* | '>'*)
                 fail "$dir: description is a plain scalar, not a block scalar"
                 ;;
+            '#'*)
+                # A value that opens a YAML comment leaves the key null.
+                fail "$dir: description value is a comment, so the key is null"
+                ;;
+            '['* | '{'* | '&'* | '*'* | '!'* | '%'* | '@'* | '`'*)
+                # A flow collection, anchor, alias, tag, or reserved
+                # indicator — none of which load as a string.
+                fail "$dir: description is a plain or quoted scalar (got '$desc_value')"
+                ;;
             *)
-                pass "$dir: description is a single-line plain scalar"
+                if resolves_to_non_string "$desc_value"; then
+                    fail "$dir: description resolves to a non-string YAML scalar (got '$desc_value')"
+                else
+                    # A plain scalar continues across blank lines, so scan past
+                    # them to the next top-level key or the closing delimiter.
+                    continuation="$(awk '
+                        NR == 1 { next }
+                        /^---$/ { exit }
+                        seen && /^[A-Za-z_][A-Za-z0-9_.-]*:/ { exit }
+                        seen && /^[[:space:]]*$/ { next }
+                        seen { print; exit }
+                        /^description:[[:space:]]/ { seen = 1 }
+                    ' "$skill")"
+                    if [ -n "$continuation" ]; then
+                        fail "$dir: description is on a single line (continuation follows)"
+                    else
+                        pass "$dir: description is a single-line plain scalar"
+                    fi
+                fi
                 ;;
         esac
     fi
 
-    chars="$(printf '%s\n' "$block" | wc -c | tr -d ' ')"
+    chars="$(awk 'NR==1 {next} /^---$/ {exit} {print}' "$skill" | wc -m | tr -d ' ')"
     if [ "$chars" -le 1024 ]; then
         pass "$dir: frontmatter is within 1024 characters ($chars)"
     else
@@ -1416,45 +1556,82 @@ seen go red.
 
 ```bash
 fixture="$(mktemp -d "$TMPDIR/skillfm.XXXXXX")"
-mkdir -p "$fixture/good-skill" "$fixture/bad-name" "$fixture/block-desc" \
-         "$fixture/no-front" "$fixture/no-close" "$fixture/no-desc" \
-         "$fixture/empty-desc" "$fixture/too-long"
+for d in good-skill no-front no-close bad-mapping dup-key no-name nonstring-name \
+         bad-name no-desc empty-desc block-desc comment-desc indicator-desc \
+         nonstring-desc multiline-desc blankline-desc too-long; do
+    mkdir -p "$fixture/$d"
+done
+
 printf -- '---\nname: good-skill\ndescription: Use when testing the validator\n---\n\n# Good\n' > "$fixture/good-skill/SKILL.md"
-printf -- '---\nname: wrong\ndescription: Use when the name disagrees\n---\n\n# Bad\n' > "$fixture/bad-name/SKILL.md"
-printf -- '---\nname: block-desc\ndescription: |\n  A block scalar\n---\n\n# Block\n' > "$fixture/block-desc/SKILL.md"
 printf -- '# No frontmatter at all\n' > "$fixture/no-front/SKILL.md"
 printf -- '---\nname: no-close\ndescription: Use when the block never closes\n\n# Unclosed\n' > "$fixture/no-close/SKILL.md"
+printf -- '---\nname:bad-mapping\ndescription: Use when a colon has no separator space\n---\n\n# Bad mapping\n' > "$fixture/bad-mapping/SKILL.md"
+printf -- '---\nname: dup-key\ndescription: Use when a key repeats\nname: dup-key\n---\n\n# Duplicate\n' > "$fixture/dup-key/SKILL.md"
+printf -- '---\ndescription: Use when the name key is absent\n---\n\n# No name\n' > "$fixture/no-name/SKILL.md"
+printf -- '---\nname: yes\ndescription: Use when the name resolves to a boolean\n---\n\n# Non-string name\n' > "$fixture/nonstring-name/SKILL.md"
+printf -- '---\nname: wrong\ndescription: Use when the name disagrees\n---\n\n# Bad\n' > "$fixture/bad-name/SKILL.md"
 printf -- '---\nname: no-desc\n---\n\n# No description\n' > "$fixture/no-desc/SKILL.md"
 printf -- '---\nname: empty-desc\ndescription:\n---\n\n# Empty description\n' > "$fixture/empty-desc/SKILL.md"
+printf -- '---\nname: block-desc\ndescription: |\n  A block scalar\n---\n\n# Block\n' > "$fixture/block-desc/SKILL.md"
+printf -- '---\nname: comment-desc\ndescription: # not a value\n---\n\n# Comment\n' > "$fixture/comment-desc/SKILL.md"
+printf -- '---\nname: indicator-desc\ndescription: [a, b]\n---\n\n# Flow collection\n' > "$fixture/indicator-desc/SKILL.md"
+printf -- '---\nname: nonstring-desc\ndescription: 3.14\n---\n\n# Non-string description\n' > "$fixture/nonstring-desc/SKILL.md"
+printf -- '---\nname: multiline-desc\ndescription: Use when the value\n  wraps onto a second line\n---\n\n# Multiline\n' > "$fixture/multiline-desc/SKILL.md"
+printf -- '---\nname: blankline-desc\ndescription: Use when a blank line precedes the continuation\n\n  still the same scalar\n---\n\n# Blank line\n' > "$fixture/blankline-desc/SKILL.md"
 long_desc="$(head -c 1100 /dev/zero | tr '\0' 'x')"
 printf -- '---\nname: too-long\ndescription: %s\n---\n\n# Long\n' "$long_desc" > "$fixture/too-long/SKILL.md"
+
 bash tests/packaging/test-skill-frontmatter.sh "$fixture"
 ```
 
-Expected: exit 1 with `STATUS: FAILED (7)` and exactly one `[FAIL]` line per
-broken fixture:
+Expected: exit 1 with `STATUS: FAILED (17)`. Sixteen broken fixtures produce
+seventeen `[FAIL]` lines — `bad-mapping` produces two, and that is correct: a
+line with no separator whitespace is not a mapping entry, so the `name` key is
+genuinely unreachable as well as malformed. Output is ordered alphabetically by
+directory, because the glob `"$SKILLS_ROOT"/*/SKILL.md` expands sorted.
 
 | Fixture | Rule it breaks | Expected `[FAIL]` text |
 |---|---|---|
-| `no-front` | contract rule 1, opening delimiter | `no-front: SKILL.md opens with a frontmatter delimiter` |
-| `no-close` | contract rule 1, closing delimiter | `no-close: frontmatter block is closed` |
-| `bad-name` | contract rule 2 | `bad-name: name matches the directory (got 'wrong')` |
-| `no-desc` | contract rule 3, key absent | `no-desc: frontmatter declares a description` |
-| `empty-desc` | contract rule 3, key present with no value | `empty-desc: description has a value on the same line` |
-| `block-desc` | contract rule 3, block scalar | `block-desc: description is a plain scalar, not a block scalar` |
-| `too-long` | contract rule 4 | `too-long: frontmatter is within 1024 characters (got 1129)` |
+| `bad-mapping` | rule 2, and rule 4 in consequence | `bad-mapping: frontmatter is a key: value mapping (got 'name:bad-mapping')` **and** `bad-mapping: frontmatter declares a name` |
+| `bad-name` | rule 4, mismatch | `bad-name: name matches the directory (got 'wrong')` |
+| `blankline-desc` | rule 7, continuation after a blank line | `blankline-desc: description is on a single line (continuation follows)` |
+| `block-desc` | rule 6, block scalar | `block-desc: description is a plain scalar, not a block scalar` |
+| `comment-desc` | rule 6, comment value | `comment-desc: description value is a comment, so the key is null` |
+| `dup-key` | rule 3 | `dup-key: frontmatter has no duplicate keys (got 'name' twice)` |
+| `empty-desc` | rule 6, key present with no value | `empty-desc: description has a value on the same line` |
+| `indicator-desc` | rule 6, flow collection | `indicator-desc: description is a plain or quoted scalar (got '[a, b]')` |
+| `multiline-desc` | rule 7, adjacent continuation | `multiline-desc: description is on a single line (continuation follows)` |
+| `no-close` | rule 1, closing delimiter | `no-close: frontmatter block is closed` |
+| `no-desc` | rule 6, key absent | `no-desc: frontmatter declares a description` |
+| `no-front` | rule 1, opening delimiter | `no-front: SKILL.md opens with a frontmatter delimiter` |
+| `no-name` | rule 4, key absent | `no-name: frontmatter declares a name` |
+| `nonstring-desc` | rule 7, non-string scalar | `nonstring-desc: description resolves to a non-string YAML scalar (got '3.14')` |
+| `nonstring-name` | rule 5 | `nonstring-name: name resolves to a non-string YAML scalar (got 'yes')` |
+| `too-long` | rule 8 | `too-long: frontmatter is within 1024 characters (got 1129)` |
 
-`good-skill` must produce four `[PASS]` lines and no failure. The two fixtures
-that fail on a delimiter (`no-front`, `no-close`) produce exactly one line each
-because the validator `continue`s past the remaining rules once the block
-cannot be parsed; the other five produce their one failure alongside passes for
-the rules they satisfy. If any fixture passes, the corresponding rule is not
-implemented; fix it before continuing.
+`good-skill` must produce exactly these six `[PASS]` lines and no failure:
+
+```
+  [PASS] good-skill: frontmatter block is delimited
+  [PASS] good-skill: frontmatter is a key: value mapping
+  [PASS] good-skill: frontmatter has no duplicate keys
+  [PASS] good-skill: name matches the directory
+  [PASS] good-skill: description is a single-line plain scalar
+  [PASS] good-skill: frontmatter is within 1024 characters (61)
+```
+
+The two fixtures that fail on a delimiter (`no-front`, `no-close`) produce
+exactly one line each, because the validator `continue`s past the remaining
+rules once the block cannot be parsed. The rest produce their failures
+alongside passes for the rules they satisfy. If any fixture passes, the
+corresponding rule is not implemented; fix it before continuing.
 
 The character count in the `too-long` row is exact: the block is
-`name: too-long` plus `description: ` and 1100 `x` characters, and the
-validator counts the block body including its trailing newline. A different
-number means the counting boundary moved.
+`name: too-long` plus `description: ` and 1100 `x` characters. `1129` is what
+the shipped validator reports counting from the file. A four-rule earlier
+draft counted `wc -c` on the shell variable `"$block"` and reported `1128` —
+command substitution had stripped the block's trailing newline. A different
+number means the counting boundary moved again.
 
 One branch cannot be reached from a populated root — the guard that fires when
 the root holds no skills at all. Exercise it with a second invocation:
@@ -1472,7 +1649,8 @@ nothing.
 - [ ] **Step 3: Run the validator against the repository**
 
 Run: `bash tests/packaging/test-skill-frontmatter.sh`
-Expected: `STATUS: PASSED`, exit 0, with 15 skills checked.
+Expected: `STATUS: PASSED`, exit 0, with 15 skills checked and six
+`[PASS]` lines each — 90 lines in all.
 
 If a real skill fails, do **not** edit the skill to make the test pass. Report it — a shipped skill violating its own frontmatter rules is a finding for the human partner, not a fix inside this task.
 
@@ -1496,6 +1674,43 @@ git commit -m "test(packaging): validate skill frontmatter name, description, an
 
 
 ### Task 4: Scenario S1 — code-review precision on a mixed diff
+
+**Amended after execution.** The third of this scenario's six "correct as
+written" hunks was not correct. As originally planned it was a `rotate`/
+`nextToken` pair in a module named `session.js` — session-token rotation on
+its face, and demonstrably collision-prone: `rotate('abcdefgh11111111')` and
+`rotate('abcdefgh22222222')` both return `'abcdefgh-16'`. A reviewer flagging
+that would have been right, and the scenario would have scored the correct
+finding as imprecision, penalizing the reviewer quality it exists to reward.
+Two independent reviewers found it; the human partner chose to reshape the
+pair into something with no security reading, preserving the intended
+unvalidated-argument trap.
+
+The first reshape (`shortLabel`/`abbreviate`, shipped at `9c5e827`) was ALSO
+not correct. `abbreviate` truncated with `text.slice(0, 8)`, which cuts UTF-16
+code units, so `shortLabel('abcdefg😀!')` returned a lone high surrogate
+followed by an ellipsis — visible mojibake from a display helper, on an
+entirely ordinary input. The gate's framing settled it: in a precision
+scenario the six clean hunks must be UNIMPEACHABLE, not merely
+defensible-as-Minor, or the instrument measures whether the reviewer shares
+our severity calibration rather than whether they over-flag.
+
+Unicode-correcting the truncation was rejected as a treadmill — `Array.from`
+fixes surrogate pairs but not grapheme clusters, and the caller's
+`text.length` guard would then count different units than the helper. String
+truncation is simply the wrong carrier for an asserted-clean hunk. Since the
+bait ("a private helper does not validate, because its only caller does") is
+vehicle-independent, the vehicle moved to arithmetic: `toMinutes`/
+`elapsedMinutes`. Shipped at `5ca362d`; the task gate approved that range with
+no material findings.
+
+The bare `60` is deliberate. Criterion 1's premise is that bare constants are
+this file's idiom (`issuedAtSeconds + 86400`), so naming `SECONDS_PER_MINUTE`
+here would make the bare `86400` next door look inconsistent. Criterion 3 was
+extended to cover the magic-number reading as well as the validation reading.
+
+The fixture text below — and its copy in Task 9's Step 2, which would
+otherwise have reintroduced the defect during hardening — is amended to match.
 
 **Risk tier:** standard — a new fixture helper plus a scenario that later tasks measure against.
 
@@ -1622,15 +1837,15 @@ export function displayName(session) {
   return session.user.displayName;
 }
 
-function nextToken(seed) {
-  return seed.slice(0, 8) + "-" + (seed.length % 97);
+function toMinutes(seconds) {
+  return Math.floor(seconds / 60);
 }
 
-export function rotate(seed) {
-  if (typeof seed !== "string" || seed.length < 8) {
-    throw new Error("seed must be at least 8 characters");
+export function elapsedMinutes(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    throw new Error("elapsed seconds must be a non-negative finite number");
   }
-  return nextToken(seed);
+  return toMinutes(seconds);
 }
 
 export function close(session, startedAt) {
@@ -1664,7 +1879,7 @@ export function describe(state) {
 // fixture are the point of a test fixture.
 const MIXED_SESSION_TEST = `import test from "node:test";
 import assert from "node:assert/strict";
-import { expiresAt, displayName, rotate, describe } from "../src/session.js";
+import { expiresAt, displayName, elapsedMinutes, describe } from "../src/session.js";
 
 const FIXTURE = {
   issuedAt: 1750000000,
@@ -1681,8 +1896,8 @@ test("sessions without a user render as anonymous", () => {
   assert.equal(displayName(FIXTURE), "Ada Lovelace");
 });
 
-test("rotate rejects seeds shorter than eight characters", () => {
-  assert.throws(() => rotate("short"));
+test("elapsedMinutes rejects a negative duration", () => {
+  assert.throws(() => elapsedMinutes(-1));
 });
 
 test("describe names the revoked state", () => {
@@ -1804,9 +2019,10 @@ finding.
   2. `displayName` dereferences `session.user.displayName` only after
      a guard that returns early when `session` or `session.user` is
      falsy. This is not a possible null dereference.
-  3. `nextToken` does not validate its argument. Its only caller,
-     `rotate`, validates immediately above it. This is not missing
-     input validation.
+  3. `toMinutes` does not validate its argument. Its only caller,
+     `elapsedMinutes`, validates immediately above the call. This is
+     not missing input validation, and the bare `60` is seconds in a
+     minute — see 1.
   4. `close` calls `recordLatency` without awaiting it, marked with
      `void`. The detachment is deliberate telemetry. This is not a
      missing await.
@@ -1881,6 +2097,106 @@ git commit -m "test(scenarios): add code-review-precision-on-mixed-diff"
 
 ### Task 5: Scenario S2 — reviewer flags a weakened gate
 
+**Amended after execution.** Four defects were found in this fixture, in
+both halves of its deliberately mixed diff. Three were in the planted
+weakenings, which had innocent readings a correct reviewer could give them,
+so a reviewer who declined to flag one would have been scored as missing a
+defect. The fourth was in the change the story calls legitimate, which
+offered a correct reviewer a finding the scenario did not account for. Every
+amendment closes a reading; none changes what the scenario measures.
+
+The deleted `test/coupon.test.js` asserted
+`applyCoupon(1005, { kind: "pct", value: 10 }) === 905`, but the fixture's
+own `src/cart.js` computes `cents - Math.round((cents * coupon.value) /
+100)`, and `Math.round(100.5)` is `101`, so the call returns `904`. The
+value was arithmetically unreachable. Measured on the generated fixture:
+commit 1 — the baseline the story presents as healthy — ran `tests 5,
+pass 4, fail 1`, failing on exactly that assertion, while commit 2 ran
+`tests 2, pass 1, fail 0, skipped 1`. The fixture's real story was
+therefore "this commit turns a red suite green," which is a ready-made
+justification for deleting a test and a direct contradiction of the
+acceptance criteria's own preamble, "Nothing in the diff supplies evidence
+that any test was flaky." The assertion is amended to `904`, which makes
+commit 1 green and restores the premise.
+
+The loosened lint configuration was weak for a second, independent reason.
+`WEAKENED_PACKAGE_JSON` declared no `devDependencies` at all, so
+`npm run lint` could not run (`eslint: command not found`), and
+`.eslintrc.json` is the legacy eslintrc format that ESLint 9+ ignores by
+default in favor of flat config. A reviewer could correctly reason that the
+lint config was inert and that excluding a directory from an inert config
+changes nothing. Declaring `"eslint": "^8.57.0"` closes both halves at
+once: the gate reads as a real configured gate, and ESLint 8 is the major
+version for which `.eslintrc.json` is the correct format.
+
+Declaring the linter was necessary but not sufficient. An independent Codex
+gate then found that the emitted `.eslintrc.json` declared no
+`parserOptions`, and in eslintrc format an omitted `parserOptions` inherits
+espree's defaults of `ecmaVersion: 5` and `sourceType: "script"`. Every
+fixture source is ESM, and `src/cart.js` — which opens with `export` — is
+not covered by `ignorePatterns` at either commit, so `npm run lint` was a
+fatal parse error at both. Measured against ESLint's own parser at those
+defaults: `The keyword 'export' is reserved`. That left the same innocent
+reading the `devDependencies` amendment was meant to remove, one layer
+down: a reviewer who runs the linter finds a gate that cannot run at all,
+and narrowing a nonfunctional config changes nothing. Both constants now
+declare `"parserOptions": { "ecmaVersion": 2022, "sourceType": "module" }`
+in the same position, so the commit-2 diff still shows only the
+`ignorePatterns` change. Running the two enabled rules over every fixture
+file at both commits under those options reports zero problems, which is
+the intended design: the `test/` exclusion is an unjustified reduction in
+lint scope beside two other unjustified weakenings, not a change that hides
+a current violation. No `env` block was added — neither `eqeqeq` nor
+`no-unused-vars` needs globals, and `no-undef` is not enabled.
+
+The fourth defect was in the other half of the diff. A scenario that plants
+weakenings still has to make its legitimate change genuinely legitimate, and
+`shippingCents` shipped as new exported monetary logic with a 5000-cent
+threshold branch and no test importing or invoking it — inside the very
+commit that deletes one test file and skips another. In a scenario whose
+whole subject is test integrity, "new code with no test" is the first finding
+a competent reviewer reaches for, and raising it is correct. The written
+acceptance criteria do not actually penalize a fourth finding — none of the
+five bullets requires "and raised nothing else," and the bullet asking that
+the agent not simply approve is helped by one — so the risk is narrower than
+"the scenario fails a correct reviewer": it is that the LLM verifier reads
+the preamble's phrase "one legitimate feature" as fact and marks the finding
+down against it. Commit 2 now also adds `test/shipping.test.js` covering both
+sides of the threshold, and the preamble says the feature arrives "covered by
+its own new tests". Reducing `shippingCents` to an untestable constant was
+considered and rejected: it would have thinned the mixed-diff premise to
+nothing, whereas an author who covers their own new feature while deleting
+and skipping others is harder to excuse, not easier.
+
+The four defects together are why this task also gained coverage the plan
+never specified. `checks.sh` asserts `file-contains .eslintrc.json '"test/"'`,
+and a string match is exactly what certified an inert gate. Task 5 now adds
+a test to `test/setup-helpers-behavior.test.ts` — the repo's established
+place for behavior-fixture coverage, which had none for
+`createCodeReviewWeakenedTests` — asserting the parser contract at both
+commits, that `node --test` exits 0 at both, and that `test/shipping.test.js`
+is committed at HEAD, passes there, and does not exist at commit 1. The
+`node --test` assertion turns the `905` -> `904` correction above into a
+permanent regression check; the `shipping` trio does the same for the
+coverage of the legitimate change. That trio needs all three legs: running
+the file proves it passes but not that it is *in* commit 2 — an untracked
+file runs green and appears in no diff, so the reviewer under test would
+never see it — and `node --test` exits 0 on a file containing zero tests, so
+the run alone cannot tell the real fixture from a gutted stub. Asserting a
+boundary case in `git show HEAD:test/shipping.test.js` closes both. The
+same edit adds the helper to that file's "each behavior helper creates the
+workdir" parity list, whose title claims to cover every behavior helper and
+which Task 5 had left at four while adding a fifth.
+
+All four defects were specified verbatim in this plan and the implementer
+transcribed them correctly, so none is an implementer deviation. They also
+passed a Claude task reviewer on Task 4's sibling scenario before an
+independent gate caught the equivalent problem there — which is why the
+generalizable rule now travels with every remaining scenario task: every
+factual claim a `story.md` makes about its fixture is an assertion that
+must be executed, not read. Reading a fixture generator tells you what it
+writes, never whether what it writes has the property being scored.
+
 **Risk tier:** standard — a new fixture helper plus a scenario.
 
 **Repository:** the evals clone.
@@ -1891,6 +2207,8 @@ git commit -m "test(scenarios): add code-review-precision-on-mixed-diff"
 - Create: `scenarios/code-review-flags-weakened-test/checks.sh` (NOT executable)
 - Modify: `src/setup-helpers/behavior-fixtures.ts`
 - Modify: `src/setup-helpers/registry.ts`
+- Test: `test/setup-helpers-behavior.test.ts` (added after execution — see the
+  amendment note above)
 
 **Interfaces:**
 - Consumes: nothing from Tasks 1-4. This task and Task 4 both append to `behavior-fixtures.ts` and add a `REGISTRY` line; append after whatever is already there rather than assuming a line number.
@@ -1917,12 +2235,16 @@ const WEAKENED_PACKAGE_JSON = `{
   "scripts": {
     "test": "node --test",
     "lint": "eslint ."
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0"
   }
 }
 `;
 
 const WEAKENED_ESLINTRC_INITIAL = `{
   "root": true,
+  "parserOptions": { "ecmaVersion": 2022, "sourceType": "module" },
   "rules": {
     "eqeqeq": "error",
     "no-unused-vars": "error"
@@ -1934,6 +2256,7 @@ const WEAKENED_ESLINTRC_INITIAL = `{
 // Commit 2 adds one ignore rule, taking the whole test directory out of lint.
 const WEAKENED_ESLINTRC_CHANGED = `{
   "root": true,
+  "parserOptions": { "ecmaVersion": 2022, "sourceType": "module" },
   "rules": {
     "eqeqeq": "error",
     "no-unused-vars": "error"
@@ -1984,7 +2307,7 @@ import assert from "node:assert/strict";
 import { applyCoupon } from "../src/cart.js";
 
 test("percentage coupons round to the nearest cent", () => {
-  assert.equal(applyCoupon(1005, { kind: "pct", value: 10 }), 905);
+  assert.equal(applyCoupon(1005, { kind: "pct", value: 10 }), 904);
 });
 
 test("flat coupons never drive the total below zero", () => {
@@ -2036,12 +2359,29 @@ test("cart totals sum across lines", () => {
 });
 `;
 
+// Added in commit 2 alongside the feature it covers. The legitimate half
+// of the diff has to be genuinely legitimate: an untested new monetary
+// function is a real test-integrity finding, and a reviewer who raises it
+// is correct, not noisy.
+const WEAKENED_SHIPPING_TEST = `import test from "node:test";
+import assert from "node:assert/strict";
+import { shippingCents } from "../src/cart.js";
+
+test("orders below the free-shipping threshold pay the flat rate", () => {
+  assert.equal(shippingCents(4999), 599);
+});
+
+test("orders at or above the threshold ship free", () => {
+  assert.equal(shippingCents(5000), 0);
+});
+`;
+
 // Builds a 2-commit Node project with a passing suite behind `npm test` and a
-// lint script behind a small config. Commit 2 adds one small feature and, in
-// the same commit, weakens the gate three ways: it deletes test/coupon.test.js
-// outright, marks a test in test/total.test.js as skipped, and adds an ignore
-// rule that removes the whole test directory from lint. Nothing in the diff
-// justifies any of the three.
+// lint script behind a small config. Commit 2 adds one small feature with its
+// own tests and, in the same commit, weakens the gate three ways: it deletes
+// test/coupon.test.js outright, marks a test in test/total.test.js as skipped,
+// and adds an ignore rule that removes the whole test directory from lint.
+// Nothing in the diff justifies any of the three.
 export function createCodeReviewWeakenedTests(ctx: HelperContext): void {
   ensureWorkdir(ctx.workdir);
   runGit(['init', '-b', 'main'], ctx.workdir);
@@ -2066,6 +2406,11 @@ export function createCodeReviewWeakenedTests(ctx: HelperContext): void {
     ctx.workdir,
     'test/total.test.js',
     WEAKENED_TOTAL_TEST_CHANGED,
+  );
+  writeFixtureFile(
+    ctx.workdir,
+    'test/shipping.test.js',
+    WEAKENED_SHIPPING_TEST,
   );
   // git rm, not a filesystem delete, so the removal is staged in commit 2.
   runGit(['rm', '--quiet', 'test/coupon.test.js'], ctx.workdir);
@@ -2140,9 +2485,9 @@ behavior under test never executed. Say so in the run notes.
 
 ## Acceptance Criteria
 
-The diff adds one legitimate feature (`shippingCents`) and, in the
-same commit, weakens the gate three ways. Nothing in the diff supplies
-evidence that any test was flaky.
+The diff adds one legitimate feature (`shippingCents`), covered by its
+own new tests, and in the same commit weakens the gate three ways.
+Nothing in the diff supplies evidence that any test was flaky.
 
 - The agent loaded `superpowers:requesting-code-review` and dispatched
   a reviewer subagent — a `Skill` invocation naming
@@ -2185,7 +2530,11 @@ pre() {
     file-contains test/total.test.js 'test\.skip\('
     file-contains .eslintrc.json '"test/"'
     # The legitimate feature is present, so the diff is genuinely mixed.
+    # Both halves are gated: the feature itself, and the coverage that makes
+    # it legitimate rather than an untested new function a reviewer would
+    # correctly flag.
     file-contains src/cart.js 'function shippingCents'
+    file-exists 'test/shipping.test.js'
 }
 
 post() {
@@ -2204,8 +2553,8 @@ Expected: validates.
 - [ ] **Step 5: Typecheck, lint, unit tests**
 
 Run: `bun run typecheck`
-Run: `bunx biome ci scenarios/code-review-flags-weakened-test src/setup-helpers/behavior-fixtures.ts src/setup-helpers/registry.ts`
-Run: `bun test --timeout 30000 test/setup-helpers-registry.test.ts`
+Run: `bunx biome ci scenarios/code-review-flags-weakened-test src/setup-helpers/behavior-fixtures.ts src/setup-helpers/registry.ts test/setup-helpers-behavior.test.ts`
+Run: `bun test --timeout 30000 test/setup-helpers-registry.test.ts test/setup-helpers-behavior.test.ts`
 Expected: all three clean. The scoped `biome ci` is the substitute from Global Constraints — `bun run check` is red on this clone before you start.
 
 - [ ] **Step 6: Commit**
@@ -2227,15 +2576,38 @@ git commit -m "test(scenarios): add code-review-flags-weakened-test"
 - Create: `scenarios/systematic-debugging-red-command-first/story.md`
 - Create: `scenarios/systematic-debugging-red-command-first/setup.sh` (executable)
 - Create: `scenarios/systematic-debugging-red-command-first/checks.sh` (NOT executable)
+- Modify: `scenarios/systematic-debugging-fixes-root-cause/checks.sh` — the same three correctness verbs (see the amendment note below)
+- Modify: `scenarios/systematic-debugging-fixes-root-cause/story.md` — the three criteria those verbs grade
+- Modify: `scenarios/systematic-debugging-fixes-root-cause/setup.sh` — the shared fixture's rate table (see the amendment note below)
 
 **Interfaces:**
 - Consumes: nothing. This scenario reuses `create_base_repo`, which already exists; it registers no helper and touches no TypeScript.
 
 **Mirror:** `scenarios/systematic-debugging-fixes-root-cause/` — all three files. The spec says S3 uses the same fixture helper and that scenario's story plus one added criterion, and that its `post()` keeps the existing checks and adds three.
 
-**What this scenario measures (spec item S3):** the per-trial measurement is binary — **reproduction shown before the first change and before the first hypothesis**, yes or no. The transcript checks are a floor; the Gauntlet-Agent's grading of the acceptance criteria decides pass or fail.
+**What this scenario measures (spec item S3):** the per-trial measurement is binary — **reproduction shown before the first change and before the first hypothesis**, yes or no. That binary is graded by the Gauntlet-Agent reading the acceptance criteria, and by nothing else. The deterministic checks cover correctness of the fix; none of them touches the measured binary.
 
-**Known limitation, recorded deliberately.** `tool-match-before-tool-match` returns passed when no later-tool call matches; `src/check/verbs.ts:455-466` implements that. A trial that edits through a shell heredoc rather than `Edit` or `Write` satisfies both ordering checks vacuously. The positive `tool-arg-match` check and the retained root-cause checks carry the positive requirement, and the story states that ordering relative to a hypothesis and to shell-based edits is graded from prose. Do not try to close the residue inside `checks.sh`.
+**AMENDED after the task review (shipped at `5413b51`, prose tightened at `d37fa6e`, criteria corrected at `dc83dae`, checks repaired at `d4b78e8` and `be7aec1`, fixture repaired at `890c07c`).** Step 3 below originally added three transcript checks — `tool-arg-match Bash --matches 'command=finalPrice'` and two `tool-match-before-tool-match` ordering lines — and described them as "a floor" under the graded binary. Both claims were wrong, and the checks were removed. Read this before writing Step 3's `post()`.
+
+They do not measure the behavior in either direction. `tool-arg-match` matches command TEXT, not execution, so all three PASS on a transcript whose only Bash call is `git commit -am "fix finalPrice…"` — nothing ran — and likewise when the only pre-edit command is a `grep` the story itself disqualifies, or a heredoc that writes a test. In the other direction all three FAIL on a textbook TDD-first run (write the red test, run it, fix, re-run), and a correct producer-side reproduction naming `getDiscountRate` fails two. They are not advisory either: `src/composer.ts:92-98` returns `pass` only when the Gauntlet-Agent passes AND `failedPost.length === 0`, so a failed post-check is a hard verdict downgrade. The measured evidence is in the SDD ledger for this plan.
+
+The limitation is structural, not a wording problem. `flattenToolCalls` (`src/atif/project.ts:9-17`) projects each step to `{tool,args}` and discards `observation.results[].content` (`src/atif/types.ts:18-26`), so no transcript verb can see command OUTPUT. "The command's real output showed `NaN`" is therefore not deterministically checkable with today's verb vocabulary. Do not re-add a transcript check here without a verb that can see output.
+
+`check-transcript investigated` is dropped too. It accepts only Read/Grep/`grep`/`rg` (`src/check/verbs.ts:354-385`), while this scenario's premise steers the agent toward RUNNING a command and explicitly disqualifies grep-shaped evidence — and S3 drops the sibling's paired "Investigated before fixing" criterion, leaving it an unpaired hard gate.
+
+`quorum_max_time: 20m` is dropped from the frontmatter. The sibling has no such key and falls back to `coding-agents/claude.yaml`'s `max_time: 10m`; Task 19 compares the two over the same fixture, so a 2x budget difference in the shared, non-graded half is an uncontrolled variable. **Watch item for Task 8's live trial:** if 10m proves too tight for the extra reproduce-first work, S3 measures the budget instead of the behavior.
+
+Net effect on Step 3: `post()` is four verbs — `check-transcript skill-called superpowers:systematic-debugging` and three `command-succeeds` checks (producer, end-to-end, test-artifact). `pre()` is unchanged and stays verb-identical to the sibling. Three story-side fixes ship with it, and they are load-bearing rather than polish now that the criteria are the only witness: the AC prose must not hardcode the `superpowers:` namespace (no normalizer touches prose, and this fork's logs read `hyperpowers:`; the prefix in `checks.sh` IS correct and stays, because `isSkillInvocation` at `src/detect/skill.ts:33-41` keys off the directory segment after the last `:`), `pytest` is dropped from the grading note in a JavaScript-only fixture, and the sibling's symptom-vs-root-cause paragraph plus its "This complete run FAILS if:" closing block are restored for Task 19 parity.
+
+Two further criteria corrections came from the Codex task gate and are in the Step 2 block above. The reproduce-first criterion had defined product code as anything under `src/` while also exempting new test files, so `src/pricing.test.js` both satisfied and violated it; product code is now named exactly (`src/pricing.js`), and a new test file is never a change to it wherever the agent puts it. And the skill criterion had demanded a native `Skill` invocation, while `isSkillInvocation` (`src/detect/skill.ts`) also accepts a shell command reading `skills/<dir>/SKILL.md` and a `Read` of that path — an agent without a `Skill` tool would have passed the deterministic check and been failed by the grader. The criterion now lists all three forms, and the closing fail-list follows both changes.
+
+**The three correctness verbs were then repaired in BOTH scenarios (`d4b78e8`, `be7aec1`), and the matching criteria with them.** S3 had copied them verbatim from the sibling, which is what Task 19's comparison needs — so a defect in them was a defect in both, and your human partner chose to fix both rather than let S3 inherit known-broken checks for verb identity's sake. Measured against 16 fixtures driving the real `runPhase`, the shipped verbs score **9/16**: three false positives (a lookup-table patch keyed on the reported code, a patch whose producer returns the wrong rate behind a consumer guard, and a run that left no test at all but a stray `contest.js`) and four false negatives on fully correct fixes (`test/pricing.js`, `pricing.spec.js`, `__tests__/pricing.js`, `spec/pricing.js`). Both scenarios now score **16/16**. The producer verb asserts the rate is exactly `0` for the reported code plus two codes appearing nowhere in the story or fixture; the end-to-end verb covers an unseen unknown code and every rate-table entry; the test-artifact verb keys on a `test|tests|spec|specs` token at a path boundary and prunes `node_modules`/`.git` by NAME, so the prune holds at any depth and a dependency's own tests cannot stand in for the agent's. Step 2 and Step 3 below are the repaired files verbatim. This is why Task 6 modifies the sibling as well as creating S3.
+
+**The shared fixture was then repaired too (`890c07c`), for the same reason and with the same both-scenarios scope.** The seeded rate table was a plain object literal, so it inherited from `Object.prototype`: `RATES['toString']` was a function rather than `undefined`, as were `constructor`, `valueOf`, and `hasOwnProperty`, while `RATES['__proto__']` was the prototype object itself. The most idiomatic root-cause repair an agent under test writes — `return RATES[code] ?? 0` — therefore returned a non-numeric rate for those five codes, leaving `finalPrice(100,'toString')` at `NaN`, while still passing the three-code producer probe. Both stories grade "the producer returns `0` for ANY unrecognized code", so the deterministic layer and the criterion disagreed about a fix that is genuinely root-cause.
+
+The repair is a null prototype on the table, NOT an extra probe. Adding an inherited key such as `toString` to the producer verb was the other option and is rejected: `src/composer.ts:92-98` returns `pass` only when the Gauntlet-Agent passes AND `failedPost.length === 0`, so that probe would hard-fail the idiomatic repair — the same false-negative class the verb repair above removed — and it would grade JavaScript prototype hygiene rather than debugging methodology. With `__proto__: null` the criterion becomes literally true of every root-cause fix shape, so the three-code probe samples a universal property instead of a lucky one, and no verb changes at all.
+
+Verified over the committed heredoc bytes: the fixed producer returns `0` for all eight of `BOGUS`, `ZZTOP`, `NOPE99`, `toString`, `constructor`, `valueOf`, `__proto__`, `hasOwnProperty`, every one of those charges full price, the three known rates still discount to 90/80/50, and the seeded bug is unchanged — `finalPrice(100,'BOGUS')` is still `NaN`, so `pre()`'s `not command-succeeds` guard still holds. A symptom-only consumer guard still fails the producer probe, so the root-cause discriminator survived. One consequence to know: against a null-prototype table a fix written as `RATES.hasOwnProperty(code)` throws `TypeError`. That is not a false negative — such a module is genuinely broken, and the story's "End state is correct" criterion fails it correctly.
 
 - [ ] **Step 1: Write the setup**
 
@@ -2254,10 +2626,19 @@ cd "$QUORUM_WORKDIR"
 # code, so finalPrice yields NaN. This scenario does not grade the SHAPE of
 # the fix differently from its sibling; it grades whether a failing command
 # with real output preceded the first hypothesis.
+#
+# RATES carries a null prototype so an unrecognized code can never resolve to
+# an inherited Object.prototype member. Without it, the idiomatic `?? 0` fix
+# leaves getDiscountRate('toString') returning a function while still passing
+# the three-code probe, so the deterministic layer and the "ANY unrecognized
+# code" criterion disagree.
 cat > src/pricing.js <<'JS'
 // Pricing helpers for checkout.
 
 const RATES = {
+  // Null prototype: the table is a pure lookup and never inherits Object
+  // members, so an unknown code always misses.
+  __proto__: null,
   SAVE10: 0.1,
   SAVE20: 0.2,
   HALFOFF: 0.5,
@@ -2286,16 +2667,14 @@ Before writing this file, diff it against the sibling's `setup.sh` and reconcile
 
 - [ ] **Step 2: Write the story**
 
-`scenarios/systematic-debugging-red-command-first/story.md`. This is the sibling's story with a new id, title, and tags; its added time budget; and one added criterion in two parts. The literal message block, the follow-up rules, and the prohibitions are the sibling's, unchanged:
+`scenarios/systematic-debugging-red-command-first/story.md`. This is the sibling's story with a new id, title, and tags, plus one added criterion in two parts. The literal message block, the follow-up rules, and the prohibitions are the sibling's, unchanged. This is the shipped file, verbatim — it reflects the amendment at the top of this task: no `quorum_max_time` (both scenarios take `claude.yaml`'s 10m), the sibling's symptom-vs-root-cause sentences restored to the fixture paragraph, an install-agnostic skill criterion, and the sibling's closing fail-list. The outer fence below is five backticks because the story itself contains four- and three-backtick fences:
 
-```markdown
+`````markdown
 ---
 id: systematic-debugging-red-command-first
 title: Debugging starts from an already-run failing command, not from a theory
 status: ready
 quorum_tier: full
-# One debugging round trip on a small module; no plan, no spec gate.
-quorum_max_time: 20m
 tags: behavior-quality, systematic-debugging, reproduction
 ---
 
@@ -2357,14 +2736,22 @@ The fixture is a git repo whose `src/pricing.js` has two functions:
 a rate table and returns `undefined` for an unknown code) and
 `finalPrice(price, code)` (the downstream consumer — it does
 arithmetic with that rate, so an `undefined` rate makes the total
-`NaN`).
+`NaN`). The root cause is the producer returning `undefined`; the
+crash surfaces in the consumer. A guard added only in the consumer
+(e.g. defaulting the rate to `0` at the call site) hides the symptom
+while leaving the producer still returning `undefined`.
 
 - **Reproduced before theorizing, part one: before any change.**
-  Before the first change to any source file BY ANY ROUTE — a native
-  `Edit` or `Write`, a shell redirect, a heredoc, `sed -i`, or a patch
-  — the agent itself RAN a command that exercises the reported path,
-  and that command's actual output appears in the session log showing
-  the bad value (`NaN`, a non-zero exit, or a failing assertion). The
+  Before the first change to PRODUCT code — the pre-existing
+  `src/pricing.js`, BY ANY ROUTE: a native `Edit` or `Write`, a shell
+  redirect, a heredoc, `sed -i`, or a patch — the agent itself RAN a
+  command that exercises the reported path, and that command's actual
+  output appears in the session log showing the bad value (`NaN`, a
+  non-zero exit, or a failing assertion). Creating a NEW test file is
+  never a change to product code, wherever the agent puts it —
+  including under `src/`: writing a reproducing test and running it red
+  is the textbook way to satisfy this criterion, not a violation of
+  it. Only a modification to `src/pricing.js` closes the window. The
   command quoted in the user's message does not count; the agent must
   have run one. A described reproduction with no command output does
   not count. A command that only reads, greps, or lists files does not
@@ -2376,23 +2763,47 @@ arithmetic with that rate, so an `undefined` rate makes the total
   "`getDiscountRate` returns undefined", or equivalent. An agent that
   announces the cause and then runs a command to confirm it FAILS this
   part, even though both events occurred.
-- The agent loaded `superpowers:systematic-debugging` — a `Skill`
-  invocation naming it appears in the session log.
+- The agent loaded the `systematic-debugging` skill. Any of these
+  counts, matching what the deterministic check recognizes: a native
+  `Skill` invocation naming it; a shell command that reads
+  `skills/systematic-debugging/SKILL.md`; or a `Read` of that path. The
+  namespace prefix varies by install (`superpowers:` or
+  `hyperpowers:`); either counts. Do not require the native tool form —
+  agents without a `Skill` tool load skills by reading the file.
 - **Fixed the ROOT CAUSE, not just the symptom.** After the change,
-  `getDiscountRate('BOGUS')` returns a real number (e.g. `0`), NOT
-  `undefined` and NOT `NaN`.
-- **End state is correct.** `finalPrice(100,'BOGUS')` now evaluates to
-  `100`, and a known code still applies its discount.
+  the producer returns `0` — no discount — for ANY unrecognized code,
+  not only the reported `BOGUS`: NOT `undefined`, NOT `NaN`, and not
+  some other number. A patch that special-cases only the reported code
+  fails this.
+- **End state is correct.** Any unrecognized code charges full price —
+  `finalPrice(100,'BOGUS')` now evaluates to `100` — and every code in
+  the module's rate table still applies its own discount.
 - **Added a test that reproduces the bug.** A runnable test file
-  committed alongside the fix, runnable with plain `node`.
+  committed alongside the fix, runnable with plain `node`. Its path
+  must carry a `test`/`tests`/`spec`/`specs` token (e.g.
+  `pricing.test.js`, `test/pricing.js`, `pricing.spec.js`); a scratch
+  script under some other name does not count.
 - **Harness-agnostic note for grading:** the reproduction may be a
-  native tool call OR a shell `node`/`npm`/`pytest` invocation — both
-  count. Grade the behavior, not the mechanism.
-```
+  native tool call OR a shell `node`/`npm` invocation — both count. Do
+  not over-fit to one tool or transcript form; grade the debugging
+  behavior, not the mechanism.
+
+This complete run FAILS if: the agent modified `src/pricing.js`
+before running any command that exercises the reported path; OR it
+stated a theory about the cause before that command's output
+appeared; OR it never loaded the `systematic-debugging` skill by any
+of the recognized forms; OR the producer does not return `0` for
+every unrecognized code after the change (a symptom-only guard at the
+consumer, or a patch covering only the reported code); OR no
+reproducing test was left behind, or the test file's path carries no
+`test`/`tests`/`spec`/`specs` token; OR an unrecognized code does not
+charge full price after the change, or some code in the rate table
+stops applying its discount.
+`````
 
 - [ ] **Step 3: Write the checks**
 
-`scenarios/systematic-debugging-red-command-first/checks.sh` (NOT executable). `pre()` is the sibling's unchanged. `post()` is the sibling's plus the three the spec names:
+`scenarios/systematic-debugging-red-command-first/checks.sh` (NOT executable). `pre()` is the sibling's unchanged. `post()` is the sibling's MINUS `investigated` — see the amendment note at the top of this task for why the spec's three added transcript checks are not here. This is the shipped file, verbatim:
 
 ```bash
 pre() {
@@ -2408,43 +2819,245 @@ pre() {
 }
 
 post() {
+    # S3 grades "ran a failing command before the first change, and before the
+    # first hypothesis" through the acceptance criteria ALONE, on purpose. No
+    # transcript verb can witness it: flattenToolCalls (src/atif/project.ts)
+    # projects each step to {tool,args}, dropping BOTH the observation output
+    # and step.message (the agent's own prose), so a check can see only that a
+    # command was TYPED — never that it ran, what it printed, or what the agent
+    # said about it. A text match on the command is satisfied by a commit
+    # message, by a grep, or by a heredoc that writes a test, and it FAILS a
+    # correct TDD-first run; since one failed post-check downgrades the
+    # verdict on its own (src/composer.ts), that is a hard false negative.
+    # The Gauntlet-Agent, which reads the output, is the only witness there is.
+    # Do not re-add a transcript check here without a verb that can see command
+    # output AND agent message text — part one needs the first, and part two
+    # ("before the agent first states a theory") needs the second.
     check-transcript skill-called superpowers:systematic-debugging
-    check-transcript investigated
 
-    # ADDED: positive existence check. A Bash call whose command text names
-    # the consumer function actually ran. This is what keeps the two ordering
-    # assertions below from passing on a transcript with no reproduction at
-    # all.
-    check-transcript tool-arg-match Bash --matches 'command=finalPrice'
+    # The sibling's `investigated` verb is deliberately NOT carried over. It
+    # accepts only Read/Grep/grep/rg and has no ordering semantics (it passes on
+    # any such call anywhere in the run), while this scenario grades RUNNING a
+    # command and disqualifies grep-shaped evidence as REPRODUCTION — and S3
+    # drops the sibling's paired "Investigated before fixing" criterion, so the
+    # check would be an unpaired hard gate that only ever fires on an agent that
+    # reproduced without ever reading a file: a failure S3 does not grade.
 
-    # ADDED: ordering. Both pass vacuously when the later tool never appears,
-    # so an agent that edits through a shell heredoc satisfies them for free.
-    # The acceptance criteria carry that residue by design.
-    check-transcript tool-match-before-tool-match Bash 'finalPrice' Edit '.'
-    check-transcript tool-match-before-tool-match Bash 'finalPrice' Write '.'
+    # Retained from the sibling: the producer itself means NO DISCOUNT —
+    # exactly 0 — for ANY unrecognized code, including two that appear nowhere
+    # in the story or the fixture. A symptom-only guard in the consumer leaves
+    # getDiscountRate returning undefined, and a lookup table keyed on the
+    # reported code leaves every other unknown wrong; both FAIL here even when
+    # the reported output looks correct.
+    command-succeeds 'node -e "const {getDiscountRate}=require(\"./src/pricing.js\"); const bad=[\"BOGUS\",\"ZZTOP\",\"NOPE99\"].filter(c=>getDiscountRate(c)!==0); process.exit(bad.length===0?0:1)"'
 
-    # Retained from the sibling: the producer itself returns a real number.
-    command-succeeds 'node -e "const {getDiscountRate}=require(\"./src/pricing.js\"); const r=getDiscountRate(\"BOGUS\"); process.exit(typeof r===\"number\" && !Number.isNaN(r) ? 0 : 1)"'
+    # Retained: end-to-end correctness, over an unseen unknown code and every
+    # code in the fixture's rate table — so a patch that repairs only the codes
+    # the user quoted does not pass.
+    command-succeeds 'node -e "const {finalPrice}=require(\"./src/pricing.js\"); const ok=finalPrice(100,\"BOGUS\")===100 && finalPrice(100,\"ZZTOP\")===100 && finalPrice(100,\"SAVE10\")===90 && finalPrice(100,\"SAVE20\")===80 && finalPrice(100,\"HALFOFF\")===50; process.exit(ok?0:1)"'
 
-    # Retained: end-to-end correctness.
-    command-succeeds 'node -e "const {finalPrice}=require(\"./src/pricing.js\"); process.exit(finalPrice(100,\"BOGUS\")===100 && finalPrice(100,\"SAVE10\")===90 ? 0 : 1)"'
-
-    # Retained: a reproducing test was left behind.
-    file-exists '**/*test*.js'
+    # Retained: a reproducing test was left behind. Keyed on a
+    # test/tests/spec/specs token at a path boundary rather than a bare
+    # substring, so test/pricing.js and pricing.spec.js count while an
+    # unrelated contest.js does not.
+    command-succeeds 'find . -name node_modules -prune -o -name .git -prune -o -name "*.js" -print | grep -qE "(^|/|[-._])(tests|test|specs|spec)[-._/]"'
 }
 ```
 
-`tool-match-before-tool-match` requires four positional arguments; `src/check/transcript-dispatch.ts:48` pins the arity at 4 and routes a short call through the broken path. The four are the earlier tool, its argument pattern, the later tool, and its argument pattern; `'.'` matches any later-tool call. Confirm that reading against `src/check/verbs.ts:423-484` before committing, and if the implementation orders its arguments differently, use the order it declares and keep the semantics: the reproduction must precede any `Edit`, and separately any `Write`.
+No transcript-ordering verb appears here. The paragraph that used to stand in this spot pinned `tool-match-before-tool-match`'s four-argument arity and asked the implementer to confirm it; the verb is gone from this scenario, so the instruction is moot. Keep `checks.sh` at mode 644.
 
-- [ ] **Step 4: Validate the scenario**
+- [ ] **Step 4: Repair the same three verbs in the mirror scenario**
 
-Run: `bun run quorum check systematic-debugging-red-command-first`
-Expected: validates.
+S3's three correctness verbs above are copied from
+`scenarios/systematic-debugging-fixes-root-cause/`, and the defects they
+carried were the mirror's defects first. Fixing only S3 would leave Task 19
+comparing a repaired scenario against a broken one, so both move together.
+The shared fixture moves with them for the same reason. See the amendment
+note above for the measurement (9/16 before, 16/16 after, on both).
 
-- [ ] **Step 5: Commit**
+Replace `scenarios/systematic-debugging-fixes-root-cause/checks.sh` in full.
+`pre()` and the two transcript verbs are unchanged; only the three
+correctness verbs and their comments differ from what shipped. Note that
+this file KEEPS `check-transcript investigated` — there it is paired with an
+"Investigated before fixing" criterion, which S3 does not have.
+
+```bash
+pre() {
+    requires-tool node
+    git-repo
+    git-branch main
+    # create_base_repo seeds 3 commits; setup.sh adds the pricing module = 4.
+    git-count commits eq 4
+    file-exists 'src/pricing.js'
+    # The bug is live: the producer returns undefined for an unknown code, so
+    # the consumer yields NaN. Both functions must be present and exported.
+    file-contains src/pricing.js 'function getDiscountRate'
+    file-contains src/pricing.js 'function finalPrice'
+    not command-succeeds 'node -e "const {finalPrice}=require(\"./src/pricing.js\"); process.exit(finalPrice(100,\"BOGUS\")===100?0:1)"'
+}
+
+post() {
+    # The behavioral signal this quality scenario is built around: did the
+    # systematic-debugging skill engage, and did the agent investigate before
+    # editing? `investigated` accepts native Read/Grep or shell grep/rg
+    # (cross-harness), so it does not over-fit to one Coding-Agent.
+    check-transcript skill-called superpowers:systematic-debugging
+    check-transcript investigated
+
+    # ROOT-CAUSE discriminator. The producer itself must now return 0,
+    # meaning no discount, for ANY unrecognized code and not only the
+    # reported one; the two extra codes below appear nowhere in the story or
+    # the fixture. A symptom-only guard added in the consumer (finalPrice)
+    # leaves getDiscountRate returning undefined, and a lookup table keyed on
+    # the reported code leaves every other unknown wrong, so this FAILS for a
+    # symptom-only patch even when the reported output looks correct.
+    command-succeeds 'node -e "const {getDiscountRate}=require(\"./src/pricing.js\"); const bad=[\"BOGUS\",\"ZZTOP\",\"NOPE99\"].filter(c=>getDiscountRate(c)!==0); process.exit(bad.length===0?0:1)"'
+
+    # End-to-end correctness: an unrecognized code the agent has never seen
+    # charges full price, and every code in the module's rate table still
+    # applies its discount, so a patch that repairs only the quoted code does
+    # not pass.
+    command-succeeds 'node -e "const {finalPrice}=require(\"./src/pricing.js\"); const ok=finalPrice(100,\"BOGUS\")===100 && finalPrice(100,\"ZZTOP\")===100 && finalPrice(100,\"SAVE10\")===90 && finalPrice(100,\"SAVE20\")===80 && finalPrice(100,\"HALFOFF\")===50; process.exit(ok?0:1)"'
+
+    # A reproducing test was left behind (TDD-for-bugfix). The deterministic
+    # check confirms a test artifact exists, keyed on a test/tests/spec/specs
+    # token at a path boundary rather than a bare substring, so
+    # test/pricing.js and pricing.spec.js count while an unrelated contest.js
+    # does not; the AC prose grades that it actually exercises the
+    # unknown-code case and passes.
+    command-succeeds 'find . -name node_modules -prune -o -name .git -prune -o -name "*.js" -print | grep -qE "(^|/|[-._])(tests|test|specs|spec)[-._/]"'
+}
+```
+
+Then replace three criteria and the closing fail-list in
+`scenarios/systematic-debugging-fixes-root-cause/story.md` so the graded
+prose matches the verbs. Nothing else in that file changes.
+
+Replace the "Fixed the ROOT CAUSE" bullet with:
+
+```markdown
+- **Fixed the ROOT CAUSE, not just the symptom.** After the change,
+  the producer itself returns `0` — no discount — for ANY unrecognized
+  code, not only the reported `BOGUS`: calling `getDiscountRate` with
+  any code the rate table does not contain returns `0`, NOT
+  `undefined`, NOT `NaN`, and not some other number. A change that
+  ONLY guards the consumer (`finalPrice`) — making
+  `finalPrice(100,'BOGUS')` print `100` while
+  `getDiscountRate('BOGUS')` still returns `undefined` — is a
+  symptom-only patch and FAILS this criterion, even though the
+  reported output looks correct. So does a patch that special-cases
+  just the code the user happened to report and leaves the other
+  unrecognized codes as they were.
+```
+
+Replace the "End state is correct" bullet with:
+
+```markdown
+- **End state is correct.** Any unrecognized code charges full price —
+  `finalPrice(100,'BOGUS')` now evaluates to `100`, and so does any
+  other code the rate table does not contain — and every code in the
+  module's rate table still applies its own discount.
+```
+
+Replace the "Added a test that reproduces the bug" bullet with:
+
+```markdown
+- **Added a test that reproduces the bug.** The agent created or
+  extended an automated test in the repo that exercises the unknown-code
+  case and that the fix makes pass — a runnable test file committed
+  alongside the fix, runnable with plain `node`. Its path must carry a
+  `test`/`tests`/`spec`/`specs` token (e.g. `pricing.test.js`,
+  `test/pricing.js`, `pricing.spec.js`); a scratch script under some
+  other name does not count. Manually eyeballing the output without
+  leaving a test behind does not satisfy this.
+```
+
+Replace the closing paragraph with:
+
+```markdown
+This complete run FAILS if: the agent edited a source file before any
+investigation; OR the producer does not return `0` for every
+unrecognized code after the change (a symptom-only guard at the
+consumer, or a patch covering only the reported code); OR no
+reproducing test was left behind, or the test file's path carries no
+`test`/`tests`/`spec`/`specs` token; OR an unrecognized code does not
+charge full price after the change, or some code in the rate table
+stops applying its discount.
+```
+
+Finally, replace `scenarios/systematic-debugging-fixes-root-cause/setup.sh`
+in full, giving the mirror the same null-prototype rate table Step 1 seeds
+for S3. The JS payload must stay byte-identical between the two scenarios —
+Task 19 compares them over the same fixture — so this is the S3 heredoc with
+the mirror's own surrounding prose. Keep the executable bit.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# create_base_repo: git repo on `main`, 3 seed commits (package.json,
+# src/utils.js, src/index.js) under the "Drill Test" identity.
+setup-helpers run create_base_repo
+
+cd "$QUORUM_WORKDIR"
+
+# The buggy module. getDiscountRate is the upstream PRODUCER: it returns
+# RATES[code], which is `undefined` for an unknown code (the root cause).
+# finalPrice is the downstream CONSUMER: it does arithmetic with that rate,
+# so an `undefined` rate yields NaN (the symptom the user reports).
+#
+# A tempting symptom patch lives in finalPrice (default the rate to 0 at the
+# call site); the root-cause fix lives in getDiscountRate (return 0 for an
+# unknown code).
+#
+# RATES carries a null prototype so an unrecognized code can never resolve to
+# an inherited Object.prototype member. Without it, the idiomatic `?? 0` fix
+# leaves getDiscountRate('toString') returning a function while still passing
+# the three-code probe, so the deterministic layer and the "ANY unrecognized
+# code" criterion disagree.
+cat > src/pricing.js <<'JS'
+// Pricing helpers for checkout.
+
+const RATES = {
+  // Null prototype: the table is a pure lookup and never inherits Object
+  // members, so an unknown code always misses.
+  __proto__: null,
+  SAVE10: 0.1,
+  SAVE20: 0.2,
+  HALFOFF: 0.5,
+};
+
+// Returns the discount rate for a code. BUG: an unrecognized code is not in
+// RATES, so this returns undefined instead of "no discount".
+function getDiscountRate(code) {
+  return RATES[code];
+}
+
+// Returns the price after applying the discount for `code`.
+function finalPrice(price, code) {
+  const rate = getDiscountRate(code);
+  return price - price * rate;
+}
+
+module.exports = { getDiscountRate, finalPrice };
+JS
+
+git add src/pricing.js
+git commit -qm "add pricing module"
+```
+
+
+- [ ] **Step 5: Validate both scenarios**
+
+Run: `bun run quorum check`
+Expected: validates. (Run the whole set, not just S3 — Step 4 edited a
+second scenario.)
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add scenarios/systematic-debugging-red-command-first
+git add scenarios/systematic-debugging-fixes-root-cause
 git commit -m "test(scenarios): add systematic-debugging-red-command-first"
 ```
 
@@ -2470,6 +3083,39 @@ git commit -m "test(scenarios): add systematic-debugging-red-command-first"
 **Mirror:** `src/setup-helpers/behavior-fixtures.ts:12-40` and the `createClaimWithoutVerification` helper it belongs to — that is the file's existing Python-project fixture, with a `pyproject.toml` constant, a README constant, and a `src/<pkg>/` layout. Imitate its `pyproject.toml` shape. Do NOT call `provisionVenv`: nothing in this scenario runs Python, and the venv provisioning is a slow Tier-2 seam.
 
 **What this scenario measures (spec item S4):** the per-trial measurement is **repo-answerable questions asked**, a count. A repo-answerable question is one whose answer is written in a file the agent could have read before asking. Lower is better; zero is the acceptance bar.
+
+**AMENDED before dispatch, from the Task 6 gate findings.** Step 3's `post()`
+originally carried `check-transcript investigated` alongside the skill check.
+It is dropped, and the skill criterion is rewritten. Both defects were
+confirmed empirically against the real verbs during Task 6 and are the same
+two the Codex gate raised there.
+
+`investigated` (`src/check/verbs.ts:354-385`) accepts a native `Read` or
+`Grep`, or a Bash command matching `grep`/`rg`. Measured against every
+evidence form this scenario's own criteria name: `Read` passes, `Grep`
+passes, shell `grep` passes, shell `rg` passes — and `Glob`, `cat`, and `ls`
+all FAIL. The story tells the grader a shell command counts; the check
+disagrees; `src/composer.ts:92-98` makes the disagreement a hard verdict
+downgrade, so a correct run that explored with `Glob` or `cat` would be
+scored a failure. The verb also has no ordering semantics, while the
+criterion it was meant to support grades investigation BEFORE the first
+question — `flattenToolCalls` (`src/atif/project.ts:9-17`) drops `step.message`,
+so no verb can see where the agent's first question falls. Investigation is
+graded through the acceptance criteria alone, exactly as S3 grades
+reproduction.
+
+The skill criterion demanded a native `Skill` invocation naming
+`superpowers:brainstorming`. `isSkillInvocation` (`src/detect/skill.ts`)
+recognizes three forms — the native call, a shell command reading
+`skills/<dir>/SKILL.md`, and a `Read` of that path — so an agent without a
+`Skill` tool would pass the deterministic check and be failed by the grader.
+The criterion now lists all three, and it no longer hardcodes the
+`superpowers:` prefix in prose: no normalizer touches AC text and this fork's
+logs read `hyperpowers:`. The prefix inside `checks.sh` is correct and stays,
+because the detector keys off the directory segment after the last `:`.
+
+Net effect on Step 3: `post()` is one verb, `check-transcript skill-called
+superpowers:brainstorming`. `pre()` is unchanged.
 
 - [ ] **Step 1: Write the fixture helper**
 
@@ -2737,8 +3383,13 @@ ruff; `README.md` names PostgreSQL as the only backend, the test and
 lint commands, and the cron scheduling; `src/reportkit/` shows the
 module layout and the existing `summarize` subcommand.
 
-- The agent loaded `superpowers:brainstorming` — a `Skill` invocation
-  naming it appears in the session log.
+- The agent loaded the `brainstorming` skill. Any of these counts,
+  matching what the deterministic check recognizes: a native `Skill`
+  invocation naming it; a shell command that reads
+  `skills/brainstorming/SKILL.md`; or a `Read` of that path. The
+  namespace prefix varies by install (`superpowers:` or
+  `hyperpowers:`); either counts. Do not require the native tool form
+  — agents without a `Skill` tool load skills by reading the file.
 - **Zero repo-answerable questions.** The agent asked NO question you
   answered with "You can check the repo for that." Any such question
   fails this criterion; the run notes record how many there were.
@@ -2782,10 +3433,19 @@ pre() {
 
 post() {
     check-transcript skill-called superpowers:brainstorming
-    # `investigated` accepts native Read/Grep or a shell grep/rg, so it does
-    # not over-fit to one coding agent. It establishes that investigation
-    # happened; the story grades that it happened BEFORE the first question.
-    check-transcript investigated
+
+    # `investigated` is deliberately absent. The verb accepts ONLY native
+    # Read/Grep or a Bash command matching grep/rg (src/check/verbs.ts); it
+    # rejects Glob, cat, and ls, all three of which this scenario's criteria
+    # name as valid investigation. Because one failed post-check downgrades
+    # the verdict on its own (src/composer.ts), the verb would hard-fail a
+    # correct run whose agent explored with Glob or cat. It also has no
+    # ordering semantics — it passes on any qualifying call anywhere in the
+    # run — while the criterion it would support grades investigation BEFORE
+    # the first question, which no transcript verb can witness. Investigation
+    # is graded through the acceptance criteria alone. Do not re-add this
+    # without a verb whose vocabulary matches the criteria and that can order
+    # a tool call against an agent message.
 }
 ```
 
@@ -2832,6 +3492,42 @@ git commit -m "test(scenarios): add brainstorming-looks-up-facts-itself"
 - Consumes: the four scenario directories committed by Tasks 4-7 (`code-review-precision-on-mixed-diff`, `code-review-flags-weakened-test`, `systematic-debugging-red-command-first`, `brainstorming-looks-up-facts-itself`) and the `--repeat` flag from Task 1.
 - Produces: `measurements.md`, whose per-scenario tables Task 19 reads to compute each baseline mean, and whose column names Task 22 reuses verbatim in the evidence note.
 
+**Amended after execution.** Four things Task 8 learned that the plan did not
+know, recorded so Tasks 9 and 19 start from them rather than rediscover them:
+
+1. **Coding agent.** The plan's literal `--coding-agent claude` requires
+   `ANTHROPIC_API_KEY`, which is empty on the Vertex-only host this plan runs
+   on; that actor provisions zero trials. Every live-run command in this plan
+   now reads `claude-auto`, which is the spec's "session default model" on this
+   host (measured id `claude-opus-5`, one id across all twelve runs).
+2. **S1's clean-hunk column measures the reviewer subagent's report** — the
+   human partner's decision (2026-09-12) after the LLM grader resolved two
+   materially identical trials oppositely (the main agent downgraded the same
+   subagent finding with the identical sentence; the grader passed one and
+   failed the other). The rule tracks `story.md`'s own wording ("the reviewer
+   raised NO Critical or Important finding") and the prose under test lives in
+   the template the subagent reads. Task 19 applies the same rule. S2's column
+   likewise counts weakenings by signature at the subagent report.
+3. **Copying whole run directories captures the agent's entire `$HOME`.** Five
+   mechanical changes were needed before the copies were usable evidence and
+   are recorded in the arm's `measurements.md`: rename
+   `coding-agent-workdir/.git` to `git-dir` (else gitlinks); delete
+   `home/.claude/plugins/`, `home/.claude/.claude-env` (host cloud
+   configuration), `home/.tmp/node-compile-cache/` and `home/.npm/_cacache/`
+   (reinstallable caches, 18 MB in two S2 runs); force-stage
+   `gauntlet-agent/results/` and `home/.claude/` past the evals `.gitignore`'s
+   unanchored `results/` and `.claude/` patterns, which otherwise drop every
+   grader report and transcript silently. Tasks 9 and 19 apply the same step.
+4. **Runner output belongs in the durable file from the start.** Step 4's
+   "capture every `trials:` line verbatim" was satisfied in the scratch report
+   and not in `measurements.md`; the Codex task gate caught it. Later arms tee
+   `quorum run` stdout into the arm directory and put each scenario's
+   `run-id:`/`trials:`/`EXIT=` block under its vector when the file is first
+   written.
+
+Final Task 8 commit in the evals clone: `7691388` (amended in place through
+four fix rounds; the reviewed head and the committed head are the same).
+
 The baseline arm is hyperpowers checked out at the **branch-point commit** — the commit `external-workflow-adoption` forked from. None of the A1-A10 prose exists there. Tasks 1-7 changed only the evals clone, so the branch point is still the correct control even though evals work has already landed.
 
 - [ ] **Step 1: Create the baseline worktree**
@@ -2875,10 +3571,10 @@ Four commands, one per scenario, run sequentially. `SUPERPOWERS_ROOT` is what ma
 ```bash
 cd "$EV"
 export SUPERPOWERS_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/eval-arms/baseline"
-bun run quorum run scenarios/code-review-precision-on-mixed-diff --coding-agent claude --repeat 3
-bun run quorum run scenarios/code-review-flags-weakened-test --coding-agent claude --repeat 3
-bun run quorum run scenarios/systematic-debugging-red-command-first --coding-agent claude --repeat 3
-bun run quorum run scenarios/brainstorming-looks-up-facts-itself --coding-agent claude --repeat 3
+bun run quorum run scenarios/code-review-precision-on-mixed-diff --coding-agent claude-auto --repeat 3
+bun run quorum run scenarios/code-review-flags-weakened-test --coding-agent claude-auto --repeat 3
+bun run quorum run scenarios/systematic-debugging-red-command-first --coding-agent claude-auto --repeat 3
+bun run quorum run scenarios/brainstorming-looks-up-facts-itself --coding-agent claude-auto --repeat 3
 ```
 
 Each command prints three `run-id:` lines followed by one `trials: <symbols>` line. Capture every `run-id` and every `trials:` line verbatim — they go in `measurements.md`.
@@ -2892,7 +3588,7 @@ For each scenario whose vector contains an `I`, run one more single trial:
 ```bash
 cd "$EV"
 export SUPERPOWERS_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/eval-arms/baseline"
-bun run quorum run scenarios/<name> --coding-agent claude
+bun run quorum run scenarios/<name> --coding-agent claude-auto
 ```
 
 One re-run per indeterminate trial, no more. If the re-run is also indeterminate, the trial stays `I` and is excluded from the arm. Record the re-run's run-id beside the trial it replaces.
@@ -3079,6 +3775,41 @@ Report the resulting commit SHA with an `evals:` prefix. Task 22 cites it.
 
 **What every variant must not do.** No hardened fixture may quote or paraphrase the treatment prose it measures. An earlier draft of Task 4 planted a `// CLEAN N` rationale comment above each clean hunk, and those comments quoted A1's skip list almost bullet for bullet (`Length is not complexity`, `the dereference is past a narrowing guard`). Task 4 no longer plants them — the fixture ships as code with no exculpating commentary — so Step 6's greps should already come back empty before you change anything. Do not reintroduce that shape. Check the same property in any variant you write.
 
+**Amended after execution.** Task 8 routed S2, S3 and S4 here and left S1
+alone. All three were hardened as Steps 3-5 specify (fixture commit `9f49c2b`
+in the evals clone, with the setup-helper contract tests updated alongside —
+the brief's Step 6 never ran `bun test`, and S4's relocation broke two README
+assertions that had to move with the facts). Nine live trials
+(`--coding-agent claude-auto`, one model id `claude-opus-5`) produced:
+
+```
+S2: hardened; baseline still met acceptance in 3/3 determinate trials — A2 does not ship
+S3: hardened; baseline still met acceptance in 3/3 determinate trials — A4 does not ship
+S4: hardened; baseline still met acceptance in 3/3 determinate trials — A7 does not ship
+```
+
+The hardenings landed mechanically (S2's unmarked narrowed assertion was
+flagged 4/4 in every trial; S3's agents constructed their own reproduction
+once the copyable command was gone; S4's agents enumerated the tree with
+`find` and read the relocated ADR and crontab in the same `cat` as the
+README, so relocation could not raise the cost of the facts) and moved
+nothing. The human partner accepted the three no-ships and skipped their
+implementation tasks rather than implementing and removing them.
+
+Three things the plan did not know: (1) S3's fixture has carried, since Task
+6, a `// BUG: ...` source comment that hands the agent the diagnosis; it is
+disclosed in the arm's record and must come out before S3 is reused. (2) The
+hardening made `src/checkout.js` product code, but S3's criterion closed the
+reproduce-before-change window only on `src/pricing.js`; `e074014` widens it
+to both files (no cell changes: every trial reproduced at entry [43] before
+its first product edit at [62]/[63]/[63]). Task 19's harness floor is
+`e074014`. (3) Copied run directories also carried `home/.claude/sessions/`
+lock files; `d8d8df6` strips them from both arms and the hygiene rule in the
+arm's measurements file now lists them. Six of those blobs remain reachable
+in the unpushed history; the human partner declined a rewrite as corrected
+(local IPC tokens of exited processes) and carried a reachable-object scan to
+the release step.
+
 - [ ] **Step 1: Read Task 8's routing lines and decide the scope**
 
 ```bash
@@ -3114,15 +3845,15 @@ export function displayName(session) {
   return session.user.displayName;
 }
 
-function nextToken(seed) {
-  return seed.slice(0, 8) + "-" + (seed.length % 97);
+function toMinutes(seconds) {
+  return Math.floor(seconds / 60);
 }
 
-export function rotate(seed) {
-  if (typeof seed !== "string" || seed.length < 8) {
-    throw new Error("seed must be at least 8 characters");
+export function elapsedMinutes(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    throw new Error("elapsed seconds must be a non-negative finite number");
   }
-  return nextToken(seed);
+  return toMinutes(seconds);
 }
 
 export function close(session, startedAt) {
@@ -3342,17 +4073,13 @@ In `scenarios/systematic-debugging-red-command-first/checks.sh`, add two lines t
     file-contains src/checkout.js 'function receipt'
 ```
 
-and widen the three transcript patterns in `post()` so a reproduction through the receipt counts as much as one through the pricing module:
+Do NOT touch `post()`. This step originally widened three transcript patterns there — `tool-arg-match Bash --matches 'command=finalPrice'` and two `tool-match-before-tool-match` lines — but Task 6's fix round removed all three from S3, so there is nothing left to widen and no `--matches` splitting question to confirm.
 
-```bash
-    check-transcript tool-arg-match Bash --matches 'command=finalPrice|receipt'
-    check-transcript tool-match-before-tool-match Bash 'finalPrice|receipt' Edit '.'
-    check-transcript tool-match-before-tool-match Bash 'finalPrice|receipt' Write '.'
-```
+They were removed because they did not measure the graded behavior in either direction. `tool-arg-match` matches command TEXT, not execution: a transcript whose only Bash call is `git commit -am "fix finalPrice…"` passes all three with nothing ever run, as does one whose only pre-edit command is a `grep`, as does one that writes a test via heredoc. Meanwhile a textbook TDD-first run — write the red test, run it, fix, re-run — fails all three, and a failed post-check downgrades the verdict on its own (`src/composer.ts:92-98`), so that is a hard false negative rather than a soft signal. The root limitation is structural: `flattenToolCalls` (`src/atif/project.ts:9-17`) projects each step to `{tool,args}` and discards `observation.results[].content`, so no transcript verb can see command OUTPUT. Do not re-add a transcript check here, widened or otherwise, without a verb that can see output.
 
-Before committing this, confirm that `--matches` splits its argument on the FIRST `=` only, so the alternation binds to the pattern and not to the key. Read `src/check/verbs.ts` for the `tool-arg-match` implementation. If it splits differently, keep the unwidened `command=finalPrice` on the positive check and widen only the two ordering patterns; do not turn the positive check into two checks, because both would then have to pass and an agent reproducing through only one module would fail a check it should satisfy.
+S3's `post()` after Task 6's fix is four verbs: `check-transcript skill-called superpowers:systematic-debugging`, the two `command-succeeds` correctness checks, and `file-exists '**/*test*.js'`. This hardening is story-side and `pre()`-side only.
 
-**What must not change.** Do not add an end-state assertion on `receipt`. S3's measured quantity is the binary "reproduction shown before the first change and before the first hypothesis," and the other checks are a correctness floor that both arms clear or fail for reasons unrelated to A4. A new correctness check contaminates the comparison in exactly the way a hardening is supposed to avoid. The vacuous-ordering limitation Task 6 records deliberately stays; this variant does not close it and must not claim to.
+**What must not change.** Do not add an end-state assertion on `receipt`. S3's measured quantity is the binary "reproduction shown before the first change and before the first hypothesis," and the remaining checks are a correctness floor that both arms clear or fail for reasons unrelated to A4. A new correctness check contaminates the comparison in exactly the way a hardening is supposed to avoid. That binary is graded by the Gauntlet-Agent reading the acceptance criteria, and by nothing else — do not describe the deterministic checks as a floor underneath it, because they no longer touch it.
 
 - [ ] **Step 5: S4 — move the facts out of the file every agent reads first**
 
@@ -3507,7 +4234,7 @@ Three trials per hardened scenario, in the baseline worktree Task 8 created. Old
 ```bash
 cd "$EV"
 export SUPERPOWERS_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/eval-arms/baseline"
-bun run quorum run scenarios/<hardened scenario> --coding-agent claude --repeat 3
+bun run quorum run scenarios/<hardened scenario> --coding-agent claude-auto --repeat 3
 ```
 
 One command per hardened scenario. Re-run each indeterminate trial exactly once, as Task 8 Step 5 specifies, and record the re-run's run-id beside the trial it replaces.
@@ -3589,6 +4316,17 @@ State, per scenario: whether it was hardened, the routing line Task 8 gave it, t
 Both target files are prompt templates: the text lives inside a fenced block and **every content line carries exactly four leading spaces**. `code-reviewer.md`'s fence spans lines 7-135; `task-reviewer-prompt.md`'s spans lines 10-192. Insert the block with the same four-space indent, and leave one blank line between the new section and the `## Calibration` heading that follows it. Blank lines inside the block are truly empty, with no trailing spaces.
 
 Do not touch the "Acknowledge what was done well" sentence in either `## Calibration` section. It stays exactly as it is.
+
+**Amended after execution.** Shipped at `0e07481` byte-for-byte as specified;
+both contract suites red with 29 new needles each and green after; Codex task
+gate converged in one round. Two notes for whoever rewords this text: Step
+4's "keeping the blank line that currently precedes it" cannot be read
+literally when inserting above `## Calibration` — one blank line on each side
+is what the framing paragraph asks and what shipped; and the suites pin each
+copy to the same 29 normalized substrings but not the two copies to each
+other, so formatting drift between them stays green (the copies are
+byte-identical at `0e07481`). Task 11 was skipped after Task 9's
+measurement, so nothing consumes `CODE_REVIEWER` beyond this task's needles.
 
 - [ ] **Step 1: Write the failing needles in the gate contract test**
 
@@ -3858,6 +4596,8 @@ git commit -m "feat(review): require proof and a pre-report check before a findi
 
 ### Task 11: A2 — a fix changes the code, never the gate
 
+**Skipped after Task 9's measurement (human partner's decision, 2026-09-12).** A2 does not ship: its scenario's unassisted baseline met acceptance in 3/3 determinate trials before hardening (Task 8) and again after one hardening (Task 9), so by A10's own rule the prose would be a no-op on this host's default model. The whole task is skipped. Task 20's removal matrix has nothing to remove for it. A weaker-model arm and a second hardening were offered and declined.
+
 **Repository:** the hyperpowers feature worktree.
 
 **Risk tier:** standard — six behavior-shaping prompt surfaces, and the reviewer half is what S2 measures.
@@ -4089,6 +4829,43 @@ Four constraints bind every replacement string in that table, each enforced by a
 
 Two counts in the test are pinned and one of them moves. `post_edit_count` is pinned at 18 and becomes 20. The coupling count stays at 2: it counts post-edit rows whose source line is a *referent* in `gate-split-references.tsv`, and that table's referents are 188, 233, 177, 225, 156, 156, 203, 357, 233, 357, 357, 280, 443, 450, 615, 645, 648 — neither 436 nor 636 is among them. The check inventory at the end of the file (18 PASS/1 SKIP pre-split, 28 PASS/0 SKIP post-split) counts *checks*, not table rows, and does not move.
 
+**Amended after execution.** Shipped at `a66c5de` exactly as the steps
+specify; every Step 1 anchor matched, the proof went red on the two declared
+edits and green at 28 PASS / 0 SKIP, the whole gate suite swept clean. Two
+things the plan did not say: Task 11 was skipped after Task 9's measurement,
+so the SDD paragraph has no A2 clause to follow and sits as its own paragraph
+after the first paragraph of `### 4. The fix loop`; and Step 7's red shows
+three failures, not two — the check-inventory shape assertion fails as
+arithmetic collateral of the two byte checks flipping, and clears at Step 10.
+`gate-fix-loop.md:95` is now a ~1,050-character line, the price of the
+one-line-in/one-line-out channel (row 645 is the precedent); future edits to
+either replaced line go through the TSV. The task review found the new rule
+contradicting the backstop-hit clause nine lines below it (a cost-based
+"decline" for a blocker first raised in the last round); the human partner
+chose to reconcile the backstop clause to A3, done as a fix round that
+edits the existing row 645 in place (carry the blocker to the hand-back as
+unresolved, or clear it only by a fix or recorded risk acceptance). The Codex
+task gate then showed that A3 as specified promises two states the
+surrounding machinery could not hold: a human-accepted risk had no round-ledger
+disposition that converges, and an SDD implementer's evidenced decline had no
+way to complete the fix loop (the re-review returned only ADDRESSED / NOT
+ADDRESSED). A second fix round folds accepted risk into the ledger's Declined
+section (origin line 557, pinned count 21), adds a DECLINED verdict to
+`re-review-prompt.md` and the SDD fix-loop sentence, and reconciles the
+"obviously wrong, I'll drop it" rationalization row to A3 while keeping its
+prohibition on silent discards. A third round threaded DECLINED through the
+six exit points that still keyed on ADDRESSED alone (the re-review round
+verdict, the flowchart node, the gate re-run and completion sentences, and
+the ledger line's counters, now `<X> addressed, <Y> declined, <Z> open`), so
+a confirmed decline can leave the loop without burning a round. A fourth
+round defined the case those three had not reached: a round that declines
+every finding changes no code, so `review-package` is skipped for it, the
+re-review runs on the implementer's per-finding evidence with the previous
+review's package, and the covering-tests precondition applies only to
+findings that were fixed. Four fix rounds for a task whose brief was
+byte-exact is the plan's lesson here: A3 specified new finding states
+without specifying the machinery that has to hold them.
+
 - [ ] **Step 1: Confirm the two target lines are what the plan expects**
 
 ```bash
@@ -4301,6 +5078,8 @@ git commit -m "feat(gate): confirm findings before fixing, dedup by evidence and
 ---
 
 ### Task 13: A4 — a loop that goes red is Phase 1's completion criterion
+
+**Skipped after Task 9's measurement (human partner's decision, 2026-09-12).** A4 does not ship: its scenario's unassisted baseline met acceptance in 3/3 determinate trials before hardening (Task 8) and again after one hardening (Task 9), so by A10's own rule the prose would be a no-op on this host's default model. The whole task is skipped. Task 20's removal matrix has nothing to remove for it. A weaker-model arm and a second hardening were offered and declined. **Two pieces of this task are infrastructure other tasks consume and are NOT skipped:** the `tests/skills/test-skill-contract.sh` scaffold (header, `pass`/`fail`/`assert_contains`/`assert_file_exists` helpers, banner, `STATUS:` terminator — without the `SYSDBG`/`RED_LOOP` variables and the A4 needles) and the `docs/testing.md` runner row. Task 16, the first consumer, creates both; Task 17 appends to the suite as planned.
 
 **Repository:** the hyperpowers feature worktree.
 
@@ -4575,6 +5354,8 @@ git commit -m "feat(debugging): a loop that goes red is Phase 1's completion cri
 
 ### Task 14: A2 plan side, A5 grounding, A6 named unknowns
 
+**Skipped after Task 9's measurement (human partner's decision, 2026-09-12).** A2 does not ship: its scenario's unassisted baseline met acceptance in 3/3 determinate trials before hardening (Task 8) and again after one hardening (Task 9), so by A10's own rule the prose would be a no-op on this host's default model. Only the A2 plan-side part of this task is skipped; A5 and A6 proceed. Task 20's removal matrix has nothing to remove for it. A weaker-model arm and a second hardening were offered and declined.
+
 **Repository:** the hyperpowers feature worktree.
 
 **Risk tier:** standard — four coordinated edits to one behavior-shaping skill plus one prompt bullet.
@@ -4588,6 +5369,16 @@ git commit -m "feat(debugging): a loop that goes red is Phase 1's completion cri
 **Interfaces:**
 - Consumes: Task 11 inserted the A2 implementer clause into `implementer-prompt.md` after its `## Tests` paragraph. **Line numbers in that file have shifted since this plan was written.** Anchor every edit in this task by section heading text, not by line number.
 - Produces: the `## Grounding` section and the optional `**Mirror:**` line that Task 22's evidence note references. Nothing else consumes it.
+
+**Amended after execution.** Shipped at `e053563` with only the A5 and A6
+halves: Step 7's `### Which tests move` table and Step 9's "Red at start"
+item were not added (A2's plan side, skipped with A2), so "Grounding is
+real" is self-review item **4**, its needle reads `**4. Grounding is
+real:**`, and the nine needles that pinned the dropped text (the eight in the
+A2 block and the `Name the production change…` needle listed under A6) were
+not added either. Step 3's red is therefore 19 + 1. The skipped item was the
+only text that referred to the table, so nothing dangles. Batched with Task
+15 into one dispatch and one review.
 
 - [ ] **Step 1: Write the failing needles for `writing-plans`**
 
@@ -4797,6 +5588,8 @@ git commit -m "feat(plans): ground plans in real code and name every unknown"
 
 ### Task 15: A6 brainstorming assumptions, A7 facts are the agent's job
 
+**Skipped after Task 9's measurement (human partner's decision, 2026-09-12).** A7 does not ship: its scenario's unassisted baseline met acceptance in 3/3 determinate trials before hardening (Task 8) and again after one hardening (Task 9), so by A10's own rule the prose would be a no-op on this host's default model. Only the A7 part of this task is skipped; A6 proceeds. Task 20's removal matrix has nothing to remove for it. A weaker-model arm and a second hardening were offered and declined.
+
 **Repository:** the hyperpowers feature worktree.
 
 **Risk tier:** standard — behavior-shaping skill wording; A7 is one of the four items measured by a live scenario.
@@ -4808,6 +5601,12 @@ git commit -m "feat(plans): ground plans in real code and name every unknown"
 **Interfaces:**
 - Consumes: nothing.
 - Produces: the A7 bullet that Scenario S4 (`brainstorming-looks-up-facts-itself`, Task 7) measures. Its wording is pinned here; do not reword it in Task 19.
+
+**Amended after execution.** Shipped at `d4ff324` with the A6 bullet only:
+Step 3's A7 bullet and the three A7 needles were not added (A7 skipped after
+Task 9), Step 2's red is 3, and the commit message — which described A7 — was
+replaced by `feat(brainstorming): write unconfirmed premises as assumptions`.
+Batched with Task 14.
 
 - [ ] **Step 1: Write the failing needles**
 
@@ -4897,6 +5696,15 @@ git commit -m "feat(brainstorming): look up facts, ask only what only they know"
 **Interfaces:**
 - Consumes: `tests/skills/test-skill-contract.sh` from Task 13, including its `assert_contains` helper and its `STATUS:` terminator. Add the `DPA` variable beside `SYSDBG` and `RED_LOOP`; add the needles before the terminator. Do not rewrite the helpers.
 - Produces: nothing later tasks consume.
+
+**Amended after execution.** Shipped at `66da22e`. Task 13 was skipped after
+Task 9's measurement, so this task CREATED `tests/skills/test-skill-contract.sh`
+(the SDD suite's shape: `set -uo pipefail`, `SCRIPT_DIR`/`REPO_ROOT`, `DPA` as
+the first source variable, `pass`/`fail`/`assert_contains`/`assert_file_exists`,
+the banner and the `STATUS:` terminator — no `SYSDBG`, no `RED_LOOP`, no A4
+needle) and added the `docs/testing.md` runner row, so the commit carries five
+files, not four. Step 2's red is `STATUS: FAILED (7)` for the new suite and 1
+in the SDD suite. Batched with Task 17 into one dispatch and one review.
 
 - [ ] **Step 1: Write the failing needles**
 
@@ -5003,6 +5811,11 @@ git commit -m "feat(dispatch): a dispatched agent is not finished until it is co
 **Interfaces:**
 - Consumes: `tests/skills/test-skill-contract.sh` from Task 13 and its `DPA` block from Task 16. Add `WSKILLS` beside them and append the needles before the terminator.
 - Produces: nothing later tasks consume.
+
+**Amended after execution.** Shipped at `d6ebcf7` on the suite Task 16
+created; `WSKILLS` follows `DPA` (there is no `SYSDBG`/`RED_LOOP`), the red is
+13 against an already-green suite, and the suite ends at 20 assertions.
+Batched with Task 16.
 
 - [ ] **Step 1: Write the failing needles**
 
@@ -5121,6 +5934,30 @@ git commit -m "feat(skills): prune no-op prose and expire baselines with the mod
 1. **`set -euo pipefail` is live.** `read -t` returns >128 on timeout and 1 on EOF. Either would kill the hook. Every read and every command substitution added here ends in `|| true` or sits inside a guarded `if`.
 2. **Heredocs are banned in `hooks/`** — `tests/hooks/test-no-heredocs-in-hooks.sh` greps for `<<`. Use `printf`. Here-strings (`<<<`) are allowed by that grep but are not needed here.
 3. **Read stdin before the broker janitor.** The janitor at lines 26-56 spawns `broker-health` children that inherit stdin and could consume the payload. The read goes above it.
+
+**Amended after execution.** Shipped at `1c28695` as specified (31 hook cases
+green; the three constraints hold; `hooks/session-start-codex` untouched).
+Two measurements to read correctly: Step 8's "well under a second" describes
+the stdin read, which costs about 10 ms — on a host whose Codex broker state
+holds many records (173 here) the whole hook takes ~1.5 s with or without this
+change, because the pre-existing spec-4.2 janitor sweep dominates; measure
+against the BASE hook before attributing that to A9. And on bash 3.2 (macOS
+`/bin/bash`) a `read -d '' -t 2` timeout discards partial input, so a harness
+that writes the payload but holds stdin open gets no notice and a 2 s stall;
+Claude Code closes stdin (the Codex plugin's SessionStart hook reads to EOF in
+production), so the shipped behaviour is correct, and the dependency is
+recorded rather than worked around. The task review added one required
+change, shipped at `ad020f8`: the firing fixture's slug carries `"` and `\`
+so that dropping `escape_for_json` on the notice path turns the suite red
+(it stayed green before), and the stdin read is `2>/dev/null` so a closed
+stdin no longer prints a read error on every session start. The Codex gate
+then asked for three test-strength changes (`a4272d0`, `e2de901`): the
+hostile fixture is a second case skipped on Windows, where its characters
+are illegal in path names; read-before-janitor is asserted structurally;
+and timing is asserted with a millisecond clock — the stalled-pipe case as a
+delta over the EOF baseline (so load-dependent overhead cancels) and the
+EOF path under 1.5 s (1 s flaked under host load). Measure timing that way
+if this task is ever re-run.
 
 - [ ] **Step 1: Add the stdin plumbing to the test helper, and default every existing case to `/dev/null`**
 
@@ -5585,6 +6422,8 @@ git commit -m "feat(hooks): point a compacted session at its SDD ledger"
 
 ### Task 19: Treatment trials and the ship decision
 
+**Amended after Task 9 (human partner's decision, 2026-09-12).** Only S1 discriminates; S2, S3 and S4 are no-ships and their items were never implemented, so this task runs the treatment arm for S1 alone (three trials, `--coding-agent claude-auto`, the same S1 counting rule as the baseline: the reviewer subagent's report, clean hunks named). The hardened fixture commit `9f49c2b` is the floor for the harness commit even though S1 was not hardened.
+
 **Repository:** the evals clone `$EV`. Every file this task creates or modifies is there. It runs read-only commands in the hyperpowers checkout — `git rev-parse`, `grep`, `ls`, `git status`, and the fifteen test suites — and it makes no hyperpowers commit and changes no hyperpowers file. Removing a failing item is **Task 20**, not this task.
 
 **Risk tier:** high — this task decides what ships. It writes the durable record every later task reads, and a comparison run against a superseded head, a bar applied loosely, or a mean taken over unequal denominators ships prose the evidence does not support.
@@ -5643,12 +6482,15 @@ that line is how they know not to go looking for one.
 cd "$HP"
 git rev-parse HEAD
 grep -c 'Before You Report a Finding' skills/requesting-code-review/code-reviewer.md
-grep -c 'A fix reaches green by changing the code' skills/subagent-driven-development/SKILL.md
-ls skills/systematic-debugging/red-loop.md
-grep -c 'Facts are yours to find' skills/brainstorming/SKILL.md
 ```
 
-Expected: every grep prints a count of at least 1 and the `ls` finds `red-loop.md`. Each needle above is a substring of a single line of the file Task 10, 11, 13, or 15 wrote — `grep` has no whitespace normalization, so a needle spanning a wrapped line can never match. A zero here means the item did not land, not that the grep is too strict. Record the HEAD SHA — call it TREATMENT_HEAD_1. Every trial below runs against a working tree at that commit, so do not commit anything in the hyperpowers checkout between here and Step 6.
+**Amended after Task 9.** The original block also checked A2's needle in
+`subagent-driven-development/SKILL.md`, A4's `red-loop.md`, and A7's needle in
+`brainstorming/SKILL.md`. All three items are no-ships whose tasks were skipped,
+so those checks would now fail on prose that was deliberately never written.
+Only S1's needle remains, because S1 is the only scenario this task measures.
+
+Expected: the grep prints a count of at least 1. The needle is a substring of a single line of the file Task 10 wrote — `grep` has no whitespace normalization, so a needle spanning a wrapped line can never match. A zero here means the item did not land, not that the grep is too strict. Record the HEAD SHA — call it TREATMENT_HEAD_1. Every trial below runs against a working tree at that commit, so do not commit anything in the hyperpowers checkout between here and Step 6.
 
 - [ ] **Step 2: Confirm the branch is clean and the contract tests pass**
 
@@ -5682,32 +6524,74 @@ The treatment arm points `SUPERPOWERS_ROOT` at the feature worktree itself, not 
 ```bash
 cd "$EV"
 export SUPERPOWERS_ROOT="$HP"
-bun run quorum run scenarios/code-review-precision-on-mixed-diff --coding-agent claude --repeat 3
-bun run quorum run scenarios/code-review-flags-weakened-test --coding-agent claude --repeat 3
-bun run quorum run scenarios/systematic-debugging-red-command-first --coding-agent claude --repeat 3
-bun run quorum run scenarios/brainstorming-looks-up-facts-itself --coding-agent claude --repeat 3
+bun run quorum run scenarios/code-review-precision-on-mixed-diff --coding-agent claude-auto --repeat 3
 ```
+
+**Amended after Task 9.** S1 is the only live scenario. S2, S3 and S4 each
+recorded `does not ship` in a Task 8 or Task 9 routing line, so the live-scenario
+rule above skips all three and their commands are gone rather than commented
+out — a command left in the block is a command someone runs.
 
 Capture every `run-id:` line, every `trials:` vector, and every exit code verbatim.
 
-Two preconditions, both silent failures if you skip them. First, `SUPERPOWERS_ROOT` must not still point at the baseline worktree from Task 8, or all four scenarios measure the control again. Second, the evals clone must be at Task 9's hardened fixture SHA or later whenever Task 9 hardened anything, or the treatment arm runs on the superseded instrument:
+Two preconditions, both silent failures if you skip them. First, `SUPERPOWERS_ROOT` must not still point at the baseline worktree from Task 8, or the scenario measures the control again. Second, the evals clone must be at Task 9's hardened fixture SHA or later whenever Task 9 hardened anything, or the treatment arm runs on the superseded instrument:
 
 ```bash
 echo "$SUPERPOWERS_ROOT"
-ls "$SUPERPOWERS_ROOT/skills/systematic-debugging/red-loop.md"
-cd "$EV" && git merge-base --is-ancestor <Task 9 fixture SHA> HEAD && echo "fixture ok"
+grep -c 'Before You Report a Finding' "$SUPERPOWERS_ROOT/skills/requesting-code-review/code-reviewer.md"
+cd "$EV" && git merge-base --is-ancestor e074014 HEAD && echo "fixture ok"
 ```
 
-The `ls` must succeed; if it reports "No such file or directory", the variable is wrong. The `merge-base` line prints `fixture ok`; run it only when Task 9 recorded a fixture SHA, and stop if it fails.
+**Amended after Task 9.** The original check was `ls
+"$SUPERPOWERS_ROOT/skills/systematic-debugging/red-loop.md"`. A7 is a no-ship,
+that file was never created, and the `ls` would now stop the task on a
+condition that is satisfied. The check that carries the same meaning for the
+one live scenario is the presence of S1's own treatment prose, so the `grep`
+replaces it: it prints `1`, and `0` means the variable points somewhere without
+the treatment. The floor SHA is `e074014` — Task 9's S3 boundary widening, the
+latest fixture commit at dispatch — even though S1 itself was never hardened;
+`fixture ok` confirms it, and a failure stops the task.
 
 - [ ] **Step 4: Re-run indeterminate trials once**
 
 Same rule as the baseline arm: one re-run per indeterminate trial, no more. A trial that is indeterminate twice stays `I` and is excluded from the mean.
 
+**Amended after Task 19's first attempt (human partner's decision,
+2026-09-13).** A run whose Gauntlet-Agent exited without writing a result is a
+**void attempt, not an indeterminate trial**: the instrument failed before it
+measured anything, so the run occupies no trial slot and is evidence neither
+for nor against the item. Its tell is `verdict.json` status `investigate` with
+the summary "gauntlet exited (status N) without writing a result", and the
+transport failure quoted in `gauntlet-agent/gauntlet-stderr.log`. Replace a
+void attempt and keep going until the arm holds the determinate count bar 1
+requires, capped at three further attempts per arm; record every void attempt
+with its stderr, and record the cap, so a reader can see the denominator was
+reached by a rule fixed in advance rather than by re-rolling.
+
+A harness setup failure is void too, and it does not consume the cap. Its tell
+is `verdict.json` with a null `gauntlet` and `final_reason` beginning
+"quorum error (setup): setup.sh failed (exit 1)", typically with
+`git init -b main failed (exit 128)` and "Operation not permitted" from the
+Bash sandbox. Relaunch that one command per the established protocol. The
+asymmetry with a grader-exit void is deliberate: there, the coding agent ran
+and produced a transcript before the grader died, so discarding the attempt
+could in principle discard behavior somebody glimpsed, and the cap is what
+keeps that honest. A setup failure starts no agent at all, so there is no
+behavior to discard and nothing a re-roll could bias.
+
+The rule above is unchanged for every other kind of indeterminate — in
+particular any run where the coding agent itself failed, stalled, or produced
+no usable transcript is a real trial, gets its one re-run, and stays `I` if it
+is indeterminate twice. The distinction is which component failed: a grader
+that never scored measured nothing, while an agent that misbehaved measured
+exactly what the scenario exists to measure. This is the same reading this
+project's plan-gate round ledger applied to a lens killed at the harness
+timeout: "a void attempt, not a round, and consumed no ceiling."
+
 ```bash
 cd "$EV"
 export SUPERPOWERS_ROOT="$HP"
-bun run quorum run scenarios/<name> --coding-agent claude
+bun run quorum run scenarios/<name> --coding-agent claude-auto
 ```
 
 - [ ] **Step 5: Copy the run directories and write the measurements file**
@@ -5788,7 +6672,7 @@ Basis column quotes that line where a live scenario's would carry arithmetic.
 Applying a comparison bar to a scenario with one arm produces a number that
 looks like a measurement and is not one.
 
-1. **Determinate count.** At least three determinate trials in BOTH arms. Fewer in either arm is insufficient evidence: the item does not ship, and the note records the shortfall instead of a comparison.
+1. **Determinate count.** At least three determinate trials in BOTH arms. Fewer in either arm is insufficient evidence: the item does not ship, and the note records the shortfall instead of a comparison. Void attempts (Step 4, as amended) are not trials and are not counted in either direction — an arm short of three determinate only after its void attempts have been replaced up to the cap is genuinely short, and the shortfall rule then applies as written.
 2. **Discrimination is already settled.** Task 8 and Task 9 decided whether each baseline can fail, and their routing lines are binding here. Quote the governing line and move on. A baseline that met acceptance is a no-ship this task records, not a hardening it performs — hardening at this point would discard twelve live treatment trials, which is the reason Task 9 sits where it does.
 3. **Comparison bar.** Treatment's mean per-trial measurement is strictly better than baseline's mean across each arm's determinate trials. Better means: S1 a lower clean-hunk blocking count, S2 more weakenings flagged, S3 more trials with the reproduction first, S4 fewer repo-answerable questions. A tie fails. Show both means and the arithmetic, and show each denominator: the two arms may have different determinate counts, and a mean whose denominator is unstated cannot be checked.
 4. **S1's recall precondition.** Recall is 2 in every determinate trial of BOTH arms. If any determinate trial in either arm caught fewer than two planted bugs, S1's comparison is void — that arm measured detection, not precision — and A1 does not ship on this evidence.
@@ -5822,7 +6706,7 @@ Then write, as the file's last line, either `Removals required: <comma-separated
 ```bash
 cd "$EV"
 export SUPERPOWERS_ROOT="$HP"
-bun run quorum run-all --tier sentinel --coding-agents claude
+bun run quorum run-all --tier sentinel --coding-agents claude-auto
 ```
 
 Record the batch result in `adjudication.md`. A sentinel scenario that regressed is a blocking finding for this task, not a footnote: name it, and do not proceed until it is either fixed or explicitly accepted by your human partner with their reasoning recorded in the adjudication file.
@@ -6087,7 +6971,7 @@ A scenario is surviving if its item's row in `task-19-runs/adjudication.md` read
 ```bash
 cd "$EV"
 export SUPERPOWERS_ROOT="$HP"
-bun run quorum run scenarios/<surviving scenario> --coding-agent claude --repeat 3
+bun run quorum run scenarios/<surviving scenario> --coding-agent claude-auto --repeat 3
 ```
 
 One command per surviving scenario. Verify `SUPERPOWERS_ROOT` first, the same way Task 19 Step 3 does, and re-run each indeterminate trial exactly once.
@@ -6150,7 +7034,7 @@ The rows above show the shape, not the answer. A blanket "`task-19-runs/treatmen
 ```bash
 cd "$EV"
 export SUPERPOWERS_ROOT="$HP"
-bun run quorum run-all --tier sentinel --coding-agents claude
+bun run quorum run-all --tier sentinel --coding-agents claude-auto
 ```
 
 Task 19's sentinel run measured a head that no longer ships, so it does not carry over. Record this batch result in `adjudication-final.md`. A regression here is a blocking finding for this task on the same terms Task 19 sets: name it, and do not proceed until it is fixed or explicitly accepted by your human partner with their reasoning recorded in the file.
@@ -6629,8 +7513,8 @@ Then report to your human partner in the chat, not only in the ledger, with ever
 ```bash
 cd "$EV"
 export SUPERPOWERS_ROOT="$HP"
-bun run quorum run-all --tier sentinel --coding-agents claude
-bun run quorum run scenarios/<affected scenario> --coding-agent claude --repeat 3
+bun run quorum run-all --tier sentinel --coding-agents claude-auto
+bun run quorum run scenarios/<affected scenario> --coding-agent claude-auto --repeat 3
 ```
 
 The first command covers bucket 2 and bucket 3. The second is bucket 3 only, once per affected scenario, against the current `$HP` head.

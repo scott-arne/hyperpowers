@@ -521,6 +521,13 @@ fails at the sentence that changed. All tests use the existing
 `assert_contains` style and `STATUS:` line and are run by path like every
 other test file in the repository.
 
+Outcome, 2026-09-15: A2, A4, and A7 did not ship (Task 9's hardened
+baselines met acceptance 3/3, so Tasks 11 and 13, the A2 half of Task 14,
+and the A7 half of Task 15 were skipped). The rows below for
+`fix-subagent-prompt.md`, `systematic-debugging/SKILL.md`, `red-loop.md`,
+and the A7 bullet describe pins that were planned, not landed; the plan's
+File Structure and the evidence note record what shipped.
+
 | Changed file | Contract test | Pinned |
 |---|---|---|
 | `skills/requesting-code-review/code-reviewer.md` | `tests/codex-review-gate/test-gate-contract.sh` (file added to its sources) | A1 section, A2 reviewer clause |

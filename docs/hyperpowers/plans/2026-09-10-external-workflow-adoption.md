@@ -110,7 +110,7 @@ Every task below cites live code. These are the anchors the plan was written aga
 
 **Evals clone — created:** four scenario directories under `scenarios/`, each with `story.md`, an executable `setup.sh`, and a non-executable `checks.sh`; and the evidence tree `evidence/2026-09-10-external-workflow-adoption/`.
 
-**Hyperpowers — modified, thirteen skill files:**
+**Hyperpowers — modified, eleven skill files:**
 
 - `skills/requesting-code-review/code-reviewer.md` — A1 section, A2 reviewer clause
 - `skills/requesting-code-review/gate-findings.md` — A3 dedup identity
@@ -118,18 +118,16 @@ Every task below cites live code. These are the anchors the plan was written aga
 - `skills/subagent-driven-development/task-reviewer-prompt.md` — A1 section, A2 reviewer clause
 - `skills/subagent-driven-development/re-review-prompt.md` — A2 reviewer clause
 - `skills/subagent-driven-development/implementer-prompt.md` — A2 implementer clause, A5 Mirror bullet
-- `skills/subagent-driven-development/fix-subagent-prompt.md` — A2 implementer clause
 - `skills/subagent-driven-development/SKILL.md` — A2 implementer clause, A3 paragraph, A8 sentence
 - `skills/writing-plans/SKILL.md` — A2 table rows and Red-at-start, A5 Grounding and Mirror, A6 sanctioned unknowns
 - `skills/brainstorming/SKILL.md` — A6 assumption bullet, A7 facts bullet
-- `skills/systematic-debugging/SKILL.md` — A4 Phase 1 criterion and two Phase 4 bullets
 - `skills/dispatching-parallel-agents/SKILL.md` — A8 collection paragraph
 - `skills/writing-skills/SKILL.md` — A10 three rules
 
 **Hyperpowers — modified, everything else:** `hooks/session-start` (A9);
 the test scripts `tests/codex-review-gate/test-gate-contract.sh`,
 `tests/codex-review-gate/test-gate-split-lossless.sh` (its `post_edit_count`
-moves 18 to 20), `tests/sdd/test-sdd-contract.sh`,
+moves 18 to 21), `tests/sdd/test-sdd-contract.sh`,
 `tests/hooks/test-session-start.sh`, `tests/hooks/test-ungated-notice.sh`, and
 `tests/hooks/test-broker-janitor.sh`; the substitution table
 `tests/codex-review-gate/gate-post-split-edits.tsv` (two new rows);
@@ -141,7 +139,7 @@ rather than line number for that reason: `docs/testing.md` (Task 3 rewrites the
 `skills/subagent-driven-development/implementer-prompt.md` (Task 11 inserts
 after `## Tests`, Task 14 appends to `## Code Organization`).
 
-**Hyperpowers — created:** `skills/systematic-debugging/red-loop.md`, `tests/skills/test-skill-contract.sh`, `tests/packaging/test-skill-frontmatter.sh`, and `docs/hyperpowers/2026-09-10-external-workflow-adoption-eval-evidence.md`.
+**Hyperpowers — created:** `tests/skills/test-skill-contract.sh`, `tests/packaging/test-skill-frontmatter.sh`, and `docs/hyperpowers/2026-09-10-external-workflow-adoption-eval-evidence.md`.
 
 Each prose task lands its own contract needles in the same commit, so no task leaves a rule-bearing sentence unpinned even briefly.
 

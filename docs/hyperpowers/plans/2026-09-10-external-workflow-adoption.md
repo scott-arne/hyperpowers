@@ -110,7 +110,7 @@ Every task below cites live code. These are the anchors the plan was written aga
 
 **Evals clone — created:** four scenario directories under `scenarios/`, each with `story.md`, an executable `setup.sh`, and a non-executable `checks.sh`; and the evidence tree `evidence/2026-09-10-external-workflow-adoption/`.
 
-**Hyperpowers — modified, eleven skill files:**
+**Hyperpowers — modified, fourteen skill files:**
 
 - `skills/requesting-code-review/code-reviewer.md` — A1 section, A2 reviewer clause
 - `skills/requesting-code-review/gate-findings.md` — A3 dedup identity
@@ -119,10 +119,13 @@ Every task below cites live code. These are the anchors the plan was written aga
 - `skills/subagent-driven-development/re-review-prompt.md` — A2 reviewer clause
 - `skills/subagent-driven-development/implementer-prompt.md` — A2 implementer clause, A5 Mirror bullet
 - `skills/subagent-driven-development/SKILL.md` — A2 implementer clause, A3 paragraph, A8 sentence
+- `skills/subagent-driven-development/common-rationalizations.md` — A3 decline verdict
+- `skills/subagent-driven-development/example-workflow.md` — A3 decline verdict in the ledger line
 - `skills/writing-plans/SKILL.md` — A2 table rows and Red-at-start, A5 Grounding and Mirror, A6 sanctioned unknowns
 - `skills/brainstorming/SKILL.md` — A6 assumption bullet, A7 facts bullet
 - `skills/dispatching-parallel-agents/SKILL.md` — A8 collection paragraph
 - `skills/writing-skills/SKILL.md` — A10 three rules
+- `skills/optimizing-performance/SKILL.md` — description quoted so the frontmatter parses (final-gate round 1)
 
 **Hyperpowers — modified, everything else:** `hooks/session-start` (A9);
 the test scripts `tests/codex-review-gate/test-gate-contract.sh`,
@@ -130,7 +133,7 @@ the test scripts `tests/codex-review-gate/test-gate-contract.sh`,
 moves 18 to 21), `tests/sdd/test-sdd-contract.sh`,
 `tests/hooks/test-session-start.sh`, `tests/hooks/test-ungated-notice.sh`, and
 `tests/hooks/test-broker-janitor.sh`; the substitution table
-`tests/codex-review-gate/gate-post-split-edits.tsv` (two new rows);
+`tests/codex-review-gate/gate-post-split-edits.tsv` (three new rows, one revised);
 `docs/testing.md`; `CHANGELOG.md`; and the version manifests `vrzn` owns.
 
 Two files carry edits from more than one task, and both are anchored by text
@@ -139,7 +142,7 @@ rather than line number for that reason: `docs/testing.md` (Task 3 rewrites the
 `skills/subagent-driven-development/implementer-prompt.md` (Task 11 inserts
 after `## Tests`, Task 14 appends to `## Code Organization`).
 
-**Hyperpowers — created:** `tests/skills/test-skill-contract.sh`, `tests/packaging/test-skill-frontmatter.sh`, and `docs/hyperpowers/2026-09-10-external-workflow-adoption-eval-evidence.md`.
+**Hyperpowers — created:** `tests/skills/test-skill-contract.sh`, `tests/packaging/test-skill-frontmatter.sh`, `tests/packaging/test-skill-frontmatter-rejects.sh`, and `docs/hyperpowers/2026-09-10-external-workflow-adoption-eval-evidence.md`.
 
 Each prose task lands its own contract needles in the same commit, so no task leaves a rule-bearing sentence unpinned even briefly.
 

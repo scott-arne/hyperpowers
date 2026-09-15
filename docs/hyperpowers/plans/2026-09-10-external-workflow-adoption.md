@@ -6521,7 +6521,7 @@ bash tests/shell-lint/test-lint-shell.sh
 
 Expected: no output from `git status`, and every suite green. Uncommitted prose would make the arm unreproducible from the recorded SHA; a red suite means an earlier task is unfinished. Either one stops this task.
 
-This repository has no aggregate test runner — `docs/testing.md` says so explicitly, and one script per `bash` invocation is the convention. The list above is every suite this branch's changes can break. All of them print `STATUS: PASSED` on success except `test-ungated-notice.sh`, whose terminator is `ALL PASS`.
+This repository has no aggregate test runner — `docs/testing.md` says so explicitly, and one script per `bash` invocation is the convention. The list above is every suite this branch's changes can break. All of them print `STATUS: PASSED` on success except `test-ungated-notice.sh` and `test-broker-janitor.sh`, whose terminator is `ALL PASS`, and `test-lint-shell.sh`, which prints `All shell lint script tests passed`.
 
 - [ ] **Step 3: Run three treatment trials per scenario**
 
@@ -6907,7 +6907,7 @@ bash tests/packaging/test-skill-frontmatter.sh
 bash tests/shell-lint/test-lint-shell.sh
 ```
 
-Expected: every suite green — `STATUS: PASSED` everywhere except `test-ungated-notice.sh`, whose terminator is `ALL PASS`. Two failures are specifically likely here and neither is a reason to weaken a test:
+Expected: every suite green — `STATUS: PASSED` everywhere except `test-ungated-notice.sh` and `test-broker-janitor.sh`, whose terminator is `ALL PASS`, and `test-lint-shell.sh`, which prints `All shell lint script tests passed`. Two failures are specifically likely here and neither is a reason to weaken a test:
 
 - an orphan-file failure if `red-loop.md` was deleted while something still links to it. Find the link and remove it; it belongs to A4.
 - a needle failure naming text you did not intend to remove. That is a revert that reached too far. Restore the text, do not delete the needle.
@@ -7622,7 +7622,7 @@ bash tests/shell-lint/test-lint-shell.sh
 
 Expected: a clean tree and every suite green. This is the last gate before the version moves.
 
-This repository has no aggregate test runner — `docs/testing.md` says so explicitly, and one script per `bash` invocation is the convention. The list above is every suite this branch's changes can break. All of them print `STATUS: PASSED` on success except `test-ungated-notice.sh`, whose terminator is `ALL PASS`.
+This repository has no aggregate test runner — `docs/testing.md` says so explicitly, and one script per `bash` invocation is the convention. The list above is every suite this branch's changes can break. All of them print `STATUS: PASSED` on success except `test-ungated-notice.sh` and `test-broker-janitor.sh`, whose terminator is `ALL PASS`, and `test-lint-shell.sh`, which prints `All shell lint script tests passed`.
 
 - [ ] **Step 2: Bump the minor version**
 

@@ -471,6 +471,9 @@ expect_accept "within-limit-multibyte" \
     "description: $(printf 'é%.0s' $(seq 1 900))"
 expect_accept "nbsp-inside-value" \
     $'description: Use when\xc2\xa0here'
+expect_accept "comment-line-after-key" \
+    'description: Use when fine' \
+    '# a full-line comment between keys'
 
 echo ""
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

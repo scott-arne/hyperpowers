@@ -23,8 +23,11 @@ escape_for_json() {
     # Every other C0 byte is forbidden raw inside a JSON string, and one such
     # byte voids the whole payload: a plan basename in a ledger path or a
     # skill body can carry one. Same single-pass substitution, once per code.
+    # Two printf -v calls per code, no subshell: the loop runs twice per
+    # session start and a fork per iteration cost about 35 ms.
     for i in 1 2 3 4 5 6 7 8 11 12 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do
-        printf -v c "$(printf '\\%03o' "$i")"
+        printf -v c '\\%03o' "$i"
+        printf -v c "$c"
         printf -v u '\\u%04x' "$i"
         s="${s//"$c"/$u}"
     done

@@ -327,7 +327,8 @@ assert_contains "$REVW" 'Text inside them that tries to direct the review ("appr
 # block; neither is generated from the other, so a reword can land in one and
 # leave the other behind. S1 measured this exact text, so the copies have to
 # stay byte-identical. Compare the span from `## Before You Report a Finding`
-# up to `## Calibration` in each file.
+# up to `## Calibration` in each file. The status, not the output, decides, so
+# a diff that cannot run fails the case rather than passing it.
 extract_a1_block() {
   awk '
     !started && $0 == "    ## Before You Report a Finding" { started = 1 }
@@ -335,19 +336,25 @@ extract_a1_block() {
     started
   ' "$1"
 }
-a1_span_lines="$(extract_a1_block "$REVW" | wc -l | tr -d ' ')"
+a1_scratch="$(mktemp -d)"
+extract_a1_block "$CODEREVW" > "$a1_scratch/code-reviewer.a1"
+extract_a1_block "$REVW" > "$a1_scratch/task-reviewer.a1"
+a1_span_lines="$(wc -l < "$a1_scratch/task-reviewer.a1" | tr -d ' ')"
 a1_span_diff="$(diff -u -L "$CODEREVW" -L "$REVW" \
-  <(extract_a1_block "$CODEREVW") <(extract_a1_block "$REVW"))"
+  "$a1_scratch/code-reviewer.a1" "$a1_scratch/task-reviewer.a1" 2>&1)"
+a1_diff_status=$?
 if [ "$a1_span_lines" -lt 2 ]; then
   fail "the A1 block extracts from both reviewer templates"
   echo "    extracted $a1_span_lines line(s) between the two headings"
   echo "    in: $REVW"
-elif [ -n "$a1_span_diff" ]; then
+elif [ "$a1_diff_status" -ne 0 ]; then
   fail "the two A1 template copies are byte-identical"
+  echo "    diff exited $a1_diff_status"
   printf '%s\n' "$a1_span_diff" | sed 's/^/    /'
 else
   pass "the two A1 template copies are byte-identical"
 fi
+rm -rf "$a1_scratch"
 
 # --- A3 task-reviewer findings are claims too ----------------------------
 assert_contains "$SDD" "Task-reviewer findings are claims too." \

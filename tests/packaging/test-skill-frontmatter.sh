@@ -283,12 +283,16 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
     # Trim leading spaces without a bashism that macOS bash 3.2 lacks.
     name_value="$(printf '%s' "$name_value" | sed 's/^ *//; s/ *$//')"
     name_body="$(strip_plain_comment "$name_value")"
+    name_syntax="$(scalar_defect "$name_body")"
     if [ -z "$name_line" ]; then
         fail "$dir: frontmatter declares a name"
     elif ! begins_with_letter "$name_body"; then
         # A directory named `123` or `2026-09-14` would otherwise compare
         # equal as raw text while a loader returns an int or a date.
         fail "$dir: name begins with a letter (got '$name_value')"
+    elif [ -n "$name_syntax" ]; then
+        # A name a loader cannot scan never reaches the directory comparison.
+        fail "$dir: name is loadable YAML ($name_syntax)"
     elif resolves_to_non_string "$name_body"; then
         # A directory named `null` or `on` would otherwise compare equal as
         # raw text while a loader returns None or True.

@@ -14,12 +14,20 @@ using_hyperpowers_content=$(cat "${PLUGIN_ROOT}/skills/using-hyperpowers/SKILL.m
 # Each ${s//old/new} is a single C-level pass - orders of magnitude
 # faster than the character-by-character loop this replaces.
 escape_for_json() {
-    local s="$1"
+    local s="$1" i c u
     s="${s//\\/\\\\}"
     s="${s//\"/\\\"}"
     s="${s//$'\n'/\\n}"
     s="${s//$'\r'/\\r}"
     s="${s//$'\t'/\\t}"
+    # Every other C0 byte is forbidden raw inside a JSON string, and one such
+    # byte voids the whole payload: a plan basename in a ledger path or a
+    # skill body can carry one. Same single-pass substitution, once per code.
+    for i in 1 2 3 4 5 6 7 8 11 12 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do
+        printf -v c "$(printf '\\%03o' "$i")"
+        printf -v u '\\u%04x' "$i"
+        s="${s//"$c"/$u}"
+    done
     printf '%s' "$s"
 }
 
@@ -159,7 +167,9 @@ if [ "$hook_source" = "compact" ]; then
       # at --severity=warning; these paths are hash- and slug-derived, never
       # user-supplied.
       newest="$(ls -t "$plans"/*/progress.md 2>/dev/null | head -n 1)"
-      [ -n "$newest" ] || exit 0
+      # A path the line-oriented listing truncated (a newline in a slug) does
+      # not exist; naming it would point the session at the wrong file.
+      [ -n "$newest" ] && [ -f "$newest" ] || exit 0
       printf 'This session resumed after context compaction. An SDD ledger for this repo is at %s: it records which tasks are already complete. Read it and git log before dispatching anything, and treat task instructions carried in the compaction summary as stale by default.' "$(escape_for_json "$newest")"
     ) 2>/dev/null
   )" || compaction_notice=""

@@ -150,6 +150,52 @@ for (const forbiddenText of forbiddenTexts) {
     fi
 }
 
+# One case needs both halves of the escaping contract at once, which
+# assert_command_output cannot express: a decoded context cannot tell an
+# escape sequence from the byte it stands for, and the raw bytes alone cannot
+# show that the payload still parses. So read the wire form and the recovered
+# string from a single run. Nested shape only — its one caller is a Claude
+# Code compaction case.
+assert_raw_and_context() {
+    local description="$1"
+    local raw_contains="$2"
+    local contains="$3"
+    local home="$4"
+    local stdin_path="$HOOK_STDIN"
+    shift 4
+
+    local output
+    HOOK_STDIN="/dev/null"
+    if ! output="$(env -i PATH="${PATH:-}" HOME="$home" "$@" <"$stdin_path" 2>&1)"; then
+        fail "$description"
+        echo "    hook exited non-zero"
+        echo "$output" | sed 's/^/      /'
+        return
+    fi
+
+    if ! printf '%s' "$output" | grep -Fq -- "$raw_contains"; then
+        fail "$description"
+        echo "    raw output did not contain: $raw_contains"
+        echo "$output" | sed 's/^/      /'
+        return
+    fi
+
+    if printf '%s' "$output" | EXPECT_CONTAINS="$contains" node -e '
+const payload = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const context = payload.hookSpecificOutput.additionalContext;
+if (typeof context !== "string" || !context.includes(process.env.EXPECT_CONTAINS)) {
+  console.error("decoded context did not carry the seeded ledger path");
+  process.exit(1);
+}
+'; then
+        pass "$description"
+    else
+        fail "$description"
+        echo "    output:"
+        echo "$output" | sed 's/^/      /'
+    fi
+}
+
 echo "SessionStart hook output tests"
 
 # Registration shape: the hook must declare shell:"bash" so Claude Code on
@@ -459,6 +505,61 @@ case "$(uname -s)" in
             XDG_CACHE_HOME="$hostile_cache" \
             CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
             bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$hostile_repo" "$HOOK_UNDER_TEST"
+        ;;
+esac
+
+# A ledger path may carry any C0 byte a POSIX file name allows, not just the
+# five escape_for_json once knew. An ESC in a plan slug reached the JSON raw
+# and voided the whole payload: Claude Code parsed nothing and the session
+# lost its entire skill bootstrap — the same failure the quote case above
+# guards, through a byte that case cannot see. Both slugs are built with
+# ANSI-C quoting so the real bytes reach mkdir and the file system. Windows
+# forbids both in a path component, so skip there as the case above does.
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+        echo "  [SKIP] SessionStart escapes a control byte in a ledger path and stays valid JSON (Windows path rules)"
+        echo "  [SKIP] SessionStart skips a ledger path the listing truncated (Windows path rules)"
+        ;;
+    *)
+        esc_repo="$(make_repo compact-esc)"
+        esc_home="$(make_home compact-esc)"
+        esc_cache="$TEST_ROOT/compact-esc/cache"
+        esc_ledger="$(seed_ledger "$esc_cache" "$esc_repo" $'esc\x1bslug-2222bbbb')"
+        esc_stdin="$TEST_ROOT/compact-esc/stdin.json"
+        write_hook_input "$esc_stdin" compact
+        HOOK_STDIN="$esc_stdin"
+        assert_raw_and_context \
+            "SessionStart escapes a control byte in a ledger path and stays valid JSON" \
+            '\u001b' \
+            "${NOTICE_HEAD}${esc_ledger}${NOTICE_TAIL}" \
+            "$esc_home" \
+            XDG_CACHE_HOME="$esc_cache" \
+            CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+            bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$esc_repo" "$HOOK_UNDER_TEST"
+
+        # `ls -t | head -n 1` is line-oriented, so a newline in the slug hands
+        # the hook a prefix of the real path. The prefix names no file, and an
+        # older ledger sits in the same cache: the notice has to be skipped,
+        # not redirected to whatever else the listing holds.
+        nl_repo="$(make_repo compact-newline)"
+        nl_home="$(make_home compact-newline)"
+        nl_cache="$TEST_ROOT/compact-newline/cache"
+        nl_older_ledger="$(seed_ledger "$nl_cache" "$nl_repo" "older-1111aaaa")"
+        nl_ledger="$(seed_ledger "$nl_cache" "$nl_repo" $'nl\nslug-3333cccc')"
+        touch -t 202401010000 "$nl_older_ledger"
+        touch -t 202403010000 "$nl_ledger"
+        nl_stdin="$TEST_ROOT/compact-newline/stdin.json"
+        write_hook_input "$nl_stdin" compact
+        HOOK_STDIN="$nl_stdin"
+        assert_command_output \
+            "SessionStart skips a ledger path the listing truncated" \
+            "nested" \
+            "" \
+            "resumed after context compaction" \
+            "$nl_home" \
+            XDG_CACHE_HOME="$nl_cache" \
+            CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+            bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$nl_repo" "$HOOK_UNDER_TEST"
         ;;
 esac
 

@@ -223,7 +223,7 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
         /\302[\200-\237]|\357\277[\276\277]|\342\200[\250\251]/ { c++ }
         END { print c + 0 }')"
     if [ "$raw_bytes" -ne "$kept_bytes" ] || [ "$bad_lines" -ne 0 ]; then
-        fail "$dir: frontmatter is valid UTF-8 with no control characters or tabs ($((raw_bytes - kept_bytes)) C0, TAB, or DEL byte(s); $bad_lines line(s) malformed or carrying a C1 control or U+FFFE/U+FFFF)"
+        fail "$dir: frontmatter is valid UTF-8 with no control characters or tabs ($((raw_bytes - kept_bytes)) C0, TAB, or DEL byte(s); $bad_lines line(s) malformed or carrying a C1 control, a U+2028/U+2029 separator, or U+FFFE/U+FFFF)"
         # Text tools cannot be trusted on malformed input (macOS awk aborts on
         # it under a UTF-8 locale), so every later check would misreport;
         # nothing more can be said about this file.

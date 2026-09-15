@@ -5,8 +5,9 @@
 # unterminated quote, a bad escape, and a `: ` mapping separator shipped
 # unnoticed. Each case below is frontmatter a reference loader (PyYAML or Ruby
 # Psych) refuses — a value it resolves to a non-string, a byte it will not read
-# at all, or bytes that are not UTF-8 — driven through the validator's optional
-# [skills-root] argument.
+# at all, bytes that are not UTF-8, or a value under any top-level key that no
+# loader can scan — driven through the validator's optional [skills-root]
+# argument.
 #
 # Usage: test-skill-frontmatter-rejects.sh
 set -uo pipefail
@@ -306,6 +307,56 @@ expect_reject "utf8-invalid-byte-in-comment" \
     "valid UTF-8" \
     $'# comment with \xff byte'
 
+# Every top-level value gets description's scalar rules. Each of these loads
+# in no standards-compliant loader, whichever key carries it.
+expect_reject "extra-key-unterminated-flow" \
+    'description: Use when fine' \
+    "plain or quoted scalar" \
+    'extra: [unterminated'
+expect_reject "extra-key-alias" \
+    'description: Use when fine' \
+    "plain or quoted scalar" \
+    'extra: *missing'
+expect_reject "extra-key-unterminated-quote" \
+    'description: Use when fine' \
+    "never closed" \
+    'extra: "unterminated'
+expect_reject "extra-key-sequence-entry" \
+    'description: Use when fine' \
+    "begins with a letter" \
+    'extra: - item'
+expect_reject "extra-key-mapping-colon" \
+    'description: Use when fine' \
+    "mapping separator" \
+    'extra: a: b'
+expect_reject "extra-key-flow-indicator" \
+    'description: Use when fine' \
+    "begins with a letter" \
+    'extra: ]x'
+
+# Loaders accept these, but the gate admits only single-line plain or quoted
+# scalars under any key; quote the value if a string is meant.
+expect_reject "extra-key-empty-value" \
+    'description: Use when fine' \
+    "has a value on its line" \
+    'extra:'
+expect_reject "extra-key-block-scalar" \
+    'description: Use when fine' \
+    "not a block scalar" \
+    'extra: |'
+expect_reject "extra-key-bare-number" \
+    'description: Use when fine' \
+    "begins with a letter" \
+    'version: 1.2'
+
+# The frontmatter is a flat mapping of single-line scalars: an indented line
+# continues or nests the entry above, which the gate does not support, however
+# legal the YAML.
+expect_reject "space-indented-continuation-on-extra-key" \
+    'description: Use when fine' \
+    "key: value mapping" \
+    $'extra: okay\n  more'
+
 # YAML permits a TAB inside a quoted scalar, but the gate admits no TAB
 # anywhere in frontmatter (see the validator): tracking the exact positions
 # where a TAB is legal is how the earlier gaps arose, and no skill needs one.
@@ -336,9 +387,18 @@ expect_accept "utf8-max-code-point" \
     $'description: Use when \xf4\x8f\xbf\xbf appears'
 expect_accept "utf8-cjk-text" \
     $'description: Use when \xe4\xb8\xad\xe6\x96\x87 appears'
-expect_accept "space-indented-continuation-on-extra-key" \
+expect_accept "extra-key-plain" \
     'description: Use when fine' \
-    $'extra: okay\n  more'
+    'license: MIT'
+expect_accept "extra-key-quoted-colon" \
+    'description: Use when fine' \
+    'extra: "with: colon"'
+expect_accept "extra-key-with-comment" \
+    'description: Use when fine' \
+    'extra: okay # note'
+expect_accept "two-extra-keys" \
+    'description: Use when fine' \
+    $'license: MIT\ncompatibility: Claude Code'
 
 echo ""
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

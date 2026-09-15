@@ -141,6 +141,44 @@ continuation_after() {
     ' "$2"
 }
 
+# Why KEY's single-line value would not load as a string, or nothing if it
+# would: the indicator, syntax, and type rules description has always had,
+# phrased for any key so that every top-level value gets them — a loader
+# cannot load a block holding a value it cannot scan, whichever key carries it.
+scalar_value_defect() {
+    key="$1"
+    value="$2"
+    case "$value" in
+        '|'* | '>'*)
+            printf '%s is a plain scalar, not a block scalar' "$key" ;;
+        '#'*)
+            # A value that opens a YAML comment leaves the key null.
+            printf '%s value is a comment, so the key is null' "$key" ;;
+        '['* | '{'* | '&'* | '*'* | '!'* | '%'* | '@'* | '`'*)
+            # A flow collection, anchor, alias, tag, or reserved
+            # indicator — none of which load as a string.
+            printf '%s is a plain or quoted scalar (got %s)' "$key" "'$value'" ;;
+        *)
+            syntax="$(scalar_defect "$value")"
+            if [ -n "$syntax" ]; then
+                printf '%s is loadable YAML (%s)' "$key" "$syntax"
+            else
+                case "$value" in
+                    '""' | "''")
+                        printf '%s is not the empty string' "$key" ;;
+                    '"'* | "'"*) ;;   # quoted values are strings whatever they spell
+                    *)
+                        body="$(strip_plain_comment "$value")"
+                        if ! begins_with_letter "$body"; then
+                            printf '%s begins with a letter or is quoted (got %s)' "$key" "'$value'"
+                        elif resolves_to_non_string "$body"; then
+                            printf '%s resolves to a non-string YAML scalar (got %s)' "$key" "'$value'"
+                        fi ;;
+                esac
+            fi ;;
+    esac
+}
+
 echo "=== skill frontmatter ==="
 echo ""
 
@@ -195,16 +233,16 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
     fi
     pass "$dir: frontmatter block is delimited"
 
-    # The block must be a YAML mapping: one `key: value` per line. A colon with
-    # no separator whitespace is not a mapping separator, so `name:x` makes the
-    # whole block parse as one plain scalar and no key is reachable at all.
-    # Indented lines are continuations of the entry above; full-line comments
-    # and blank lines are legal YAML.
+    # The block must be a flat YAML mapping: one `key: value` per line. A colon
+    # with no separator whitespace is not a mapping separator, so `name:x`
+    # makes the whole block parse as one plain scalar and no key is reachable
+    # at all. An indented line continues or nests the entry above, which this
+    # frontmatter — single-line scalars only — does not support. Full-line
+    # comments and blank lines are legal YAML.
     bad_line="$(awk '
         NR == 1 { next }
         /^---$/ { exit }
         /^[[:space:]]*$/ { next }
-        /^[[:space:]]/ { next }
         /^#/ { next }
         /^[A-Za-z_][A-Za-z0-9_.-]*:[[:space:]]/ { next }
         /^[A-Za-z_][A-Za-z0-9_.-]*:$/ { next }
@@ -272,36 +310,7 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
     elif [ -z "$desc_value" ]; then
         fail "$dir: description has a value on the same line"
     else
-        desc_defect=""
-        case "$desc_value" in
-            '|'* | '>'*)
-                desc_defect="description is a plain scalar, not a block scalar" ;;
-            '#'*)
-                # A value that opens a YAML comment leaves the key null.
-                desc_defect="description value is a comment, so the key is null" ;;
-            '['* | '{'* | '&'* | '*'* | '!'* | '%'* | '@'* | '`'*)
-                # A flow collection, anchor, alias, tag, or reserved
-                # indicator — none of which load as a string.
-                desc_defect="description is a plain or quoted scalar (got '$desc_value')" ;;
-            *)
-                syntax="$(scalar_defect "$desc_value")"
-                if [ -n "$syntax" ]; then
-                    desc_defect="description is loadable YAML ($syntax)"
-                else
-                    case "$desc_value" in
-                        '""' | "''")
-                            desc_defect="description is not the empty string" ;;
-                        '"'* | "'"*) ;;   # quoted values are strings whatever they spell
-                        *)
-                            body="$(strip_plain_comment "$desc_value")"
-                            if ! begins_with_letter "$body"; then
-                                desc_defect="description begins with a letter or is quoted (got '$desc_value')"
-                            elif resolves_to_non_string "$body"; then
-                                desc_defect="description resolves to a non-string YAML scalar (got '$desc_value')"
-                            fi ;;
-                    esac
-                fi ;;
-        esac
+        desc_defect="$(scalar_value_defect description "$desc_value")"
         if [ -n "$desc_defect" ]; then
             fail "$dir: $desc_defect"
         else
@@ -314,6 +323,31 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
                 pass "$dir: description is a single-line plain scalar"
             fi
         fi
+    fi
+
+    # Every other key's value gets the same rules. The skills here carry only
+    # name and description; another key is checked, not forbidden.
+    others="$(printf '%s\n' "$block" | LC_ALL=C awk '
+        /^#/ || /^[[:space:]]*$/ { next }
+        match($0, /^[A-Za-z_][A-Za-z0-9_.-]*:/) {
+            k = substr($0, 1, RLENGTH - 1)
+            if (k != "name" && k != "description") print
+        }')"
+    if [ -n "$others" ]; then
+        while IFS= read -r line; do
+            key="${line%%:*}"
+            value="$(printf '%s' "${line#*:}" | sed 's/^ *//')"
+            if [ -z "$value" ]; then
+                fail "$dir: $key has a value on its line"
+                continue
+            fi
+            defect="$(scalar_value_defect "$key" "$value")"
+            if [ -n "$defect" ]; then
+                fail "$dir: $defect"
+            else
+                pass "$dir: $key is a single-line plain or quoted scalar"
+            fi
+        done <<< "$others"
     fi
 
     chars="$(awk 'NR==1 {next} /^---$/ {exit} {print}' "$skill" | wc -m | tr -d ' ')"

@@ -519,6 +519,7 @@ case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*)
         echo "  [SKIP] SessionStart escapes a control byte in a ledger path and stays valid JSON (Windows path rules)"
         echo "  [SKIP] SessionStart names a ledger whose path carries a newline (Windows path rules)"
+        echo "  [SKIP] SessionStart skips a ledger path that is not valid UTF-8 (Windows path rules)"
         ;;
     *)
         esc_repo="$(make_repo compact-esc)"

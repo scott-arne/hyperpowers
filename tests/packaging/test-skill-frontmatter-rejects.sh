@@ -6,8 +6,9 @@
 # unnoticed. Each case below is frontmatter a reference loader (PyYAML or Ruby
 # Psych) refuses — a value it resolves to a non-string, a byte it will not read
 # at all, bytes that are not UTF-8, or a value under any top-level key that no
-# loader can scan — driven through the validator's optional [skills-root]
-# argument.
+# loader can scan — or that the gate declines on purpose; each such case says
+# so in its comment. Every case is driven through the validator's optional
+# [skills-root] argument.
 #
 # Usage: test-skill-frontmatter-rejects.sh
 set -uo pipefail
@@ -368,6 +369,27 @@ expect_reject "extra-key-null-word" \
     "is a string key" \
     'null: okay'
 
+# Psych resolves the boolean and null words in any capitalisation, as values
+# and as keys; PyYAML loads the same spellings as strings. The gate follows
+# the stricter loader.
+expect_reject "mixed-case-boolean-value" \
+    'description: tRuE' \
+    "resolves to a non-string"
+expect_reject "mixed-case-null-key" \
+    'description: Use when fine' \
+    "is a string key" \
+    'nUlL: x'
+
+# A byte-order mark is not a character a value may begin with.
+expect_reject "bom-leading-value" \
+    $'description: \xef\xbb\xbfUse when fine' \
+    "begins with a letter"
+
+# The limit is 1024 characters, counted the same way under every locale.
+expect_reject "over-limit-multibyte" \
+    "description: $(printf 'é%.0s' $(seq 1 1100))" \
+    "within 1024 characters"
+
 # The frontmatter is a flat mapping of single-line scalars: an indented line
 # continues or nests the entry above, which the gate does not support, however
 # legal the YAML.
@@ -418,6 +440,12 @@ expect_accept "extra-key-with-comment" \
 expect_accept "two-extra-keys" \
     'description: Use when fine' \
     $'license: MIT\ncompatibility: Claude Code'
+
+# Both loaders load these; the gate must too, whatever the host's locale.
+expect_accept "non-ascii-initial-description" \
+    'description: Übersicht when things happen'
+expect_accept "within-limit-multibyte" \
+    "description: $(printf 'é%.0s' $(seq 1 900))"
 
 echo ""
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

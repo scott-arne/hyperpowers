@@ -406,7 +406,7 @@ fmt_s() { # <milliseconds> -> "1.234s"
 # The EOF bound stays absolute — there is no baseline to subtract from it — so
 # it is set by the gap between the two things it must separate. Above it: the
 # hook's own overhead, which reaches ~1.1s when the host is busy (one failure
-# at 1.136s best-of-four against a 1000ms bound, while the hook was correct).
+# at 1.136s best-of-three against a 1000ms bound, while the hook was correct).
 # Below it: the smallest regression worth catching, the read waiting out its
 # own timeout at EOF, which costs that 2.0s timeout plus the same overhead.
 # 1500ms clears the first and leaves ~0.5s under the second.

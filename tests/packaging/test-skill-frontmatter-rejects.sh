@@ -3,9 +3,9 @@
 # Its positive suite only proves the shipped tree passes, which stays true if
 # the validator degrades into accepting everything — that is exactly how an
 # unterminated quote, a bad escape, and a `: ` mapping separator shipped
-# unnoticed. Each case below is a value a reference loader (PyYAML or Ruby
-# Psych) rejects or resolves to a non-string, driven through the validator's
-# optional [skills-root] argument.
+# unnoticed. Each case below is frontmatter a reference loader (PyYAML or Ruby
+# Psych) refuses — a value it resolves to a non-string, or a byte it will not
+# read at all — driven through the validator's optional [skills-root] argument.
 #
 # Usage: test-skill-frontmatter-rejects.sh
 set -uo pipefail
@@ -57,6 +57,47 @@ write_fixture() {
         echo "# $dirname"
     } > "$root/$dirname/SKILL.md"
     printf '%s' "$root"
+}
+
+# Like write_fixture, but the description line is a printf FORMAT, so a case
+# can place any byte in the file — a shell variable cannot carry NUL.
+write_fixture_raw() {
+    local dirname="$1"
+    local desc_format="$2"
+    local root
+    root="$(mktemp -d "$TEST_ROOT/case-XXXXXX")"
+    mkdir -p "$root/$dirname"
+    {
+        echo "---"
+        echo "name: $dirname"
+        # shellcheck disable=SC2059  # the format is the point of this helper
+        printf "description: $desc_format\n"
+        echo "---"
+        echo ""
+        echo "# $dirname"
+    } > "$root/$dirname/SKILL.md"
+    printf '%s' "$root"
+}
+
+expect_reject_raw() {
+    local dirname="$1"
+    local desc_format="$2"
+    local needle="$3"
+    local root output status
+
+    root="$(write_fixture_raw "$dirname" "$desc_format")"
+    output="$(bash "$VALIDATOR" "$root" 2>&1)"
+    status=$?
+
+    if [ "$status" -eq 0 ]; then
+        fail "$dirname: validator rejects it (exited 0)"
+        printf '%s\n' "$output" | sed 's/^/      /'
+    elif printf '%s\n' "$output" | grep -Fq -- "$needle"; then
+        pass "$dirname: rejected, and the reason names '$needle'"
+    else
+        fail "$dirname: rejected, but no '$needle' in the reason"
+        printf '%s\n' "$output" | sed 's/^/      /'
+    fi
 }
 
 # A rejected case must also say WHY: an exit status alone would be satisfied by
@@ -190,6 +231,37 @@ expect_reject "plain-tab" \
     $'description: Use when ready\t# comment' \
     "contains a tab"
 
+# A control character anywhere in the document — plain or quoted, C0 or C1,
+# NUL included — makes a loader refuse the whole file. The gate counts the
+# block's bytes, so even a NUL the shell cannot hold is seen.
+expect_reject_raw "control-bel-plain" \
+    'Use when\007here' \
+    "control characters"
+expect_reject_raw "control-bel-quoted" \
+    '"Use when\007here"' \
+    "control characters"
+expect_reject_raw "control-cr-plain" \
+    'Use when\rhere' \
+    "control characters"
+expect_reject_raw "control-del" \
+    'Use when\177here' \
+    "control characters"
+expect_reject_raw "control-esc-quoted" \
+    '"Use when\033[0m here"' \
+    "control characters"
+expect_reject_raw "control-nul" \
+    'Use when\000here' \
+    "control characters"
+expect_reject_raw "control-c1" \
+    'Use when\302\200here' \
+    "control characters"
+expect_reject_raw "control-nel" \
+    'Use when\302\205here' \
+    "control characters"
+expect_reject_raw "control-fffe" \
+    'Use when\357\277\276here' \
+    "control characters"
+
 expect_accept "well-formed" \
     'description: Use when a thing happens and another thing is true'
 expect_accept "valid-hex-escapes" \
@@ -204,6 +276,10 @@ expect_accept "colon-tab-quoted" \
     $'description: "Use when foo:\tbar"'
 expect_accept "single-quoted-tab" \
     $'description: \'Use when foo\tbar\''
+expect_accept "bom-mid-string" \
+    $'description: Use when \xef\xbb\xbf here'
+expect_accept "non-ascii-text" \
+    'description: Use when é happens and ü follows'
 
 echo ""
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

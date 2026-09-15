@@ -165,6 +165,20 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
     fi
     pass "$dir: frontmatter block is delimited"
 
+    # YAML admits no control character other than TAB and the line break
+    # anywhere in a document, nor a C1 control or U+FFFE/U+FFFF; a loader
+    # refuses the whole file. Count the block's bytes rather than inspect a
+    # shell string: the shell drops NUL, so a variable can never show one.
+    block_end="$(awk 'NR > 1 && /^---$/ { print NR; exit }' "$skill")"
+    raw_bytes="$(head -n "$block_end" "$skill" | wc -c | tr -d ' ')"
+    kept_bytes="$(head -n "$block_end" "$skill" | LC_ALL=C tr -d '\000-\010\013-\037\177' | wc -c | tr -d ' ')"
+    wide_ctl="$(head -n "$block_end" "$skill" | LC_ALL=C awk '/\302[\200-\237]|\357\277[\276\277]/ { c++ } END { print c + 0 }')"
+    if [ "$raw_bytes" -ne "$kept_bytes" ] || [ "$wide_ctl" -ne 0 ]; then
+        fail "$dir: frontmatter has no control characters ($((raw_bytes - kept_bytes)) C0 or DEL byte(s); $wide_ctl line(s) with a C1 control or U+FFFE/U+FFFF)"
+    else
+        pass "$dir: frontmatter has no control characters"
+    fi
+
     # The block must be a YAML mapping: one `key: value` per line. A colon with
     # no separator whitespace is not a mapping separator, so `name:x` makes the
     # whole block parse as one plain scalar and no key is reachable at all.

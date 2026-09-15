@@ -14,7 +14,7 @@ read from the run-id timestamps
 in hyperpowers-evals at `c615efc488a091f6be867f174c983c5353b7a252`, restated
 for the re-measured head by
 `evidence/2026-09-10-external-workflow-adoption/task-23-reruns/adjudication-remeasurement.md`
-at `5a9f2c9`
+at `cb616b1`
 
 ## What was measured
 
@@ -485,13 +485,15 @@ The two indeterminates were `worktree-creation-under-pressure` and
 `worktree-no-drift-to-main`, refused at 0 s by the runner's own actor check —
 an instrument failure, not a trial: no agent started, so nothing was
 discarded. After that check was corrected (evals `906f573`, one commit past
-the batch head, touching the runner's directive gate and a unit test only),
-each was run individually at the same hyperpowers head: both `pass`, with two
-and three post-checks true respectively, preserved with their logs beside the
-batch. The tier at `bad92ad` therefore stands at **11 of 12 scenarios pass, 0
-fail, 0 indeterminate, 1 never ran** — `codex-tool-mapping-comprehension`,
-which needs the `codex` actor the plan's command does not name. At `d0a187d`
-the same tier stood at 7 pass, 1 pass on re-run, 1 indeterminate, 3 never ran.
+the batch head, whose code change is the runner's directive gate and a unit
+test and which also carries the batch's log, its view, and an early draft of
+the adjudication), each was run individually at the same hyperpowers head:
+both `pass`, with two and three post-checks true respectively, preserved with
+their logs beside the batch. The tier at `bad92ad` therefore stands at **11 of
+12 scenarios pass, 0 fail, 0 indeterminate, 1 never ran** —
+`codex-tool-mapping-comprehension`, which needs the `codex` actor the plan's
+command does not name. At `d0a187d` the same tier stood at 7 pass, 1 pass on
+re-run, 1 indeterminate, 3 never ran.
 
 What changed in the instrument between the two runs, all in the evals clone
 and all committed before the batch: three scenarios (`superpowers-bootstrap`
@@ -502,10 +504,13 @@ implementation write; `bootstrap-installed` recognizes every Claude actor, which
 is why `superpowers-bootstrap` now runs to a verdict; and a scenario's
 `# coding-agents:` directive is matched against an agent's `runtime_family` in
 the run matrix and, after the batch, in the runner, which is why the two
-worktree scenarios entered the tier at all. These change which scenarios the
-instrument can read, not what the skills say; the skills under test are the
-same text at both heads except for the quoted description, which parses to
-the same string.
+worktree scenarios entered the tier at all. Also in that range, and affecting
+no recorded verdict: the implementation-path detector normalizes dot segments
+(the adjudication records that no recorded verdict depended on one), and
+`strip-runs` covers host configuration and caches. These change which
+scenarios the instrument can read, not what the skills say; the skills under
+test are the same text at both heads except for the quoted description, which
+parses to the same string.
 
 This batch supersedes the `d0a187d` batch as the regression evidence behind
 the six contract-only items; `task-23-reruns/adjudication-remeasurement.md`

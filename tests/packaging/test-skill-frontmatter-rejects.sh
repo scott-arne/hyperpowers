@@ -216,6 +216,12 @@ expect_reject "name-continuation" \
     "name is on a single line" \
     "  continued"
 
+# A quoted name is a string in every loader; the gate keeps names bare by a
+# recorded decision and must say so rather than blame the letter rule.
+expect_reject '"quoted-name"' \
+    'description: Use when fine' \
+    "unquoted scalar"
+
 # A name that no loader can scan never gets to be compared with the directory.
 expect_reject "a: b" \
     'description: Use when fine' \

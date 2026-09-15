@@ -166,13 +166,27 @@ if [ "$hook_source" = "compact" ]; then
       [ -n "$key" ] || exit 0
       plans="${XDG_CACHE_HOME:-${HOME:-}/.cache}/hyperpowers/sdd/${key}/plans"
       [ -d "$plans" ] || exit 0
-      # ls -t is newest-first by mtime. SC2012 is info-level and the repo lints
-      # at --severity=warning; these paths are hash- and slug-derived, never
-      # user-supplied.
-      newest="$(ls -t "$plans"/*/progress.md 2>/dev/null | head -n 1)"
-      # A path the line-oriented listing truncated (a newline in a slug) does
-      # not exist; naming it would point the session at the wrong file.
-      [ -n "$newest" ] && [ -f "$newest" ] || exit 0
+      # Newest by modification time, chosen with -nt over the paths
+      # themselves. A listing is line-oriented and a newline in a
+      # plan-derived directory name would split it into a path that names
+      # no file; comparing the paths needs no fork and no parsing. With no
+      # ledger the pattern stays literal and -f rejects it.
+      newest=""
+      for ledger in "$plans"/*/progress.md; do
+        [ -f "$ledger" ] || continue
+        if [ -z "$newest" ] || [ "$ledger" -nt "$newest" ]; then
+          newest="$ledger"
+        fi
+      done
+      [ -n "$newest" ] || exit 0
+      # A JSON string carries Unicode, not bytes. A path that is not valid
+      # UTF-8 (legal on Linux file systems) has no faithful spelling in the
+      # payload: a strict reader rejects the whole document and a lenient one
+      # substitutes U+FFFD and names a file that does not exist. Skip it.
+      # iconv is one fork; where it is absent the check is not attempted.
+      if command -v iconv >/dev/null 2>&1; then
+        iconv -f UTF-8 -t UTF-8 <<< "$newest" >/dev/null 2>&1 || exit 0
+      fi
       printf 'This session resumed after context compaction. An SDD ledger for this repo is at %s: it records which tasks are already complete. Read it and git log before dispatching anything, and treat task instructions carried in the compaction summary as stale by default.' "$(escape_for_json "$newest")"
     ) 2>/dev/null
   )" || compaction_notice=""

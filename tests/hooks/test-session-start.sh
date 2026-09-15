@@ -518,7 +518,7 @@ esac
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*)
         echo "  [SKIP] SessionStart escapes a control byte in a ledger path and stays valid JSON (Windows path rules)"
-        echo "  [SKIP] SessionStart skips a ledger path the listing truncated (Windows path rules)"
+        echo "  [SKIP] SessionStart names a ledger whose path carries a newline (Windows path rules)"
         ;;
     *)
         esc_repo="$(make_repo compact-esc)"
@@ -537,10 +537,12 @@ case "$(uname -s)" in
             CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
             bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$esc_repo" "$HOOK_UNDER_TEST"
 
-        # `ls -t | head -n 1` is line-oriented, so a newline in the slug hands
-        # the hook a prefix of the real path. The prefix names no file, and an
-        # older ledger sits in the same cache: the notice has to be skipped,
-        # not redirected to whatever else the listing holds.
+        # A newline in a plan slug is a legal path, and the line-oriented
+        # listing that used to split it into a prefix naming no file is gone.
+        # The notice must name the real file; an older ledger sits in the same
+        # cache so the case shows a choice being made, not a lone candidate
+        # falling through. The raw form carries the escape and the decoded
+        # form the byte, so both halves are read from one run.
         nl_repo="$(make_repo compact-newline)"
         nl_home="$(make_home compact-newline)"
         nl_cache="$TEST_ROOT/compact-newline/cache"
@@ -551,15 +553,75 @@ case "$(uname -s)" in
         nl_stdin="$TEST_ROOT/compact-newline/stdin.json"
         write_hook_input "$nl_stdin" compact
         HOOK_STDIN="$nl_stdin"
-        assert_command_output \
-            "SessionStart skips a ledger path the listing truncated" \
-            "nested" \
-            "" \
-            "resumed after context compaction" \
+        assert_raw_and_context \
+            "SessionStart names a ledger whose path carries a newline" \
+            'nl\nslug-3333cccc' \
+            "${NOTICE_HEAD}${nl_ledger}${NOTICE_TAIL}" \
             "$nl_home" \
             XDG_CACHE_HOME="$nl_cache" \
             CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
             bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$nl_repo" "$HOOK_UNDER_TEST"
+
+        # A JSON string carries Unicode, not bytes. A path that is not valid
+        # UTF-8 has no faithful spelling in the payload — a strict reader
+        # rejects the whole document, a lenient one substitutes U+FFFD and
+        # names a file that does not exist — so the notice is skipped for it.
+        # Only a file system that accepts such a name can pose the question:
+        # Linux does, APFS refuses it with "Illegal byte sequence". The case
+        # skips itself where the fixture cannot be built rather than reporting
+        # a failure the host made inevitable.
+        utf8_repo="$(make_repo compact-bad-utf8)"
+        utf8_home="$(make_home compact-bad-utf8)"
+        utf8_cache="$TEST_ROOT/compact-bad-utf8/cache"
+        utf8_seed_err="$TEST_ROOT/compact-bad-utf8/seed.err"
+        utf8_seed_status=0
+        utf8_ledger="$(seed_ledger "$utf8_cache" "$utf8_repo" \
+            $'bad\xffslug-4444dddd' 2>"$utf8_seed_err")" || utf8_seed_status=$?
+        # A refused mkdir need not reach the caller: bash suppresses errexit
+        # inside a command substitution whose assignment is already guarded by
+        # ||, so seed_ledger can print a path it never created. The fixture is
+        # present only if the file is there, not merely if the status is zero.
+        if [ "$utf8_seed_status" -ne 0 ] || [ ! -f "$utf8_ledger" ]; then
+            echo "  [SKIP] SessionStart skips a ledger path that is not valid UTF-8 (file system refuses non-UTF-8 names)"
+        else
+            utf8_older_ledger="$(seed_ledger "$utf8_cache" "$utf8_repo" "older-1111aaaa")"
+            touch -t 202401010000 "$utf8_older_ledger"
+            touch -t 202403010000 "$utf8_ledger"
+            utf8_stdin="$TEST_ROOT/compact-bad-utf8/stdin.json"
+            write_hook_input "$utf8_stdin" compact
+            utf8_out="$TEST_ROOT/compact-bad-utf8/out.json"
+            utf8_status=0
+            env -i PATH="${PATH:-}" HOME="$utf8_home" \
+                XDG_CACHE_HOME="$utf8_cache" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+                bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$utf8_repo" "$HOOK_UNDER_TEST" \
+                <"$utf8_stdin" >"$utf8_out" 2>/dev/null || utf8_status=$?
+            # The payload is read from the file rather than a shell variable
+            # because a command substitution would re-encode the very byte
+            # under test.
+            if [ "$utf8_status" -ne 0 ]; then
+                fail "SessionStart skips a ledger path that is not valid UTF-8"
+                echo "    hook exited $utf8_status"
+            elif node -e '
+const bytes = require("fs").readFileSync(process.argv[1]);
+if (bytes.includes(0xff)) {
+  console.error("raw output carried the 0xff byte from the ledger path");
+  process.exit(1);
+}
+const context = JSON.parse(bytes.toString("utf8")).hookSpecificOutput.additionalContext;
+if (typeof context !== "string") {
+  console.error("payload carried no additionalContext string");
+  process.exit(1);
+}
+if (context.includes("resumed after context compaction")) {
+  console.error("the notice named a ledger path that is not valid UTF-8");
+  process.exit(1);
+}
+' "$utf8_out"; then
+                pass "SessionStart skips a ledger path that is not valid UTF-8"
+            else
+                fail "SessionStart skips a ledger path that is not valid UTF-8"
+            fi
+        fi
         ;;
 esac
 

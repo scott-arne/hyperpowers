@@ -466,16 +466,17 @@ following the same fail-silent, no-quote, no-newline discipline. Contract:
   call `sdd-dir` (it creates and touches directories); the notice is
   read-only.
 - With several ledgers, the newest by modification time is named.
-- A path that contains a control character is named on one line in bash's
-  `$'...'` quoting, as `printf %q` renders it, so that no filename data can
-  add a line to the context; every other path is named verbatim.
+- A path whose JSON spelling differs from its bytes (a quote, a backslash, or
+  a control character in it) is named as that JSON string literal, escapes
+  visible, on one line, so that no filename data can add a line to the
+  context; every other path is named verbatim.
 - A ledger path that is not valid UTF-8 (legal on Linux file systems) has no
   faithful spelling in a JSON string, so the notice is skipped for it rather
   than naming a file the session could not open; the rest of the payload is
   unaffected. This is the one case in which a ledger exists and no notice is
   emitted.
-- Text, one line, the path routed through `escape_for_json`, asserted
-  verbatim by the hook test apart from the path:
+- Text, one line, the rendered path routed through `escape_for_json`,
+  asserted verbatim by the hook test apart from the path:
   `This session resumed after context compaction. An SDD ledger for this
   repo is at <path>: it records which tasks are already complete. Read it
   and git log before dispatching anything, and treat task instructions

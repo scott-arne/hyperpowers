@@ -17,10 +17,10 @@ tree) at the human partner's request — see "Re-measured at `bad92ad`" under
 Sentinel tier for why the tier ran nine times
 **Governing adjudication:**
 `evidence/2026-09-10-external-workflow-adoption/task-19-runs/adjudication.md`,
-in hyperpowers-evals at `c615efc488a091f6be867f174c983c5353b7a252`, restated
+in hyperpowers-evals at `71bd5e0cf2e04eda74f37f003c2ffabc862a984d`, restated
 for the re-measured heads by
 `evidence/2026-09-10-external-workflow-adoption/task-23-reruns/adjudication-remeasurement.md`
-at `ab80a12`
+at `22b2fb3`
 
 ## What was measured
 
@@ -84,14 +84,14 @@ flattening them:
 - Baseline (Task 8, all four scenarios): hyperpowers-evals
   `18f5f25b2466ba84da21f70f7d9efa2dddb76757`.
 - Hardened baseline (Task 9, S2/S3/S4):
-  `9f49c2b1ccfff1db0515ac06e1d37593f60053de`, which is both the hardening
+  `1aee9dcffd9033d3a58922486ff5893cb5a6721b`, which is both the hardening
   commit and the harness commit every trial in that arm ran on.
-- Treatment (Task 19, S1): `d8d8df6ae775e36acf9b453fb3a35eba9568f1cf` for the
-  first four runs, and `0edf098` for `b15c` and `0eb0`, which started after
-  that commit landed. `git diff --name-only d8d8df6 0edf098` lists 487 paths
+- Treatment (Task 19, S1): `57f74a29730e1182f85eb164315cb6df10192d73` for the
+  first four runs, and `f3677b2` for `b15c` and `0eb0`, which started after
+  that commit landed. `git diff --name-only 57f74a2 f3677b2` lists 487 paths
   and none outside `evidence/`, so the harness code was identical across all
   six runs. The arm also cleared Task 9's fixture floor: `git merge-base
-  --is-ancestor e074014 HEAD` was checked before the first trial and its output
+  --is-ancestor a57d717 HEAD` was checked before the first trial and its output
   is at the top of the arm's runner log.
 
 Arm heads in this repository:
@@ -117,7 +117,7 @@ Task 8's unassisted baseline met acceptance in every trial of S2, S3 and S4.
 A scenario an unassisted agent already passes cannot discriminate — the
 treatment arm can only match it — so Task 9 hardened each one and re-ran the
 baseline against the hardened fixture, all at
-`9f49c2b1ccfff1db0515ac06e1d37593f60053de`:
+`1aee9dcffd9033d3a58922486ff5893cb5a6721b`:
 
 - S2 gained a fourth planted weakening, a summation assertion narrowed from
   `assert.equal(cartTotal([...]), 950)` to `assert.ok(cartTotal([...]) > 0)`.
@@ -148,7 +148,7 @@ toward the no-ship rather than against it, since the baseline cleared the bar
 on the easier version of the task. Second, S3's reproduce-before-change
 boundary named only `src/pricing.js` although the hardening had made
 `src/checkout.js` pre-existing product code as well. A Codex gate raised it and
-`e074014` tightened both statements of the boundary. That happened after these
+`a57d717` tightened both statements of the boundary. That happened after these
 runs, and the arm file re-derived every cell under the tightened wording from
 the `tool_use` `file_path` fields: no trial edited `src/checkout.js` at all, so
 no cell changed.
@@ -405,7 +405,7 @@ than as a non-regression result. It is preserved at
 `triggering-writing-plans-claude-auto-20260913T231141Z-c483`.
 
 **The fix was the human partner's call, made on 2026-09-13: fix the
-instrument.** Two changes in the evals clone, committed there at `1652992`.
+instrument.** Two changes in the evals clone, committed there at `66d9d47`.
 `^docs/hyperpowers/` was added to `EXCLUDED_RE` in
 `src/detect/implementation.ts`, finishing a fork rename that had stopped at
 `src/detect/skill.ts` and had been counting the fork's own spec path as
@@ -454,7 +454,7 @@ check currently fails on a `docs/hyperpowers/` design document and would not
 after the change. It is outside the sentinel tier and was not re-run. The
 change was not verified against it. The predicate widened once more before
 the re-measurement — the detector now normalizes dot segments (evals
-`a79c600`), closing a gap a Codex lens had recorded — and the two worktree
+`e9ca830`), closing a gap a Codex lens had recorded — and the two worktree
 sentinel scenarios ran green under it; `worktree-creation-from-main` remains
 outside the tier and unverified.
 
@@ -487,7 +487,7 @@ the measured head — so the release was not authorized and the human partner
 was asked. They authorized re-measurement.
 
 The plan's remediation command ran unchanged, sandboxed, from the evals clone
-at `452739a` with `SUPERPOWERS_ROOT` at hyperpowers `bad92ad`, tee'd with its
+at `d752ad4` with `SUPERPOWERS_ROOT` at hyperpowers `bad92ad`, tee'd with its
 heads and start time to `task-23-reruns/sentinel-remeasurement-1.log`. Batch
 line, verbatim:
 
@@ -502,7 +502,7 @@ needing a re-run, and `superpowers-bootstrap`, which had been indeterminate.
 The two indeterminates were `worktree-creation-under-pressure` and
 `worktree-no-drift-to-main`, refused at 0 s by the runner's own actor check —
 an instrument failure, not a trial: no agent started, so nothing was
-discarded. After that check was corrected (evals `906f573`, one commit past
+discarded. After that check was corrected (evals `af09266`, one commit past
 the batch head, whose code change is the runner's directive gate and a unit
 test and which also carries the batch's log, its view, and an early draft of
 the adjudication), each was run individually at the same hyperpowers head:
@@ -541,7 +541,7 @@ SessionStart payload and lost the bootstrap after compaction. It was fixed
 new hook tests, and the gate converged on the fix. That moved a `hooks/` file
 after `bad92ad`, and the hook is A9's own surface, so under the same
 standing decision the tier ran a third time, same command, from the evals
-clone at `cb616b1` with `SUPERPOWERS_ROOT` at `7e8ba23`, tee'd to
+clone at `787b15c` with `SUPERPOWERS_ROOT` at `7e8ba23`, tee'd to
 `task-23-reruns/sentinel-remeasurement-3.log`. Batch line, verbatim:
 
 ```
@@ -573,7 +573,7 @@ here-strings too), with the control-byte and newline cases asserting the
 path is named on one line as its JSON string literal and a new case for the
 skipped path; the spec's A9 section records that one skipped case
 (`65d7747`). The hook moved twice, so under the same standing decision the
-tier ran twice more, same command, from the evals clone at `b2ed9e1`: at
+tier ran twice more, same command, from the evals clone at `e7084ef`: at
 `fd457d3`, tee'd to
 `task-23-reruns/sentinel-remeasurement-4.log` (`batch done · 11 ✓ · 0 ✗ ·
 0 ⊘ · 69 — · wall 10m45s`, `batch-20260915T224434Z-7266`; its log and batch
@@ -611,7 +611,7 @@ The control-byte and newline cases assert the one-line spelling and that an
 injected sentence never appears as a line of the context; a new case runs
 the hook under a UTF-8 locale with a newline and a euro sign in the path
 and asserts strict UTF-8 validity; the spec records the rule (`46bcf46`). The
-tier ran a seventh time, from the evals clone at `b343150` with
+tier ran a seventh time, from the evals clone at `79d7db5` with
 `SUPERPOWERS_ROOT` at `46bcf46`, tee'd to
 `task-23-reruns/sentinel-remeasurement-7.log`. Batch line, verbatim:
 
@@ -633,7 +633,7 @@ workspace slug, so a plan named `.release.md` was never considered. The
 gate's backstop disposition was to fix it and open a follow-on gate: `9d1367f`
 enables `dotglob` inside the compaction subshell and pins the case with a
 hook test; `2ee268c` updates this note's count. The tier ran an eighth time,
-from the evals clone at `c4ad933` with `SUPERPOWERS_ROOT` at `2ee268c`, tee'd to
+from the evals clone at `b4218e4` with `SUPERPOWERS_ROOT` at `2ee268c`, tee'd to
 `task-23-reruns/sentinel-remeasurement-8.log`. Batch line, verbatim:
 
 ```
@@ -663,7 +663,7 @@ to the human partner, and the one-rerun rule covers indeterminate trials
 only. The question was handed back; the human partner asked for one more
 measurement first. The tier ran a ninth time at `ede69af` (this note's
 commit for the eighth run; `skills/` and `hooks/` unchanged since
-`2ee268c`), from the evals clone at `d841a5d`, tee'd to
+`2ee268c`), from the evals clone at `0f087a4`, tee'd to
 `task-23-reruns/sentinel-remeasurement-9.log`. Batch line, verbatim:
 
 ```
@@ -675,7 +675,7 @@ All eleven runnable scenarios passed, the two that had not passed cleanly in the
 batches in hand, the human partner decided: "Treat as a regression." The
 release is held, and an investigation of the brainstorming over-trigger
 is opened as new work outside this plan; the adjudication (now at evals
-`ab80a12`) records the decision, and nothing in it is restated as
+`22b2fb3`) records the decision, and nothing in it is restated as
 shipping until that investigation concludes. `task-23-reruns/adjudication-remeasurement.md` restates the ship
 table at `2ee268c`; the fourteen contract suites at that head, 14 of 14 exit 0.
 Limits unchanged.

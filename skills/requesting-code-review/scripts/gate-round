@@ -136,7 +136,14 @@ if [ "$peek" -eq 1 ]; then
   # which swallowed a real zero along with it. Leave unknown empty: unknown
   # proceeds, and a recorded zero means the budget is spent and backstops.
   # A real zero was unreachable until --consumed 5 made it ordinary.
-  c="${prev_ceiling:-$ceiling}"
+  #
+  # The ceiling in effect is the one THIS call supplies -- derived from
+  # --consumed, or given as --ceiling -- exactly as the advance below uses it;
+  # the persisted ceiling answers only when the call supplies none. Preferring
+  # the persisted one let a peek proceed on a cap a newer --consumed had
+  # already reported spent, which is the one answer this counter exists to
+  # refuse.
+  if [ "$ceiling_set" -eq 1 ] || [ "$consumed_set" -eq 1 ]; then c="$ceiling"; else c="$prev_ceiling"; fi
   # Defend against a non-numeric ceiling that slipped past the sentinel.
   # `expr "$c" + 0` cannot do this job: expr exits 1 whenever the expression
   # evaluates to zero, so it condemned a legitimate ceiling of 0 as unreadable.

@@ -11,15 +11,16 @@ read from the run-id timestamps
 then `7e8ba23f1d5f3acd3fa780b7bc4b5e930db24edf`, then
 `fd457d36ca3a507266784a4e14299229b09c36e2`,
 `65d77471704c38088be2dc79d55f1ee59285ad57`, `0145cd77350763efe8cb6fdb88948fb80e150708`,
-`46bcf4631d2df0827f4f2cf37f653ec8e609f44a` and `2ee268c21d88c0c7946630de529eb99d3362614a` — see
-"Re-measured at `bad92ad`" under Sentinel tier for why the tier ran eight
-times
+`46bcf4631d2df0827f4f2cf37f653ec8e609f44a` and `2ee268c21d88c0c7946630de529eb99d3362614a`,
+then once more at `ede69af6b10a596ba6f9400cfe59a0a708bfa922` (the same skills
+tree) at the human partner's request — see "Re-measured at `bad92ad`" under
+Sentinel tier for why the tier ran nine times
 **Governing adjudication:**
 `evidence/2026-09-10-external-workflow-adoption/task-19-runs/adjudication.md`,
 in hyperpowers-evals at `c615efc488a091f6be867f174c983c5353b7a252`, restated
 for the re-measured heads by
 `evidence/2026-09-10-external-workflow-adoption/task-23-reruns/adjudication-remeasurement.md`
-at `d841a5d`
+at `1a35a79`
 
 ## What was measured
 
@@ -358,13 +359,15 @@ are byte-identical. Neither changes what the needles pin.
 
 ## Sentinel tier
 
-The tier was run eight times: first against the treatment head `d0a187d`,
+The tier was run nine times: first against the treatment head `d0a187d`,
 described in the next four paragraphs and their subsections; again on
 2026-09-15 against `bad92ad`; once more the same evening against `7e8ba23`,
 after a hook fix; and five times that night against `fd457d3`, `65d7747`,
 `0145cd7`, `46bcf46` and `2ee268c`, after the third-pass gate's fixes to the same
-hook — the re-runs are described under "Re-measured at `bad92ad`", and the
-last one is the run the six contract-only items now rest on.
+hook; and once more at `ede69af`, the same skills tree, at the human
+partner's request after the eighth batch's one failure — the re-runs are
+described under "Re-measured at `bad92ad`", and the last two are the runs
+the six contract-only items now rest on.
 
 `quorum run-all --tier sentinel --coding-agents claude-auto` against the
 treatment head. The full batch output is preserved at
@@ -652,7 +655,23 @@ is the hook's `dotglob` line, which runs only after a compaction. The
 checkbox failure is the single-run variance the limits below have recorded
 since the first batch, caught once. Run copies, both re-runs included, are
 under `task-23-reruns/sentinel-runs-5/`; the hook suite on Linux at this
-head is 39 of 39. `task-23-reruns/adjudication-remeasurement.md` restates the ship
+head is 39 of 39.
+
+The follow-on gate over the backstop fix approved the fix and raised one
+process finding: the plan reserves acceptance of a failed sentinel scenario
+to the human partner, and the one-rerun rule covers indeterminate trials
+only. The question was handed back; the human partner asked for one more
+measurement first. The tier ran a ninth time at `ede69af` (this note's
+commit for the eighth run; `skills/` and `hooks/` unchanged since
+`2ee268c`), from the evals clone at `d841a5d`, tee'd to
+`task-23-reruns/sentinel-remeasurement-9.log`. Batch line, verbatim:
+
+```
+batch done · 11 ✓ · 0 ✗ · 0 ⊘ · 69 — · wall 7m47s
+artifacts: results/batches/batch-20260916T040815Z-601c
+```
+
+All eleven runnable scenarios passed, the two that had not passed cleanly in the eighth batch among them; across the two batches of this skills tree the tally is twenty passes in the batches, one failure and one indeterminate each followed by a passing single re-run, and eleven passes in the ninth. The recorded failure stays on record pending the human partner's words. Run copies are under `task-23-reruns/sentinel-runs-6/`. `task-23-reruns/adjudication-remeasurement.md` restates the ship
 table at `2ee268c`; the fourteen contract suites at that head, 14 of 14 exit 0.
 Limits unchanged.
 

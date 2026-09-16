@@ -84,9 +84,14 @@ only.
   (`2e83fd8`), current description;
 - treatment: `SUPERPOWERS_ROOT` at the `brainstorming-trigger` head after
   the change;
-- harness: the hyperpowers-evals commit recorded in `manifest.tsv` when the
-  launches start; every launcher refuses to run unless both roots and the
-  harness are at their recorded commits with clean trees.
+- harness: the hyperpowers-evals commit recorded in `manifest.tsv`; every
+  launch refuses to run unless both roots are at their recorded commits with
+  clean trees and the evals clone's harness paths (`src`, `scenarios`,
+  `coding-agents`, `package.json`, `bun.lock`) are byte-identical to that
+  commit with no uncommitted changes. Evidence commits may follow the pin;
+  harness changes may not, so "one harness" is checked as a fact about the
+  code every run saw rather than as a HEAD equality the evidence commits
+  themselves would break.
 
 | scenario | control | treatment |
 |---|---|---|

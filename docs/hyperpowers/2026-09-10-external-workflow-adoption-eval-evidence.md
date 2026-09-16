@@ -10,15 +10,16 @@ read from the run-id timestamps
 **Re-measured heads (sentinel tier):** `bad92ad079783032c1e2431e624ea0c09cc67f31`,
 then `7e8ba23f1d5f3acd3fa780b7bc4b5e930db24edf`, then
 `fd457d36ca3a507266784a4e14299229b09c36e2`,
-`65d77471704c38088be2dc79d55f1ee59285ad57`, `0145cd77350763efe8cb6fdb88948fb80e150708`
-and `46bcf4631d2df0827f4f2cf37f653ec8e609f44a` — see "Re-measured at
-`bad92ad`" under Sentinel tier for why the tier ran seven times
+`65d77471704c38088be2dc79d55f1ee59285ad57`, `0145cd77350763efe8cb6fdb88948fb80e150708`,
+`46bcf4631d2df0827f4f2cf37f653ec8e609f44a` and `2ee268c21d88c0c7946630de529eb99d3362614a` — see
+"Re-measured at `bad92ad`" under Sentinel tier for why the tier ran eight
+times
 **Governing adjudication:**
 `evidence/2026-09-10-external-workflow-adoption/task-19-runs/adjudication.md`,
 in hyperpowers-evals at `c615efc488a091f6be867f174c983c5353b7a252`, restated
 for the re-measured heads by
 `evidence/2026-09-10-external-workflow-adoption/task-23-reruns/adjudication-remeasurement.md`
-at `c4ad933`
+at `d841a5d`
 
 ## What was measured
 
@@ -345,8 +346,8 @@ agent acts on the wording.
 The six items that ship on tests alone do not all rest on the same evidence.
 Five of them — A3, A5, A6, A8 and A10 — rest on the fourteen contract suites at
 `d0a187d`, every one of which exited 0 at that head, and again at `bad92ad`,
-`7e8ba23`, `65d7747`, `0145cd7` and `46bcf46`, where all fourteen exited 0 each
-time the tier was re-measured; A9 rests on the four
+`7e8ba23`, `65d7747`, `0145cd7`, `46bcf46` and `2ee268c`, where all fourteen exited 0
+each time the tier was re-measured; A9 rests on the four
 hook suites among them, `test-session-start.sh`, `test-ungated-notice.sh`,
 `test-broker-janitor.sh` and `test-no-heredocs-in-hooks.sh`. The governing
 adjudication names all fourteen suite paths against the head, so the set is
@@ -357,13 +358,13 @@ are byte-identical. Neither changes what the needles pin.
 
 ## Sentinel tier
 
-The tier was run seven times: first against the treatment head `d0a187d`,
+The tier was run eight times: first against the treatment head `d0a187d`,
 described in the next four paragraphs and their subsections; again on
 2026-09-15 against `bad92ad`; once more the same evening against `7e8ba23`,
-after a hook fix; and four times that night against `fd457d3`, `65d7747`,
-`0145cd7` and `46bcf46`, after the third-pass gate's fixes to the same hook —
-the re-runs are described under "Re-measured at `bad92ad`", and the last
-one is the run the six contract-only items now rest on.
+after a hook fix; and five times that night against `fd457d3`, `65d7747`,
+`0145cd7`, `46bcf46` and `2ee268c`, after the third-pass gate's fixes to the same
+hook — the re-runs are described under "Re-measured at `bad92ad`", and the
+last one is the run the six contract-only items now rest on.
 
 `quorum run-all --tier sentinel --coding-agents claude-auto` against the
 treatment head. The full batch output is preserved at
@@ -620,6 +621,39 @@ All eleven runnable scenarios passed. Run copies are under
 `task-23-reruns/sentinel-runs-4/`; the hook suite on Linux at this head is
 38 of 38. `task-23-reruns/adjudication-remeasurement.md` restates the ship
 table at `46bcf46`; the fourteen contract suites at that head, 14 of 14 exit 0.
+Limits unchanged.
+
+Round 3 of the gate, its last round, confirmed every earlier fix and found
+one more gap: the newest-ledger loop globbed `"$plans"/*/progress.md`, and
+`*` skips a leading dot, while `sdd-dir` keeps the plan basename in the
+workspace slug, so a plan named `.release.md` was never considered. The
+gate's backstop disposition was to fix it and open a follow-on gate: `9d1367f`
+enables `dotglob` inside the compaction subshell and pins the case with a
+hook test; `2ee268c` updates this note's count. The tier ran an eighth time,
+from the evals clone at `c4ad933` with `SUPERPOWERS_ROOT` at `2ee268c`, tee'd to
+`task-23-reruns/sentinel-remeasurement-8.log`. Batch line, verbatim:
+
+```
+batch done · 9 ✓ · 1 ✗ · 1 ⊘ · 69 — · wall 10m56s
+artifacts: results/batches/batch-20260916T010013Z-9bbc
+```
+
+Nine of the eleven runnable scenarios passed in the batch; for the first
+time in eight batches two did not, and each was re-run once at the same
+head, as the first re-measurement did for its two indeterminates:
+`cost-checkbox-over-trigger` failed (the agent loaded brainstorming for a
+trivial checkbox request) and passed on re-run (implemented directly, no
+skill); `brainstorming-resists-jump-to-implementation` was indeterminate
+(the grader returned `investigate` at the eleven-minute wall while every
+deterministic check passed) and passed on re-run. Neither is a regression
+from this head: the `skills/` tree is byte-identical to the five preceding
+measured heads where both passed every time, and the only product change
+is the hook's `dotglob` line, which runs only after a compaction. The
+checkbox failure is the single-run variance the limits below have recorded
+since the first batch, caught once. Run copies, both re-runs included, are
+under `task-23-reruns/sentinel-runs-5/`; the hook suite on Linux at this
+head is 39 of 39. `task-23-reruns/adjudication-remeasurement.md` restates the ship
+table at `2ee268c`; the fourteen contract suites at that head, 14 of 14 exit 0.
 Limits unchanged.
 
 ## Removals

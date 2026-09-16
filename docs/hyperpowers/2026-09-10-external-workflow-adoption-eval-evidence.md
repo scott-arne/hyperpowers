@@ -20,7 +20,7 @@ Sentinel tier for why the tier ran nine times
 in hyperpowers-evals at `c615efc488a091f6be867f174c983c5353b7a252`, restated
 for the re-measured heads by
 `evidence/2026-09-10-external-workflow-adoption/task-23-reruns/adjudication-remeasurement.md`
-at `1a35a79`
+at `ab80a12`
 
 ## What was measured
 
@@ -671,7 +671,12 @@ batch done · 11 ✓ · 0 ✗ · 0 ⊘ · 69 — · wall 7m47s
 artifacts: results/batches/batch-20260916T040815Z-601c
 ```
 
-All eleven runnable scenarios passed, the two that had not passed cleanly in the eighth batch among them; across the two batches of this skills tree the tally is twenty passes in the batches, one failure and one indeterminate each followed by a passing single re-run, and eleven passes in the ninth. The recorded failure stays on record pending the human partner's words. Run copies are under `task-23-reruns/sentinel-runs-6/`. `task-23-reruns/adjudication-remeasurement.md` restates the ship
+All eleven runnable scenarios passed, the two that had not passed cleanly in the eighth batch among them; across the two batches of this skills tree the tally is twenty passes in the batches, one failure and one indeterminate each followed by a passing single re-run, and eleven passes in the ninth. Run copies are under `task-23-reruns/sentinel-runs-6/`. Asked with both
+batches in hand, the human partner decided: "Treat as a regression." The
+release is held, and an investigation of the brainstorming over-trigger
+is opened as new work outside this plan; the adjudication (now at evals
+`ab80a12`) records the decision, and nothing in it is restated as
+shipping until that investigation concludes. `task-23-reruns/adjudication-remeasurement.md` restates the ship
 table at `2ee268c`; the fourteen contract suites at that head, 14 of 14 exit 0.
 Limits unchanged.
 

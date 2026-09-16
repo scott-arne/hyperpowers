@@ -3531,7 +3531,7 @@ know, recorded so Tasks 9 and 19 start from them rather than rediscover them:
    `run-id:`/`trials:`/`EXIT=` block under its vector when the file is first
    written.
 
-Final Task 8 commit in the evals clone: `7691388` (amended in place through
+Final Task 8 commit in the evals clone: `58f8a2b` (amended in place through
 four fix rounds; the reviewed head and the committed head are the same).
 
 The baseline arm is hyperpowers checked out at the **branch-point commit** — the commit `external-workflow-adoption` forked from. None of the A1-A10 prose exists there. Tasks 1-7 changed only the evals clone, so the branch point is still the correct control even though evals work has already landed.
@@ -3782,7 +3782,7 @@ Report the resulting commit SHA with an `evals:` prefix. Task 22 cites it.
 **What every variant must not do.** No hardened fixture may quote or paraphrase the treatment prose it measures. An earlier draft of Task 4 planted a `// CLEAN N` rationale comment above each clean hunk, and those comments quoted A1's skip list almost bullet for bullet (`Length is not complexity`, `the dereference is past a narrowing guard`). Task 4 no longer plants them — the fixture ships as code with no exculpating commentary — so Step 6's greps should already come back empty before you change anything. Do not reintroduce that shape. Check the same property in any variant you write.
 
 **Amended after execution.** Task 8 routed S2, S3 and S4 here and left S1
-alone. All three were hardened as Steps 3-5 specify (fixture commit `9f49c2b`
+alone. All three were hardened as Steps 3-5 specify (fixture commit `1aee9dc`
 in the evals clone, with the setup-helper contract tests updated alongside —
 the brief's Step 6 never ran `bun test`, and S4's relocation broke two README
 assertions that had to move with the facts). Nine live trials
@@ -3806,11 +3806,11 @@ Three things the plan did not know: (1) S3's fixture has carried, since Task
 6, a `// BUG: ...` source comment that hands the agent the diagnosis; it is
 disclosed in the arm's record and must come out before S3 is reused. (2) The
 hardening made `src/checkout.js` product code, but S3's criterion closed the
-reproduce-before-change window only on `src/pricing.js`; `e074014` widens it
+reproduce-before-change window only on `src/pricing.js`; `a57d717` widens it
 to both files (no cell changes: every trial reproduced at entry [43] before
 its first product edit at [62]/[63]/[63]). Task 19's harness floor is
-`e074014`. (3) Copied run directories also carried `home/.claude/sessions/`
-lock files; `d8d8df6` strips them from both arms and the hygiene rule in the
+`a57d717`. (3) Copied run directories also carried `home/.claude/sessions/`
+lock files; `57f74a2` strips them from both arms and the hygiene rule in the
 arm's measurements file now lists them. Six of those blobs remain reachable
 in the unpushed history; the human partner declined a rewrite as corrected
 (local IPC tokens of exited processes) and carried a reachable-object scan to
@@ -6428,7 +6428,7 @@ git commit -m "feat(hooks): point a compacted session at its SDD ledger"
 
 ### Task 19: Treatment trials and the ship decision
 
-**Amended after Task 9 (human partner's decision, 2026-09-12).** Only S1 discriminates; S2, S3 and S4 are no-ships and their items were never implemented, so this task runs the treatment arm for S1 alone (three trials, `--coding-agent claude-auto`, the same S1 counting rule as the baseline: the reviewer subagent's report, clean hunks named). The hardened fixture commit `9f49c2b` is the floor for the harness commit even though S1 was not hardened.
+**Amended after Task 9 (human partner's decision, 2026-09-12).** Only S1 discriminates; S2, S3 and S4 are no-ships and their items were never implemented, so this task runs the treatment arm for S1 alone (three trials, `--coding-agent claude-auto`, the same S1 counting rule as the baseline: the reviewer subagent's report, clean hunks named). The hardened fixture commit `1aee9dc` is the floor for the harness commit even though S1 was not hardened.
 
 **Repository:** the evals clone `$EV`. Every file this task creates or modifies is there. It runs read-only commands in the hyperpowers checkout — `git rev-parse`, `grep`, `ls`, `git status`, and the fifteen test suites — and it makes no hyperpowers commit and changes no hyperpowers file. Removing a failing item is **Task 20**, not this task.
 
@@ -6545,7 +6545,7 @@ Two preconditions, both silent failures if you skip them. First, `SUPERPOWERS_RO
 ```bash
 echo "$SUPERPOWERS_ROOT"
 grep -c 'Before You Report a Finding' "$SUPERPOWERS_ROOT/skills/requesting-code-review/code-reviewer.md"
-cd "$EV" && git merge-base --is-ancestor e074014 HEAD && echo "fixture ok"
+cd "$EV" && git merge-base --is-ancestor a57d717 HEAD && echo "fixture ok"
 ```
 
 **Amended after Task 9.** The original check was `ls
@@ -6554,7 +6554,7 @@ that file was never created, and the `ls` would now stop the task on a
 condition that is satisfied. The check that carries the same meaning for the
 one live scenario is the presence of S1's own treatment prose, so the `grep`
 replaces it: it prints `1`, and `0` means the variable points somewhere without
-the treatment. The floor SHA is `e074014` — Task 9's S3 boundary widening, the
+the treatment. The floor SHA is `a57d717` — Task 9's S3 boundary widening, the
 latest fixture commit at dispatch — even though S1 itself was never hardened;
 `fixture ok` confirms it, and a failure stops the task.
 

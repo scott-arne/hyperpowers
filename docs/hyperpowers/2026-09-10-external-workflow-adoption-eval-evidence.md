@@ -322,19 +322,20 @@ A1, A3, A5, A6, A8 and A10. The count is the `assert_contains` and
 `assert_not_contains` call sites added across `f5a9843..d0a187d` in those three
 files, excluding the two helper definitions the new suite introduces.
 
-`tests/hooks/test-session-start.sh` covers the seventh, A9, with 37 cases
+`tests/hooks/test-session-start.sh` covers the seventh, A9, with 38 cases
 including an open-pipe watchdog, a timed EOF-path case, two cases that feed the
 hook a ledger path carrying a control byte or newlines and assert the payload
-still parses and names the path on one line, and one that skips the notice for
-a path that is not valid UTF-8 (it runs only where the file system accepts such
-names).
+still parses and names the path on one line as its JSON string literal, one that
+does the same under a UTF-8 locale with a non-ASCII letter in the path, and one
+that skips the notice for a path that is not valid UTF-8 (it runs only where the
+file system accepts such names).
 
 The two suites do not prove the same kind of thing. Each needle normalizes
 whitespace and then greps for one fixed substring, so it proves a required
 clause is still present — or, for `assert_not_contains`, still absent — and not
 that the prose around it is unmodified; a contradicting qualification could be
 added beside a needle and every needle would still pass. A9's hook suite is
-different in kind: 31 of its 37 cases run the hook and assert on its output,
+different in kind: 32 of its 38 cases run the hook and assert on its output,
 exit status and timing, one checks the `hooks.json` registration shape without
 running it, and 5 grep the hook's source. Neither suite is evidence that an
 agent acts on the wording.
@@ -563,10 +564,11 @@ since a JSON string cannot carry it) and refined in `ddbe0e2` (the check is
 a pipeline rather than a here-string, which on bash 5.1+ is the pre-fork
 pipe write the repo's heredoc fence exists to ban; the fence now bans
 here-strings too), with the control-byte and newline cases asserting the
-path is named on one line in bash quoting and a new case for the skipped
-path; the spec's A9 section records that one skipped case (`65d7747`). The
-hook moved twice, so under the same standing decision the tier ran twice
-more, same command, from the evals clone at `b2ed9e1`: at `fd457d3`, tee'd to
+path is named on one line as its JSON string literal and a new case for the
+skipped path; the spec's A9 section records that one skipped case
+(`65d7747`). The hook moved twice, so under the same standing decision the
+tier ran twice more, same command, from the evals clone at `b2ed9e1`: at
+`fd457d3`, tee'd to
 `task-23-reruns/sentinel-remeasurement-4.log` (`batch done · 11 ✓ · 0 ✗ ·
 0 ⊘ · 69 — · wall 10m45s`, `batch-20260915T224434Z-7266`; its log and batch
 view are kept, its run copies are not, since the head was superseded within

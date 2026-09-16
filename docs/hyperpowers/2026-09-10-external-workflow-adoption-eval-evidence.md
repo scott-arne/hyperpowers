@@ -323,20 +323,21 @@ A1, A3, A5, A6, A8 and A10. The count is the `assert_contains` and
 `assert_not_contains` call sites added across `f5a9843..d0a187d` in those three
 files, excluding the two helper definitions the new suite introduces.
 
-`tests/hooks/test-session-start.sh` covers the seventh, A9, with 38 cases
+`tests/hooks/test-session-start.sh` covers the seventh, A9, with 39 cases
 including an open-pipe watchdog, a timed EOF-path case, two cases that feed the
 hook a ledger path carrying a control byte or newlines and assert the payload
 still parses and names the path on one line as its JSON string literal, one that
-does the same under a UTF-8 locale with a non-ASCII letter in the path, and one
-that skips the notice for a path that is not valid UTF-8 (it runs only where the
-file system accepts such names).
+does the same under a UTF-8 locale with a non-ASCII letter in the path, one that
+names a dot-prefixed workspace when it is the newest, and one that skips the
+notice for a path that is not valid UTF-8 (it runs only where the file system
+accepts such names).
 
 The two suites do not prove the same kind of thing. Each needle normalizes
 whitespace and then greps for one fixed substring, so it proves a required
 clause is still present — or, for `assert_not_contains`, still absent — and not
 that the prose around it is unmodified; a contradicting qualification could be
 added beside a needle and every needle would still pass. A9's hook suite is
-different in kind: 32 of its 38 cases run the hook and assert on its output,
+different in kind: 33 of its 39 cases run the hook and assert on its output,
 exit status and timing, one checks the `hooks.json` registration shape without
 running it, and 5 grep the hook's source. Neither suite is evidence that an
 agent acts on the wording.

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - The new description text is the spec's, verbatim, double-quoted; it names no eval fixture. No other line of `skills/brainstorming/SKILL.md` and no line of `skills/using-hyperpowers/SKILL.md` changes.
-- One harness commit for every trial, recorded as the `harness` row of `manifest.tsv` before the first launch; the launcher (`launch-all.sh`) exits 1 if the evals clone, the control root, or the treatment root is not at its manifest commit with a clean tree. Nothing from `evidence/2026-09-16-over-trigger-measurement/` is reused as a trial.
+- One harness for every trial: the `harness` row of `manifest.tsv` names the evals commit whose harness paths (`src`, `scenarios`, `coding-agents`, `package.json`, `bun.lock`) every run must match byte for byte; evidence commits may follow that pin, harness changes may not. Every `measure-launch.sh` invocation checks, before launching, that the arm's root is at its manifest commit with a clean tree, that `git diff --quiet <harness> HEAD -- <harness paths>` holds, and that the harness paths have no uncommitted changes; it refuses otherwise, so a direct rerun launch is as fenced as a scheduled one. Nothing from `evidence/2026-09-16-over-trigger-measurement/` is reused as a trial.
 - Both arms run with `SLASH_COMMAND_TOOL_CHAR_BUDGET=20000` in the runner's environment. Control root: `/Users/johnss51/Development/agents/hyperpowers/.worktrees/external-workflow-adoption` at `2e83fd8`. Treatment root: `/Users/johnss51/Development/agents/hyperpowers/.worktrees/brainstorming-trigger` at the Task 1 commit.
 - Evidence directory (hyperpowers-evals): `evidence/2026-09-16-brainstorming-trigger-calibration/`. Run copies are prepared with `scripts/strip-runs` and staged with `git add -f` (the README's procedure: `home/.claude/` and `gauntlet-agent/results/` match unanchored ignore rules), and the staged tree is checked before the commit: one transcript and one `result.json` per run, no gitlinks, no `.claude-env`, no `.key`, no `peerToken`.
 - Live `quorum run` commands are the controller's to launch (trusted-maintainer operation, approved by the human partner in chat on 2026-09-16); implementers write scripts, manifests, and analysis and never launch a live run.
@@ -86,8 +86,8 @@ not, and keep the tie going to brainstorming."
 - Create (in the evals clone `/Users/johnss51/Development/agents/hyperpowers/evals`, all under `evidence/2026-09-16-brainstorming-trigger-calibration/`): `README.md`, `manifest.tsv`, `logs/measure-launch.sh`, `launch-all.sh`, `analyze.py`
 
 **Interfaces:**
-- Consumes: the two roots' paths (Global Constraints) and their `skills/brainstorming/SKILL.md` description lines (the analysis renders each arm's expected listing line from them); the Task 1 commit SHA for the manifest's `treatment` row.
-- Produces: `manifest.tsv` (rows `harness<TAB>sha`, `control<TAB>sha`, `treatment<TAB>sha`, `model<TAB>claude-opus-5`, then one `arm<TAB>scenario<TAB>repeat<TAB>proc` row per launch); `launch-all.sh manifest.tsv [max]`; `logs/measure-launch.sh arm scenario repeat proc`; `analyze.py` writing `runs.json` and printing the table, exit 1 with `DESIGN ERROR:` on any deviation; `reruns.tsv` format (`original<TAB>replacement`, `#` comments) consumed by `analyze.py`.
+- Consumes: the two roots' paths (Global Constraints) and their `skills/brainstorming/SKILL.md` description lines (the analysis renders each arm's expected listing line from them); the Task 1 commit SHA for the manifest's `treatment` row; the evals harness paths named in Global Constraints.
+- Produces: `manifest.tsv` (two-field rows `harness<TAB>sha`, `control<TAB>sha`, `treatment<TAB>sha`, `model<TAB>claude-opus-5`, then one four-field `arm<TAB>scenario<TAB>repeat<TAB>proc` row per launch, proc `p<n>`); `launch-all.sh manifest.tsv [max]`; `logs/measure-launch.sh arm scenario repeat proc` (proc `p<n>` for a manifest row, `r<n>` for a rerun; it writes `logs/<arm>-<scenario>-<proc>.log` with `root=<sha> root_clean=0` and `harness_pin=<sha> evals_head=<sha> harness_paths_identical=yes` header lines that `analyze.py` requires); `analyze.py` writing `runs.json` and printing the table, exit 1 with `DESIGN ERROR:` on any deviation (a manifest row without a log, a log that is neither a manifest row nor a rerun, a repeat count that differs, a missing pin, a rerun not in `reruns.tsv`, a replacement without a log or of another arm or scenario, a trial replaced twice); `reruns.tsv` (`original<TAB>replacement`, `#` comments).
 
 - [ ] **Step 1: Write the README**
 
@@ -119,7 +119,7 @@ Indeterminate trials re-run once, recorded in `reruns.tsv`. Logs under
 
 - [ ] **Step 2: Write `manifest.tsv`**
 
-Tab-separated. `<EVALS_COMMIT>` is filled by the controller at Task 3 Step 1 with `git rev-parse HEAD` of the evals clone at that moment; `<TASK_1_COMMIT>` is Task 1's full SHA. Until both are filled, `launch-all.sh` refuses to run.
+Tab-separated. `<EVALS_COMMIT>` is filled by the controller at Task 3 Step 1 with the evals commit that pins the harness (Task 2's commit: the last commit that touched the harness paths or later, as long as the harness paths are identical to it); `<TASK_1_COMMIT>` is Task 1's full SHA. Until both are full SHAs, `measure-launch.sh` refuses to run and `analyze.py` reports a design error.
 
 ```
 harness	<EVALS_COMMIT>
@@ -162,37 +162,49 @@ treatment	brainstorming-router-escalates-b5-prefs-storage	5	1
 
 ```bash
 #!/usr/bin/env bash
-# measure-launch.sh <arm> <scenario> <repeat> <proc-id>
-# Runs one quorum process for the calibration and writes
-# logs/<arm>-<scenario>-p<proc-id>.log with the roots' commits and cleanliness,
-# the harness commit, the time, the exact command, and quorum's output. The last
-# line is DONE only when quorum exited 0; otherwise it is FAILED <code>, which
-# analyze.py treats as a design error rather than a smaller sample.
+# measure-launch.sh <arm> <scenario> <repeat> <proc>
+# Runs one quorum process for the calibration after checking the manifest's
+# pins: the arm's root at its commit with a clean tree, and the evals clone with
+# harness paths identical to the pinned harness commit (evidence commits may
+# follow the pin; harness code may not) and no changes outside evidence/.
+# Writes logs/<arm>-<scenario>-<proc>.log (proc is p<n> for a manifest row or
+# r<n> for a rerun) with the pins, the time, the exact command, and quorum's
+# output. The last line is DONE only when quorum exited 0, 1, or 2 (a pass, a
+# fail, or an indeterminate are measurements); anything else is FAILED <code>.
 set -uo pipefail
-arm="$1"; scen="$2"; rep="$3"; pid="$4"
+arm="$1"; scen="$2"; rep="$3"; proc="$4"
 EV=/Users/johnss51/Development/agents/hyperpowers/evals
 E="$EV/evidence/2026-09-16-brainstorming-trigger-calibration"
+HARNESS_PATHS="src scenarios coding-agents package.json bun.lock"
 case "$arm" in
   control) root=/Users/johnss51/Development/agents/hyperpowers/.worktrees/external-workflow-adoption ;;
   treatment) root=/Users/johnss51/Development/agents/hyperpowers/.worktrees/brainstorming-trigger ;;
   *) echo "arm must be control or treatment" >&2; exit 2 ;;
 esac
+case "$proc" in p[0-9]|p[0-9][0-9]|r[0-9]|r[0-9][0-9]) ;; *) echo "proc must be p<n> or r<n>" >&2; exit 2 ;; esac
+pin() { awk -F '\t' -v key="$1" 'NF == 2 && $1 == key { print $2 }' "$E/manifest.tsv"; }
+root_pin=$(pin "$arm"); harness_pin=$(pin harness)
+case "$root_pin$harness_pin" in *'<'*|'') echo "manifest.tsv is not filled in" >&2; exit 1 ;; esac
+[ "$(git -C "$root" rev-parse HEAD)" = "$root_pin" ] || { echo "$arm root is not at $root_pin" >&2; exit 1; }
+[ -z "$(git -C "$root" status --short)" ] || { echo "$arm root has uncommitted changes" >&2; exit 1; }
 cd "$EV" || exit 1
+git cat-file -e "$harness_pin^{commit}" 2>/dev/null || { echo "harness pin $harness_pin does not resolve" >&2; exit 1; }
+# shellcheck disable=SC2086
+git diff --quiet "$harness_pin" HEAD -- $HARNESS_PATHS || { echo "harness paths differ from $harness_pin" >&2; exit 1; }
+# shellcheck disable=SC2086
+[ -z "$(git status --short -- $HARNESS_PATHS)" ] || { echo "harness paths have uncommitted changes" >&2; exit 1; }
 export SUPERPOWERS_ROOT="$root"
-log="$E/logs/$arm-$scen-p$pid.log"
+log="$E/logs/$arm-$scen-$proc.log"
 {
-  echo "arm=$arm scenario=$scen repeat=$rep proc=$pid"
-  echo "\$ git -C \$SUPERPOWERS_ROOT rev-parse HEAD"; git -C "$SUPERPOWERS_ROOT" rev-parse HEAD
-  echo "\$ git -C \$SUPERPOWERS_ROOT status --short | wc -l"; git -C "$SUPERPOWERS_ROOT" status --short | wc -l
-  echo "\$ git rev-parse HEAD"; git rev-parse HEAD
+  echo "arm=$arm scenario=$scen repeat=$rep proc=$proc"
+  echo "root=$root_pin root_clean=0"
+  echo "harness_pin=$harness_pin evals_head=$(git rev-parse HEAD) harness_paths_identical=yes"
   date -u +%Y-%m-%dT%H:%M:%SZ
   echo "\$ SLASH_COMMAND_TOOL_CHAR_BUDGET=20000 bun run quorum run scenarios/$scen --coding-agent claude-auto --repeat $rep"
   SLASH_COMMAND_TOOL_CHAR_BUDGET=20000 bun run quorum run "scenarios/$scen" --coding-agent claude-auto --repeat "$rep"
   code=$?
   echo "EXIT=$code"; date -u +%Y-%m-%dT%H:%M:%SZ
-  # quorum exits 1 when any trial failed and 2 when any was indeterminate; both
-  # are measurements, not launch failures. Anything else is a broken launch.
-  case "$code" in 0|1|2) echo "DONE $arm $scen p$pid" ;; *) echo "FAILED $code $arm $scen p$pid" ;; esac
+  case "$code" in 0|1|2) echo "DONE $arm $scen $proc" ;; *) echo "FAILED $code $arm $scen $proc" ;; esac
 } > "$log" 2>&1
 ```
 
@@ -201,33 +213,26 @@ log="$E/logs/$arm-$scen-p$pid.log"
 ```bash
 #!/usr/bin/env bash
 # launch-all.sh <manifest.tsv> [max-concurrent]
-# Runs every line of the manifest (arm<TAB>scenario<TAB>repeat<TAB>proc) through
-# measure-launch.sh, at most N at a time (default 8), and waits for all of them.
-# Refuses to start unless both roots are at their manifest commits with clean
-# trees and the harness is at its manifest commit.
+# Runs every four-field row of the manifest (arm, scenario, repeat, proc)
+# through logs/measure-launch.sh, at most N at a time (default 8), and waits.
+# measure-launch.sh does the pin checks for every launch, so a row that cannot
+# run refuses on its own; this script only schedules and reports.
 set -uo pipefail
 manifest="$1"; max="${2:-8}"
 E=/Users/johnss51/Development/agents/hyperpowers/evals/evidence/2026-09-16-brainstorming-trigger-calibration
-EV=/Users/johnss51/Development/agents/hyperpowers/evals
-expect() { # <repo> <sha> <label>
-  local have; have=$(git -C "$1" rev-parse HEAD)
-  [ "$have" = "$2" ] || { echo "$3 is at $have, manifest says $2" >&2; exit 1; }
-  [ -z "$(git -C "$1" status --short)" ] || { echo "$3 has uncommitted changes" >&2; exit 1; }
-}
-expect "$EV" "$(grep '^harness' "$E/manifest.tsv" | cut -f2)" "harness"
-expect /Users/johnss51/Development/agents/hyperpowers/.worktrees/external-workflow-adoption "$(grep '^control' "$E/manifest.tsv" | cut -f2)" "control root"
-expect /Users/johnss51/Development/agents/hyperpowers/.worktrees/brainstorming-trigger "$(grep '^treatment' "$E/manifest.tsv" | cut -f2)" "treatment root"
-running=0
+[ -f "$manifest" ] || { echo "no manifest at $manifest" >&2; exit 1; }
+launched=0
 while IFS=$'\t' read -r arm scen rep proc; do
   case "$arm" in control|treatment) ;; *) continue ;; esac
+  [ -n "$proc" ] || continue
   while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$max" ]; do sleep 15; done
   bash "$E/logs/measure-launch.sh" "$arm" "$scen" "$rep" "$proc" &
-  running=$((running + 1)); echo "started $arm $scen x$rep p$proc ($running launched) $(date -u +%H:%M:%SZ)"
+  launched=$((launched + 1)); echo "started $arm $scen x$rep $proc ($launched launched) $(date -u +%H:%M:%SZ)"
 done < "$manifest"
 wait
-failed=$(grep -L '^DONE' "$E"/logs/*.log 2>/dev/null | wc -l | tr -d ' ')
-echo "all launches finished; logs without DONE: $failed"
-[ "$failed" -eq 0 ]
+without_done=$(grep -L '^DONE ' "$E"/logs/*-p[0-9]*.log 2>/dev/null | wc -l | tr -d ' ')
+echo "all launches finished; manifest logs without DONE: $without_done"
+[ "$without_done" -eq 0 ]
 ```
 
 - [ ] **Step 5: Write `analyze.py`**
@@ -238,11 +243,11 @@ echo "all launches finished; logs without DONE: $failed"
 
 Reads ``manifest.tsv`` (the declared design: harness commit, the two roots'
 commits, the model, and one trial row per launch), the per-process logs under
-``logs/``, and ``reruns.tsv`` (original run -> replacement run). The expected
-brainstorming listing line per arm is rendered from each root's
-``skills/brainstorming/SKILL.md`` description. Every trial collapses to
-one outcome. Any deviation from the declared design is an error, not a skipped
-row. Writes ``runs.json`` and prints the per-arm table.
+``logs/``, and ``reruns.tsv`` (original run -> replacement run). Every log
+must be a manifest row or a declared rerun, carry the pins the launcher wrote,
+and hold exactly its runs; every trial collapses to one outcome. Any deviation
+from the declared design is an error, not a skipped row. Writes ``runs.json``
+and prints the per-arm table.
 """
 
 from __future__ import annotations
@@ -258,8 +263,21 @@ from dataclasses import asdict, dataclass
 
 EV = "/Users/johnss51/Development/agents/hyperpowers/evals"
 E = os.path.join(EV, "evidence/2026-09-16-brainstorming-trigger-calibration")
+ROOTS = {
+    "control": "/Users/johnss51/Development/agents/hyperpowers/.worktrees/external-workflow-adoption",
+    "treatment": "/Users/johnss51/Development/agents/hyperpowers/.worktrees/brainstorming-trigger",
+}
 RUN_DIR_RE = re.compile(r"run-dir\s+(\S+)")
-LOG_RE = re.compile(r"(control|treatment)-(.+)-p\d+\.log")
+LOG_RE = re.compile(r"(control|treatment)-(.+)-([pr]\d+)\.log")
+HEADER_RE = re.compile(
+    r"^arm=(\S+) scenario=(\S+) repeat=(\d+) proc=(\S+)$", re.MULTILINE
+)
+ROOT_RE = re.compile(r"^root=([0-9a-f]{40}) root_clean=0$", re.MULTILINE)
+HARNESS_RE = re.compile(
+    r"^harness_pin=([0-9a-f]{40}) evals_head=[0-9a-f]{40} harness_paths_identical=yes$",
+    re.MULTILINE,
+)
+SHA_RE = re.compile(r"[0-9a-f]{40}")
 BRAINSTORMING_LINE = "- hyperpowers:brainstorming"
 
 
@@ -284,16 +302,10 @@ class DesignError(Exception):
     """The observed runs do not match the declared design."""
 
 
-ROOTS = {
-    "control": "/Users/johnss51/Development/agents/hyperpowers/.worktrees/external-workflow-adoption",
-    "treatment": "/Users/johnss51/Development/agents/hyperpowers/.worktrees/brainstorming-trigger",
-}
-
-
 def read_manifest() -> dict:
-    """Parse manifest.tsv into commits, the model, and expected trial counts."""
+    """Parse manifest.tsv into commits, the model, the launch rows, and expected counts."""
 
-    manifest: dict = {"trials": {}, "commits": {}, "model": ""}
+    manifest: dict = {"trials": {}, "commits": {}, "model": "", "rows": {}}
     with open(os.path.join(E, "manifest.tsv"), encoding="utf-8") as handle:
         for raw in handle:
             line = raw.rstrip("\n")
@@ -305,16 +317,28 @@ def read_manifest() -> dict:
             elif cells[0] == "model" and len(cells) == 2:
                 manifest["model"] = cells[1]
             elif cells[0] in ("control", "treatment") and len(cells) == 4:
-                arm, scenario, repeat = cells[0], cells[1], int(cells[2])
+                arm, scenario, repeat, proc = (
+                    cells[0],
+                    cells[1],
+                    int(cells[2]),
+                    cells[3],
+                )
+                if (arm, scenario, proc) in manifest["rows"]:
+                    raise DesignError(
+                        f"manifest.tsv: duplicate row {arm} {scenario} {proc}"
+                    )
+                manifest["rows"][(arm, scenario, proc)] = repeat
                 manifest["trials"].setdefault(scenario, {}).setdefault(arm, 0)
                 manifest["trials"][scenario][arm] += repeat
             else:
                 raise DesignError(f"manifest.tsv: unreadable line {line!r}")
     for key in ("harness", "control", "treatment"):
-        if key not in manifest["commits"]:
-            raise DesignError(f"manifest.tsv: no {key} commit")
+        if not SHA_RE.fullmatch(manifest["commits"].get(key, "")):
+            raise DesignError(f"manifest.tsv: {key} commit missing or not a full sha")
     if not manifest["model"]:
         raise DesignError("manifest.tsv: no model")
+    if not manifest["rows"]:
+        raise DesignError("manifest.tsv: no launch rows")
     return manifest
 
 
@@ -395,26 +419,65 @@ def token_total(run_dir: str) -> int | None:
     return int(sum(v for v in usage.values() if isinstance(v, (int, float))))
 
 
-def read_logs() -> list[tuple[str, str, str, str]]:
-    rows: list[tuple[str, str, str, str]] = []
+def read_logs(manifest: dict) -> list[tuple[str, str, str, bool]]:
+    """Return (arm, scenario, run dir, is_rerun) for every run of every valid log."""
+
+    rows: list[tuple[str, str, str, bool]] = []
+    seen_rows: set[tuple[str, str, str]] = set()
     for log in sorted(glob.glob(os.path.join(E, "logs", "*.log"))):
         match = LOG_RE.match(os.path.basename(log))
         if not match:
             continue
+        arm, scenario, proc = match.group(1), match.group(2), match.group(3)
         with open(log, encoding="utf-8", errors="replace") as handle:
             text = handle.read()
+        header = HEADER_RE.search(text)
+        if not header or (header.group(1), header.group(2), header.group(4)) != (
+            arm,
+            scenario,
+            proc,
+        ):
+            raise DesignError(f"{log}: header does not match the file name")
+        repeat = int(header.group(3))
+        root = ROOT_RE.search(text)
+        if not root or root.group(1) != manifest["commits"][arm]:
+            raise DesignError(
+                f"{log}: root pin missing or not the manifest's {arm} commit"
+            )
+        harness = HARNESS_RE.search(text)
+        if not harness or harness.group(1) != manifest["commits"]["harness"]:
+            raise DesignError(f"{log}: harness pin missing or not the manifest's")
         if "\nDONE " not in text:
             raise DesignError(
                 f"{log}: the launch did not finish cleanly (no DONE line)"
             )
-        for found in RUN_DIR_RE.finditer(text):
-            rows.append(
-                (match.group(1), match.group(2), found.group(1).rstrip("/"), log)
-            )
+        is_rerun = proc.startswith("r")
+        if is_rerun:
+            if repeat != 1:
+                raise DesignError(f"{log}: a rerun log must have repeat=1")
+        else:
+            expected_repeat = manifest["rows"].get((arm, scenario, proc))
+            if expected_repeat is None:
+                raise DesignError(f"{log}: not a manifest row")
+            if expected_repeat != repeat:
+                raise DesignError(
+                    f"{log}: repeat {repeat}, manifest says {expected_repeat}"
+                )
+            seen_rows.add((arm, scenario, proc))
+        found = [m.group(1).rstrip("/") for m in RUN_DIR_RE.finditer(text)]
+        if len(found) != repeat:
+            raise DesignError(f"{log}: {len(found)} runs recorded, repeat was {repeat}")
+        for run_dir in found:
+            rows.append((arm, scenario, run_dir, is_rerun))
+    missing = set(manifest["rows"]) - seen_rows
+    if missing:
+        raise DesignError(f"manifest rows without a log: {sorted(missing)}")
     return rows
 
 
 def read_reruns() -> dict[str, str]:
+    """replacement run name -> original run name."""
+
     path = os.path.join(E, "reruns.tsv")
     replaced: dict[str, str] = {}
     if not os.path.exists(path):
@@ -424,6 +487,8 @@ def read_reruns() -> dict[str, str]:
             if not line.strip() or line.startswith("#"):
                 continue
             original, replacement = line.split()[:2]
+            if replacement in replaced:
+                raise DesignError(f"reruns.tsv: {replacement} listed twice")
             replaced[replacement] = original
     return replaced
 
@@ -432,13 +497,19 @@ def build_runs(manifest: dict) -> list[Run]:
     replaced = read_reruns()
     runs: list[Run] = []
     seen: set[str] = set()
-    for arm, scenario, run_dir, log in read_logs():
+    for arm, scenario, run_dir, is_rerun in read_logs(manifest):
         if not os.path.isabs(run_dir):
             run_dir = os.path.join(EV, run_dir)
         name = os.path.basename(run_dir)
         if name in seen:
-            raise DesignError(f"{name}: listed twice ({log})")
+            raise DesignError(f"{name}: listed twice")
         seen.add(name)
+        if is_rerun and name not in replaced:
+            raise DesignError(f"{name}: a rerun not listed in reruns.tsv")
+        if not is_rerun and name in replaced:
+            raise DesignError(
+                f"{name}: listed as a replacement but launched as a manifest row"
+            )
         verdict_path = os.path.join(run_dir, "verdict.json")
         if not os.path.exists(verdict_path):
             raise DesignError(f"{name}: no verdict.json")
@@ -468,6 +539,11 @@ def build_runs(manifest: dict) -> list[Run]:
                 replaced.get(name),
             )
         )
+    for replacement in replaced:
+        if replacement not in seen:
+            raise DesignError(
+                f"reruns.tsv names a replacement with no log: {replacement}"
+            )
     return runs
 
 
@@ -475,12 +551,22 @@ def collapse(runs: list[Run]) -> list[Run]:
     """One outcome per trial: a replacement stands in for its original."""
 
     by_name = {run.run: run for run in runs}
-    replaced_originals = {run.replaces for run in runs if run.replaces}
-    for original in replaced_originals:
-        if original not in by_name:
-            raise DesignError(f"reruns.tsv names an unknown original {original}")
-        if by_name[original].final != "indeterminate":
-            raise DesignError(f"{original} was replaced but was not indeterminate")
+    replaced_originals: set[str] = set()
+    for run in runs:
+        if not run.replaces:
+            continue
+        original = by_name.get(run.replaces)
+        if original is None:
+            raise DesignError(f"reruns.tsv names an unknown original {run.replaces}")
+        if original.final != "indeterminate":
+            raise DesignError(f"{run.replaces} was replaced but was not indeterminate")
+        if (original.arm, original.scenario) != (run.arm, run.scenario):
+            raise DesignError(f"{run.run} replaces a trial of another arm or scenario")
+        if run.replaces in replaced_originals:
+            raise DesignError(
+                f"{run.replaces} was replaced twice; the rule is one rerun"
+            )
+        replaced_originals.add(run.replaces)
     return [run for run in runs if run.run not in replaced_originals]
 
 
@@ -569,7 +655,9 @@ def main() -> int:
                 )
             )
     print(
-        "\ndesign checks passed: one payload hash, one listing outside the brainstorming line, expected lines per arm, expected counts"
+        "\ndesign checks passed: every manifest row logged once with its pins, "
+        "one payload hash, one listing outside the brainstorming line, "
+        "expected brainstorming line per arm, expected counts"
     )
     return 0
 
@@ -605,31 +693,32 @@ git commit -m "evidence: manifest, launcher and fail-closed analysis for the bra
 
 - [ ] **Step 1: Controller fills the manifest and launches (not an implementer)**
 
-From the evals clone: replace `<TASK_1_COMMIT>` with `git -C /Users/johnss51/Development/agents/hyperpowers/.worktrees/brainstorming-trigger rev-parse HEAD` and `<EVALS_COMMIT>` with `git rev-parse HEAD` (both trees clean), commit `manifest.tsv` alone (`git commit -m "evidence: pin the calibration's harness and treatment commits"`), and re-read `git rev-parse HEAD` — that new commit is NOT the harness value; the harness row names the commit the runs are taken at, so fill it with the SHA after this commit in a second one-line commit if they differ, then verify `launch-all.sh` accepts the tree. Then run, from the evals clone, in the background with a log:
+From the evals clone with a clean tree: replace `<TASK_1_COMMIT>` with `git -C /Users/johnss51/Development/agents/hyperpowers/.worktrees/brainstorming-trigger rev-parse HEAD` and `<EVALS_COMMIT>` with `git rev-parse HEAD` (Task 2's commit or later; it pins the harness paths, and the manifest commit that follows does not touch them), commit `manifest.tsv` alone (`git commit -m "evidence: pin the calibration's harness and treatment commits"`), then confirm the pin holds: `git diff --quiet <EVALS_COMMIT> HEAD -- src scenarios coding-agents package.json bun.lock && echo pinned`. Then run, from the evals clone, in the background with a log:
 
 ```bash
 E=evidence/2026-09-16-brainstorming-trigger-calibration
 nohup bash $E/launch-all.sh $E/manifest.tsv 8 > $E/logs/launch-all.out 2>&1 &
 ```
 
-Wait in bounded stretches (`sleep 300` at most per check; never poll faster) until `launch-all.out` ends with `all launches finished; logs without DONE: 0`. A non-zero count means a broken launch: read that log, fix the cause, delete only that log's run directories from consideration by removing the log, and relaunch that row alone with `bash $E/logs/measure-launch.sh <arm> <scenario> 5 <proc>`.
+Wait in bounded stretches (`sleep 300` at most per check; never poll faster) until `launch-all.out` ends with `all launches finished; manifest logs without DONE: 0`. A non-zero count means a broken launch: read that log, fix the cause, move the log to `logs/failed/` (the analysis ignores that directory and will report the manifest row as missing until it is relaunched), and relaunch that row alone with `bash $E/logs/measure-launch.sh <arm> <scenario> 5 <proc>`, which re-checks every pin.
 
 - [ ] **Step 2: Controller re-runs indeterminates once**
 
-Run `python3 $E/analyze.py`; it fails closed until counts match, so first list indeterminates directly: `grep -l 'final *indeterminate' $E/logs/*.log` and, per log, the `run-dir` of each indeterminate trial. For each, launch one replacement: `bash $E/logs/measure-launch.sh <arm> <scenario> 1 r<k>` (k = 1, 2, ...), then append `<original-run-name><TAB><replacement-run-name>` to `$E/reruns.tsv` (create it with a first line `# original<TAB>replacement` if absent). Replacements that are indeterminate again stay in `reruns.tsv` and are excluded from the rate by the analysis; do not re-run a trial twice.
+List indeterminates directly: `grep -l 'final *indeterminate' $E/logs/*-p*.log` and, per log, the `run-dir` of each indeterminate trial. For each, launch one replacement with a fresh rerun id: `bash $E/logs/measure-launch.sh <arm> <scenario> 1 r<k>` (k = 1, 2, ... unique across the campaign), wait for its log to end with `DONE`, read its `run-dir`, and append `<original-run-name><TAB><replacement-run-name>` to `$E/reruns.tsv` (create it with a first line `# original<TAB>replacement` if absent). A replacement that is indeterminate again stays in `reruns.tsv` and is excluded from the rate by the analysis; do not re-run a trial twice (the analysis rejects a second replacement).
 
 - [ ] **Step 3: Analyze**
 
-Run: `python3 $E/analyze.py | tee $E/analysis-table.txt`
-Expected: exit 0, one row per scenario and arm with the manifest's counts, the closing line `design checks passed: ...`. Any `DESIGN ERROR:` is a stop: fix the cause (a missing rerun row, a broken launch), never the check.
+Run: `python3 $E/analyze.py > $E/analysis-table.txt; status=$?; cat $E/analysis-table.txt; [ "$status" -eq 0 ] && echo ANALYSIS OK` (no pipe: `tee` would hide the exit status).
+Expected: `ANALYSIS OK`, one row per scenario and arm with the manifest's counts, the closing line `design checks passed: ...`. Any `DESIGN ERROR:` (printed on stderr; `analysis-table.txt` is then not a table) is a stop: fix the cause (a missing rerun row, a broken launch), never the check.
 
 - [ ] **Step 4: Copy the runs, strip them, and check the staged tree**
 
-For every run in `runs.json` (including replaced originals), copy its directory from `results/<run>` to `$E/runs-<scenario>/<arm>/<run>` (`cp -R`), run `scripts/strip-runs` over each copy, rename any nested `.git` directory or file to `git-dir`/`git-dir-file`, then stage with `git add -f $E` and check the staged tree before committing:
+For every run in `runs.json` (including replaced originals), copy its directory from `results/<run>` to `$E/runs-<scenario>/<arm>/<run>` (`cp -R`), run `scripts/strip-runs --min-age-minutes 0` over each copy (the default skips directories touched in the last hour, which a fresh copy always is), rename any nested `.git` directory or file to `git-dir`/`git-dir-file`, then stage with `git add -f $E` and check the staged tree before committing:
 
 ```bash
-git diff --cached --raw | grep -c ' 160000 '                    # must print 0
-git grep --cached -l -E 'peerToken|prj-dcpgenai' -- "$E" | wc -l  # must print 0
+git diff --cached --raw | grep -c ' 160000 '                                      # must print 0
+git grep --cached -l -E 'peerToken|prj-dcpgenai' -- "$E" | wc -l                    # must print 0
+git diff --cached --name-only | grep -c -E '\.claude-env$|\.key$|/sessions/'       # must print 0
 for r in "$E"/runs-*/*/*/; do
   git ls-files --cached "$r" | grep -q 'home/.claude/projects/.*\.jsonl$' || echo "NO TRANSCRIPT $r"
   git ls-files --cached "$r" | grep -q 'gauntlet-agent/.*result.json$' || echo "NO RESULT $r"

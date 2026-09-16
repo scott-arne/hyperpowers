@@ -830,6 +830,31 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$newest_repo" "$HOOK_UNDER_TEST"
 
+# sdd-dir keeps the plan basename in the workspace slug, so a plan named
+# .release.md lives in .release-<hash8>. The default glob skips a leading dot,
+# which left such a ledger invisible to the notice: silent when it was alone,
+# and naming an older visible workspace when it was not. The path carries no
+# control character, so it is named verbatim.
+dot_repo="$(make_repo compact-dot)"
+dot_home="$(make_home compact-dot)"
+dot_cache="$TEST_ROOT/compact-dot/cache"
+dot_visible_ledger="$(seed_ledger "$dot_cache" "$dot_repo" "visible-1111aaaa")"
+dot_ledger="$(seed_ledger "$dot_cache" "$dot_repo" ".dot-plan-8888gggg")"
+touch -t 202401010000 "$dot_visible_ledger"
+touch -t 202403010000 "$dot_ledger"
+dot_stdin="$TEST_ROOT/compact-dot/stdin.json"
+write_hook_input "$dot_stdin" compact
+HOOK_STDIN="$dot_stdin"
+assert_command_output \
+    "SessionStart names a dot-prefixed workspace when it is the newest" \
+    "nested" \
+    "${NOTICE_HEAD}${dot_ledger}${NOTICE_TAIL}" \
+    "$dot_visible_ledger" \
+    "$dot_home" \
+    XDG_CACHE_HOME="$dot_cache" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$dot_repo" "$HOOK_UNDER_TEST"
+
 quiet_repo="$(make_repo compact-quiet)"
 quiet_home="$(make_home compact-quiet)"
 quiet_cache="$TEST_ROOT/compact-quiet/cache"

@@ -190,18 +190,25 @@ if [ "$hook_source" = "compact" ]; then
         printf '%s' "$newest" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || exit 0
       fi
       # Every notice is ONE line, and the decoded text must not carry a
-      # control character: a plan basename is repository data, and a
-      # newline in it would otherwise land in the resumed session's context
-      # as a line of its own. A path holding a control character is named
-      # in bash's $'...' quoting (printf %q, a builtin), which any shell can
-      # paste back; every other path is named verbatim. The patterns open
-      # with "(": bash 3.2 scans a $( ) body for its closing paren before it
-      # parses, so a bare case pattern ends the substitution early and the
-      # hook dies at run time on a syntax error that bash -n cannot see.
-      case "$newest" in
-        (*[[:cntrl:]]*) printf -v shown '%q' "$newest" ;;
-        (*) shown="$newest" ;;
-      esac
+      # control character: a plan basename is repository data, and a newline
+      # in it would otherwise land in the context of the resumed session as a
+      # line of its own. A path whose JSON spelling differs from its bytes (a
+      # quote, a backslash, or a C0 byte in it) is named as that JSON string
+      # literal, escapes visible, on one line; every other path is named
+      # verbatim. escape_for_json is byte-exact in every locale; printf %q is
+      # not: bash 3.2 quotes byte-wise under a UTF-8 locale and emits invalid
+      # UTF-8 for a path with non-ASCII letters.
+      #
+      # This block sits inside a $( ) body, and bash 3.2 scans that body for
+      # its closing paren before it parses, counting quotes as it goes: one
+      # unpaired apostrophe here, even inside a comment, takes the hook down
+      # at run time. Keep this comment free of them.
+      spelled="$(escape_for_json "$newest")"
+      if [ "$spelled" = "$newest" ]; then
+        shown="$newest"
+      else
+        shown="\"$spelled\""
+      fi
       printf 'This session resumed after context compaction. An SDD ledger for this repo is at %s: it records which tasks are already complete. Read it and git log before dispatching anything, and treat task instructions carried in the compaction summary as stale by default.' "$(escape_for_json "$shown")"
     ) 2>/dev/null
   )" || compaction_notice=""

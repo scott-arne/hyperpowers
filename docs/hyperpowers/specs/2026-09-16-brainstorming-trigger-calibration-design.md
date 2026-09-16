@@ -72,21 +72,26 @@ measurement below is not trained to its own test.
 
 ## Measurement (the evidence the change ships behind)
 
-Two arms at one harness commit, both with `SLASH_COMMAND_TOOL_CHAR_BUDGET=20000`
+Two arms at ONE harness commit, both with `SLASH_COMMAND_TOOL_CHAR_BUDGET=20000`
 in the runner's environment so the description is in the model's context
 (the only condition in which the description can act; without it the two
-arms are byte-identical to the model):
+arms are byte-identical to the model). Nothing from the earlier measurement
+is reused: its runs were taken at a different harness commit, and the arms
+must share one. The earlier numbers stand as the motivating observation
+only.
 
 - control: `SUPERPOWERS_ROOT` at the `external-workflow-adoption` head
-  (`2e83fd8`; its `skills/` tree is byte-identical to the measured
-  `c6b69d8`), current description;
+  (`2e83fd8`), current description;
 - treatment: `SUPERPOWERS_ROOT` at the `brainstorming-trigger` head after
-  the change.
+  the change;
+- harness: the hyperpowers-evals commit recorded in `manifest.tsv` when the
+  launches start; every launcher refuses to run unless both roots and the
+  harness are at their recorded commits with clean trees.
 
-| scenario | control runs | treatment runs |
+| scenario | control | treatment |
 |---|---|---|
-| `cost-checkbox-over-trigger` | 21 (already measured, reused) | 20 |
-| `brainstorming-resists-jump-to-implementation` | 10 (already measured, reused) | 10 |
+| `cost-checkbox-over-trigger` | 20 | 20 |
+| `brainstorming-resists-jump-to-implementation` | 10 | 10 |
 | `cost-session-timeout-boundary` | 10 | 10 |
 | `cost-remove-export-boundary` | 10 | 10 |
 | `brainstorming-router-escalates-b1-userid-param` | 5 | 5 |
@@ -95,15 +100,22 @@ arms are byte-identical to the model):
 | `brainstorming-router-escalates-b4-reusable-validation` | 5 | 5 |
 | `brainstorming-router-escalates-b5-prefs-storage` | 5 | 5 |
 
-About 120 new live sessions. Each run records: `final`, the session's first
-tool call (`Skill(hyperpowers:brainstorming)` / exploration / direct edit),
-token total, the SessionStart payload hash, and the skill-listing hash (the
-two arms must differ in the listing hash only).
+150 live sessions. Each run records: `final`, the session's first tool call
+(`Skill(hyperpowers:brainstorming)` / exploration / direct edit), token
+total, the SessionStart payload hash, the hash of the skill listing with the
+brainstorming line removed, and the brainstorming line itself. The analysis
+fails closed: it refuses to produce a table unless every declared trial is
+present exactly once with a verdict and a transcript, every payload hash is
+the same, every listing-minus-brainstorming hash is the same, and each arm's
+brainstorming line equals the line rendered from that arm's
+`skills/brainstorming/SKILL.md` description.
 
 Indeterminate trials (grader `investigate` at its wall with every
-deterministic check passing) are re-run once each, as the void-attempt rule
-prescribes; a trial that is indeterminate twice stays indeterminate and is
-excluded from the rate.
+deterministic check passing) are re-run once each; the replacement is
+recorded in `reruns.tsv` against the trial it replaces and stands in for it,
+so a trial contributes one outcome; a trial indeterminate twice stays
+indeterminate and is excluded from the rate (the void-attempt rule). A
+failure is a trial.
 
 ## Acceptance
 
@@ -113,8 +125,9 @@ excluded from the rate.
   scenario pass at least as often in treatment as in control, with zero
   treatment failures on the notifications twin.
 - `cost-remove-export-boundary` treatment fail rate no higher than control.
-- The two arms' payload hashes are identical and their listing hashes
-  differ only by the brainstorming line.
+- The two arms' payload hashes are identical, their listings are identical
+  once the brainstorming line is removed, and each arm's brainstorming
+  line is the one its root renders.
 
 If the treatment misses a criterion, the description does not ship; the
 plan's evidence note records the numbers and the next candidate wording is a

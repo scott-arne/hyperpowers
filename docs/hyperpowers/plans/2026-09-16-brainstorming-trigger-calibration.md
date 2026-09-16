@@ -126,36 +126,36 @@ harness	<EVALS_COMMIT>
 control	2e83fd8f42417168cf3f12d5d99e1e484859a06d
 treatment	<TASK_1_COMMIT>
 model	claude-opus-5
-control	cost-checkbox-over-trigger	5	1
-control	cost-checkbox-over-trigger	5	2
-control	cost-checkbox-over-trigger	5	3
-control	cost-checkbox-over-trigger	5	4
-control	brainstorming-resists-jump-to-implementation	5	1
-control	brainstorming-resists-jump-to-implementation	5	2
-control	cost-session-timeout-boundary	5	1
-control	cost-session-timeout-boundary	5	2
-control	cost-remove-export-boundary	5	1
-control	cost-remove-export-boundary	5	2
-control	brainstorming-router-escalates-b1-userid-param	5	1
-control	brainstorming-router-escalates-b2-config-module	5	1
-control	brainstorming-router-escalates-b3-logging	5	1
-control	brainstorming-router-escalates-b4-reusable-validation	5	1
-control	brainstorming-router-escalates-b5-prefs-storage	5	1
-treatment	cost-checkbox-over-trigger	5	1
-treatment	cost-checkbox-over-trigger	5	2
-treatment	cost-checkbox-over-trigger	5	3
-treatment	cost-checkbox-over-trigger	5	4
-treatment	brainstorming-resists-jump-to-implementation	5	1
-treatment	brainstorming-resists-jump-to-implementation	5	2
-treatment	cost-session-timeout-boundary	5	1
-treatment	cost-session-timeout-boundary	5	2
-treatment	cost-remove-export-boundary	5	1
-treatment	cost-remove-export-boundary	5	2
-treatment	brainstorming-router-escalates-b1-userid-param	5	1
-treatment	brainstorming-router-escalates-b2-config-module	5	1
-treatment	brainstorming-router-escalates-b3-logging	5	1
-treatment	brainstorming-router-escalates-b4-reusable-validation	5	1
-treatment	brainstorming-router-escalates-b5-prefs-storage	5	1
+control	cost-checkbox-over-trigger	5	p1
+control	cost-checkbox-over-trigger	5	p2
+control	cost-checkbox-over-trigger	5	p3
+control	cost-checkbox-over-trigger	5	p4
+control	brainstorming-resists-jump-to-implementation	5	p1
+control	brainstorming-resists-jump-to-implementation	5	p2
+control	cost-session-timeout-boundary	5	p1
+control	cost-session-timeout-boundary	5	p2
+control	cost-remove-export-boundary	5	p1
+control	cost-remove-export-boundary	5	p2
+control	brainstorming-router-escalates-b1-userid-param	5	p1
+control	brainstorming-router-escalates-b2-config-module	5	p1
+control	brainstorming-router-escalates-b3-logging	5	p1
+control	brainstorming-router-escalates-b4-reusable-validation	5	p1
+control	brainstorming-router-escalates-b5-prefs-storage	5	p1
+treatment	cost-checkbox-over-trigger	5	p1
+treatment	cost-checkbox-over-trigger	5	p2
+treatment	cost-checkbox-over-trigger	5	p3
+treatment	cost-checkbox-over-trigger	5	p4
+treatment	brainstorming-resists-jump-to-implementation	5	p1
+treatment	brainstorming-resists-jump-to-implementation	5	p2
+treatment	cost-session-timeout-boundary	5	p1
+treatment	cost-session-timeout-boundary	5	p2
+treatment	cost-remove-export-boundary	5	p1
+treatment	cost-remove-export-boundary	5	p2
+treatment	brainstorming-router-escalates-b1-userid-param	5	p1
+treatment	brainstorming-router-escalates-b2-config-module	5	p1
+treatment	brainstorming-router-escalates-b3-logging	5	p1
+treatment	brainstorming-router-escalates-b4-reusable-validation	5	p1
+treatment	brainstorming-router-escalates-b5-prefs-storage	5	p1
 ```
 
 - [ ] **Step 3: Write `logs/measure-launch.sh`**
@@ -214,25 +214,42 @@ log="$E/logs/$arm-$scen-$proc.log"
 #!/usr/bin/env bash
 # launch-all.sh <manifest.tsv> [max-concurrent]
 # Runs every four-field row of the manifest (arm, scenario, repeat, proc)
-# through logs/measure-launch.sh, at most N at a time (default 8), and waits.
-# measure-launch.sh does the pin checks for every launch, so a row that cannot
-# run refuses on its own; this script only schedules and reports.
+# through the launcher, at most N at a time (default 8), waits for every child,
+# and fails closed: a malformed row, a child that exits non-zero, or a manifest
+# row whose log is missing or does not end with DONE makes the exit status 1
+# and the closing line say so. LAUNCHER overrides the launcher path (the stub
+# test uses it); the default is logs/measure-launch.sh beside the manifest.
 set -uo pipefail
 manifest="$1"; max="${2:-8}"
-E=/Users/johnss51/Development/agents/hyperpowers/evals/evidence/2026-09-16-brainstorming-trigger-calibration
+E=$(cd "$(dirname "$manifest")" && pwd)
+launcher="${LAUNCHER:-$E/logs/measure-launch.sh}"
 [ -f "$manifest" ] || { echo "no manifest at $manifest" >&2; exit 1; }
-launched=0
+[ -x "$launcher" ] || [ -f "$launcher" ] || { echo "no launcher at $launcher" >&2; exit 1; }
+rows=(); pids=(); labels=(); bad=0
 while IFS=$'\t' read -r arm scen rep proc; do
   case "$arm" in control|treatment) ;; *) continue ;; esac
   [ -n "$proc" ] || continue
+  case "$proc" in p[0-9]|p[0-9][0-9]) ;; *) echo "malformed proc id '$proc' in row $arm $scen" >&2; bad=1; continue ;; esac
+  case "$rep" in [1-9]|[1-9][0-9]) ;; *) echo "malformed repeat '$rep' in row $arm $scen $proc" >&2; bad=1; continue ;; esac
+  rows+=("$arm-$scen-$proc")
   while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$max" ]; do sleep 15; done
-  bash "$E/logs/measure-launch.sh" "$arm" "$scen" "$rep" "$proc" &
-  launched=$((launched + 1)); echo "started $arm $scen x$rep $proc ($launched launched) $(date -u +%H:%M:%SZ)"
+  bash "$launcher" "$arm" "$scen" "$rep" "$proc" &
+  pids+=("$!"); labels+=("$arm $scen x$rep $proc"); echo "started $arm $scen x$rep $proc ($(date -u +%H:%M:%SZ))"
 done < "$manifest"
-wait
-without_done=$(grep -L '^DONE ' "$E"/logs/*-p[0-9]*.log 2>/dev/null | wc -l | tr -d ' ')
-echo "all launches finished; manifest logs without DONE: $without_done"
-[ "$without_done" -eq 0 ]
+[ "$bad" -eq 0 ] || { echo "manifest has malformed rows; nothing else is trusted" >&2; wait; exit 1; }
+[ "${#pids[@]}" -gt 0 ] || { echo "manifest has no launch rows" >&2; exit 1; }
+failed_children=0
+for i in "${!pids[@]}"; do
+  if ! wait "${pids[$i]}"; then echo "launcher exited non-zero: ${labels[$i]}" >&2; failed_children=$((failed_children + 1)); fi
+done
+missing=0
+for row in "${rows[@]}"; do
+  log="$E/logs/$row.log"
+  if [ ! -f "$log" ]; then echo "no log for $row" >&2; missing=$((missing + 1)); continue; fi
+  tail -n 1 "$log" | grep -q "^DONE " || { echo "log for $row does not end with DONE" >&2; missing=$((missing + 1)); }
+done
+echo "all launches finished; launchers non-zero: $failed_children; manifest rows without a DONE log: $missing"
+[ "$failed_children" -eq 0 ] && [ "$missing" -eq 0 ]
 ```
 
 - [ ] **Step 5: Write `analyze.py`**
@@ -247,7 +264,8 @@ commits, the model, and one trial row per launch), the per-process logs under
 must be a manifest row or a declared rerun, carry the pins the launcher wrote,
 and hold exactly its runs; every trial collapses to one outcome. Any deviation
 from the declared design is an error, not a skipped row. Writes ``runs.json``
-and prints the per-arm table.
+and prints the per-arm table. ``--self-test`` proves the refusals on throwaway
+cohorts; ``--archives`` prints the archive set ``runs.json`` implies.
 """
 
 from __future__ import annotations
@@ -765,9 +783,23 @@ def self_test() -> int:
     return 1 if failures else 0
 
 
+def print_archives() -> int:
+    """Print scenario/arm/run for every run in runs.json: the archive set Task 3 must stage."""
+
+    with open(os.path.join(E, "runs.json"), encoding="utf-8") as handle:
+        runs = json.load(handle)
+    if not isinstance(runs, list) or not runs:
+        raise DesignError("runs.json is missing or empty; run the analysis first")
+    for run in runs:
+        print(f"{run['scenario']}/{run['arm']}/{run['run']}")
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
         return self_test()
+    if len(sys.argv) > 1 and sys.argv[1] == "--archives":
+        return print_archives()
     manifest = read_manifest()
     runs = build_runs(manifest)
     trials = collapse(runs)
@@ -828,9 +860,32 @@ if __name__ == "__main__":
         sys.exit(1)
 ```
 
-- [ ] **Step 6: Check and commit in the evals clone**
+- [ ] **Step 6: Prove the launcher fails closed with a stub (no live run)**
 
-Run, each its own command, from the evals clone with `E=evidence/2026-09-16-brainstorming-trigger-calibration`: `chmod +x $E/analyze.py $E/launch-all.sh $E/logs/measure-launch.sh`; `bash -n $E/logs/measure-launch.sh $E/launch-all.sh`; `shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh`; `/Users/johnss51/.local/bin/ruff check $E/analyze.py`; `/Users/johnss51/.local/bin/ruff format --check $E/analyze.py`; `/Users/johnss51/.local/bin/mypy --ignore-missing-imports $E/analyze.py`; `python3 $E/analyze.py --self-test` must exit 0 and print one `accepted as expected` line and three `refused as expected` lines (an indeterminate never re-run; a replacement whose original was not indeterminate; a rerun absent from `reruns.tsv`); then `python3 $E/analyze.py` must exit 1 with `DESIGN ERROR:` naming the unfilled manifest (no logs exist yet). No live run is launched in this task.
+Write `logs/stub-launch.sh` (kept in the evidence directory so the check is repeatable):
+
+```bash
+#!/usr/bin/env bash
+E=$(cd "$(dirname "$0")" && pwd)
+case "$4" in p1) printf 'arm=%s\nDONE %s %s %s\n' "$1" "$1" "$2" "$4" > "$E/logs/$1-$2-$4.log" ;; p2) exit 3 ;; p3) printf 'arm=%s\nEXIT=9\nFAILED 9\n' "$1" > "$E/logs/$1-$2-$4.log" ;; esac
+```
+
+Then, under `$TMPDIR`, run the three checks with `LAUNCHER` pointing at the stub, each its own command:
+
+```bash
+#!/usr/bin/env bash
+T="$(mktemp -d)"; mkdir -p "$T/logs"; cp "$E/logs/stub-launch.sh" "$T/stub-launch.sh"; L="$E/launch-all.sh"
+printf 'harness\t%s\ncontrol\t%s\ntreatment\t%s\nmodel\tm\ncontrol\ts\t1\tp1\ncontrol\ts\t1\tp2\ncontrol\ts\t1\tp3\n' aaaa bbbb cccc > "$T/manifest.tsv"
+echo "--- one good row, one failed child, one log without DONE:"; LAUNCHER="$T/stub-launch.sh" bash "$L" "$T/manifest.tsv" 2 2>&1 | tail -3; echo "exit=${PIPESTATUS[0]}"
+printf 'harness\t%s\ncontrol\t%s\ntreatment\t%s\nmodel\tm\ncontrol\ts\t1\t1\n' aaaa bbbb cccc > "$T/manifest-bad.tsv"; echo "--- malformed proc id:"; LAUNCHER="$T/stub-launch.sh" bash "$L" "$T/manifest-bad.tsv" 2 2>&1 | tail -2; echo "exit=${PIPESTATUS[0]}"
+rm -f "$T"/logs/*; printf 'harness\t%s\ncontrol\t%s\ntreatment\t%s\nmodel\tm\ncontrol\ts\t1\tp1\n' aaaa bbbb cccc > "$T/manifest-good.tsv"; echo "--- one good row:"; LAUNCHER="$T/stub-launch.sh" bash "$L" "$T/manifest-good.tsv" 2 2>&1 | tail -1; echo "exit=${PIPESTATUS[0]}"
+```
+
+Expected, in order: exit 1 with `launchers non-zero: 1; manifest rows without a DONE log: 2`; exit 1 with `malformed proc id '1'`; exit 0 with `launchers non-zero: 0; manifest rows without a DONE log: 0`. Record all three outputs in the report.
+
+- [ ] **Step 7: Check and commit in the evals clone**
+
+Run, each its own command, from the evals clone with `E=evidence/2026-09-16-brainstorming-trigger-calibration`: `chmod +x $E/analyze.py $E/launch-all.sh $E/logs/measure-launch.sh $E/logs/stub-launch.sh`; `bash -n $E/logs/measure-launch.sh $E/launch-all.sh`; `shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh`; `/Users/johnss51/.local/bin/ruff check $E/analyze.py`; `/Users/johnss51/.local/bin/ruff format --check $E/analyze.py`; `/Users/johnss51/.local/bin/mypy --ignore-missing-imports $E/analyze.py`; `python3 $E/analyze.py --self-test` must exit 0 and print one `accepted as expected` line and three `refused as expected` lines (an indeterminate never re-run; a replacement whose original was not indeterminate; a rerun absent from `reruns.tsv`); then `python3 $E/analyze.py` must exit 1 with `DESIGN ERROR:` naming the unfilled manifest (no logs exist yet). No live run is launched in this task.
 
 ```bash
 git add -f evidence/2026-09-16-brainstorming-trigger-calibration
@@ -880,7 +935,7 @@ git diff --cached --name-only | grep -c -E '\.claude-env$|\.key$|/sessions/'    
 # The staged archive set must equal the run set in runs.json, and every archive
 # must carry a transcript and a grader result. Expected paths come from
 # runs.json, not from what happens to be on disk.
-python3 -c 'import json,sys; [print(f"{r[\"scenario\"]}/{r[\"arm\"]}/{r[\"run\"]}") for r in json.load(open(sys.argv[1]))]' "$E/runs.json" | sort > "$TMPDIR/expected-archives.txt"
+python3 "$E/analyze.py" --archives | sort > "$TMPDIR/expected-archives.txt" || { echo "could not derive the expected archive set"; exit 1; }
 git ls-files --cached "$E" | grep -o -E 'runs-[^/]+/(control|treatment)/[^/]+' | sed 's/^runs-//' | sort -u > "$TMPDIR/staged-archives.txt"
 diff "$TMPDIR/expected-archives.txt" "$TMPDIR/staged-archives.txt" && echo ARCHIVE SET OK     # must print ARCHIVE SET OK
 while IFS=/ read -r scenario arm run; do

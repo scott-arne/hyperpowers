@@ -6,6 +6,10 @@
 # state of the world the sweep could not determine must be reported as
 # unverifiable rather than acted on, and a broker that is retired must be asked
 # to shut down over its own protocol before it is signalled.
+#
+# It runs against the host's real process table, so every sweep below is fenced
+# to the pids this file spawned with --only-pids. Any sweep added here needs
+# that fence too: --state-root isolates the records, not the processes.
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -18,6 +22,23 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/broker-sweep.XXXXXX")"
 pids=""
 cleanup() { for p in $pids; do kill -KILL "$p" 2>/dev/null; done; chmod 755 "$T/locked" 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
+
+# The pid list every sweep in this file is fenced to: the brokers it spawned,
+# minus any this call names. Without it the scan reaches the whole host, and a
+# developer's own broker in a removed worktree is classified cwd-missing and
+# retired before anything asks whether a record names it.
+only() {
+  local skip=" $* " list="" p
+  for p in $pids; do
+    case "$skip" in *" $p "*) continue ;; esac
+    list="${list:+$list,}$p"
+  done
+  printf '%s' "$list"
+}
+# The sweep waits a minute before it will call an unrecorded broker
+# unreferenced. The clock-outs below were written against ten seconds, so pin
+# the window rather than make the suite sit through the default.
+export CODEX_BROKER_SWEEP_WINDOW_S=10
 
 # The fake broker writes its own pid: `$!` on a backgrounded compound command
 # names the intermediate subshell, so the pid the sweep prints would not match.
@@ -134,7 +155,7 @@ mkdir -p "$state/peer-2222222222222222"
 printf '{"endpoint":"unix:%s/peer.sock","pid":%s,"sessionDir":"%s"}\n' "$T" "$peer_pid" "$T" > "$state/peer-2222222222222222/broker.json"
 
 echo "Dry run"
-out="$(bash "$SWEEP" --state-root "$state" 2>&1)"; rc=$?
+out="$(bash "$SWEEP" --only-pids "$(only)" --state-root "$state" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && pass "dry run exits 0" || fail "dry run exits 0 (rc=$rc): $out"
 printf '%s\n' "$out" | grep -q "stale-record .*stale-1111111111111111" && pass "a record whose endpoint is dead is reported as stale" || fail "stale record reported: $out"
 printf '%s\n' "$out" | grep -q "unknown-record .*malformed-4444444444444444" && pass "a record that does not parse is reported as unknown, not stale" || fail "malformed record reported as unknown: $out"
@@ -164,19 +185,19 @@ state_clean="$T/state-clean"
 cp -R "$state" "$state_clean"
 rm -rf "$state_clean/malformed-4444444444444444"
 for _ in $(seq 1 30); do [ $(( $(date +%s) - spawn_epoch )) -ge 11 ] && break; sleep 1; done
-out="$(bash "$SWEEP" --include-unreferenced --state-root "$state_clean" 2>&1)"; rc=$?
+out="$(bash "$SWEEP" --only-pids "$(only)" --include-unreferenced --state-root "$state_clean" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && pass "--include-unreferenced exits 0" || fail "--include-unreferenced exits 0 (rc=$rc): $out"
 printf '%s\n' "$out" | grep -q "orphan-broker pid=$unref_pid .*reason=unreferenced" && pass "--include-unreferenced reports the unreferenced broker" || fail "--include-unreferenced must report the unreferenced broker: $out"
 printf '%s\n' "$out" | grep -q "orphan-broker pid=$peer_pid" && fail "--include-unreferenced must still leave the referenced peer alone" || pass "--include-unreferenced still leaves the referenced peer alone"
 
 echo "Incomplete process inspection"
 mkdir -p "$T/bin"; printf '#!/bin/sh\nexit 1\n' > "$T/bin/ps"; chmod +x "$T/bin/ps"
-out="$(PATH="$T/bin:$PATH" bash "$SWEEP" --state-root "$state" 2>&1)"; rc=$?
+out="$(PATH="$T/bin:$PATH" bash "$SWEEP" --only-pids "$(only)" --state-root "$state" 2>&1)"; rc=$?
 printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$orphan_pid .*reason=inspect-failed" && pass "a broker that cannot be inspected is reported, not dropped" || fail "inspect failure reported: $out"
 printf '%s\n' "$out" | grep -qi "incomplete" && pass "an incomplete sweep says so" || fail "an incomplete sweep must say so: $out"
 
 echo "Retirement"
-out="$(bash "$SWEEP" --kill --state-root "$state" 2>&1)"; rc=$?
+out="$(bash "$SWEEP" --only-pids "$(only)" --kill --state-root "$state" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && pass "--kill exits 0 when every retirement succeeds" || fail "--kill exits 0 (rc=$rc): $out"
 sleep 1
 [ ! -f "$state/stale-1111111111111111/broker.json" ] && pass "--kill clears the stale record" || fail "--kill must clear the stale record"
@@ -207,7 +228,7 @@ echo "Unreferenced retirement requires a complete inventory"
 # The companion writes broker.json with a plain writeFileSync, so a record can
 # be caught half-written. A record the sweep could not read may be the record
 # for the very broker it is about to call unreferenced.
-out="$(bash "$SWEEP" --include-unreferenced --kill --state-root "$state" 2>&1)"; rc=$?
+out="$(bash "$SWEEP" --only-pids "$(only)" --include-unreferenced --kill --state-root "$state" 2>&1)"; rc=$?
 sleep 1
 printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$unref_pid .*reason=unreferenced-inventory-incomplete" && pass "an unreadable record fences unreferenced retirement" || fail "unreferenced fence reported: $out"
 printf '%s\n' "$out" | grep -q "orphan-broker pid=$unref_pid" && fail "a broker must not be called unreferenced while a record is unreadable" || pass "a broker is not called unreferenced while a record is unreadable"
@@ -230,7 +251,7 @@ esac
 exec /bin/ps "\$@"
 PSEOF
 chmod +x "$T/bin2/ps"
-out="$(PATH="$T/bin2:$PATH" bash "$SWEEP" --kill --state-root "$state" 2>&1)"; rc=$?
+out="$(PATH="$T/bin2:$PATH" bash "$SWEEP" --only-pids "$(only)" --kill --state-root "$state" 2>&1)"; rc=$?
 sleep 1
 printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapped_pid .*reason=identity-changed" && pass "a pid whose command no longer looks like a broker is not signalled" || fail "identity change reported: $out"
 kill -0 "$swapped_pid" 2>/dev/null && pass "--kill leaves a pid that stopped looking like a broker" || fail "--kill signalled a pid that no longer looked like a broker"
@@ -254,7 +275,7 @@ esac
 exec /bin/ps "\$@"
 PSEOF
 chmod +x "$T/bin3/ps"
-out="$(PATH="$T/bin3:$PATH" bash "$SWEEP" --kill --state-root "$state" 2>&1)"; rc=$?
+out="$(PATH="$T/bin3:$PATH" bash "$SWEEP" --only-pids "$(only)" --kill --state-root "$state" 2>&1)"; rc=$?
 sleep 1
 kill -0 "$swapkill_pid" 2>/dev/null && pass "the fallback signal is withheld from a pid that stopped looking like a broker" || fail "--kill sent the fallback signal to a pid that no longer looked like a broker"
 printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapkill_pid .*reason=identity-changed" && pass "an identity change between signals is reported" || fail "identity change between signals reported: $out"
@@ -278,7 +299,7 @@ esac
 exec /bin/ps "\$@"
 PSEOF
 chmod +x "$T/bin4/ps"
-out="$(PATH="$T/bin4:$PATH" bash "$SWEEP" --kill --state-root "$state" 2>&1)"; rc=$?
+out="$(PATH="$T/bin4:$PATH" bash "$SWEEP" --only-pids "$(only)" --kill --state-root "$state" 2>&1)"; rc=$?
 sleep 1
 kill -0 "$swapname_pid" 2>/dev/null && pass "a pid running a lookalike script name is not signalled" || fail "--kill signalled a pid whose script name only resembles the broker"
 printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapname_pid .*reason=identity-changed" && pass "a lookalike script name at signal time is an identity change" || fail "lookalike identity change reported: $out"
@@ -302,7 +323,7 @@ esac
 exec /bin/ps "\$@"
 PSEOF
 chmod +x "$T/bin5/ps"
-out="$(PATH="$T/bin5:$PATH" bash "$SWEEP" --kill --state-root "$state" 2>&1)"; rc=$?
+out="$(PATH="$T/bin5:$PATH" bash "$SWEEP" --only-pids "$(only)" --kill --state-root "$state" 2>&1)"; rc=$?
 sleep 1
 kill -0 "$swapep_pid" 2>/dev/null && pass "the fallback signal is withheld when only an endpoint prefix matches" || fail "--kill signalled a pid whose endpoint merely shares a prefix with the classified one"
 printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapep_pid .*reason=identity-changed" && pass "an endpoint-prefix-only match between signals is an identity change" || fail "endpoint prefix identity change reported: $out"
@@ -321,17 +342,10 @@ echo "Unreferenced retirement re-checks the inventory at the moment of decision"
 state_race="$T/state-race"
 cp -R "$state_clean" "$state_race"
 # This is the one block whose inventory is complete AND whose retirement is
-# armed, so it is the one that could reach past the fixtures: pgrep finds every
-# broker on the machine, and none of the developer's own are named by a record
-# under a throwaway state root. Name them, so the only brokers this run can call
-# unreferenced are the ones the test created.
-for hostpid in $(pgrep -f 'app-server-broker\.mjs serve' 2>/dev/null); do
-  case " $pids " in *" $hostpid "*) continue ;; esac
-  hostep=$(ps -o command= -p "$hostpid" 2>/dev/null | sed -n 's/.*--endpoint \([^ ]*\).*/\1/p')
-  [ -n "$hostep" ] || { echo "cannot read the endpoint of host broker $hostpid"; exit 1; }
-  mkdir -p "$state_race/host-$hostpid"
-  printf '{"endpoint":"%s","pid":%s,"sessionDir":"%s"}\n' "$hostep" "$hostpid" "$T" > "$state_race/host-$hostpid/broker.json"
-done
+# armed, so before --only-pids existed it was the one that could reach past the
+# fixtures: the scan found every broker on the machine, and none of the
+# developer's own are named by a record under a throwaway state root. The fence
+# on the scan is what keeps them out of it now.
 spawn young
 young_pid=$(cat "$T/young.pid")
 mkdir -p "$T/bin6"
@@ -347,7 +361,7 @@ esac
 exec /bin/ps "\$@"
 PSEOF
 chmod +x "$T/bin6/ps"
-out="$(PATH="$T/bin6:$PATH" bash "$SWEEP" --include-unreferenced --kill --state-root "$state_race" 2>&1)"; rc=$?
+out="$(PATH="$T/bin6:$PATH" bash "$SWEEP" --only-pids "$(only)" --include-unreferenced --kill --state-root "$state_race" 2>&1)"; rc=$?
 sleep 1
 printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$late_pid .*reason=unreferenced-record-appeared" && pass "a record written after the inventory snapshot fences unreferenced retirement" || fail "late record fence reported: $out"
 kill -0 "$late_pid" 2>/dev/null && pass "--kill leaves a broker whose record appeared during the sweep" || fail "--kill retired a broker whose record appeared during the sweep"
@@ -359,11 +373,35 @@ printf '%s\n' "$out" | grep -q "orphan-broker pid=$starting_pid .*reason=unrefer
 kill -0 "$starting_pid" 2>/dev/null && fail "--include-unreferenced must still retire a genuinely unreferenced broker" || pass "--include-unreferenced still retires a genuinely unreferenced broker"
 [ "$rc" -eq 0 ] && pass "fencing an ambiguous unreferenced broker is not a failure" || fail "fencing an unreferenced broker must not be an error (rc=$rc)"
 
+echo "The scan considers only the pids it was given"
+# --state-root isolates the records, not the process table, and a broker whose
+# working directory has been deleted is retired for that alone -- before
+# anything asks whether a record names it. `inside` is the control that this
+# run still does its job; `outside` is spawned exactly like it, left off the
+# list, and must come through untouched.
+spawn inside
+spawn outside
+inside_pid=$(cat "$T/inside.pid"); outside_pid=$(cat "$T/outside.pid")
+rmdir "$T/inside-cwd" "$T/outside-cwd" || { echo "cannot remove the fence fixtures' cwds on this host"; exit 1; }
+out="$(bash "$SWEEP" --kill --only-pids "$(only "$outside_pid")" --state-root "$state" 2>&1)"; rc=$?
+sleep 1
+printf '%s\n' "$out" | grep -qE "orphan-broker pid=$inside_pid .*reason=cwd-missing" && pass "a listed broker whose cwd is gone is still classified" || fail "a fenced sweep must still classify the pids it was given: $out"
+kill -0 "$inside_pid" 2>/dev/null && fail "--kill must retire a listed broker whose cwd is gone" || pass "--kill retires a listed broker whose cwd is gone"
+printf '%s\n' "$out" | grep -qE "pid=$outside_pid( |$)" && fail "a pid outside --only-pids must not be classified at all" || pass "a pid outside --only-pids is not classified at all"
+kill -0 "$outside_pid" 2>/dev/null && pass "--kill leaves a broker outside --only-pids running" || fail "--kill retired a broker outside --only-pids"
+[ "$rc" -eq 0 ] && pass "a fenced retirement exits 0" || fail "a fenced retirement must exit 0 (rc=$rc): $out"
+
 echo "Degenerate inputs"
-out="$(bash "$SWEEP" --state-root "$T/does-not-exist" 2>&1)"; rc=$?
+out="$(bash "$SWEEP" --only-pids "$(only)" --state-root "$T/does-not-exist" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qi 'no state root' && pass "a missing state root is reported, not an error" || fail "missing state root handling (rc=$rc): $out"
-out="$(bash "$SWEEP" --nonsense 2>&1)"; rc=$?
+out="$(bash "$SWEEP" --only-pids "$(only)" --nonsense 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && pass "an unknown flag is a usage error" || fail "an unknown flag must exit 2 (rc=$rc)"
+out="$(CODEX_BROKER_SWEEP_WINDOW_S=nope bash "$SWEEP" --only-pids "$(only)" --state-root "$T/does-not-exist" 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && pass "a registration window that is not a number is a usage error" || fail "a bad CODEX_BROKER_SWEEP_WINDOW_S must exit 2 (rc=$rc): $out"
+out="$(bash "$SWEEP" --only-pids 'not,pids' --state-root "$T/does-not-exist" 2>&1)"; rc=$?
+[ "$rc" -eq 2 ] && pass "a --only-pids list that is not pids is a usage error" || fail "a malformed --only-pids must exit 2 (rc=$rc): $out"
+# The window the suite pins above is not the one the sweep ships with.
+grep -q 'CODEX_BROKER_SWEEP_WINDOW_S:-60' "$SWEEP" && pass "the registration window defaults to sixty seconds" || fail "the sweep's default registration window must be 60 seconds"
 
 echo
 if [ "$FAILURES" -eq 0 ]; then echo "STATUS: PASSED"; else echo "STATUS: FAILED ($FAILURES failures)"; exit 1; fi

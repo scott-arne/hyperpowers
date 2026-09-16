@@ -171,6 +171,10 @@ if [ "$hook_source" = "compact" ]; then
       # plan-derived directory name would split it into a path that names
       # no file; comparing the paths needs no fork and no parsing. With no
       # ledger the pattern stays literal and -f rejects it.
+      # A plan named .release.md gives a workspace named .release-<hash8>;
+      # the default glob skips a leading dot, so it must be widened here.
+      # The option lives and dies with this subshell.
+      shopt -s dotglob
       newest=""
       for ledger in "$plans"/*/progress.md; do
         [ -f "$ledger" ] || continue

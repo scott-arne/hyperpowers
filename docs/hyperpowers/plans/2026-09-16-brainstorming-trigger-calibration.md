@@ -87,7 +87,7 @@ not, and keep the tie going to brainstorming."
 
 **Interfaces:**
 - Consumes: the two roots' paths (Global Constraints) and their `skills/brainstorming/SKILL.md` description lines (the analysis renders each arm's expected listing line from them); the Task 1 commit SHA for the manifest's `treatment` row; the evals harness paths named in Global Constraints.
-- Produces: `manifest.tsv` (two-field rows `harness<TAB>sha`, `control<TAB>sha`, `treatment<TAB>sha`, `model<TAB>claude-opus-5`, then one four-field `arm<TAB>scenario<TAB>repeat<TAB>proc` row per launch, proc `p<n>`); `launch-all.sh manifest.tsv [max]`; `logs/measure-launch.sh arm scenario repeat proc` (proc `p<n>` for a manifest row, `r<n>` for a rerun; it writes `logs/<arm>-<scenario>-<proc>.log` with `root=<sha> root_clean=0` and `harness_pin=<sha> evals_head=<sha> harness_paths_identical=yes` header lines that `analyze.py` requires); `analyze.py` writing `runs.json` and printing the table, exit 1 with `DESIGN ERROR:` on any deviation (a manifest row without a log, a log that is neither a manifest row nor a rerun, a repeat count that differs, a missing pin, a rerun not in `reruns.tsv`, a replacement without a log or of another arm or scenario, a trial replaced twice); `reruns.tsv` (`original<TAB>replacement`, `#` comments).
+- Produces: `manifest.tsv` (two-field rows `harness<TAB>sha`, `control<TAB>sha`, `treatment<TAB>sha`, `model<TAB>claude-opus-5`, then one four-field `arm<TAB>scenario<TAB>repeat<TAB>proc` row per launch, proc `p<n>`); `launch-all.sh manifest.tsv [max]`; `logs/measure-launch.sh arm scenario repeat proc` (proc `p<n>` for a manifest row, `r<n>` for a rerun; it writes `logs/<arm>-<scenario>-<proc>.log` with `root=<sha> root_clean=0` and `harness_pin=<sha> evals_head=<sha> harness_paths_identical=yes` header lines that `analyze.py` requires); `analyze.py` writing `runs.json` and printing the table, exit 1 with `DESIGN ERROR:` on any deviation (a manifest row without a log, a log that is neither a manifest row nor a rerun, a repeat count that differs, a missing pin, a rerun not in `reruns.tsv`, a replacement without a log or of another arm or scenario, a trial replaced twice, an indeterminate trial never re-run, an arm with no trials), and `analyze.py --self-test`, which builds throwaway cohorts under `$TMPDIR` and proves one clean cohort is accepted and three broken ones refused; `reruns.tsv` (`original<TAB>replacement`, `#` comments).
 
 - [ ] **Step 1: Write the README**
 
@@ -567,6 +567,15 @@ def collapse(runs: list[Run]) -> list[Run]:
                 f"{run.replaces} was replaced twice; the rule is one rerun"
             )
         replaced_originals.add(run.replaces)
+    for run in runs:
+        if (
+            run.final == "indeterminate"
+            and not run.replaces
+            and run.run not in replaced_originals
+        ):
+            raise DesignError(
+                f"{run.run}: indeterminate and never re-run; the rule is one rerun"
+            )
     return [run for run in runs if run.run not in replaced_originals]
 
 
@@ -601,6 +610,8 @@ def check_design(manifest: dict, trials: list[Run]) -> None:
             f"listings differ outside the brainstorming line: {sorted(rests)}"
         )
     for arm in ("control", "treatment"):
+        if not any(t.arm == arm for t in trials):
+            raise DesignError(f"{arm}: no trials")
         lines = {t.brainstorming_line for t in trials if t.arm == arm}
         if lines != {expected_brainstorming_line(arm)}:
             raise DesignError(f"{arm}: brainstorming line {sorted(lines)}")
@@ -609,7 +620,154 @@ def check_design(manifest: dict, trials: list[Run]) -> None:
         raise DesignError(f"models differ from the design: {sorted(models)}")
 
 
+def _write_fixture(root: str, final_by_run: dict[str, str], reruns: str | None) -> None:
+    """A minimal evidence tree: both arms, one log per proc, one run per verdict.
+
+    ``final_by_run`` describes the control arm; names starting with ``rerun-``
+    go into a rerun log. The treatment arm always has one passing trial.
+    """
+
+    os.makedirs(os.path.join(root, "logs"), exist_ok=True)
+    os.makedirs(os.path.join(root, "skills/brainstorming"), exist_ok=True)
+    with open(
+        os.path.join(root, "skills/brainstorming/SKILL.md"), "w", encoding="utf-8"
+    ) as handle:
+        handle.write("---\nname: brainstorming\ndescription: DESC\n---\n")
+    control, treatment, harness = "1" * 40, "2" * 40, "3" * 40
+    commits = {"control": control, "treatment": treatment}
+    originals = [name for name in final_by_run if not name.startswith("rerun-")]
+    with open(os.path.join(root, "manifest.tsv"), "w", encoding="utf-8") as handle:
+        handle.write(
+            f"harness\t{harness}\ncontrol\t{control}\ntreatment\t{treatment}\n"
+        )
+        handle.write(f"model\tmodel-x\ncontrol\tscenario-x\t{len(originals)}\tp1\n")
+        handle.write("treatment\tscenario-x\t1\tp1\n")
+    listing = "- other:skill: text\n- hyperpowers:brainstorming: DESC"
+    transcript = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "attachment",
+                    "attachment": {
+                        "type": "hook_additional_context",
+                        "content": ["boot"],
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "attachment",
+                    "attachment": {"type": "skill_listing", "content": listing},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "model": "model-x",
+                        "content": [{"type": "tool_use", "name": "Bash"}],
+                    },
+                }
+            ),
+        ]
+    )
+    runs = [("control", name, final) for name, final in final_by_run.items()]
+    runs.append(("treatment", "run-t", "pass"))
+    logs: dict[tuple[str, str], list[str]] = {}
+    for arm, name, final in runs:
+        run_dir = os.path.join(root, "results", name)
+        os.makedirs(os.path.join(run_dir, "home/.claude/projects/p"), exist_ok=True)
+        with open(
+            os.path.join(run_dir, "verdict.json"), "w", encoding="utf-8"
+        ) as handle:
+            json.dump({"final": final}, handle)
+        with open(
+            os.path.join(run_dir, "home/.claude/projects/p/t.jsonl"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            handle.write(transcript + "\n")
+        proc = "r1" if name.startswith("rerun-") else "p1"
+        logs.setdefault((arm, proc), []).append(f"run-dir   {run_dir}")
+    for (arm, proc), lines in logs.items():
+        with open(
+            os.path.join(root, "logs", f"{arm}-scenario-x-{proc}.log"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            handle.write(
+                f"arm={arm} scenario=scenario-x repeat={len(lines)} proc={proc}\n"
+            )
+            handle.write(f"root={commits[arm]} root_clean=0\n")
+            handle.write(
+                f"harness_pin={harness} evals_head={harness} harness_paths_identical=yes\n"
+            )
+            handle.write("\n".join(lines) + f"\nEXIT=0\nDONE {arm} scenario-x {proc}\n")
+    if reruns is not None:
+        with open(os.path.join(root, "reruns.tsv"), "w", encoding="utf-8") as handle:
+            handle.write(reruns)
+
+
+def self_test() -> int:
+    """The analysis must accept the clean cohort and refuse each broken one."""
+
+    import tempfile
+
+    global E, ROOTS
+    saved = (E, ROOTS)
+    cases: list[tuple[str, dict[str, str], str | None, bool]] = [
+        (
+            "a clean cohort with one replaced indeterminate",
+            {"run-a": "pass", "run-b": "indeterminate", "rerun-b": "fail"},
+            "run-b\trerun-b\n",
+            True,
+        ),
+        (
+            "an indeterminate trial never re-run",
+            {"run-a": "pass", "run-b": "indeterminate"},
+            None,
+            False,
+        ),
+        (
+            "a replacement whose original was not indeterminate",
+            {"run-a": "pass", "rerun-a": "pass"},
+            "run-a\trerun-a\n",
+            False,
+        ),
+        (
+            "a rerun not listed in reruns.tsv",
+            {"run-a": "indeterminate", "rerun-a": "pass"},
+            None,
+            False,
+        ),
+    ]
+    failures = 0
+    for title, verdicts, reruns, should_pass in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            E = tmp
+            ROOTS = {"control": tmp, "treatment": tmp}
+            _write_fixture(tmp, verdicts, reruns)
+            detail = ""
+            try:
+                manifest = read_manifest()
+                check_design(manifest, collapse(build_runs(manifest)))
+                accepted = True
+            except DesignError as error:
+                accepted = False
+                detail = f": {error}"
+        if accepted == should_pass:
+            verb = "accepted as expected" if accepted else "refused as expected"
+            print(f"{verb} ({title}){detail}")
+        else:
+            print(f"SELF-TEST FAILURE ({title}): accepted={accepted}{detail}")
+            failures += 1
+    E, ROOTS = saved
+    return 1 if failures else 0
+
+
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
+        return self_test()
     manifest = read_manifest()
     runs = build_runs(manifest)
     trials = collapse(runs)
@@ -672,7 +830,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 6: Check and commit in the evals clone**
 
-Run, each its own command, from the evals clone with `E=evidence/2026-09-16-brainstorming-trigger-calibration`: `chmod +x $E/analyze.py $E/launch-all.sh $E/logs/measure-launch.sh`; `bash -n $E/logs/measure-launch.sh $E/launch-all.sh`; `shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh`; `/Users/johnss51/.local/bin/ruff check $E/analyze.py`; `/Users/johnss51/.local/bin/ruff format --check $E/analyze.py`; `/Users/johnss51/.local/bin/mypy --ignore-missing-imports $E/analyze.py`; then `python3 $E/analyze.py` must exit 1 with `DESIGN ERROR:` naming the unfilled manifest (no logs exist yet) — that is the fail-closed behaviour under test. No live run is launched in this task.
+Run, each its own command, from the evals clone with `E=evidence/2026-09-16-brainstorming-trigger-calibration`: `chmod +x $E/analyze.py $E/launch-all.sh $E/logs/measure-launch.sh`; `bash -n $E/logs/measure-launch.sh $E/launch-all.sh`; `shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh`; `/Users/johnss51/.local/bin/ruff check $E/analyze.py`; `/Users/johnss51/.local/bin/ruff format --check $E/analyze.py`; `/Users/johnss51/.local/bin/mypy --ignore-missing-imports $E/analyze.py`; `python3 $E/analyze.py --self-test` must exit 0 and print one `accepted as expected` line and three `refused as expected` lines (an indeterminate never re-run; a replacement whose original was not indeterminate; a rerun absent from `reruns.tsv`); then `python3 $E/analyze.py` must exit 1 with `DESIGN ERROR:` naming the unfilled manifest (no logs exist yet). No live run is launched in this task.
 
 ```bash
 git add -f evidence/2026-09-16-brainstorming-trigger-calibration
@@ -719,10 +877,17 @@ For every run in `runs.json` (including replaced originals), copy its directory 
 git diff --cached --raw | grep -c ' 160000 '                                      # must print 0
 git grep --cached -l -E 'peerToken|prj-dcpgenai' -- "$E" | wc -l                    # must print 0
 git diff --cached --name-only | grep -c -E '\.claude-env$|\.key$|/sessions/'       # must print 0
-for r in "$E"/runs-*/*/*/; do
+# The staged archive set must equal the run set in runs.json, and every archive
+# must carry a transcript and a grader result. Expected paths come from
+# runs.json, not from what happens to be on disk.
+python3 -c 'import json,sys; [print(f"{r[\"scenario\"]}/{r[\"arm\"]}/{r[\"run\"]}") for r in json.load(open(sys.argv[1]))]' "$E/runs.json" | sort > "$TMPDIR/expected-archives.txt"
+git ls-files --cached "$E" | grep -o -E 'runs-[^/]+/(control|treatment)/[^/]+' | sed 's/^runs-//' | sort -u > "$TMPDIR/staged-archives.txt"
+diff "$TMPDIR/expected-archives.txt" "$TMPDIR/staged-archives.txt" && echo ARCHIVE SET OK     # must print ARCHIVE SET OK
+while IFS=/ read -r scenario arm run; do
+  r="$E/runs-$scenario/$arm/$run/"
   git ls-files --cached "$r" | grep -q 'home/.claude/projects/.*\.jsonl$' || echo "NO TRANSCRIPT $r"
   git ls-files --cached "$r" | grep -q 'gauntlet-agent/.*result.json$' || echo "NO RESULT $r"
-done                                                              # must print nothing
+done < "$TMPDIR/expected-archives.txt"                                             # must print nothing
 ```
 
 - [ ] **Step 5: Write `analysis.md`**

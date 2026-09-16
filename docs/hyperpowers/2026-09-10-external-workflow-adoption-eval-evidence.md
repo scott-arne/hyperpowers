@@ -9,15 +9,16 @@ read from the run-id timestamps
 **Treatment head (S1):** `d0a187d64e62587131f9c9ff4f59988d257b6b26`
 **Re-measured heads (sentinel tier):** `bad92ad079783032c1e2431e624ea0c09cc67f31`,
 then `7e8ba23f1d5f3acd3fa780b7bc4b5e930db24edf`, then
-`fd457d36ca3a507266784a4e14299229b09c36e2` and
-`65d77471704c38088be2dc79d55f1ee59285ad57` — see "Re-measured at
-`bad92ad`" under Sentinel tier for why the tier ran five times
+`fd457d36ca3a507266784a4e14299229b09c36e2`,
+`65d77471704c38088be2dc79d55f1ee59285ad57`, `0145cd77350763efe8cb6fdb88948fb80e150708`
+and `46bcf4631d2df0827f4f2cf37f653ec8e609f44a` — see "Re-measured at
+`bad92ad`" under Sentinel tier for why the tier ran seven times
 **Governing adjudication:**
 `evidence/2026-09-10-external-workflow-adoption/task-19-runs/adjudication.md`,
 in hyperpowers-evals at `c615efc488a091f6be867f174c983c5353b7a252`, restated
 for the re-measured heads by
 `evidence/2026-09-10-external-workflow-adoption/task-23-reruns/adjudication-remeasurement.md`
-at `b343150`
+at `c4ad933`
 
 ## What was measured
 
@@ -343,8 +344,8 @@ agent acts on the wording.
 The six items that ship on tests alone do not all rest on the same evidence.
 Five of them — A3, A5, A6, A8 and A10 — rest on the fourteen contract suites at
 `d0a187d`, every one of which exited 0 at that head, and again at `bad92ad`,
-`7e8ba23` and `65d7747`, where all fourteen exited 0 each time the tier was
-re-measured; A9 rests on the four
+`7e8ba23`, `65d7747`, `0145cd7` and `46bcf46`, where all fourteen exited 0 each
+time the tier was re-measured; A9 rests on the four
 hook suites among them, `test-session-start.sh`, `test-ungated-notice.sh`,
 `test-broker-janitor.sh` and `test-no-heredocs-in-hooks.sh`. The governing
 adjudication names all fourteen suite paths against the head, so the set is
@@ -355,13 +356,13 @@ are byte-identical. Neither changes what the needles pin.
 
 ## Sentinel tier
 
-The tier was run five times: first against the treatment head `d0a187d`,
+The tier was run seven times: first against the treatment head `d0a187d`,
 described in the next four paragraphs and their subsections; again on
 2026-09-15 against `bad92ad`; once more the same evening against `7e8ba23`,
-after a hook fix; and twice that night against `fd457d3` and `65d7747`,
-after the third-pass gate's fixes to the same hook — the re-runs are
-described under "Re-measured at `bad92ad`", and the last one is the run the
-six contract-only items now rest on.
+after a hook fix; and four times that night against `fd457d3`, `65d7747`,
+`0145cd7` and `46bcf46`, after the third-pass gate's fixes to the same hook —
+the re-runs are described under "Re-measured at `bad92ad`", and the last
+one is the run the six contract-only items now rest on.
 
 `quorum run-all --tier sentinel --coding-agents claude-auto` against the
 treatment head. The full batch output is preserved at
@@ -588,6 +589,37 @@ at `65d7747` and leaves every verdict where it was; the fourteen contract
 suites were run at that head as well, 14 of 14 exit 0. The limits are
 unchanged: one run per scenario, no variance estimate, and one scenario the
 host cannot run.
+
+Round 2 of the same gate then found that naming a newline-bearing path
+verbatim let the filename's text, newlines included, into the resumed
+session's decoded context, where a repository-controlled plan basename could
+add an instruction-like line, against the hook's one-line-per-notice rule. A
+first fix (`b0f8ea5`) rendered such a path with `printf %q` and the tier ran
+at `0145cd7` (`batch done · 11 ✓ · 0 ✗ · 0 ⊘ · 69 — · wall 8m41s`,
+`batch-20260915T235142Z-94fa`; log and batch view kept, run copies not);
+its scoped re-review showed bash 3.2 quotes `%q` byte-wise under a UTF-8
+locale and can emit invalid UTF-8, so `9201039` superseded it in the same round:
+a path whose JSON spelling differs from its bytes is named as that JSON
+string literal, escapes visible, on one line, by the hook's own escape,
+which is byte-exact in every locale; every other path is named verbatim.
+The control-byte and newline cases assert the one-line spelling and that an
+injected sentence never appears as a line of the context; a new case runs
+the hook under a UTF-8 locale with a newline and a euro sign in the path
+and asserts strict UTF-8 validity; the spec records the rule (`46bcf46`). The
+tier ran a seventh time, from the evals clone at `b343150` with
+`SUPERPOWERS_ROOT` at `46bcf46`, tee'd to
+`task-23-reruns/sentinel-remeasurement-7.log`. Batch line, verbatim:
+
+```
+batch done · 11 ✓ · 0 ✗ · 0 ⊘ · 69 — · wall 9m47s
+artifacts: results/batches/batch-20260916T002512Z-9a6b
+```
+
+All eleven runnable scenarios passed. Run copies are under
+`task-23-reruns/sentinel-runs-4/`; the hook suite on Linux at this head is
+38 of 38. `task-23-reruns/adjudication-remeasurement.md` restates the ship
+table at `46bcf46`; the fourteen contract suites at that head, 14 of 14 exit 0.
+Limits unchanged.
 
 ## Removals
 

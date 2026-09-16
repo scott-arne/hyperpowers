@@ -724,15 +724,15 @@ if (typeof context !== "string") {
     problems.push(`  expected: ${JSON.stringify(process.env.EXPECT_LINE)}`);
     problems.push(`  actual:   ${JSON.stringify(notice[0])}`);
   }
-  // The context is split on its own separators, so a control character left
-  // in a line is one the file name carried.
-  const carriesControl = (line) => Array.from(line).some((ch) => {
-    const code = ch.charCodeAt(0);
-    return code < 32 || code === 127;
-  });
-  const at = lines.findIndex(carriesControl);
+  // The context is split on the LF separators it carries between notices, so
+  // a byte below 0x20 left in a line is one the file name carried. The check
+  // stops at 0x20 because that is the rule the hook implements: DEL, C1 code
+  // points and U+2028/U+2029 are legal inside a JSON string, add no line to
+  // the context, and are named verbatim by design.
+  const carriesC0 = (line) => Array.from(line).some((ch) => ch.charCodeAt(0) < 32);
+  const at = lines.findIndex(carriesC0);
   if (at !== -1) {
-    problems.push(`line ${at} carries a raw control byte: ${JSON.stringify(lines[at])}`);
+    problems.push(`line ${at} carries a raw C0 control character: ${JSON.stringify(lines[at])}`);
   }
 }
 

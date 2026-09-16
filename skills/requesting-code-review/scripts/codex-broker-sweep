@@ -59,14 +59,41 @@ if [ "$only_set" -eq 1 ]; then
     ''|*[!0-9,]*|,*|*,|*,,*) echo "codex-broker-sweep: --only-pids must be a comma-separated list of pids (got '$only')" >&2; exit 2 ;;
   esac
 fi
+# Leading zeros are padding, not magnitude. Stripping them first means the
+# bounds below measure the number the caller meant, and leaves a string that is
+# already canonical decimal -- so nothing downstream has to convert it.
+strip_leading_zeros() {
+  local s
+  s="${1#"${1%%[!0]*}"}"
+  [ -n "$s" ] || s=0
+  printf '%s' "$s"
+}
 # The registration window below, in seconds. A value the script cannot read
 # would become NaN in every age comparison and silently disarm the fence that
 # protects a broker which has not registered yet, so a bad one is a usage
-# error rather than a default.
-window="${CODEX_BROKER_SWEEP_WINDOW_S:-60}"
-case "$window" in
-  ''|0|*[!0-9]*) echo "codex-broker-sweep: CODEX_BROKER_SWEEP_WINDOW_S must be a positive integer (got '$window')" >&2; exit 2 ;;
+# error rather than a default -- and an empty value is a caller asking for a
+# window this tool cannot give, not an absent variable, so only an unset
+# variable takes the default.
+#
+# Both bounds are decided on the canonical STRING, because the value is read by
+# node, not by bash: `00` and `000` are digits and are not the literal `0`, yet
+# Number("00") is 0, which makes every unregistered broker instantly old enough
+# and disarms the very fence the window exists to hold; and a 20-digit value
+# lands past Number.MAX_SAFE_INTEGER, so node holds a rounded magnitude no
+# elapsed time will ever reach and the widened sweep stops retiring anything.
+# Six digits is eleven days of registration grace, far past any real window.
+WINDOW_MAX_DIGITS=6
+window_raw="${CODEX_BROKER_SWEEP_WINDOW_S-60}"
+reject_window() {
+  echo "codex-broker-sweep: CODEX_BROKER_SWEEP_WINDOW_S must be a positive integer of at most $WINDOW_MAX_DIGITS digits (got '$window_raw')" >&2
+  exit 2
+}
+case "$window_raw" in
+  ''|*[!0-9]*) reject_window ;;
 esac
+window="$(strip_leading_zeros "$window_raw")"
+[ "$window" != 0 ] || reject_window
+[ "${#window}" -le "$WINDOW_MAX_DIGITS" ] || reject_window
 node - "$root" "$kill" "$unref" "$only" "$window" <<'JS'
 const fs = require("fs"), path = require("path"), net = require("net"), cp = require("child_process");
 const [root, killArg, unrefArg, onlyArg, windowArg] = process.argv.slice(2);

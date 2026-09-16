@@ -8,8 +8,9 @@
 # to shut down over its own protocol before it is signalled.
 #
 # It runs against the host's real process table, so every sweep below is fenced
-# to the pids this file spawned with --only-pids. Any sweep added here needs
-# that fence too: --state-root isolates the records, not the processes.
+# with --only-pids to the fixtures this file spawned that are still running.
+# Any sweep added here needs that fence too: --state-root isolates the records,
+# not the processes.
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -20,19 +21,33 @@ pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
 T="$(mktemp -d "${TMPDIR:-/tmp}/broker-sweep.XXXXXX")"
 pids=""
-cleanup() { for p in $pids; do kill -KILL "$p" 2>/dev/null; done; chmod 755 "$T/locked" 2>/dev/null; rm -rf "$T"; }
+# A pid is not an identity: the kernel hands the number out again, and this
+# file retires fixtures while it runs. Every process it starts carries $T in
+# its command line -- the fakes through --endpoint and --pid-file, the
+# bystander through its argv[0] -- so that, and not membership in $pids, is
+# what says the number still belongs to this suite.
+fixture_alive() {
+  kill -0 "$1" 2>/dev/null || return 1
+  ps -o command= -p "$1" 2>/dev/null | grep -Fq -- "$T/"
+}
+cleanup() { for p in $pids; do fixture_alive "$p" && kill -KILL "$p" 2>/dev/null; done; chmod 755 "$T/locked" 2>/dev/null; rm -rf "$T"; }
 trap cleanup EXIT
 
-# The pid list every sweep in this file is fenced to: the brokers it spawned,
-# minus any this call names. Without it the scan reaches the whole host, and a
-# developer's own broker in a removed worktree is classified cwd-missing and
-# retired before anything asks whether a record names it.
+# The pid list every sweep in this file is fenced to: the fixtures still alive
+# now, minus any this call names. Without the fence the scan reaches the whole
+# host, and a developer's own broker in a removed worktree is classified
+# cwd-missing and retired before anything asks whether a record names it.
+# Built at call time, because $pids only grows: a retired fixture's number
+# would otherwise stay authorized for every later sweep, and by then it may
+# belong to a real broker.
 only() {
   local skip=" $* " list="" p
   for p in $pids; do
     case "$skip" in *" $p "*) continue ;; esac
+    fixture_alive "$p" || continue
     list="${list:+$list,}$p"
   done
+  [ -n "$list" ] || echo "no fixture process is alive: the fence list would be empty" >&2
   printf '%s' "$list"
 }
 # The sweep waits a minute before it will call an unrecorded broker
@@ -56,8 +71,10 @@ spawn() {
 
 state="$T/state"
 # A live process that is not a broker, standing in for the process that inherits
-# a pid recorded in an old broker.json after the original exited.
-sleep 600 & bystander=$!; disown 2>/dev/null; pids="$pids $bystander"
+# a pid recorded in an old broker.json after the original exited. Its argv[0]
+# names $T so the fence above can tell it from whatever inherits ITS pid.
+( exec -a "broker-sweep-bystander $T/bystander" sleep 600 ) &
+bystander=$!; disown 2>/dev/null; pids="$pids $bystander"
 
 # 1. A stale record whose pid now belongs to that bystander.
 mkdir -p "$state/stale-1111111111111111"
@@ -223,6 +240,33 @@ kill -0 "$pfx_pid" 2>/dev/null && pass "--kill leaves the peer that owns the pre
 kill -0 "$pfxb_pid" 2>/dev/null && fail "--kill must retire the orphan whose endpoint carries the suffix" || pass "--kill retires the orphan whose endpoint carries the suffix"
 [ -f "$state/peer-2222222222222222/broker.json" ] && pass "--kill keeps the peer's record" || fail "--kill must keep the peer's record"
 printf '%s\n' "$out" | grep -q "0 failure(s)" && pass "a clean retirement reports no failures" || fail "a clean retirement must report 0 failures: $out"
+
+echo "The fence authorizes only the fixtures that are still alive"
+# The block above retired several fixtures. Their numbers stay in $pids, and
+# the kernel hands numbers out again, so a fence built from that list would go
+# on authorizing pids this suite no longer owns -- on a developer's machine,
+# quite possibly a real broker by the time the next --kill runs.
+fence=",$(only),"
+dead_pids=""; stale_authorized=""; missing_live=""
+for p in $pids; do
+  if fixture_alive "$p"; then
+    case "$fence" in *",$p,"*) : ;; *) missing_live="${missing_live:+$missing_live }$p" ;; esac
+  else
+    dead_pids="${dead_pids:+$dead_pids }$p"
+    case "$fence" in *",$p,"*) stale_authorized="${stale_authorized:+$stale_authorized }$p" ;; esac
+  fi
+done
+[ -n "$dead_pids" ] && pass "the retirement left fixture pids behind for the fence to drop" || fail "no fixture was retired above, so this block proves nothing"
+case "$fence" in
+  *",$orphan_pid,"*) fail "the fence must drop the retired orphan's pid ($orphan_pid)" ;;
+  *) pass "the fence drops the pid of a fixture the sweep retired" ;;
+esac
+case "$fence" in
+  *",$peer_pid,"*) pass "the fence still authorizes a live fixture" ;;
+  *) fail "the fence must still authorize the live peer ($peer_pid)" ;;
+esac
+[ -z "$stale_authorized" ] && pass "no pid this suite no longer owns is authorized" || fail "the fence authorized pids that are gone or reused: $stale_authorized"
+[ -z "$missing_live" ] && pass "every live fixture is still authorized" || fail "the fence dropped live fixtures: $missing_live"
 
 echo "Unreferenced retirement requires a complete inventory"
 # The companion writes broker.json with a plain writeFileSync, so a record can
@@ -398,10 +442,32 @@ out="$(bash "$SWEEP" --only-pids "$(only)" --nonsense 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && pass "an unknown flag is a usage error" || fail "an unknown flag must exit 2 (rc=$rc)"
 out="$(CODEX_BROKER_SWEEP_WINDOW_S=nope bash "$SWEEP" --only-pids "$(only)" --state-root "$T/does-not-exist" 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && pass "a registration window that is not a number is a usage error" || fail "a bad CODEX_BROKER_SWEEP_WINDOW_S must exit 2 (rc=$rc): $out"
+# A window of zero is not a small window, it is no window: every broker the
+# records do not name is instantly old enough to retire, including one that is
+# still registering. `00` is that value wearing padding, and an empty value is
+# a caller's unset variable rather than a request for the default. At the other
+# end a twenty-digit value is a magnitude no elapsed time reaches, so nothing is
+# ever old enough and the sweep reclaims nothing. Each of these must be refused,
+# not interpreted.
+for bad in 0 00 000 '' abc -5 1.5 ' 60' 99999999999999999999; do
+  out="$(CODEX_BROKER_SWEEP_WINDOW_S="$bad" bash "$SWEEP" --only-pids "$(only)" --state-root "$T/does-not-exist" 2>&1)"; rc=$?
+  [ "$rc" -eq 2 ] && pass "a registration window of '$bad' is a usage error" || fail "CODEX_BROKER_SWEEP_WINDOW_S='$bad' must exit 2 (rc=$rc): $out"
+done
+# Padding is not a defect: 060 is sixty. The only ways this fixture does not
+# survive are a rejected value (rc 2) or a window that canonicalised to zero,
+# which would call a broker spawned seconds ago unreferenced and retire it.
+spawn padded
+padded_pid=$(cat "$T/padded.pid")
+out="$(CODEX_BROKER_SWEEP_WINDOW_S=060 bash "$SWEEP" --only-pids "$padded_pid" --include-unreferenced --kill --state-root "$state_clean" 2>&1)"; rc=$?
+sleep 1
+[ "$rc" -eq 0 ] && pass "a zero-padded registration window is accepted" || fail "CODEX_BROKER_SWEEP_WINDOW_S=060 must be accepted (rc=$rc): $out"
+printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$padded_pid .*reason=unreferenced-too-young" && pass "a padded window of 060 reads as sixty seconds" || fail "060 must fence a broker younger than sixty seconds: $out"
+kill -0 "$padded_pid" 2>/dev/null && pass "--kill leaves a broker inside the padded window" || fail "--kill retired a broker inside the padded sixty-second window"
 out="$(bash "$SWEEP" --only-pids 'not,pids' --state-root "$T/does-not-exist" 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && pass "a --only-pids list that is not pids is a usage error" || fail "a malformed --only-pids must exit 2 (rc=$rc): $out"
-# The window the suite pins above is not the one the sweep ships with.
-grep -q 'CODEX_BROKER_SWEEP_WINDOW_S:-60' "$SWEEP" && pass "the registration window defaults to sixty seconds" || fail "the sweep's default registration window must be 60 seconds"
+# The window the suite pins above is not the one the sweep ships with. The
+# default answers an unset variable only -- an empty one is refused above.
+grep -q 'CODEX_BROKER_SWEEP_WINDOW_S-60' "$SWEEP" && pass "the registration window defaults to sixty seconds when unset" || fail "the sweep's default registration window must be 60 seconds for an unset variable"
 
 echo
 if [ "$FAILURES" -eq 0 ]; then echo "STATUS: PASSED"; else echo "STATUS: FAILED ($FAILURES failures)"; exit 1; fi

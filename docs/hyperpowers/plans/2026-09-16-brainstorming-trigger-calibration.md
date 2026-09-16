@@ -123,7 +123,7 @@ Tab-separated. `<EVALS_COMMIT>` is filled by the controller at Task 3 Step 1 wit
 
 ```
 harness	<EVALS_COMMIT>
-control	2e83fd8ab0d2fa3ab8fef9ac26d5a0d3e5a4f0d3
+control	2e83fd8f42417168cf3f12d5d99e1e484859a06d
 treatment	<TASK_1_COMMIT>
 model	claude-opus-5
 control	cost-checkbox-over-trigger	5	1

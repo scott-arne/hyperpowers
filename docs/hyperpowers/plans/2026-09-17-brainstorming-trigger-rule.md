@@ -2100,13 +2100,6 @@ def self_test() -> int:
             "models differ within the session",
         ),
         (
-            "a second skill listing that differs",
-            two_passes,
-            None,
-            second_listing,
-            "different skill listings",
-        ),
-        (
             "a default listing whose only brainstorming-like line is another prefixed skill",
             two_passes,
             None,
@@ -2119,6 +2112,13 @@ def self_test() -> int:
             None,
             corrupt_record,
             "malformed transcript record",
+        ),
+        (
+            "a second skill listing that differs",
+            two_passes,
+            None,
+            second_listing,
+            "different skill listings",
         ),
     ]
     for title, verdicts, reruns, mutate, expect in cases:

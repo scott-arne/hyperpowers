@@ -115,7 +115,7 @@ is declared in `manifest.tsv`; `launch-all.sh` runs it; `analyze.py`
 refuses to report unless the observed runs match the manifest exactly.
 Indeterminate trials re-run once, recorded in `reruns.tsv`. Logs under
 `logs/`, run copies under `runs-<scenario>/<arm>/`, the analysis in
-`analysis.md` and `analysis-table.txt`.
+`analysis.md` and `analysis-table.txt`. The analysis resolves each run from the log's recorded results/ path and falls back to the archive under runs-<scenario>/<arm>/ when that path is gone, so the committed directory recomputes its own table. Each arm's expected brainstorming line is read from the manifest's root commit with git show, not from the checkout, so the roots' later commits (the description was reverted on the treatment branch after the measurement) do not change the analysis.
 ```
 
 - [ ] **Step 2: Write `manifest.tsv`**
@@ -298,6 +298,8 @@ import json
 import math
 import os
 import re
+import shutil
+import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -385,18 +387,34 @@ def read_manifest() -> dict:
     return manifest
 
 
-def expected_brainstorming_line(arm: str) -> str:
-    """The listing line Claude Code renders for the brainstorming skill at this arm's root."""
+def expected_brainstorming_line(arm: str, commit: str) -> str:
+    """The listing line Claude Code renders for the brainstorming skill at this arm's pinned commit.
 
-    path = os.path.join(ROOTS[arm], "skills/brainstorming/SKILL.md")
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            if line.startswith("description:"):
-                value = line[len("description:") :].strip()
-                if value.startswith('"') and value.endswith('"'):
-                    value = value[1:-1]
-                return f"{BRAINSTORMING_LINE}: {value}"
-    raise DesignError(f"{path}: no description line")
+    Read from the commit, not the checkout: the root is a live worktree whose
+    HEAD moves on (the description was reverted after the measurement), and
+    the evidence must reproduce from the pins it records.
+    """
+
+    proc = subprocess.run(
+        ["git", "-C", ROOTS[arm], "show", f"{commit}:skills/brainstorming/SKILL.md"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise DesignError(
+            f"{arm}: cannot read skills/brainstorming/SKILL.md at {commit} "
+            f"from {ROOTS[arm]}: {proc.stderr.strip()}"
+        )
+    for line in proc.stdout.splitlines():
+        if line.startswith("description:"):
+            value = line[len("description:") :].strip()
+            if value.startswith('"') and value.endswith('"'):
+                value = value[1:-1]
+            return f"{BRAINSTORMING_LINE}: {value}"
+    raise DesignError(
+        f"{arm}: no description line in skills/brainstorming/SKILL.md at {commit}"
+    )
 
 
 def load_json(path: str) -> dict:
@@ -551,6 +569,10 @@ def build_runs(manifest: dict) -> list[Run]:
         if not os.path.isabs(run_dir):
             run_dir = os.path.join(EV, run_dir)
         name = os.path.basename(run_dir)
+        if not os.path.isdir(run_dir):
+            # The live results/ tree is pruned over time; the archive committed
+            # beside this script is the durable copy of the same run.
+            run_dir = os.path.join(E, f"runs-{scenario}", arm, name)
         if name in seen:
             raise DesignError(f"{name}: listed twice")
         seen.add(name)
@@ -699,7 +721,7 @@ def check_design(manifest: dict, runs: list[Run], trials: list[Run]) -> None:
         if not any(t.arm == arm for t in trials):
             raise DesignError(f"{arm}: no trials")
         lines = {r.brainstorming_line for r in runs if r.arm == arm}
-        if lines != {expected_brainstorming_line(arm)}:
+        if lines != {expected_brainstorming_line(arm, manifest["commits"][arm])}:
             raise DesignError(f"{arm}: brainstorming line {sorted(lines)}")
     models = {r.model for r in runs}
     if models != {manifest["model"]}:
@@ -720,13 +742,34 @@ def _write_fixture(
     """
 
     os.makedirs(os.path.join(root, "logs"), exist_ok=True)
-    os.makedirs(os.path.join(root, "skills/brainstorming"), exist_ok=True)
-    with open(
-        os.path.join(root, "skills/brainstorming/SKILL.md"), "w", encoding="utf-8"
-    ) as handle:
-        handle.write("---\nname: brainstorming\ndescription: DESC\n---\n")
-    control, treatment, harness = "1" * 40, "2" * 40, "3" * 40
-    commits = {"control": control, "treatment": treatment}
+    commits: dict[str, str] = {}
+    for arm in ("control", "treatment"):
+        arm_root = ROOTS[arm]
+        os.makedirs(os.path.join(arm_root, "skills/brainstorming"), exist_ok=True)
+        with open(
+            os.path.join(arm_root, "skills/brainstorming/SKILL.md"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            handle.write("---\nname: brainstorming\ndescription: DESC\n---\n")
+        git = [
+            "git",
+            "-C",
+            arm_root,
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.com",
+            "-c",
+            "commit.gpgsign=false",
+        ]
+        subprocess.run(git + ["init", "-q"], check=True)
+        subprocess.run(git + ["add", "skills"], check=True)
+        subprocess.run(git + ["commit", "-q", "-m", "fixture"], check=True)
+        commits[arm] = subprocess.run(
+            git + ["rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    control, treatment, harness = commits["control"], commits["treatment"], "3" * 40
     originals = [name for name in final_by_run if not name.startswith("rerun-")]
     with open(os.path.join(root, "manifest.tsv"), "w", encoding="utf-8") as handle:
         handle.write(
@@ -875,6 +918,12 @@ def self_test() -> int:
                 text.replace('"content": ["boot"]', '"content": ["boot-foreign"]')
             )
 
+    def archived_only(root: str) -> None:
+        src = os.path.join(root, "results", "run-a")
+        dst = os.path.join(root, "runs-scenario-x", "control", "run-a")
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.move(src, dst)
+
     two_passes = {"run-a": "pass", "run-b": "pass"}
     cases: list[
         tuple[str, dict[str, str], str | None, Callable[[str], None] | None, str | None]
@@ -968,12 +1017,22 @@ def self_test() -> int:
             foreign_original,
             "payload hashes differ",
         ),
+        (
+            "a run present only in its archive under runs-<scenario>/<arm>/",
+            two_passes,
+            None,
+            archived_only,
+            None,
+        ),
     ]
     failures = 0
     for title, verdicts, reruns, mutate, expect in cases:
         with tempfile.TemporaryDirectory() as tmp:
             E = tmp
-            ROOTS = {"control": tmp, "treatment": tmp}
+            ROOTS = {
+                "control": os.path.join(tmp, "control-root"),
+                "treatment": os.path.join(tmp, "treatment-root"),
+            }
             _write_fixture(tmp, verdicts, reruns, mutate)
             detail = ""
             try:
@@ -1106,7 +1165,7 @@ Expected, in order: exit 1 with `launchers non-zero: 1; manifest rows without a 
 
 - [ ] **Step 7: Check and commit in the evals clone**
 
-Run, each its own command, from the evals clone with `E=evidence/2026-09-16-brainstorming-trigger-calibration`: `chmod +x $E/analyze.py $E/launch-all.sh $E/logs/measure-launch.sh $E/logs/stub-launch.sh`; `bash -n $E/logs/measure-launch.sh $E/launch-all.sh`; `shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh`; `/Users/johnss51/.local/bin/ruff check $E/analyze.py`; `/Users/johnss51/.local/bin/ruff format --check $E/analyze.py`; `/Users/johnss51/.local/bin/mypy --ignore-missing-imports $E/analyze.py`; `python3 $E/analyze.py --self-test` must exit 0 and print one `accepted as expected` line and eleven `refused as expected` lines (an indeterminate never re-run; a replacement whose original was not indeterminate; a rerun absent from `reruns.tsv`; a replacement that is itself replaced; a log whose last line is FAILED after an earlier DONE; a stray log beside the manifest logs; a run whose verdict names another scenario; a manifest row with repeat 0; two runs of one log with the same trial index; a trial identity made of booleans; a replaced indeterminate whose bootstrap payload differs); every case names the fragment of the refusal it expects, and a refusal for any other reason is a `SELF-TEST FAILURE`; then `python3 $E/analyze.py` must exit 1 with `DESIGN ERROR:` naming the unfilled manifest (no logs exist yet). No live run is launched in this task.
+Run, each its own command, from the evals clone with `E=evidence/2026-09-16-brainstorming-trigger-calibration`: `chmod +x $E/analyze.py $E/launch-all.sh $E/logs/measure-launch.sh $E/logs/stub-launch.sh`; `bash -n $E/logs/measure-launch.sh $E/launch-all.sh`; `shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh`; `/Users/johnss51/.local/bin/ruff check $E/analyze.py`; `/Users/johnss51/.local/bin/ruff format --check $E/analyze.py`; `/Users/johnss51/.local/bin/mypy --ignore-missing-imports $E/analyze.py`; `python3 $E/analyze.py --self-test` must exit 0 and print two `accepted as expected` lines (the clean cohort, and the same cohort with one run present only in its archive) and eleven `refused as expected` lines (an indeterminate never re-run; a replacement whose original was not indeterminate; a rerun absent from `reruns.tsv`; a replacement that is itself replaced; a log whose last line is FAILED after an earlier DONE; a stray log beside the manifest logs; a run whose verdict names another scenario; a manifest row with repeat 0; two runs of one log with the same trial index; a trial identity made of booleans; a replaced indeterminate whose bootstrap payload differs); every case names the fragment of the refusal it expects, and a refusal for any other reason is a `SELF-TEST FAILURE`; then `python3 $E/analyze.py` must exit 1 with `DESIGN ERROR:` naming the unfilled manifest (no logs exist yet). No live run is launched in this task.
 
 ```bash
 git add -f evidence/2026-09-16-brainstorming-trigger-calibration

@@ -20,7 +20,7 @@ script per `bash` invocation.
 
 | Directory | Covers | Runner |
 |---|---|---|
-| `tests/hooks/` | session-start context injection, the ungated notice, the Codex broker janitor, the hooks heredoc fence | each `test-*.sh`, one per `bash` call |
+| `tests/hooks/` | session-start context injection, the ungated notice, the Codex broker janitor, the first-edit interlock (decision table, wave rule, atomic publication, mutation vectors, pruning), the hooks heredoc fence | each `test-*.sh`, one per `bash` call |
 | `tests/codex-review-gate/` | gate scripts (`verdict-normalize`, `gate-round`, `gate-telemetry`, `ungated-ledger`, preflight, broker health), gate topology, and the gate-split losslessness proof | each `test-*.sh`, one per `bash` call |
 | `tests/sdd/` | the subagent-driven-development contract | `bash tests/sdd/test-sdd-contract.sh` |
 | `tests/skills/` | prose contracts for behavior-shaping skill wording with no other test: the parallel-dispatch collection contract, the writing-skills pruning rules | `bash tests/skills/test-skill-contract.sh` |

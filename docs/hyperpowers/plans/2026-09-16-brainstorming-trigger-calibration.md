@@ -87,7 +87,7 @@ not, and keep the tie going to brainstorming."
 
 **Interfaces:**
 - Consumes: the two roots' paths (Global Constraints) and their `skills/brainstorming/SKILL.md` description lines (the analysis renders each arm's expected listing line from them); the Task 1 commit SHA for the manifest's `treatment` row; the evals harness paths named in Global Constraints.
-- Produces: `manifest.tsv` (two-field rows `harness<TAB>sha`, `control<TAB>sha`, `treatment<TAB>sha`, `model<TAB>claude-opus-5`, then one four-field `arm<TAB>scenario<TAB>repeat<TAB>proc` row per launch, proc `p<n>`); `launch-all.sh manifest.tsv [max]`; `logs/measure-launch.sh arm scenario repeat proc` (proc `p<n>` for a manifest row, `r<n>` for a rerun; it writes `logs/<arm>-<scenario>-<proc>.log` with `root=<sha> root_clean=0` and `harness_pin=<sha> evals_head=<sha> harness_paths_identical=yes` header lines that `analyze.py` requires); `analyze.py` writing `runs.json` and printing the table, exit 1 with `DESIGN ERROR:` on any deviation (a manifest row without a log, a log that is neither a manifest row nor a rerun, a repeat count that differs, a missing pin, a rerun not in `reruns.tsv`, a replacement without a log or of another arm or scenario, a trial replaced twice, a replacement that is itself replaced, an indeterminate trial never re-run, a log whose last line is not its own DONE line, a `*.log` that is not a launch log, a verdict whose scenario, coding agent, or trial index does not fit its log, a repeat outside 1..99, an arm with no trials), and `analyze.py --self-test`, which builds throwaway cohorts under `$TMPDIR` and proves one clean cohort is accepted and ten broken ones refused, each for the reason the case names; `reruns.tsv` (`original<TAB>replacement`, `#` comments).
+- Produces: `manifest.tsv` (two-field rows `harness<TAB>sha`, `control<TAB>sha`, `treatment<TAB>sha`, `model<TAB>claude-opus-5`, then one four-field `arm<TAB>scenario<TAB>repeat<TAB>proc` row per launch, proc `p<n>`); `launch-all.sh manifest.tsv [max]`; `logs/measure-launch.sh arm scenario repeat proc` (proc `p<n>` for a manifest row, `r<n>` for a rerun; it writes `logs/<arm>-<scenario>-<proc>.log` with `root=<sha> root_clean=0` and `harness_pin=<sha> evals_head=<sha> harness_paths_identical=yes` header lines that `analyze.py` requires); `analyze.py` writing `runs.json` and printing the table, exit 1 with `DESIGN ERROR:` on any deviation (a manifest row without a log, a log that is neither a manifest row nor a rerun, a repeat count that differs, a missing pin, a rerun not in `reruns.tsv`, a replacement without a log or of another arm or scenario, a trial replaced twice, a replacement that is itself replaced, an indeterminate trial never re-run, a log whose last line is not its own DONE line, a `*.log` that is not a launch log, a verdict whose scenario, coding agent, or trial index does not fit its log, a repeat outside 1..99, a run (a replaced original included) whose payload, listing, brainstorming line, or model differs from the cohort, an arm with no trials), and `analyze.py --self-test`, which builds throwaway cohorts under `$TMPDIR` and proves one clean cohort is accepted and eleven broken ones refused, each for the reason the case names; `reruns.tsv` (`original<TAB>replacement`, `#` comments).
 
 - [ ] **Step 1: Write the README**
 
@@ -668,7 +668,13 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return (max(0.0, centre - half), min(1.0, centre + half))
 
 
-def check_design(manifest: dict, trials: list[Run]) -> None:
+def check_design(manifest: dict, runs: list[Run], trials: list[Run]) -> None:
+    """Counts on the collapsed trials; the measurement context on every run.
+
+    A replaced indeterminate original still ran under the instrument, so its
+    payload, listing, brainstorming line, and model must match the cohort too.
+    """
+
     expected = manifest["trials"]
     for scenario, arms in expected.items():
         for arm, count in arms.items():
@@ -680,10 +686,10 @@ def check_design(manifest: dict, trials: list[Run]) -> None:
     for scenario in {t.scenario for t in trials}:
         if scenario not in expected:
             raise DesignError(f"{scenario}: not in the declared design")
-    payloads = {t.payload for t in trials}
+    payloads = {r.payload for r in runs}
     if len(payloads) != 1:
         raise DesignError(f"payload hashes differ: {sorted(payloads)}")
-    rests = {t.listing_rest for t in trials}
+    rests = {r.listing_rest for r in runs}
     if len(rests) != 1:
         raise DesignError(
             f"listings differ outside the brainstorming line: {sorted(rests)}"
@@ -691,10 +697,10 @@ def check_design(manifest: dict, trials: list[Run]) -> None:
     for arm in ("control", "treatment"):
         if not any(t.arm == arm for t in trials):
             raise DesignError(f"{arm}: no trials")
-        lines = {t.brainstorming_line for t in trials if t.arm == arm}
+        lines = {r.brainstorming_line for r in runs if r.arm == arm}
         if lines != {expected_brainstorming_line(arm)}:
             raise DesignError(f"{arm}: brainstorming line {sorted(lines)}")
-    models = {t.model for t in trials}
+    models = {r.model for r in runs}
     if models != {manifest["model"]}:
         raise DesignError(f"models differ from the design: {sorted(models)}")
 
@@ -859,6 +865,15 @@ def self_test() -> int:
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(verdict, handle)
 
+    def foreign_original(root: str) -> None:
+        path = os.path.join(root, "results", "run-b", "home/.claude/projects/p/t.jsonl")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(
+                text.replace('"content": ["boot"]', '"content": ["boot-foreign"]')
+            )
+
     two_passes = {"run-a": "pass", "run-b": "pass"}
     cases: list[
         tuple[str, dict[str, str], str | None, Callable[[str], None] | None, str | None]
@@ -945,6 +960,13 @@ def self_test() -> int:
             boolean_identity,
             "trial identity",
         ),
+        (
+            "a replaced indeterminate whose bootstrap payload differs",
+            {"run-a": "pass", "run-b": "indeterminate", "rerun-b": "fail"},
+            "run-b\trerun-b\n",
+            foreign_original,
+            "payload hashes differ",
+        ),
     ]
     failures = 0
     for title, verdicts, reruns, mutate, expect in cases:
@@ -955,7 +977,8 @@ def self_test() -> int:
             detail = ""
             try:
                 manifest = read_manifest()
-                check_design(manifest, collapse(build_runs(manifest)))
+                runs = build_runs(manifest)
+                check_design(manifest, runs, collapse(runs))
                 accepted = True
             except DesignError as error:
                 accepted = False
@@ -997,7 +1020,7 @@ def main() -> int:
     manifest = read_manifest()
     runs = build_runs(manifest)
     trials = collapse(runs)
-    check_design(manifest, trials)
+    check_design(manifest, runs, trials)
     with open(os.path.join(E, "runs.json"), "w", encoding="utf-8") as handle:
         json.dump([asdict(run) for run in runs], handle, indent=1)
     header = "{:<50} {:<10} {:>3} {:>4} {:>4} {:>3}  {:<14} {}"
@@ -1082,7 +1105,7 @@ Expected, in order: exit 1 with `launchers non-zero: 1; manifest rows without a 
 
 - [ ] **Step 7: Check and commit in the evals clone**
 
-Run, each its own command, from the evals clone with `E=evidence/2026-09-16-brainstorming-trigger-calibration`: `chmod +x $E/analyze.py $E/launch-all.sh $E/logs/measure-launch.sh $E/logs/stub-launch.sh`; `bash -n $E/logs/measure-launch.sh $E/launch-all.sh`; `shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh`; `/Users/johnss51/.local/bin/ruff check $E/analyze.py`; `/Users/johnss51/.local/bin/ruff format --check $E/analyze.py`; `/Users/johnss51/.local/bin/mypy --ignore-missing-imports $E/analyze.py`; `python3 $E/analyze.py --self-test` must exit 0 and print one `accepted as expected` line and ten `refused as expected` lines (an indeterminate never re-run; a replacement whose original was not indeterminate; a rerun absent from `reruns.tsv`; a replacement that is itself replaced; a log whose last line is FAILED after an earlier DONE; a stray log beside the manifest logs; a run whose verdict names another scenario; a manifest row with repeat 0; two runs of one log with the same trial index; a trial identity made of booleans); every case names the fragment of the refusal it expects, and a refusal for any other reason is a `SELF-TEST FAILURE`; then `python3 $E/analyze.py` must exit 1 with `DESIGN ERROR:` naming the unfilled manifest (no logs exist yet). No live run is launched in this task.
+Run, each its own command, from the evals clone with `E=evidence/2026-09-16-brainstorming-trigger-calibration`: `chmod +x $E/analyze.py $E/launch-all.sh $E/logs/measure-launch.sh $E/logs/stub-launch.sh`; `bash -n $E/logs/measure-launch.sh $E/launch-all.sh`; `shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh`; `/Users/johnss51/.local/bin/ruff check $E/analyze.py`; `/Users/johnss51/.local/bin/ruff format --check $E/analyze.py`; `/Users/johnss51/.local/bin/mypy --ignore-missing-imports $E/analyze.py`; `python3 $E/analyze.py --self-test` must exit 0 and print one `accepted as expected` line and eleven `refused as expected` lines (an indeterminate never re-run; a replacement whose original was not indeterminate; a rerun absent from `reruns.tsv`; a replacement that is itself replaced; a log whose last line is FAILED after an earlier DONE; a stray log beside the manifest logs; a run whose verdict names another scenario; a manifest row with repeat 0; two runs of one log with the same trial index; a trial identity made of booleans; a replaced indeterminate whose bootstrap payload differs); every case names the fragment of the refusal it expects, and a refusal for any other reason is a `SELF-TEST FAILURE`; then `python3 $E/analyze.py` must exit 1 with `DESIGN ERROR:` naming the unfilled manifest (no logs exist yet). No live run is launched in this task.
 
 ```bash
 git add -f evidence/2026-09-16-brainstorming-trigger-calibration

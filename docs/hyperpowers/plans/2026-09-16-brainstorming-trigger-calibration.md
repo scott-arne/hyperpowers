@@ -87,7 +87,7 @@ not, and keep the tie going to brainstorming."
 
 **Interfaces:**
 - Consumes: the two roots' paths (Global Constraints) and their `skills/brainstorming/SKILL.md` description lines (the analysis renders each arm's expected listing line from them); the Task 1 commit SHA for the manifest's `treatment` row; the evals harness paths named in Global Constraints.
-- Produces: `manifest.tsv` (two-field rows `harness<TAB>sha`, `control<TAB>sha`, `treatment<TAB>sha`, `model<TAB>claude-opus-5`, then one four-field `arm<TAB>scenario<TAB>repeat<TAB>proc` row per launch, proc `p<n>`); `launch-all.sh manifest.tsv [max]`; `logs/measure-launch.sh arm scenario repeat proc` (proc `p<n>` for a manifest row, `r<n>` for a rerun; it writes `logs/<arm>-<scenario>-<proc>.log` with `root=<sha> root_clean=0` and `harness_pin=<sha> evals_head=<sha> harness_paths_identical=yes` header lines that `analyze.py` requires); `analyze.py` writing `runs.json` and printing the table, exit 1 with `DESIGN ERROR:` on any deviation (a manifest row without a log, a log that is neither a manifest row nor a rerun, a repeat count that differs, a missing pin, a rerun not in `reruns.tsv`, a replacement without a log or of another arm or scenario, a trial replaced twice, a replacement that is itself replaced, an indeterminate trial never re-run, a log whose last line is not its own DONE line, a `*.log` that is not a launch log, a verdict whose scenario, coding agent, or trial index does not fit its log, a repeat outside 1..99, an arm with no trials), and `analyze.py --self-test`, which builds throwaway cohorts under `$TMPDIR` and proves one clean cohort is accepted and nine broken ones refused; `reruns.tsv` (`original<TAB>replacement`, `#` comments).
+- Produces: `manifest.tsv` (two-field rows `harness<TAB>sha`, `control<TAB>sha`, `treatment<TAB>sha`, `model<TAB>claude-opus-5`, then one four-field `arm<TAB>scenario<TAB>repeat<TAB>proc` row per launch, proc `p<n>`); `launch-all.sh manifest.tsv [max]`; `logs/measure-launch.sh arm scenario repeat proc` (proc `p<n>` for a manifest row, `r<n>` for a rerun; it writes `logs/<arm>-<scenario>-<proc>.log` with `root=<sha> root_clean=0` and `harness_pin=<sha> evals_head=<sha> harness_paths_identical=yes` header lines that `analyze.py` requires); `analyze.py` writing `runs.json` and printing the table, exit 1 with `DESIGN ERROR:` on any deviation (a manifest row without a log, a log that is neither a manifest row nor a rerun, a repeat count that differs, a missing pin, a rerun not in `reruns.tsv`, a replacement without a log or of another arm or scenario, a trial replaced twice, a replacement that is itself replaced, an indeterminate trial never re-run, a log whose last line is not its own DONE line, a `*.log` that is not a launch log, a verdict whose scenario, coding agent, or trial index does not fit its log, a repeat outside 1..99, an arm with no trials), and `analyze.py --self-test`, which builds throwaway cohorts under `$TMPDIR` and proves one clean cohort is accepted and ten broken ones refused, each for the reason the case names; `reruns.tsv` (`original<TAB>replacement`, `#` comments).
 
 - [ ] **Step 1: Write the README**
 
@@ -215,7 +215,8 @@ log="$E/logs/$arm-$scen-$proc.log"
 # launch-all.sh <manifest.tsv> [max-concurrent]
 # Validates every row of the manifest first, then runs every four-field row
 # (arm, scenario, repeat, proc) through the launcher, at most N at a time
-# (default 8), waits for every child, and fails closed: a malformed or
+# (default 8), waits for every child, and fails closed: a malformed row (wrong
+# field count, an empty field, a misspelled arm, a bad proc or repeat) or a
 # duplicate row stops the campaign before anything is launched; a child that
 # exits non-zero, or a manifest row whose log is missing or does not end with
 # DONE, makes the exit status 1 and the closing line say so. LAUNCHER
@@ -227,10 +228,13 @@ E=$(cd "$(dirname "$manifest")" && pwd)
 launcher="${LAUNCHER:-$E/logs/measure-launch.sh}"
 [ -f "$manifest" ] || { echo "no manifest at $manifest" >&2; exit 1; }
 [ -x "$launcher" ] || [ -f "$launcher" ] || { echo "no launcher at $launcher" >&2; exit 1; }
-arms=(); scens=(); reps=(); procs=(); keys=" "; bad=0
+arms=(); scens=(); reps=(); procs=(); keys=" "; bad=0; tab=$'\t'
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in ''|'#'*) continue ;; esac
+  case "$line" in "$tab"*|*"$tab"|*"$tab$tab"*) echo "malformed row '$line' (empty field)" >&2; bad=1; continue ;; esac
+  ntab=$(printf '%s' "$line" | tr -cd '\t' | wc -c | tr -d ' ')
   IFS=$'\t' read -r -a f <<< "$line"
+  [ "${#f[@]}" -eq $((ntab + 1)) ] || { echo "malformed row '$line'" >&2; bad=1; continue; }
   case "${#f[@]}" in
     2) case "${f[0]}" in harness|control|treatment|model) continue ;; esac
        echo "malformed row '$line'" >&2; bad=1; continue ;;
@@ -574,7 +578,8 @@ def build_runs(manifest: dict) -> list[Run]:
             )
         trial = verdict.get("trial") or {}
         index = trial.get("index")
-        if trial.get("count") != repeat or not isinstance(index, int):
+        count = trial.get("count")
+        if type(count) is not int or count != repeat or type(index) is not int:
             raise DesignError(
                 f"{name}: trial identity {trial!r} does not fit a log with repeat {repeat}"
             )
@@ -807,7 +812,7 @@ def _write_fixture(
 
 
 def self_test() -> int:
-    """The analysis must accept the clean cohort and refuse each broken one."""
+    """The analysis must accept the clean cohort and refuse each broken one for its own reason."""
 
     import tempfile
 
@@ -847,37 +852,44 @@ def self_test() -> int:
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(verdict, handle)
 
+    def boolean_identity(root: str) -> None:
+        path = os.path.join(root, "results", "run-t", "verdict.json")
+        verdict = load_json(path)
+        verdict["trial"] = {"index": True, "count": True}
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(verdict, handle)
+
     two_passes = {"run-a": "pass", "run-b": "pass"}
     cases: list[
-        tuple[str, dict[str, str], str | None, Callable[[str], None] | None, bool]
+        tuple[str, dict[str, str], str | None, Callable[[str], None] | None, str | None]
     ] = [
         (
             "a clean cohort with one replaced indeterminate",
             {"run-a": "pass", "run-b": "indeterminate", "rerun-b": "fail"},
             "run-b\trerun-b\n",
             None,
-            True,
+            None,
         ),
         (
             "an indeterminate trial never re-run",
             {"run-a": "pass", "run-b": "indeterminate"},
             None,
             None,
-            False,
+            "indeterminate and never re-run",
         ),
         (
             "a replacement whose original was not indeterminate",
             {"run-a": "pass", "rerun-a": "pass"},
             "run-a\trerun-a\n",
             None,
-            False,
+            "was replaced but was not indeterminate",
         ),
         (
             "a rerun not listed in reruns.tsv",
             {"run-a": "indeterminate", "rerun-a": "pass"},
             None,
             None,
-            False,
+            "a rerun not listed in reruns.tsv",
         ),
         (
             "a replacement that is itself replaced",
@@ -889,34 +901,53 @@ def self_test() -> int:
             },
             "run-b\trerun-b\nrerun-b\trerun-c\n",
             None,
-            False,
+            "itself a replacement",
         ),
         (
             "a log whose last line is FAILED after an earlier DONE",
             two_passes,
             None,
             done_then_failed,
-            False,
+            "not this log's DONE line",
         ),
-        ("a stray log beside the manifest logs", two_passes, None, stray_log, False),
+        (
+            "a stray log beside the manifest logs",
+            two_passes,
+            None,
+            stray_log,
+            "not a launch log name",
+        ),
         (
             "a run whose verdict names another scenario",
             two_passes,
             None,
             wrong_scenario,
-            False,
+            "verdict.json names scenario",
         ),
-        ("a manifest row with repeat 0", two_passes, None, zero_repeat, False),
+        (
+            "a manifest row with repeat 0",
+            two_passes,
+            None,
+            zero_repeat,
+            "repeat must be 1..99",
+        ),
         (
             "two runs of one log with the same trial index",
             two_passes,
             None,
             duplicate_index,
-            False,
+            "are not 1..2",
+        ),
+        (
+            "a trial identity made of booleans",
+            two_passes,
+            None,
+            boolean_identity,
+            "trial identity",
         ),
     ]
     failures = 0
-    for title, verdicts, reruns, mutate, should_pass in cases:
+    for title, verdicts, reruns, mutate, expect in cases:
         with tempfile.TemporaryDirectory() as tmp:
             E = tmp
             ROOTS = {"control": tmp, "treatment": tmp}
@@ -929,11 +960,18 @@ def self_test() -> int:
             except DesignError as error:
                 accepted = False
                 detail = f": {error}"
-        if accepted == should_pass:
+        if expect is None:
+            as_expected = accepted
+        else:
+            as_expected = not accepted and expect in detail
+        if as_expected:
             verb = "accepted as expected" if accepted else "refused as expected"
             print(f"{verb} ({title}){detail}")
         else:
-            print(f"SELF-TEST FAILURE ({title}): accepted={accepted}{detail}")
+            print(
+                f"SELF-TEST FAILURE ({title}): accepted={accepted}, "
+                f"expected {expect!r}{detail}"
+            )
             failures += 1
     E, ROOTS = saved
     return 1 if failures else 0
@@ -1036,13 +1074,15 @@ echo "--- one good row, one failed child, one log without DONE:"; LAUNCHER="$T/s
 printf 'harness\t%s\ncontrol\t%s\ntreatment\t%s\nmodel\tm\ncontrol\ts\t1\t1\n' aaaa bbbb cccc > "$T/manifest-bad.tsv"; echo "--- malformed proc id:"; LAUNCHER="$T/stub-launch.sh" bash "$L" "$T/manifest-bad.tsv" 2 2>&1 | tail -2; echo "exit=${PIPESTATUS[0]}"
 rm -f "$T"/logs/*; printf 'harness\t%s\ncontrol\t%s\ntreatment\t%s\nmodel\tm\ncontrol\ts\t1\tp1\n' aaaa bbbb cccc > "$T/manifest-good.tsv"; echo "--- one good row:"; LAUNCHER="$T/stub-launch.sh" bash "$L" "$T/manifest-good.tsv" 2 2>&1 | tail -1; echo "exit=${PIPESTATUS[0]}"
 rm -f "$T"/logs/*; printf 'harness\t%s\ncontrol\t%s\ntreatment\t%s\nmodel\tm\ncontorl\ts\t1\tp2\ncontrol\ts\t1\tp1\n' aaaa bbbb cccc > "$T/manifest-typo.tsv"; echo "--- misspelled arm, nothing launched:"; LAUNCHER="$T/stub-launch.sh" bash "$L" "$T/manifest-typo.tsv" 2 2>&1 | tail -2; echo "exit=${PIPESTATUS[0]}"; echo "logs after: $(ls "$T/logs" | wc -l | tr -d ' ')"
+rm -f "$T"/logs/*; printf 'harness\t%s\ncontrol\t%s\ntreatment\t%s\nmodel\tm\ncontrol\ts\t1\tp1\t\n' aaaa bbbb cccc > "$T/manifest-trailing.tsv"; echo "--- trailing tab, nothing launched:"; LAUNCHER="$T/stub-launch.sh" bash "$L" "$T/manifest-trailing.tsv" 2 2>&1 | tail -2; echo "exit=${PIPESTATUS[0]}"; echo "logs after: $(ls "$T/logs" | wc -l | tr -d ' ')"
+rm -f "$T"/logs/*; printf 'harness\t%s\ncontrol\t%s\ntreatment\t%s\nmodel\tm\ncontrol\t\t1\tp1\n' aaaa bbbb cccc > "$T/manifest-empty.tsv"; echo "--- empty scenario field, nothing launched:"; LAUNCHER="$T/stub-launch.sh" bash "$L" "$T/manifest-empty.tsv" 2 2>&1 | tail -2; echo "exit=${PIPESTATUS[0]}"; echo "logs after: $(ls "$T/logs" | wc -l | tr -d ' ')"
 ```
 
-Expected, in order: exit 1 with `launchers non-zero: 1; manifest rows without a DONE log: 2`; exit 1 with `malformed proc id '1'`; exit 0 with `launchers non-zero: 0; manifest rows without a DONE log: 0`; exit 1 with `malformed arm 'contorl'` and `logs after: 0` (the launcher validates the whole manifest before it starts anything, so the valid row was never started). Record all four outputs in the report.
+Expected, in order: exit 1 with `launchers non-zero: 1; manifest rows without a DONE log: 2`; exit 1 with `malformed proc id '1'`; exit 0 with `launchers non-zero: 0; manifest rows without a DONE log: 0`; exit 1 with `malformed arm 'contorl'` and `logs after: 0` (the launcher validates the whole manifest before it starts anything, so the valid row was never started); exit 1 with `(empty field)` and `logs after: 0` for the trailing tab; the same for the empty scenario field. Record all six outputs in the report.
 
 - [ ] **Step 7: Check and commit in the evals clone**
 
-Run, each its own command, from the evals clone with `E=evidence/2026-09-16-brainstorming-trigger-calibration`: `chmod +x $E/analyze.py $E/launch-all.sh $E/logs/measure-launch.sh $E/logs/stub-launch.sh`; `bash -n $E/logs/measure-launch.sh $E/launch-all.sh`; `shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh`; `/Users/johnss51/.local/bin/ruff check $E/analyze.py`; `/Users/johnss51/.local/bin/ruff format --check $E/analyze.py`; `/Users/johnss51/.local/bin/mypy --ignore-missing-imports $E/analyze.py`; `python3 $E/analyze.py --self-test` must exit 0 and print one `accepted as expected` line and nine `refused as expected` lines (an indeterminate never re-run; a replacement whose original was not indeterminate; a rerun absent from `reruns.tsv`; a replacement that is itself replaced; a log whose last line is FAILED after an earlier DONE; a stray log beside the manifest logs; a run whose verdict names another scenario; a manifest row with repeat 0; two runs of one log with the same trial index), each refused by the check it targets; then `python3 $E/analyze.py` must exit 1 with `DESIGN ERROR:` naming the unfilled manifest (no logs exist yet). No live run is launched in this task.
+Run, each its own command, from the evals clone with `E=evidence/2026-09-16-brainstorming-trigger-calibration`: `chmod +x $E/analyze.py $E/launch-all.sh $E/logs/measure-launch.sh $E/logs/stub-launch.sh`; `bash -n $E/logs/measure-launch.sh $E/launch-all.sh`; `shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh`; `/Users/johnss51/.local/bin/ruff check $E/analyze.py`; `/Users/johnss51/.local/bin/ruff format --check $E/analyze.py`; `/Users/johnss51/.local/bin/mypy --ignore-missing-imports $E/analyze.py`; `python3 $E/analyze.py --self-test` must exit 0 and print one `accepted as expected` line and ten `refused as expected` lines (an indeterminate never re-run; a replacement whose original was not indeterminate; a rerun absent from `reruns.tsv`; a replacement that is itself replaced; a log whose last line is FAILED after an earlier DONE; a stray log beside the manifest logs; a run whose verdict names another scenario; a manifest row with repeat 0; two runs of one log with the same trial index; a trial identity made of booleans); every case names the fragment of the refusal it expects, and a refusal for any other reason is a `SELF-TEST FAILURE`; then `python3 $E/analyze.py` must exit 1 with `DESIGN ERROR:` naming the unfilled manifest (no logs exist yet). No live run is launched in this task.
 
 ```bash
 git add -f evidence/2026-09-16-brainstorming-trigger-calibration

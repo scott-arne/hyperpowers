@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# PreToolUse hook for the hyperpowers plugin: the first-edit interlock.
+#
+# Denies each agent context's first wave of mutation attempts once, with the
+# ladder's rung 1 in the denial, and allows everything after that context has
+# read the denial. hooks/interlock-lib.cjs holds the mutation definition, the
+# transcript reader, and the atomic marker publication; this script decides.
+# Every error path allows: a hook that could block a session on a parse error
+# or a full disk would cost more than the behavior it buys. No heredocs or
+# here-strings (tests/hooks/test-no-heredocs-in-hooks.sh); bash 3.2.
+#
+# State lives under ${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/interlock/
+# <session_id>/<agent>/wave, where <agent> is the transcript's basename: a
+# controller and each of its subagents is interlocked once. The marker is
+# published by renaming a prepared temporary directory, so it is either absent
+# or complete, and a caller that dies early leaves only a temporary directory
+# that hooks/session-start prunes.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB="${SCRIPT_DIR}/interlock-lib.cjs"
+
+MESSAGE='Interlock, once before your first edit: run the ladder from the bootstrap. Rung 1 asks whether the change carries a consequence beyond the lines you touch: security posture, permissions, TLS or certificate checks, data loss or exposure, removing or disabling something that works, an interface others call. If it does: say the consequence to your human partner and stop; retry only after a reply that says yes. Nothing already in the request counts as that yes; "unused", "internal", and "just staging" are claims to confirm. If it does not: retry this call now; no question, no skill. Dispatched subagents: if rung 1 applies, stop and report the consequence to your controller instead of editing; otherwise retry now.'
+
+# Escape string for JSON embedding using bash parameter substitution (the same
+# byte-exact function hooks/session-start uses).
+escape_for_json() {
+    local s="$1" i c u
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    for i in 1 2 3 4 5 6 7 8 11 12 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do
+        printf -v c '\\%03o' "$i"
+        printf -v c "$c"
+        printf -v u '\\u%04x' "$i"
+        s="${s//"$c"/$u}"
+    done
+    printf '%s' "$s"
+}
+
+deny() {
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$(escape_for_json "$MESSAGE")"
+  exit 0
+}
+
+command -v node >/dev/null 2>&1 || exit 0
+[ -f "$LIB" ] || exit 0
+
+# Claude Code pipes the PreToolUse payload on stdin. Bounded by wall-clock, as
+# in session-start: a byte bound alone blocks forever on an open, silent pipe.
+hook_input=""
+if [ ! -t 0 ]; then
+  IFS= read -r -d '' -t 2 hook_input 2>/dev/null || true
+fi
+[ -n "$hook_input" ] || exit 0
+
+decision_line="$(printf '%s' "$hook_input" | node "$LIB" --hook 2>/dev/null)" || exit 0
+tab=$'\t'
+decision="${decision_line%%${tab}*}"
+rest="${decision_line#*${tab}}"
+sid="${rest%%${tab}*}"
+transcript="${rest#*${tab}}"
+[ "$decision" = "attempt" ] || exit 0
+case "$sid" in ''|*[!A-Za-z0-9._-]*) exit 0 ;; esac
+[ -n "$transcript" ] || exit 0
+agent="${transcript##*/}"
+agent="${agent%.*}"
+case "$agent" in ''|*[!A-Za-z0-9._-]*) exit 0 ;; esac
+
+root="${XDG_CACHE_HOME:-${HOME:-}/.cache}/hyperpowers/interlock/${sid}"
+marker="${root}/${agent}"
+
+if [ ! -d "$marker" ]; then
+  mkdir -p "$root" 2>/dev/null || exit 0
+  tmp="${root}/${agent}.tmp.$$"
+  mkdir "$tmp" 2>/dev/null || exit 0
+  wave="$(node "$LIB" --wave "$transcript" 2>/dev/null)" || wave="unknown"
+  [ -n "$wave" ] || wave="unknown"
+  if ! printf '%s\n' "$wave" > "$tmp/wave" 2>/dev/null; then
+    rm -rf "$tmp" 2>/dev/null
+    exit 0
+  fi
+  node "$LIB" --publish "$tmp" "$marker" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    deny
+  fi
+  rm -rf "$tmp" 2>/dev/null
+  # 3: a parallel call in this context published first; read its wave below.
+  [ "$rc" -eq 3 ] || exit 0
+fi
+
+wave="$(cat "$marker/wave" 2>/dev/null)" || wave="unknown"
+[ -n "$wave" ] || wave="unknown"
+[ "$wave" != "unknown" ] || exit 0
+current="$(node "$LIB" --wave "$transcript" 2>/dev/null)" || exit 0
+[ -n "$current" ] || exit 0
+[ "$current" != "unknown" ] || exit 0
+if [ "$current" = "$wave" ]; then
+  deny
+fi
+exit 0

@@ -10,7 +10,7 @@
 
 ## What was measured
 
-Whether a user sees the description depends on Claude Code's listing budget (context tokens x 3 bytes/token x 1%, bundled skills first, plugin skills by usage), so behaviour differs by installed plugins, model and history. That mechanism is out of this fork's control; the description is in it.
+Two arms that differ only in line 3 of `skills/brainstorming/SKILL.md`: control ran the upstream description from `external-workflow-adoption` at `2e83fd8`, treatment ran the reworded description from `brainstorming-trigger` at `8fbbb42` (description commit `12b5b78`), with every other skill byte-identical, as the analysis's listing hash confirmed. Each arm ran 75 live sessions of `claude-opus-5` on Claude Code 2.1.261 across nine scenarios, `cost-checkbox-over-trigger` (20), `brainstorming-resists-jump-to-implementation` (10), `cost-session-timeout-boundary` (10), `cost-remove-export-boundary` (10), and `brainstorming-router-escalates-b1..b5` (5 each), judged by the Gauntlet-Agent, with indeterminate trials re-run once. Both arms set `SLASH_COMMAND_TOOL_CHAR_BUDGET=20000` so the description was rendered in the skill listing; whether a user sees it in production depends on Claude Code's listing budget (context tokens x 3 bytes per token x 1%, bundled skills first, plugin skills by usage), which is outside this fork's control, while the description is in it.
 
 ## Results
 
@@ -72,7 +72,7 @@ The spec's criteria, each with numbers:
 
 ## Decision
 
-The description does not ship under the spec's criteria. The human partner's stated preference: "I'd rather have false positives than negatives, but it is a rigorous process, so we also don't want to trigger it when unnecessary." The measured change reduced false positives from 90% to 35% without a false-negative regression on the twin or four of the five router briefs; b1's one-session gap is within the noise of five sessions. Whether that trade is worth shipping outside the spec's bar is the human partner's call. The spec says the next candidate wording is a new measured change.
+The description does not ship under the spec's criteria, measured against the human partner's stated preference, "I'd rather have false positives than negatives, but it is a rigorous process, so we also don't want to trigger it when unnecessary" (the plan's shorthand: false positives over false negatives, but no trigger where none is needed).
 
 ## Limits
 
@@ -80,3 +80,4 @@ The description does not ship under the spec's criteria. The human partner's sta
 - The budget override (`SLASH_COMMAND_TOOL_CHAR_BUDGET=20000`) renders all fifteen hyperpowers descriptions, not only brainstorming's. The production listing renders far fewer.
 - Router briefs have five sessions per arm: one session moves a rate by 20 points, and b1's 3-of-5 against 4-of-5 has Wilson intervals of 12-77 against 4-62.
 - Both boundary scenarios (`cost-session-timeout-boundary`, `cost-remove-export-boundary`) sit at 0% pass in both arms, so they can show neither a regression nor an improvement from a description change. The behaviour they probe is not decided by the description under this model and version.
+- The verdict follows the spec's bar, not the direction of the effect: the change cut false positives from 90% to 35% with no false-negative regression on the twin or on four of the five router briefs, and b1's one-session gap is within the noise of five sessions; whether that trade ships outside the bar is the human partner's decision, and the spec says the next candidate wording is a new measured change.

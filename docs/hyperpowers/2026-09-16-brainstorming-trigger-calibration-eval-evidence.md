@@ -6,7 +6,7 @@
 **Control root:** `2e83fd8`
 **Treatment root:** `8fbbb42` (description commit `12b5b78`; the treatment worktree carried plan-document commits on top of it, and the skills tree is otherwise identical to control)
 **Harness:** evals `4fd69ed` (the manifest's harness pin)
-**Evidence:** evals `evidence/2026-09-16-brainstorming-trigger-calibration/` at `9348f02`
+**Evidence:** evals `evidence/2026-09-16-brainstorming-trigger-calibration/` at `6fc70bf`
 **Branch state:** the description commit `12b5b78` is reverted on the branch (`738f05c`); the reworded text is preserved in history and ships with one cherry-pick if the human partner decides to ship outside the spec's bar.
 
 ## What was measured

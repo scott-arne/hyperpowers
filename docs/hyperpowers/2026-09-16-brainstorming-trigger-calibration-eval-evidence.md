@@ -2,15 +2,16 @@
 
 **Spec:** `docs/hyperpowers/specs/2026-09-16-brainstorming-trigger-calibration-design.md`
 **Plan:** `docs/hyperpowers/plans/2026-09-16-brainstorming-trigger-calibration.md`
-**Measured:** 2026-09-17
+**Measured:** 2026-09-17 (UTC)
 **Control root:** `2e83fd8`
 **Treatment root:** `8fbbb42` (description commit `12b5b78`; the treatment worktree carried plan-document commits on top of it, and the skills tree is otherwise identical to control)
 **Harness:** evals `4fd69ed` (the manifest's harness pin)
-**Evidence:** evals `evidence/2026-09-16-brainstorming-trigger-calibration/` at `acdad9b`
+**Evidence:** evals `evidence/2026-09-16-brainstorming-trigger-calibration/` at `9348f02`
+**Branch state:** the description commit `12b5b78` is reverted on the branch (`738f05c`); the reworded text is preserved in history and ships with one cherry-pick if the human partner decides to ship outside the spec's bar.
 
 ## What was measured
 
-Two arms that differ only in line 3 of `skills/brainstorming/SKILL.md`: control ran the upstream description from `external-workflow-adoption` at `2e83fd8`, treatment ran the reworded description from `brainstorming-trigger` at `8fbbb42` (description commit `12b5b78`), with every other skill byte-identical, as the analysis's listing hash confirmed. Each arm ran 75 live sessions of `claude-opus-5` on Claude Code 2.1.261 across nine scenarios, `cost-checkbox-over-trigger` (20), `brainstorming-resists-jump-to-implementation` (10), `cost-session-timeout-boundary` (10), `cost-remove-export-boundary` (10), and `brainstorming-router-escalates-b1..b5` (5 each), judged by the Gauntlet-Agent, with indeterminate trials re-run once. Both arms set `SLASH_COMMAND_TOOL_CHAR_BUDGET=20000` so the description was rendered in the skill listing; whether a user sees it in production depends on Claude Code's listing budget (context tokens x 3 bytes per token x 1%, bundled skills first, plugin skills by usage), which is outside this fork's control, while the description is in it.
+Two arms that differ only in line 3 of `skills/brainstorming/SKILL.md`: control ran the upstream description from `external-workflow-adoption` at `2e83fd8`, treatment ran the reworded description from `brainstorming-trigger` at `8fbbb42` (description commit `12b5b78`), with every file outside docs/ byte-identical (`git diff --stat 2e83fd8 8fbbb42 -- . ':(exclude)docs'` is the single description line; the analysis's listing hash separately confirmed no other description changed). Each arm ran 75 trials (77 and 76 sessions once the three replaced indeterminate originals are counted) of `claude-opus-5` on Claude Code 2.1.261 across nine scenarios, `cost-checkbox-over-trigger` (20), `brainstorming-resists-jump-to-implementation` (10), `cost-session-timeout-boundary` (10), `cost-remove-export-boundary` (10), and `brainstorming-router-escalates-b1..b5` (5 each), judged by the Gauntlet-Agent, with indeterminate trials re-run once. Both arms set `SLASH_COMMAND_TOOL_CHAR_BUDGET=20000` so the description was rendered in the skill listing; whether a user sees it in production depends on Claude Code's listing budget (context tokens x 3 bytes per token x 1%, bundled skills first, plugin skills by usage), which is outside this fork's control, while the description is in it.
 
 ## Results
 
@@ -40,6 +41,8 @@ design checks passed: every manifest row logged once with its pins, one payload 
 
 Model `claude-opus-5`, Claude Code 2.1.261, `SLASH_COMMAND_TOOL_CHAR_BUDGET=20000` in both arms.
 
+Mean coding-agent tokens per checkbox session: 168,571 in control, 151,742 in treatment. The scenario's story names the token total as its headline and the pass/fail bucketing as a secondary signal; the spec's bar is the bucketing, so the note reads it that way.
+
 ## Reruns
 
 Three manifest trials were indeterminate, each with
@@ -66,7 +69,7 @@ The spec's criteria, each with numbers:
 2. No false-negative regression:
    - `brainstorming-resists-jump-to-implementation` twin: treatment 10 of 10 pass, control 10 of 10 pass, zero treatment failures. Met.
    - `cost-session-timeout-boundary`: treatment 0 of 10 pass, control 0 of 10 pass. Met as an equality at the floor.
-   - Router briefs: `brainstorming-router-escalates-b1-userid-param` treatment 3 of 5 pass, control 4 of 5 pass. Not met. `b2-config-module`, `b3-logging`, `b4-reusable-validation`, `b5-prefs-storage`: treatment 5 of 5 pass, control 5 of 5 pass each. Met.
+   - Router briefs: `brainstorming-router-escalates-b1-userid-param` treatment 3 of 5 pass, control 4 of 5 pass. Not met. All 50 router sessions in both arms invoked brainstorming first; every b1 failure is a classification failure inside the skill (the task called bounded, no spec written), not a missed trigger. `b2-config-module`, `b3-logging`, `b4-reusable-validation`, `b5-prefs-storage`: treatment 5 of 5 pass, control 5 of 5 pass each. Met.
 3. `cost-remove-export-boundary` treatment fail rate no higher than control: 100% fail both arms (10 of 10 each). Met at the floor.
 4. Context checks (one payload hash across all runs, one listing outside the brainstorming line, each arm's brainstorming line as rendered from its root, one model): confirmed by the design checks.
 

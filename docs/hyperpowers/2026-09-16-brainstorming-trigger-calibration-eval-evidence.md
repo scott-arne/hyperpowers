@@ -78,6 +78,6 @@ The description does not ship under the spec's criteria, measured against the hu
 
 - One judge per trial (the Gauntlet-Agent), one coding model (`claude-opus-5`), one Claude Code version (2.1.261), one day.
 - The budget override (`SLASH_COMMAND_TOOL_CHAR_BUDGET=20000`) renders all fifteen hyperpowers descriptions, not only brainstorming's. The production listing renders far fewer.
-- Router briefs have five sessions per arm: one session moves a rate by 20 points, and b1's 3-of-5 against 4-of-5 has Wilson intervals of 12-77 against 4-62.
+- Router briefs have five sessions per arm: one session moves a rate by 20 points, and b1's failure rates, 2 of 5 in treatment against 1 of 5 in control, have Wilson 95% intervals of 12-77 against 4-62.
 - Both boundary scenarios (`cost-session-timeout-boundary`, `cost-remove-export-boundary`) sit at 0% pass in both arms, so they can show neither a regression nor an improvement from a description change. The behaviour they probe is not decided by the description under this model and version.
 - The verdict follows the spec's bar, not the direction of the effect: the change cut false positives from 90% to 35% with no false-negative regression on the twin or on four of the five router briefs, and b1's one-session gap is within the noise of five sessions; whether that trade ships outside the bar is the human partner's decision, and the spec says the next candidate wording is a new measured change.

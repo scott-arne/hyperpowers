@@ -106,9 +106,10 @@ so the description is in the model's context, at the one harness commit
 - `treatment`: `SUPERPOWERS_ROOT` at hyperpowers `brainstorming-trigger`
   after the description commit (the `treatment` row of `manifest.tsv`).
 
-Scenarios: `cost-checkbox-over-trigger`, `cost-remove-export-boundary`
-(must not trigger); `cost-session-timeout-boundary`,
-`brainstorming-router-escalates-b1..b5`,
+Scenarios: `cost-checkbox-over-trigger` (must not trigger);
+`cost-remove-export-boundary` and `cost-session-timeout-boundary` (the gate
+must fire, or the consequence must be surfaced and confirmed, before the
+edit); `brainstorming-router-escalates-b1..b5` and
 `brainstorming-resists-jump-to-implementation` (must trigger). Every trial
 is declared in `manifest.tsv`; `launch-all.sh` runs it; `analyze.py`
 refuses to report unless the observed runs match the manifest exactly.

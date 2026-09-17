@@ -198,7 +198,7 @@ ship."
 
 **Interfaces:**
 - Consumes: the two roots' paths (Global Constraints); the control commit `a04fe31557c2de3e5e4821a404433ef99231b890`; Task 1's guarantee that the treatment root's `skills/using-hyperpowers/SKILL.md` and the `description:` line of `skills/brainstorming/SKILL.md` are readable from the pinned commit with `git show`.
-- Produces: `manifest.tsv` with two-field rows `harness<TAB><EVALS_COMMIT>`, `control<TAB>a04fe31557c2de3e5e4821a404433ef99231b890`, `treatment<TAB><TREATMENT_COMMIT>`, `model<TAB>claude-opus-5`, then one five-field row `arm<TAB>scenario<TAB>repeat<TAB>proc<TAB>budget` per launch (48 rows, 184 sessions); `manifest.base.tsv`, byte-identical to the initial `manifest.tsv`, the frozen design the analyzer validates later rows against; `launch-all.sh manifest.tsv [max]` (max a positive integer); `logs/measure-launch.sh arm scenario repeat proc budget` (refuses to launch when `HTTP_PROXY`, `HTTPS_PROXY`, or `NO_PROXY` is unset, when `ANTHROPIC_MODEL` differs from the manifest's model row, or when a git status check fails; writes a `model_pin=... anthropic_model=...` header line) (proc `p<n>` for a manifest row, `r<n>` for a rerun; budget `raised` or `default`), writing `logs/<arm>-<scenario>-<proc>.log` whose header lines are `arm=... scenario=... repeat=N proc=... budget=...`, `root=<sha> root_clean=0`, and `harness_pin=<sha> evals_head=<sha> harness_paths_identical=yes`, and whose last line is `DONE <arm> <scenario> <proc>` only on quorum exit 0, 1, or 2; `analyze.py`, which writes `runs.json`, prints the per-cell table (scenario, arm, budget) and the six acceptance criteria with their numbers, exits 1 with `DESIGN ERROR:` on any deviation from the manifest (a base manifest whose sha256 is not the frozen design's, a control pin or model that is not the design's, an unlogged row, a stray or unfinished log, a repeat or budget that differs, a missing pin, a payload without the pinned bootstrap, arms sharing a payload though their bootstraps differ, a void attempt left in the logs, a rerun not in `reruns.tsv` or of another arm, scenario, or budget, a trial replaced twice or a replacement of a replacement, an indeterminate never re-run, a listing that differs within a budget or within a session, a listing with other than exactly one brainstorming line, default-budget brainstorming lines that differ across arms or that rendered the description, a model that differs from the design or within a session, a hook payload (the first or a later one) without the pinned bootstrap, a grader that exited without a summary or run id, a base-design row missing or edited, an added row without a `# top-up: <run> indeterminate twice` or `# control run for criterion 4: treatment failed` comment, a top-up whose run was not indeterminate twice or a fourth top-up in a cell, a twice-indeterminate trial with no top-up while its cell is under the limit, a control run without a failed treatment trial, or a failed non-sentinel treatment trial without its control run), `analyze.py --self-test` (a criteria arithmetic check of ten expected lines on synthetic trials, 4 accepted cohorts including one run through `main()`, and 29 refused cohorts, each refused by the check it targets), and `analyze.py --archives` (scenario/arm/run for the archives under `task-3-runs/`); `reruns.tsv` (`original<TAB>replacement`, `#` comments).
+- Produces: `manifest.tsv` with two-field rows `harness<TAB><EVALS_COMMIT>`, `control<TAB>a04fe31557c2de3e5e4821a404433ef99231b890`, `treatment<TAB><TREATMENT_COMMIT>`, `model<TAB>claude-opus-5`, then one five-field row `arm<TAB>scenario<TAB>repeat<TAB>proc<TAB>budget` per launch (48 rows, 184 sessions); `manifest.base.tsv`, byte-identical to the initial `manifest.tsv`, the frozen design the analyzer validates later rows against; `launch-all.sh manifest.tsv [max]` (max a positive integer); `logs/measure-launch.sh arm scenario repeat proc budget` (refuses to launch when `HTTP_PROXY`, `HTTPS_PROXY`, or `NO_PROXY` is unset, when `ANTHROPIC_MODEL` differs from the manifest's model row, or when a git status check fails; writes a `model_pin=... anthropic_model=...` header line) (proc `p<n>` for a manifest row, `r<n>` for a rerun; budget `raised` or `default`), writing `logs/<arm>-<scenario>-<proc>.log` whose header lines are `arm=... scenario=... repeat=N proc=... budget=...`, `root=<sha> root_clean=0`, and `harness_pin=<sha> evals_head=<sha> harness_paths_identical=yes`, and whose last line is `DONE <arm> <scenario> <proc>` only on quorum exit 0, 1, or 2; `analyze.py`, which writes `runs.json`, prints the per-cell table (scenario, arm, budget) and the six acceptance criteria with their numbers, exits 1 with `DESIGN ERROR:` on any deviation from the manifest (a base manifest whose sha256 is not the frozen design's, a control pin or model that is not the design's, an unlogged row, a stray or unfinished log, a repeat or budget that differs, a missing pin, a payload without the pinned bootstrap, arms sharing a payload though their bootstraps differ, a void attempt left in the logs, a rerun not in `reruns.tsv` or of another arm, scenario, or budget, a trial replaced twice or a replacement of a replacement, an indeterminate never re-run, a listing that differs within a budget or within a session, a listing with other than exactly one brainstorming line (the bare skill name or the name followed by a colon; a differently named skill does not count), a transcript with a non-JSON record, default-budget brainstorming lines that differ across arms or that rendered the description, a model that differs from the design or within a session, a hook payload (the first or a later one) without the pinned bootstrap, a grader that exited without a summary or run id, a base-design row missing or edited, an added row without a `# top-up: <run> indeterminate twice` or `# control run for criterion 4: treatment failed` comment, a top-up whose run was not indeterminate twice or a fourth top-up in a cell, a twice-indeterminate trial with no top-up while its cell is under the limit, a control run without a failed treatment trial, or a failed non-sentinel treatment trial without its control run), `analyze.py --self-test` (a criteria arithmetic check of ten expected lines on synthetic trials, 4 accepted cohorts including one run through `main()`, and 31 refused cohorts, each refused by the check it targets), and `analyze.py --archives` (scenario/arm/run for the archives under `task-3-runs/`); `reruns.tsv` (`original<TAB>replacement`, `#` comments).
 
 - [ ] **Step 1: Write `README.md`**
 
@@ -523,6 +523,14 @@ HARNESS_RE = re.compile(
 )
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 BRAINSTORMING_LINE = "- hyperpowers:brainstorming"
+
+
+def is_brainstorming_line(line: str) -> bool:
+    """The listing line of the brainstorming skill itself: the bare name or the name followed by its description."""
+
+    return line == BRAINSTORMING_LINE or line.startswith(BRAINSTORMING_LINE + ":")
+
+
 CHECKBOX = "cost-checkbox-over-trigger"
 TIMEOUT = "cost-session-timeout-boundary"
 EXPORT = "cost-remove-export-boundary"
@@ -754,12 +762,18 @@ def load_json(path: str) -> dict:
 
 
 def iter_records(path: str):
+    """Every JSON record of a transcript; a non-empty line that is not JSON is an error, not a skip."""
+
     with open(path, encoding="utf-8", errors="replace") as handle:
-        for line in handle:
+        for number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
             try:
                 yield json.loads(line)
-            except json.JSONDecodeError:
-                continue
+            except json.JSONDecodeError as error:
+                raise DesignError(
+                    f"{path}: malformed transcript record at line {number} ({error.msg})"
+                ) from None
 
 
 def first_action(transcript: str) -> str:
@@ -818,12 +832,12 @@ def context(transcript: str) -> tuple[str, list[str], str, str, str]:
         )
     listing = next(iter(listings)) if listings else ""
     lines = listing.split("\n")
-    own = [line for line in lines if line.startswith(BRAINSTORMING_LINE)]
+    own = [line for line in lines if is_brainstorming_line(line)]
     if listing and len(own) != 1:
         raise DesignError(
             f"{transcript}: the listing has {len(own)} brainstorming lines, expected exactly one"
         )
-    rest = [line for line in lines if not line.startswith(BRAINSTORMING_LINE)]
+    rest = [line for line in lines if not is_brainstorming_line(line)]
     brainstorming = own[0] if own else ""
     listing_rest = (
         hashlib.sha256("\n".join(rest).encode()).hexdigest()[:12] if listing else ""
@@ -1712,7 +1726,7 @@ def self_test() -> int:
         _rewrite(
             os.path.join(root, "results", "run-c", "home/.claude/projects/p/t.jsonl"),
             '"- other:skill: text\\n- hyperpowers:brainstorming"',
-            '"- other:skill: text\\n- hyperpowers:brainstorming (other)"',
+            '"- other:skill: text\\n- hyperpowers:brainstorming: OTHER"',
         )
 
     def rerun_other_budget(root: str) -> None:
@@ -1812,6 +1826,19 @@ def self_test() -> int:
             "run-a",
             {"type": "assistant", "message": {"model": "other-model", "content": []}},
         )
+
+    def prefixed_other_skill(root: str) -> None:
+        for name in ("run-d", "run-c"):
+            _rewrite(
+                os.path.join(root, "results", name, "home/.claude/projects/p/t.jsonl"),
+                '"- other:skill: text\\n- hyperpowers:brainstorming"',
+                '"- other:skill: text\\n- hyperpowers:brainstorming-old"',
+            )
+
+    def corrupt_record(root: str) -> None:
+        path = os.path.join(root, "results", "run-a", "home/.claude/projects/p/t.jsonl")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write('{"type": "assistant", "mess\n')
 
     def second_listing(root: str) -> None:
         _append_record(
@@ -2079,6 +2106,20 @@ def self_test() -> int:
             second_listing,
             "different skill listings",
         ),
+        (
+            "a default listing whose only brainstorming-like line is another prefixed skill",
+            two_passes,
+            None,
+            prefixed_other_skill,
+            "brainstorming lines, expected exactly one",
+        ),
+        (
+            "a transcript with a corrupt trailing record",
+            two_passes,
+            None,
+            corrupt_record,
+            "malformed transcript record",
+        ),
     ]
     for title, verdicts, reruns, mutate, expect in cases:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2237,7 +2278,7 @@ shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh
 /Users/johnss51/Applications/micromamba/envs/main/bin/python $E/analyze.py
 ```
 
-Expected: the shell checks silent; ruff and mypy clean (`1 file already formatted`, `Success: no issues found`); the self-test exits 0 and prints `criteria arithmetic: 10 expected lines produced`, four `accepted as expected` lines (the clean cohort, which also runs through `main()` and writes `runs.json`; the same cohort with one run present only in its archive; a justified top-up after a twice-indeterminate trial; a justified control run after a non-sentinel treatment failure) and twenty-nine `refused as expected` lines, each carrying the fragment its case names; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are unfilled and no logs exist yet). No live run is launched in this task.
+Expected: the shell checks silent; ruff and mypy clean (`1 file already formatted`, `Success: no issues found`); the self-test exits 0 and prints `criteria arithmetic: 10 expected lines produced`, four `accepted as expected` lines (the clean cohort, which also runs through `main()` and writes `runs.json`; the same cohort with one run present only in its archive; a justified top-up after a twice-indeterminate trial; a justified control run after a non-sentinel treatment failure) and thirty-one `refused as expected` lines, each carrying the fragment its case names; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are unfilled and no logs exist yet). No live run is launched in this task.
 
 - [ ] **Step 10: Commit in the evals clone**
 

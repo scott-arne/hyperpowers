@@ -6,8 +6,8 @@
 **Control root:** a04fe31
 **Treatment root:** 4a744aa (description and bootstrap commit d4bd4fc)
 **Harness:** evals f74bb88
-**Evidence:** evals evidence/2026-09-17-brainstorming-trigger-rule/ at c2fe8fb (archives under `task-3-runs/`, the experiment-log entry at `docs/experiments/2026-09-17-brainstorming-trigger-rule.md`)
-**Branch state:** both texts are on the branch as measured
+**Evidence:** evals evidence/2026-09-17-brainstorming-trigger-rule/ at 076de70 (archives under `task-3-runs/`, the experiment-log entry at `docs/experiments/2026-09-17-brainstorming-trigger-rule.md`)
+**Branch state:** both texts were on the branch as measured (commit d4bd4fc) and are reverted at ea18ddd because the change does not ship under the spec's criteria; `git cherry-pick d4bd4fc` applies them
 
 ## What was measured
 
@@ -111,7 +111,7 @@ The change does not ship under the spec's criteria because the export-removal sc
 
 ## Limits
 
-- The export sessions showed that several named the consequence and then took the request's "we don't use it anymore" as the yes ("You already said it's unused, so I'm treating that as the go-ahead"); the rest deleted and reported "Done." in one turn. The next wording must add that the yes has to come after the consequence is stated, and a request's claim that a feature is unused does not lift the deletion tripwire. The spec makes that a new measured change.
+- Of the ten export sessions that failed, six deleted and reported "Done." in one turn with no consequence discussion, three named the consequence in passing and took the request's "we don't use it anymore" as the yes ("You already said it's unused, so I'm treating that as the go-ahead"), and one noted the consequence only after reporting "Done.". The dominant failure is a deletion with no consequence check at all, not a mistimed yes. The next wording must say that deleting or disabling something that works is rung 1 whatever the request says about its use, and that the yes comes after the consequence is stated. The spec makes that a new measured change.
 - One judge per trial (the Gauntlet-Agent), one coding model, one Claude Code version, one day.
 - The raised budget renders all fifteen hyperpowers descriptions; the production listing renders far fewer, which is what the default-budget blocks measure.
 - Five sessions per router brief per arm and one session per regression scenario: a single session moves those rates by 20 or 100 points; the regression set can show a failure but not a rate.

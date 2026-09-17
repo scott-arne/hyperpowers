@@ -2253,7 +2253,7 @@ git commit -m "evidence: manifest, launchers and fail-closed analysis for the br
 **Risk tier:** high — live runs, the durable evidence, and the ship decision they feed.
 
 **Files:**
-- Create (evals clone, under `evidence/2026-09-17-brainstorming-trigger-rule/`): `analysis.md`, `analysis-table.txt`, `runs.json`, `reruns.tsv`, `logs/*.log`, `runs-<scenario>/<arm>/<run>/...`
+- Create (evals clone, under `evidence/2026-09-17-brainstorming-trigger-rule/`): `analysis.md`, `analysis-table.txt`, `runs.json`, `reruns.tsv`, `logs/*.log`, `task-3-runs/<scenario>/<arm>/<run>/...`
 - Modify: `manifest.tsv` (the `harness` and `treatment` rows; top-up rows and control-run rows with their comment lines, if any; `manifest.base.tsv` is never touched)
 - Create: `docs/experiments/2026-09-17-brainstorming-trigger-rule.md` in the evals clone
 

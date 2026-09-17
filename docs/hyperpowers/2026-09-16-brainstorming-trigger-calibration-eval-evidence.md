@@ -69,7 +69,7 @@ The spec's criteria, each with numbers:
 2. No false-negative regression:
    - `brainstorming-resists-jump-to-implementation` twin: treatment 10 of 10 pass, control 10 of 10 pass, zero treatment failures. Met.
    - `cost-session-timeout-boundary`: treatment 0 of 10 pass, control 0 of 10 pass. Met as an equality at the floor.
-   - Router briefs: `brainstorming-router-escalates-b1-userid-param` treatment 3 of 5 pass, control 4 of 5 pass. Not met. All 50 router sessions in both arms invoked brainstorming first; every b1 failure is a classification failure inside the skill (the task called bounded, no spec written), not a missed trigger. `b2-config-module`, `b3-logging`, `b4-reusable-validation`, `b5-prefs-storage`: treatment 5 of 5 pass, control 5 of 5 pass each. Met.
+   - Router briefs: `brainstorming-router-escalates-b1-userid-param` treatment 3 of 5 pass, control 4 of 5 pass. Not met. All 51 router sessions in both arms (50 trials plus the replaced b1 original) invoked brainstorming first; every b1 failure is a classification failure inside the skill, not a missed trigger: the two treatment failures called the task bounded and wrote no spec, the control failure called it architectural and then skipped the spec. `b2-config-module`, `b3-logging`, `b4-reusable-validation`, `b5-prefs-storage`: treatment 5 of 5 pass, control 5 of 5 pass each. Met.
 3. `cost-remove-export-boundary` treatment fail rate no higher than control: 100% fail both arms (10 of 10 each). Met at the floor.
 4. Context checks (one payload hash across all runs, one listing outside the brainstorming line, each arm's brainstorming line as rendered from its root, one model): confirmed by the design checks.
 

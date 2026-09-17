@@ -120,7 +120,7 @@ Indeterminate trials re-run once, recorded in `reruns.tsv`. Logs under
 
 - [ ] **Step 2: Write `manifest.tsv`**
 
-Tab-separated. `<EVALS_COMMIT>` is filled by the controller at Task 3 Step 1 with the evals commit that pins the harness (Task 2's commit: the last commit that touched the harness paths or later, as long as the harness paths are identical to it); `<TASK_1_COMMIT>` is Task 1's full SHA. Until both are full SHAs, `measure-launch.sh` refuses to run and `analyze.py` reports a design error.
+Tab-separated. `<EVALS_COMMIT>` is filled by the controller at Task 3 Step 1 with the evals commit that pins the harness (Task 2's commit: the last commit that touched the harness paths or later, as long as the harness paths are identical to it); `<TASK_1_COMMIT>` is the treatment root's HEAD at launch, Task 1's commit or a later commit on the branch whose skills tree is identical to it (Task 3 Step 1 reads it with `git rev-parse HEAD`). Until both are full SHAs, `measure-launch.sh` refuses to run and `analyze.py` reports a design error.
 
 ```
 harness	<EVALS_COMMIT>

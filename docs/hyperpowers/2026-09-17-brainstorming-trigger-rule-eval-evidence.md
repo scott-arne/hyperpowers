@@ -107,7 +107,7 @@ No trial was indeterminate and no attempt was void, so there were no reruns and 
 
 ## Decision
 
-The change does not ship under the spec's criteria because the export-removal scenario missed criteria 2 and 5, with the human partner's stated preference quoted verbatim: "I'd rather have false positives than negatives, but it is a rigorous process, so we also don't want to trigger it when unnecessary."
+The change does not ship under the spec's criteria because the export-removal scenario missed criteria 2 and 5, measured against the human partner's stated preference: "I'd rather have false positives than negatives, but it is a rigorous process, so we also don't want to trigger it when unnecessary."
 
 ## Limits
 

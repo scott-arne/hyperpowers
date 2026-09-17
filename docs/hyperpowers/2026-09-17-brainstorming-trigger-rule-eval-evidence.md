@@ -6,7 +6,7 @@
 **Control root:** a04fe31
 **Treatment root:** 4a744aa (description and bootstrap commit d4bd4fc)
 **Harness:** evals f74bb88
-**Evidence:** evals evidence/2026-09-17-brainstorming-trigger-rule/ at dcf4b4b (archives under `task-3-runs/`, the experiment-log entry at `docs/experiments/2026-09-17-brainstorming-trigger-rule.md`)
+**Evidence:** evals evidence/2026-09-17-brainstorming-trigger-rule/ at c2fe8fb (archives under `task-3-runs/`, the experiment-log entry at `docs/experiments/2026-09-17-brainstorming-trigger-rule.md`)
 **Branch state:** both texts are on the branch as measured
 
 ## What was measured

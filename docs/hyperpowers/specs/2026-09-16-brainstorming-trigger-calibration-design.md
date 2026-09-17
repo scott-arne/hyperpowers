@@ -41,9 +41,13 @@ The human partner's preference: false positives over false negatives, but
 the process is rigorous, so no trigger where none is needed. The eval suite
 already draws the line by content, not by the user's framing:
 
-- must NOT trigger: `cost-checkbox-over-trigger` (one basic checkbox),
-  `cost-remove-export-boundary` (delete a dead button and handler);
-- MUST trigger despite "nothing fancy" framing: `cost-session-timeout-boundary`
+- must NOT trigger: `cost-checkbox-over-trigger` (one basic checkbox);
+- MUST trigger despite "nothing fancy" framing: `cost-remove-export-boundary`
+  (deleting a working, user-visible feature on a belief about its usage;
+  this spec first filed it under "must not trigger", corrected 2026-09-17
+  when the measurement read the scenario's story; the measurement itself
+  is unaffected, both arms failed it 10 of 10),
+  `cost-session-timeout-boundary`
   (a one-line config bump with a security consequence),
   `brainstorming-router-escalates-b1..b5` (a userId parameter that changes
   a public interface; config moved into a module; logging as a new

@@ -2520,7 +2520,13 @@ without a verdict, or a launch that did not end in DONE) is relaunched and
 its log is kept as `logs/failed/<arm>-<scenario>-<proc>.<attempt>.log`; the
 analysis reads that directory as the void ledger, requires every entry to
 carry the pins and to be void on its face, refuses a completed attempt set
-aside there, and reports the count. Every `launch-all.sh` invocation writes
+aside there, and reports the count. `logs/measure-launch.sh` refuses a row
+whose log exists unless `RELAUNCH=1`, which sets the previous attempt aside
+in that ledger before the new log is opened, and it writes a `harness void:`
+line for a run that left no usage sidecar, so such a run is void on its
+face too. Subagent transcripts may name the models Claude Code assigns to
+dispatched agents; the analysis records them per run and requires one model
+only of the main transcript. Every `launch-all.sh` invocation writes
 its nonce into each log it produces and accepts only logs carrying it, so a
 launcher that failed before opening its log cannot hide behind a stale one. Logs
 under `logs/`, run copies under `task-6-runs/<scenario>/<arm>/`, the live
@@ -2683,17 +2689,23 @@ Expected: the two digests are identical (the analyzer refuses to run otherwise).
 # session). Writes logs/<arm>-<scenario>-<proc>.log (proc is p<n> for a
 # manifest row or r<n> for a rerun) with the pins, the budget, the launch
 # nonce (LAUNCH_NONCE from launch-all.sh, `manual` for a row launched by
-# hand), the time, the exact command, and quorum's output. The last line is DONE only when quorum
-# exited 0, 1, or 2 (a pass, a fail, or an indeterminate are measurements);
-# anything else is FAILED <code>. Refuses to launch when the proxy variables
-# the sessions need are not set (validated, never re-exported), when
-# ANTHROPIC_MODEL differs from the manifest's model row, when `claude
-# --version` differs from the manifest's claude_code row, or when a git
-# status check fails.
+# hand), the time, the exact command, quorum's output, and a `harness void:`
+# line for every run directory quorum named that has no
+# coding-agent-token-usage.json (a void attempt the analysis refuses to count).
+# The last line is DONE only when quorum exited 0, 1, or 2 (a pass, a fail, or
+# an indeterminate are measurements); anything else is FAILED <code>. Refuses
+# to launch when the proxy variables the sessions need are not set (validated,
+# never re-exported), when ANTHROPIC_MODEL differs from the manifest's model
+# row, when `claude --version` differs from the manifest's claude_code row, or
+# when a git status check fails. A row whose log already exists is refused
+# unless RELAUNCH=1, which first sets the previous attempt aside as
+# logs/failed/<arm>-<scenario>-<proc>.<attempt>.log, the void ledger the
+# analysis reads. MEASURE_E overrides the evidence directory for the offline
+# proof in the plan only.
 set -uo pipefail
 arm="$1"; scen="$2"; rep="$3"; proc="$4"; budget="$5"
 EV=/Users/johnss51/Development/agents/hyperpowers/evals
-E="$EV/evidence/2026-09-17-first-edit-interlock"
+E="${MEASURE_E:-$EV/evidence/2026-09-17-first-edit-interlock}"
 HARNESS_PATHS="src scenarios coding-agents package.json bun.lock"
 case "$arm" in
   control) root=/Users/johnss51/Development/agents/hyperpowers/.worktrees/external-workflow-adoption ;;
@@ -2703,6 +2715,14 @@ case "$arm" in
 esac
 case "$proc" in p[0-9]|p[0-9][0-9]|p[0-9][0-9][0-9]|r[0-9]|r[0-9][0-9]|r[0-9][0-9][0-9]) ;; *) echo "proc must be p<n> or r<n>" >&2; exit 2 ;; esac
 case "$budget" in default) ;; *) echo "budget must be default" >&2; exit 2 ;; esac
+log="$E/logs/$arm-$scen-$proc.log"
+if [ -e "$log" ]; then
+  [ "${RELAUNCH:-}" = "1" ] || { echo "$log exists; a row is relaunched only with RELAUNCH=1, which sets the previous attempt aside in logs/failed/" >&2; exit 1; }
+  mkdir -p "$E/logs/failed" || exit 1
+  n=1; while [ -e "$E/logs/failed/$arm-$scen-$proc.$n.log" ]; do n=$((n + 1)); done
+  mv "$log" "$E/logs/failed/$arm-$scen-$proc.$n.log" || exit 1
+  echo "previous attempt set aside as logs/failed/$arm-$scen-$proc.$n.log"
+fi
 for v in HTTP_PROXY HTTPS_PROXY NO_PROXY; do [ -n "${!v:-}" ] || { echo "$v is not set in the launch environment; the live session needs the proxy configuration" >&2; exit 1; }; done
 pin() { awk -F '\t' -v key="$1" 'NF == 2 && $1 == key { print $2 }' "$E/manifest.tsv"; }
 root_pin=$(pin "$arm"); harness_pin=$(pin harness); model_pin=$(pin model); claude_pin=$(pin claude_code)
@@ -2722,7 +2742,6 @@ git diff --quiet "$harness_pin" HEAD -- $HARNESS_PATHS || { echo "harness paths 
 harness_status=$(git status --short -- $HARNESS_PATHS) || { echo "git status failed in $EV" >&2; exit 1; }
 [ -z "$harness_status" ] || { echo "harness paths have uncommitted changes" >&2; exit 1; }
 export SUPERPOWERS_ROOT="$root"
-log="$E/logs/$arm-$scen-$proc.log"
 {
   echo "arm=$arm scenario=$scen repeat=$rep proc=$proc budget=$budget"
   echo "nonce=${LAUNCH_NONCE:-manual}"
@@ -2734,6 +2753,9 @@ log="$E/logs/$arm-$scen-$proc.log"
   echo "\$ env -u SLASH_COMMAND_TOOL_CHAR_BUDGET bun run quorum run scenarios/$scen --coding-agent claude-auto --repeat $rep"
   env -u SLASH_COMMAND_TOOL_CHAR_BUDGET bun run quorum run "scenarios/$scen" --coding-agent claude-auto --repeat "$rep"
   code=$?
+  grep -o 'run-dir  *[^[:space:]]*' "$log" | awk '{print $2}' | while read -r d; do
+    [ -f "$d/coding-agent-token-usage.json" ] || echo "harness void: no coding-agent-token-usage.json in $d"
+  done
   echo "EXIT=$code"; date -u +%Y-%m-%dT%H:%M:%SZ
   case "$code" in 0|1|2) echo "DONE $arm $scen $proc" ;; *) echo "FAILED $code $arm $scen $proc" ;; esac
 } > "$log" 2>&1
@@ -2916,7 +2938,7 @@ CLAUDE_RE = re.compile(r"^claude_code=(\S+)$", re.MULTILINE)
 MODEL_HEADER_RE = re.compile(r"^model_pin=(\S+) anthropic_model=(\S+)$", re.MULTILINE)
 FAILED_LOG_RE = re.compile(r"(control|wording|full)-(.+)-([pr]\d+)\.(\d+)\.log")
 LEDGER_VOID_RE = re.compile(
-    r"quorum error|without writing a result|no Gauntlet-Agent verdict|did not complete|no grader block"
+    r"quorum error|without writing a result|no Gauntlet-Agent verdict|did not complete|no grader block|harness void"
 )
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 BRAINSTORMING_LINE = "- hyperpowers:brainstorming"
@@ -3049,6 +3071,7 @@ class Run:
     replaces: str | None = None
     version: str = ""
     log: str = ""
+    subagent_models: list[str] = field(default_factory=list)
     denials: int = 0
     attempts: int = 0
     carried_out: int = 0
@@ -3505,11 +3528,12 @@ def context(transcript: str) -> tuple[str, list[str], str, str, str]:
 def models_of(transcript: str) -> set[str]:
     """Every model an assistant record in the transcript names."""
 
-    return {
+    models = {
         (rec.get("message") or {}).get("model") or ""
         for rec in iter_records(transcript)
         if rec.get("type") == "assistant"
     }
+    return {model for model in models if model}
 
 
 def result_text(content: object) -> str:
@@ -3678,14 +3702,11 @@ def token_total(run_dir: str, name: str) -> int:
     """The run's token total from the harness's usage sidecar; a missing or unreadable total is a refusal."""
 
     path = os.path.join(run_dir, "coding-agent-token-usage.json")
-    if not os.path.exists(path):
-        raise DesignError(
-            f"{name}: no coding-agent-token-usage.json; the cost readout needs every run's tokens"
-        )
-    total = load_json(path).get("total_tokens")
+    total = load_json(path).get("total_tokens") if os.path.exists(path) else None
     if type(total) is not int or total < 0:
         raise DesignError(
-            f"{name}: coding-agent-token-usage.json has no integer total_tokens"
+            f"{name}: void attempt left in the logs (the harness wrote no usable coding-agent-token-usage.json); "
+            "move its log to logs/failed/<log name>.<attempt>.log and relaunch the row"
         )
     return total
 
@@ -3790,6 +3811,11 @@ def read_void_ledger(manifest: dict) -> list[Void]:
         claude = CLAUDE_RE.search(text)
         if not claude or claude.group(1) != manifest["claude_code"]:
             raise DesignError(f"{path}: claude_code pin missing or not the manifest's")
+        models = MODEL_HEADER_RE.findall(text)
+        if len(models) != 1 or models[0] != (manifest["model"], manifest["model"]):
+            raise DesignError(
+                f"{path}: model header missing, repeated, or not the manifest's model"
+            )
         if not proc.startswith("r") and (arm, scenario, proc) not in manifest["rows"]:
             raise DesignError(f"{path}: not a manifest row")
         last_line = text.rstrip("\n").rsplit("\n", 1)[-1]
@@ -3952,12 +3978,12 @@ def build_runs(manifest: dict, classifier: Classifier) -> list[Run]:
             raise DesignError(
                 f"{name}: transcript versions {sorted(versions)} are not the pinned {manifest['claude_code']!r}"
             )
+        # Claude Code assigns dispatched agents their own models; they are
+        # recorded per run, and only the main transcript must hold one model.
+        subagent_models: set[str] = set()
         for transcript in transcripts[1:]:
-            foreign = models_of(transcript) - {model}
-            if foreign:
-                raise DesignError(
-                    f"{name}: a subagent transcript ran {sorted(foreign)}, the session model is {model!r}"
-                )
+            subagent_models |= models_of(transcript)
+        run.subagent_models = sorted(subagent_models)
         run.version = manifest["claude_code"]
         run.log = log_name
         run.tree_changed = tree_changed(run_dir, name)
@@ -5547,6 +5573,14 @@ def self_test() -> int:
     def void_without_relaunch(root: str) -> None:
         _fixture_void_log(root, "full", "r7", 1, "void")
 
+    def void_without_model_header(root: str) -> None:
+        _fixture_void_log(root, "full", "p1", 1, "void")
+        _rewrite(
+            os.path.join(root, "logs", "failed", "full-scenario-x-p1.1.log"),
+            "model_pin=model-x anthropic_model=model-x\n",
+            "",
+        )
+
     def void_bad_name(root: str) -> None:
         os.makedirs(os.path.join(root, "logs", "failed"), exist_ok=True)
         with open(
@@ -5602,7 +5636,7 @@ def self_test() -> int:
             two_passes,
             None,
             sidecar_missing,
-            "no coding-agent-token-usage.json",
+            "void attempt left in the logs",
             "plain",
             None,
         ),
@@ -5611,7 +5645,7 @@ def self_test() -> int:
             two_passes,
             None,
             sidecar_without_total,
-            "no integer total_tokens",
+            "void attempt left in the logs",
             "plain",
             None,
         ),
@@ -5634,11 +5668,20 @@ def self_test() -> int:
             None,
         ),
         (
-            "a subagent transcript on another model",
+            "a subagent transcript on another model, recorded and accepted",
             two_passes,
             None,
             subagent_other_model,
-            "a subagent transcript ran",
+            None,
+            "plain",
+            None,
+        ),
+        (
+            "a void ledger entry without the model header",
+            two_passes,
+            None,
+            void_without_model_header,
+            "model header missing, repeated, or not the manifest's model",
             "plain",
             None,
         ),
@@ -6411,9 +6454,10 @@ def main() -> int:
         "one hash per arm, one listing, the hook registered only at the full pin, one main "
         "transcript per run, every full-arm context denied at its first attempt with every "
         "carried-out mutation in a later turn, no denial elsewhere, every fixture tree "
-        "compared and every change explained, one model in every transcript, one Claude Code "
-        "version, every run's tokens, every void attempt retained with its relaunch, expected "
-        "counts" + (" (archives only)" if ARCHIVES_ONLY else "")
+        "compared and every change explained, one model in every main transcript with the "
+        "models of dispatched agents recorded, one Claude Code version, every run's tokens, "
+        "every void attempt retained with its relaunch, expected counts"
+        + (" (archives only)" if ARCHIVES_ONLY else "")
     )
     return 0
 
@@ -6441,9 +6485,11 @@ printf 'harness\t%s\ncontrol\t%s\nwording\t%s\nfull\t%s\nmodel\tm\nclaude_code\t
 printf 'harness\t%s\ncontrol\t%s\nwording\t%s\nfull\t%s\nmodel\tm\nclaude_code\t1.2.3\nwording\ts\t1\tp1\tdefault\n' aaaa bbbb cccc dddd > "$T/manifest-good.tsv"; echo "--- one good row:"; LAUNCHER="$T/stub-launch.sh" bash "$L" "$T/manifest-good.tsv" 2 2>&1 | tail -1; echo "exit=${PIPESTATUS[0]}"; cat "$T/logs/wording-s-p1.log"
 for m in 0 00 abc; do echo "--- max=$m:"; LAUNCHER="$T/stub-launch.sh" bash "$L" "$T/manifest-good.tsv" "$m" 2>&1 | tail -1; echo "exit=${PIPESTATUS[0]}"; done
 mkdir -p "$T/real/logs"; sed -e 's/<[A-Z_]*>/x/' "$E/manifest.base.tsv" > "$T/real/manifest.tsv"; cp "$E/logs/stub-launch.sh" "$T/real/stub-launch.sh"; echo "--- the real manifest validates:"; LAUNCHER="$T/real/stub-launch.sh" bash "$L" "$T/real/manifest.tsv" 8 2>&1 | grep -c '^started '
+mkdir -p "$T/ml/logs"; cp "$E/manifest.tsv" "$T/ml/manifest.tsv"; printf 'arm=full budget=default\nDONE full s p1\n' > "$T/ml/logs/full-s-p1.log"; echo "--- a row whose log exists, without RELAUNCH:"; MEASURE_E="$T/ml" bash "$E/logs/measure-launch.sh" full s 1 p1 default; echo "exit=$?"; ls "$T/ml/logs"
+echo "--- the same row with RELAUNCH=1 (set aside, then the pin check refuses):"; MEASURE_E="$T/ml" RELAUNCH=1 bash "$E/logs/measure-launch.sh" full s 1 p1 default; echo "exit=$?"; ls "$T/ml/logs" "$T/ml/logs/failed"
 ```
 
-Expected, in order: exit 1 with `no log for full-s-p2`, `log for full-s-p3 does not end with DONE`, and `all launches finished; wait notes: 1; manifest rows without a DONE log: 2`; exit 1 with `log for full-s-p2 is from an earlier launch (nonce mismatch)` (the stale log's `nonce=earlier` is not this launch's) and `manifest rows without a DONE log: 2`; exit 1 with `malformed budget 'raised'` and `logs after: 0`; exit 1 with `malformed arm 'treatment'`; exit 1 with `malformed row`; exit 0 with `wait notes: 0; manifest rows without a DONE log: 0` and a log whose first line is `arm=wording budget=default` and whose second line is `nonce=` followed by the nonce the run printed; exit 2 with `max-concurrent must be a positive integer` for `0`, `00`, and `abc`; and `110` started rows for the real manifest (the stub's p2 and p3 rows leave no DONE log there by design, which is why only the `started` count is read). Record every output in the report.
+Expected, in order: exit 1 with `no log for full-s-p2`, `log for full-s-p3 does not end with DONE`, and `all launches finished; wait notes: 1; manifest rows without a DONE log: 2`; exit 1 with `log for full-s-p2 is from an earlier launch (nonce mismatch)` (the stale log's `nonce=earlier` is not this launch's) and `manifest rows without a DONE log: 2`; exit 1 with `malformed budget 'raised'` and `logs after: 0`; exit 1 with `malformed arm 'treatment'`; exit 1 with `malformed row`; exit 0 with `wait notes: 0; manifest rows without a DONE log: 0` and a log whose first line is `arm=wording budget=default` and whose second line is `nonce=` followed by the nonce the run printed; exit 2 with `max-concurrent must be a positive integer` for `0`, `00`, and `abc`; and `110` started rows for the real manifest (the stub's p2 and p3 rows leave no DONE log there by design, which is why only the `started` count is read); then, for the launcher itself, exit 1 with `exists; a row is relaunched only with RELAUNCH=1` and `full-s-p1.log` still listed; then `previous attempt set aside as logs/failed/full-s-p1.1.log`, exit 1 with `manifest.tsv is not filled in`, `logs` holding only `failed`, and `logs/failed` holding `full-s-p1.1.log`. Record every output in the report.
 
 - [ ] **Step 9: Check the scripts and the analyzer**
 
@@ -6460,7 +6506,7 @@ shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh
 /Users/johnss51/Applications/micromamba/envs/main/bin/python $E/analyze.py
 ```
 
-Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 71 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
+Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 72 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
 
 - [ ] **Step 10: Commit in the evals clone**
 

@@ -6,6 +6,10 @@ cat a.txt	read-only
 head -n 20 src/app.js	read-only
 grep -rn "todo" src	read-only
 rg --files	read-only
+rg --pre=rm needle victim	mutation
+rg --pre rm x	mutation
+rg --pre-glob '*.pdf' x	read-only
+rg -p x	read-only
 wc -l *.py	read-only
 pwd	read-only
 echo hi	read-only
@@ -23,6 +27,8 @@ sort -uo f f	mutation
 sort --output=f f	mutation
 sort --outp=f f	mutation
 sort --out f f	mutation
+sort --compress-program=gzip f	mutation
+sort --comp=gzip f	mutation
 /bin/rm -rf build	mutation
 rm -f a.txt	mutation
 mv a b	mutation
@@ -171,6 +177,8 @@ $(cat run.txt)	mutation
 $(echo rm) -rf build	mutation
 $(echo ls) -la	mutation
 $(ls)	mutation
+$(echo touch) ls	mutation
+$(echo ls)	mutation
 echo "$(touch f)"	mutation
 echo "$(ls)"	read-only
 echo "`touch f`"	mutation
@@ -179,6 +187,9 @@ echo "a $(rm f) b"	mutation
 cat <<EOF > f\nhello\nEOF	mutation
 cat <<EOF\nhello | rm -rf /\nEOF	read-only
 cat <<'EOF'\nx\nEOF	read-only
+cat <<EOF\n$(echo\nrm -f target)\nEOF	mutation
+echo ok # <<EOF\nrm -f victim\nEOF	mutation
+echo '# <<EOF' <<REAL\nrm -f x\nREAL	read-only
 cat <<EOF\n$(touch f)\nEOF	mutation
 cat <<EOF\n`rm f`\nEOF	mutation
 cat <<EOF\n$(ls)\nEOF	read-only
@@ -190,7 +201,14 @@ ls && cat a	read-only
 ls || rm f	mutation
 ls & rm f	mutation
 cd src && ls	read-only
-export FOO=1	read-only
+export FOO=1	mutation
+export	read-only
+export -p	read-only
+export LC_ALL=C	read-only
+export LC_ALL=C; sort f	read-only
+export GIT_EXTERNAL_DIFF='touch victim'; git diff	mutation
+export PATH=/tmp:$PATH	mutation
+export FOO	mutation
 set -e	read-only
 unset FOO	read-only
 read x	read-only
@@ -228,6 +246,10 @@ ls <> f	mutation
 $CMD args	mutation
 ./script.sh	mutation
 ../tool	mutation
+/usr/bin/../../tmp/ls	mutation
+/usr/bin/./ls	mutation
+/usr/bin//ls	mutation
+/usr/bin/..	mutation
 ./ls	mutation
 /tmp/git status	mutation
 /usr/bin/git status	read-only

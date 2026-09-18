@@ -102,10 +102,13 @@ function stripHeredocs(text) {
     out.push(line);
     i += 1;
     for (const delim of delimiters) {
+      const body = [];
       while (i < lines.length && lines[i].replace(/^\t+/, '') !== delim.word) {
-        if (!delim.quoted) collectSubstitutions(lines[i], subs);
+        body.push(lines[i]);
         i += 1;
       }
+      // Substitutions may span lines, so the body is scanned as one text.
+      if (!delim.quoted) collectSubstitutions(body.join('\n'), subs);
       i += 1; // the delimiter line itself
     }
   }
@@ -147,6 +150,9 @@ function heredocDelimiters(line) {
     }
     if (c === '\\') { i += 1; continue; }
     if (c === "'" || c === '"') { q = c; continue; }
+    // An unquoted # at a word start opens a comment: the rest of the line,
+    // heredoc-looking or not, is text.
+    if (c === '#' && (i === 0 || /[\s;|&(]/.test(line[i - 1]))) break;
     if (c === '<' && line[i + 1] === '<' && line[i + 2] !== '<') {
       let j = i + 2;
       if (line[j] === '-') j += 1;
@@ -338,16 +344,17 @@ function words(segment) {
 // Classification
 // ---------------------------------------------------------------------------
 
-const SYSTEM_DIRS = ['/bin/', '/sbin/', '/usr/bin/', '/usr/sbin/', '/usr/local/bin/', '/opt/homebrew/bin/', '/opt/local/bin/'];
+const SYSTEM_PATH = /^(?:\/bin|\/sbin|\/usr\/bin|\/usr\/sbin|\/usr\/local\/bin|\/opt\/homebrew\/bin|\/opt\/local\/bin)\/([^/]+)$/;
 
-// The command name to look up: a bare word, or the basename of a path under a
-// system directory. Any other path (./ls, ../tool, /tmp/git, a home directory)
-// is an arbitrary executable and returns '' so that nothing matches it.
+// The command name to look up: a bare word, or the basename of a path that is
+// exactly one name under a system directory. Any other path (./ls, ../tool,
+// /tmp/git, a home directory, /usr/bin/../../tmp/ls, /usr/bin/./ls) is an
+// arbitrary executable and returns '' so that nothing matches it.
 function basename(word) {
-  const i = word.lastIndexOf('/');
-  if (i === -1) return word;
-  if (!SYSTEM_DIRS.some((dir) => word.startsWith(dir))) return '';
-  return word.slice(i + 1);
+  if (word.indexOf('/') === -1) return word;
+  const m = SYSTEM_PATH.exec(word);
+  if (!m || m[1] === '.' || m[1] === '..') return '';
+  return m[1];
 }
 
 // GNU getopt accepts any unambiguous prefix of a long option, so --out=f is
@@ -377,9 +384,9 @@ function simpleReadOnly(ws) {
   if (i >= ws.length) return true; // assignments only, all permitted
   const rest = ws.slice(i);
   const cmd = basename(rest[0]);
-  // A substitution in command position runs its output as the command: a
-  // mutation attempt unless allowlisted words follow it.
-  if (cmd === '__SUBST__') return rest.length > 1 && simpleReadOnly(rest.slice(1));
+  // A substitution in command position runs its output as the command, and
+  // that output is unknown here: always a mutation attempt.
+  if (cmd === '__SUBST__') return false;
   if (WRAPPERS_MUTATING.has(cmd)) return false;
   if (cmd === 'env') return envReadOnly(rest.slice(1));
   if (cmd === 'command') {
@@ -400,8 +407,10 @@ function simpleReadOnly(ws) {
   }
   if (!ALLOW.has(cmd)) return false;
   const args = rest.slice(1);
+  if (cmd === 'export') return args.every((a) => a === '-p' || a === '-n' || ALLOWED_ASSIGNMENTS.has(a) || (isAssignment(a) && assignmentAllowed(a)));
+  if (cmd === 'rg') return !args.some((a) => longOption(a, '--pre'));
   if (cmd === 'find') return !args.some((a) => FIND_MUTATING.has(a));
-  if (cmd === 'sort') return !args.some((a) => longOption(a, '--output') || /^-[a-zA-Z]*o/.test(a));
+  if (cmd === 'sort') return !args.some((a) => longOption(a, '--output') || longOption(a, '--compress-program') || /^-[a-zA-Z]*o/.test(a));
   if (cmd === 'file') return !args.some((a) => longOption(a, '--compile') || /^-[a-zA-Z]*C/.test(a));
   if (cmd === 'date') return !args.some((a) => longOption(a, '--set') || /^-[a-zA-Z]*s/.test(a));
   if (cmd === 'hostname') return args.every((a) => a.startsWith('-'));

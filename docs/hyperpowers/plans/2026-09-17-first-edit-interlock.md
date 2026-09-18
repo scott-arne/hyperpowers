@@ -177,7 +177,7 @@ Record the commit sha in the report: Task 6 pins it as the wording arm.
 
 **Interfaces:**
 - Consumes: Task 1's texts (this task's commit sits on top of them; the skills tree is untouched here).
-- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--wave <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 349`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
+- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--wave <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 363`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
 
 - [ ] **Step 1: Write the failing suite `tests/hooks/test-first-edit-interlock.sh`**
 
@@ -734,6 +734,7 @@ env LANG=C cat "$FILE"	read-only
 date $FMT	mutation
 date 1200	mutation
 date -f fmt 2026-01-01	mutation
+date --set=2020-01-01	mutation
 date +%s	read-only
 date -u +%Y-%m-%d	read-only
 date -r f +%s	read-only
@@ -752,12 +753,24 @@ export LC_ALL=$X	mutation
 uniq in out	mutation
 uniq -c f	read-only
 uniq -f 1 f	read-only
+uniq - out	mutation
+uniq -c - out	mutation
+uniq -	read-only
 printf -v PATH /tmp	mutation
 printf -vPATH /tmp	mutation
 printf '%s ' x	read-only
+printf '%s\n' "$x"	read-only
+printf "$fmt" x	mutation
+printf -- "$fmt" x	read-only
+printf $OPT x	mutation
+printf '%s' -v	read-only
 read PATH < f	mutation
 read GIT_DIR	mutation
 read -r line < f	read-only
+unset PATH	mutation
+unset -v GIT_DIR	mutation
+unset FOO	read-only
+unset $NAME	mutation
 git --version	read-only
 git config -l	read-only
 git config --global --get user.name	read-only
@@ -765,6 +778,7 @@ git config user.name x	mutation
 git config --get k --unset k	mutation
 git reflog	read-only
 git reflog -n 3	read-only
+git reflog show	read-only
 git reflog expire --all	mutation
 git for-each-ref --format='%(refname)'	read-only
 git check-ignore -q x	read-only
@@ -861,7 +875,7 @@ const HOSTNAME_DISPLAY = new Set([
   '-I', '--all-ip-addresses', '-a', '--alias', '-A', '--all-fqdns', '-y', '--yp', '--nis',
 ]);
 // Variables the shell or git consults for what to execute: read may not fill
-// them and printf -v may not assign at all.
+// them, unset may not clear them, and printf -v may not assign at all.
 const SHELL_SENSITIVE_NAME = /^(?:PATH|IFS|CDPATH|ENV|BASH_ENV|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|PS4|GLOBIGNORE|EXECIGNORE|HOME|TMPDIR|GIT_.*|LD_.*|DYLD_.*|BASH_.*)$/;
 const GIT_GLOBAL_SKIP_WITH_VALUE = new Set(['-C']);
 const GIT_GLOBAL_SKIP = new Set(['--no-pager', '-P', '--no-optional-locks']);
@@ -1197,7 +1211,7 @@ function basename(word) {
 // or subcommand once the shell expands it, so it makes the call a mutation.
 // The wrappers apply the same rule to their own option, value, and assignment
 // slots, where word splitting moves the command boundary (timeout $DUR ls).
-const ARGUMENT_SENSITIVE = new Set(['git', 'find', 'sort', 'file', 'date', 'hostname', 'rg', 'ag', 'export', 'uniq', 'read', 'printf']);
+const ARGUMENT_SENSITIVE = new Set(['git', 'find', 'sort', 'file', 'date', 'hostname', 'rg', 'ag', 'export', 'uniq', 'read', 'unset']);
 
 function hasExpansion(word) {
   return word.indexOf('$') !== -1 || word.indexOf('__SUBST__') !== -1 || word.indexOf(GLOB_MARK) !== -1;
@@ -1282,12 +1296,21 @@ function simpleReadOnly(ws) {
     for (let j = 0; j < args.length; j += 1) {
       const a = args[j];
       if (a === '-f' || a === '-s' || a === '-w') { j += 1; continue; }
-      if (!a.startsWith('-')) operands += 1;
+      if (a === '-' || !a.startsWith('-')) operands += 1; // - is standard input
     }
     return operands <= 1;
   }
-  if (cmd === 'printf') return !args.some((a) => /^-v/.test(a));
-  if (cmd === 'read') return !args.some((a) => !a.startsWith('-') && SHELL_SENSITIVE_NAME.test(a));
+  if (cmd === 'printf') {
+    // Options end at the format word, so only a leading word can become -v.
+    for (let j = 0; j < args.length; j += 1) {
+      const a = args[j];
+      if (a === '--') return true;
+      if (/^-v/.test(a) || hasExpansion(a)) return false;
+      if (!a.startsWith('-')) return true;
+    }
+    return true;
+  }
+  if (cmd === 'read' || cmd === 'unset') return !args.some((a) => !a.startsWith('-') && SHELL_SENSITIVE_NAME.test(a));
   if (cmd === 'git') return gitReadOnly(args);
   return true;
 }
@@ -1501,7 +1524,7 @@ module.exports = { classify, commandReadOnly, lastAssistantId };
 ```
 
 Then `chmod +x hooks/interlock-lib.cjs` and run: `node hooks/interlock-lib.cjs --vectors tests/hooks/fixtures/mutation-cases.tsv`
-Expected: `ok 349` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
+Expected: `ok 363` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
 
 - [ ] **Step 4: Write `hooks/first-edit-interlock`**
 
@@ -1678,7 +1701,7 @@ fi
 - [ ] **Step 7: Run the suite to verify it passes**
 
 Run: `bash tests/hooks/test-first-edit-interlock.sh < /dev/null`
-Expected: 38 `[PASS]` lines and `STATUS: PASSED`, including `every vector (349) classifies through the hook as the file says` and `interlock-lib.cjs --vectors agrees (ok 349)`.
+Expected: 38 `[PASS]` lines and `STATUS: PASSED`, including `every vector (363) classifies through the hook as the file says` and `interlock-lib.cjs --vectors agrees (ok 363)`.
 
 - [ ] **Step 8: Run the neighbouring suites**
 

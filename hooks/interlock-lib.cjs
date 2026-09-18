@@ -350,6 +350,15 @@ function basename(word) {
   return word.slice(i + 1);
 }
 
+// GNU getopt accepts any unambiguous prefix of a long option, so --out=f is
+// --output=f: a word matches the option when its name (before any =) is at
+// least three characters and a prefix of the full spelling.
+function longOption(word, full) {
+  const eq = word.indexOf('=');
+  const name = eq === -1 ? word : word.slice(0, eq);
+  return name.length >= 3 && name.startsWith('--') && full.startsWith(name);
+}
+
 function isAssignment(word) {
   return /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
 }
@@ -368,7 +377,9 @@ function simpleReadOnly(ws) {
   if (i >= ws.length) return true; // assignments only, all permitted
   const rest = ws.slice(i);
   const cmd = basename(rest[0]);
-  if (cmd === '__SUBST__') return simpleReadOnly(rest.slice(1));
+  // A substitution in command position runs its output as the command: a
+  // mutation attempt unless allowlisted words follow it.
+  if (cmd === '__SUBST__') return rest.length > 1 && simpleReadOnly(rest.slice(1));
   if (WRAPPERS_MUTATING.has(cmd)) return false;
   if (cmd === 'env') return envReadOnly(rest.slice(1));
   if (cmd === 'command') {
@@ -390,9 +401,9 @@ function simpleReadOnly(ws) {
   if (!ALLOW.has(cmd)) return false;
   const args = rest.slice(1);
   if (cmd === 'find') return !args.some((a) => FIND_MUTATING.has(a));
-  if (cmd === 'sort') return !args.some((a) => a === '-o' || a === '--output' || a.startsWith('--output=') || /^-[a-zA-Z]*o/.test(a));
-  if (cmd === 'file') return !args.some((a) => a === '--compile' || /^-[a-zA-Z]*C/.test(a));
-  if (cmd === 'date') return !args.some((a) => a === '--set' || a.startsWith('--set=') || /^-[a-zA-Z]*s/.test(a));
+  if (cmd === 'sort') return !args.some((a) => longOption(a, '--output') || /^-[a-zA-Z]*o/.test(a));
+  if (cmd === 'file') return !args.some((a) => longOption(a, '--compile') || /^-[a-zA-Z]*C/.test(a));
+  if (cmd === 'date') return !args.some((a) => longOption(a, '--set') || /^-[a-zA-Z]*s/.test(a));
   if (cmd === 'hostname') return args.every((a) => a.startsWith('-'));
   if (cmd === 'git') return gitReadOnly(args);
   return true;

@@ -177,7 +177,7 @@ Record the commit sha in the report: Task 6 pins it as the wording arm.
 
 **Interfaces:**
 - Consumes: Task 1's texts (this task's commit sits on top of them; the skills tree is untouched here).
-- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--wave <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 296`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
+- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--wave <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 349`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
 
 - [ ] **Step 1: Write the failing suite `tests/hooks/test-first-edit-interlock.sh`**
 
@@ -466,6 +466,7 @@ sort --comp=gzip f	mutation
 sort "$(printf %s -o)" out input	mutation
 sort $OPT f	mutation
 sort ${OPT} f	mutation
+sort {-o,victim} f	mutation
 /bin/rm -rf build	mutation
 rm -f a.txt	mutation
 mv a b	mutation
@@ -484,6 +485,10 @@ find . -name '*.log' -delete	mutation
 find . -name x -exec rm {} \;	mutation
 find src -type f -newer a	read-only
 find $DIR -name x	mutation
+find {.,-delete}	mutation
+find . -name *.py	mutation
+find . -name '*.py'	read-only
+find . -name "*.py" -newer a	read-only
 git status	read-only
 git status --short	read-only
 git -C sub log --oneline	read-only
@@ -547,6 +552,8 @@ git -c core.pager=cat log	mutation
 git --no-pager log -1	read-only
 git $SUB	mutation
 git log $REF	mutation
+git log -- *.md	mutation
+git log -- '*.md'	read-only
 git "$(echo push)"	mutation
 git -P log -1	read-only
 git -p log	mutation
@@ -583,6 +590,8 @@ timeout 5 ls	read-only
 timeout 5 rm f	mutation
 timeout -k 2 5 ls	read-only
 timeout $DUR ls	mutation
+timeout {5,rm,-f,victim} ls	mutation
+env {LANG=C,rm,-f,victim} ls	mutation
 timeout -k $K 5 ls	mutation
 timeout 5 cat $FILE	read-only
 nice -n $N ls	mutation
@@ -619,6 +628,11 @@ ls $(rm f)	mutation
 ls $DIR	read-only
 cat "$FILE"	read-only
 grep '$HOME' f	read-only
+ls *.py	read-only
+cat src/*.md	read-only
+grep -n foo src/*.py	read-only
+du -sh *	read-only
+[ -f a ] && cat a	read-only
 echo `date`	read-only
 echo `touch f`	mutation
 $(echo rm -rf build)	mutation
@@ -632,6 +646,10 @@ $(echo ls)	mutation
 echo "$(touch f)"	mutation
 echo "$(ls)"	read-only
 echo "`touch f`"	mutation
+echo `echo \`rm -f victim\``	mutation
+echo "`echo \`rm -f victim\``"	mutation
+echo `basename \$HOME`	read-only
+cat <<EOF\n`echo \`rm f\``\nEOF	mutation
 echo '$(touch f)'	read-only
 echo "a $(rm f) b"	mutation
 cat <<EOF > f\nhello\nEOF	mutation
@@ -714,6 +732,14 @@ env LANG=$X ls	mutation
 env -u $V ls	mutation
 env LANG=C cat "$FILE"	read-only
 date $FMT	mutation
+date 1200	mutation
+date -f fmt 2026-01-01	mutation
+date +%s	read-only
+date -u +%Y-%m-%d	read-only
+date -r f +%s	read-only
+date -d yesterday +%F	read-only
+date -v+1d +%F	read-only
+date -Iseconds	read-only
 rg $PAT x	mutation
 ag --pager 'touch f' x	mutation
 ag --pag=cmd x	mutation
@@ -723,6 +749,27 @@ file $F	mutation
 hostname $H	mutation
 export $NAME=1	mutation
 export LC_ALL=$X	mutation
+uniq in out	mutation
+uniq -c f	read-only
+uniq -f 1 f	read-only
+printf -v PATH /tmp	mutation
+printf -vPATH /tmp	mutation
+printf '%s ' x	read-only
+read PATH < f	mutation
+read GIT_DIR	mutation
+read -r line < f	read-only
+git --version	read-only
+git config -l	read-only
+git config --global --get user.name	read-only
+git config user.name x	mutation
+git config --get k --unset k	mutation
+git reflog	read-only
+git reflog -n 3	read-only
+git reflog expire --all	mutation
+git for-each-ref --format='%(refname)'	read-only
+git check-ignore -q x	read-only
+git help --web log	mutation
+git symbolic-ref HEAD refs/heads/x	mutation
 file -C -m magic	mutation
 file --compile magic	mutation
 file a.bin	read-only
@@ -731,6 +778,12 @@ date --se=2020-01-01	mutation
 date +%s	read-only
 hostname newname	mutation
 hostname -f	read-only
+hostname -F /etc/hn	mutation
+hostname --file=/etc/hn	mutation
+hostname -b	mutation
+hostname -fs	mutation
+hostname -I	read-only
+hostname --fqdn	read-only
 ```
 
 - [ ] **Step 3: Write `hooks/interlock-lib.cjs`**
@@ -792,9 +845,24 @@ const FIND_MUTATING = new Set([
 const GIT_READONLY = new Set([
   'status', 'log', 'diff', 'show', 'blame', 'grep', 'rev-parse', 'rev-list',
   'ls-files', 'ls-tree', 'cat-file', 'describe', 'merge-base', 'name-rev',
-  'shortlog', 'show-ref',
+  'shortlog', 'show-ref', 'for-each-ref', 'check-ignore', 'check-attr',
+  'diff-tree', 'diff-index', 'diff-files', 'count-objects', 'var', 'cherry',
+  'range-diff', 'annotate', 'show-branch', 'whatchanged', 'version',
 ]);
-const GIT_CONFIG_READONLY = new Set(['--get', '--get-all', '--get-regexp', '--list']);
+// Global flags that print and exit before any subcommand runs.
+const GIT_BARE_FLAGS = new Set(['--version', '--help', '--html-path', '--man-path', '--info-path']);
+// config reads when one of these is present and none of the write actions is;
+// git refuses two actions in one call.
+const GIT_CONFIG_READONLY = new Set(['--get', '--get-all', '--get-regexp', '--list', '-l']);
+const GIT_CONFIG_WRITE = new Set(['--unset', '--unset-all', '--add', '--replace-all', '--rename-section', '--remove-section', '--edit', '-e']);
+// hostname prints with these; -F, --file, -b, and a positional set the name.
+const HOSTNAME_DISPLAY = new Set([
+  '-f', '--fqdn', '--long', '-s', '--short', '-d', '--domain', '-i', '--ip-address',
+  '-I', '--all-ip-addresses', '-a', '--alias', '-A', '--all-fqdns', '-y', '--yp', '--nis',
+]);
+// Variables the shell or git consults for what to execute: read may not fill
+// them and printf -v may not assign at all.
+const SHELL_SENSITIVE_NAME = /^(?:PATH|IFS|CDPATH|ENV|BASH_ENV|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|PS4|GLOBIGNORE|EXECIGNORE|HOME|TMPDIR|GIT_.*|LD_.*|DYLD_.*|BASH_.*)$/;
 const GIT_GLOBAL_SKIP_WITH_VALUE = new Set(['-C']);
 const GIT_GLOBAL_SKIP = new Set(['--no-pager', '-P', '--no-optional-locks']);
 const GIT_HELPER_OPTIONS = new Set(['-o', '--output', '-O', '--open-files-in-pager', '--ext-diff', '--textconv']);
@@ -854,6 +922,33 @@ function stripHeredocs(text) {
 }
 
 // The bodies of every $( ) and backtick substitution in one heredoc body line.
+// A backtick body ends at the first backtick not escaped by a backslash. Bash
+// removes the backslash before $, a backtick, and a backslash inside the body,
+// so a nested \` opens an inner substitution that classifying the body finds.
+function backtickBody(text, open) {
+  let body = '';
+  let i = open;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '\\' && i + 1 < text.length) {
+      const n = text[i + 1];
+      body += (n === '$' || n === '`' || n === '\\') ? n : c + n;
+      i += 2;
+      continue;
+    }
+    if (c === '`') return { body, end: i };
+    body += c;
+    i += 1;
+  }
+  return { body, end: text.length };
+}
+
+// A word carrying an unquoted pathname or brace pattern is marked: after
+// expansion it can be any number of any words, so the argument rules treat it
+// as an expansion. The standalone [ is the test builtin.
+const GLOB_MARK = '__GLOB__';
+const GLOB_CHARS = '*?[{}()';
+
 function collectSubstitutions(line, subs) {
   let i = 0;
   while (i < line.length) {
@@ -866,10 +961,9 @@ function collectSubstitutions(line, subs) {
       continue;
     }
     if (c === '`') {
-      const end = line.indexOf('`', i + 1);
-      const stop = end === -1 ? line.length : end;
-      subs.push(line.slice(i + 1, stop));
-      i = stop + 1;
+      const bt = backtickBody(line, i + 1);
+      subs.push(bt.body);
+      i = bt.end + 1;
       continue;
     }
     i += 1;
@@ -941,11 +1035,10 @@ function segments(text) {
         continue;
       }
       if (q === '"' && c === '`') {
-        const end = text.indexOf('`', i + 1);
-        const stop = end === -1 ? text.length : end;
-        subs.push(text.slice(i + 1, stop));
+        const bt = backtickBody(text, i + 1);
+        subs.push(bt.body);
         cur += ' __SUBST__ ';
-        i = stop + 1;
+        i = bt.end + 1;
         continue;
       }
       cur += c;
@@ -966,11 +1059,10 @@ function segments(text) {
       continue;
     }
     if (c === '`') {
-      const end = text.indexOf('`', i + 1);
-      const stop = end === -1 ? text.length : end;
-      subs.push(text.slice(i + 1, stop));
+      const bt = backtickBody(text, i + 1);
+      subs.push(bt.body);
       cur += ' __SUBST__ ';
-      i = stop + 1;
+      i = bt.end + 1;
       continue;
     }
     if (c === '\n' || c === ';') { pushSeg(); i += 1; continue; }
@@ -1010,8 +1102,12 @@ function words(segment) {
   let have = false;
   let q = null;
   let writesFile = false;
+  let glob = false;
   let i = 0;
-  const flush = () => { if (have) out.push(cur); cur = ''; have = false; };
+  const flush = () => {
+    if (have) out.push(glob && cur !== '[' ? GLOB_MARK + cur : cur);
+    cur = ''; have = false; glob = false;
+  };
   const isDigits = (s) => /^[0-9]+$/.test(s);
   while (i < segment.length) {
     const c = segment[i];
@@ -1072,6 +1168,7 @@ function words(segment) {
       i = j;
       continue;
     }
+    if (GLOB_CHARS.indexOf(c) !== -1) glob = true;
     cur += c; have = true; i += 1;
   }
   flush();
@@ -1100,10 +1197,10 @@ function basename(word) {
 // or subcommand once the shell expands it, so it makes the call a mutation.
 // The wrappers apply the same rule to their own option, value, and assignment
 // slots, where word splitting moves the command boundary (timeout $DUR ls).
-const ARGUMENT_SENSITIVE = new Set(['git', 'find', 'sort', 'file', 'date', 'hostname', 'rg', 'ag', 'export']);
+const ARGUMENT_SENSITIVE = new Set(['git', 'find', 'sort', 'file', 'date', 'hostname', 'rg', 'ag', 'export', 'uniq', 'read', 'printf']);
 
 function hasExpansion(word) {
-  return word.indexOf('$') !== -1 || word.indexOf('__SUBST__') !== -1;
+  return word.indexOf('$') !== -1 || word.indexOf('__SUBST__') !== -1 || word.indexOf(GLOB_MARK) !== -1;
 }
 
 // GNU getopt accepts any unambiguous prefix of a long option, so --out=f is
@@ -1165,8 +1262,32 @@ function simpleReadOnly(ws) {
   if (cmd === 'find') return !args.some((a) => FIND_MUTATING.has(a));
   if (cmd === 'sort') return !args.some((a) => longOption(a, '--output') || longOption(a, '--compress-program') || /^-[a-zA-Z]*o/.test(a));
   if (cmd === 'file') return !args.some((a) => longOption(a, '--compile') || /^-[a-zA-Z]*C/.test(a));
-  if (cmd === 'date') return !args.some((a) => longOption(a, '--set') || /^-[a-zA-Z]*s/.test(a));
-  if (cmd === 'hostname') return args.every((a) => a.startsWith('-'));
+  if (cmd === 'date') {
+    // BSD date sets the clock from a positional operand or -f; a format starts with +.
+    for (let j = 0; j < args.length; j += 1) {
+      const a = args[j];
+      if (longOption(a, '--set')) return false;
+      if (/^-I/.test(a)) continue;
+      if (/^-[a-zA-Z]*[sf]/.test(a)) return false;
+      if (a === '-r' || a === '-d' || a === '-v' || a === '--date' || a === '--reference') { j += 1; continue; }
+      if (a.startsWith('-') || a.startsWith('+')) continue;
+      return false;
+    }
+    return true;
+  }
+  if (cmd === 'hostname') return args.every((a) => HOSTNAME_DISPLAY.has(a));
+  if (cmd === 'uniq') {
+    // A second operand is uniq's output file.
+    let operands = 0;
+    for (let j = 0; j < args.length; j += 1) {
+      const a = args[j];
+      if (a === '-f' || a === '-s' || a === '-w') { j += 1; continue; }
+      if (!a.startsWith('-')) operands += 1;
+    }
+    return operands <= 1;
+  }
+  if (cmd === 'printf') return !args.some((a) => /^-v/.test(a));
+  if (cmd === 'read') return !args.some((a) => !a.startsWith('-') && SHELL_SENSITIVE_NAME.test(a));
   if (cmd === 'git') return gitReadOnly(args);
   return true;
 }
@@ -1197,6 +1318,7 @@ function gitReadOnly(args) {
   while (j < args.length && args[j].startsWith('-')) {
     const a = args[j];
     if (a === '-c' || a.startsWith('-c')) return false; // a config override can name a command
+    if (GIT_BARE_FLAGS.has(a)) return true;
     if (GIT_GLOBAL_SKIP_WITH_VALUE.has(a)) { j += 2; continue; }
     if (GIT_GLOBAL_SKIP.has(a) || a.startsWith('--git-dir=') || a.startsWith('--work-tree=')) { j += 1; continue; }
     return false;
@@ -1206,7 +1328,8 @@ function gitReadOnly(args) {
   const rest = args.slice(j + 1);
   if (rest.some((a) => GIT_HELPER_OPTIONS.has(a.indexOf('=') === -1 ? a : a.slice(0, a.indexOf('='))) || /^-O./.test(a))) return false;
   if (GIT_READONLY.has(sub)) return true;
-  if (sub === 'config') return rest.length > 0 && GIT_CONFIG_READONLY.has(rest[0]);
+  if (sub === 'config') return rest.some((a) => GIT_CONFIG_READONLY.has(a)) && !rest.some((a) => GIT_CONFIG_WRITE.has(a));
+  if (sub === 'reflog') return rest.length === 0 || rest[0] === 'show' || rest[0].startsWith('-');
   if (sub === 'stash') return rest[0] === 'list' || rest[0] === 'show';
   if (sub === 'worktree') return rest[0] === 'list';
   if (sub === 'remote') return rest.every((a) => a === '-v' || a === '--verbose');
@@ -1378,7 +1501,7 @@ module.exports = { classify, commandReadOnly, lastAssistantId };
 ```
 
 Then `chmod +x hooks/interlock-lib.cjs` and run: `node hooks/interlock-lib.cjs --vectors tests/hooks/fixtures/mutation-cases.tsv`
-Expected: `ok 296` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
+Expected: `ok 349` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
 
 - [ ] **Step 4: Write `hooks/first-edit-interlock`**
 
@@ -1555,7 +1678,7 @@ fi
 - [ ] **Step 7: Run the suite to verify it passes**
 
 Run: `bash tests/hooks/test-first-edit-interlock.sh < /dev/null`
-Expected: 38 `[PASS]` lines and `STATUS: PASSED`, including `every vector (296) classifies through the hook as the file says` and `interlock-lib.cjs --vectors agrees (ok 296)`.
+Expected: 38 `[PASS]` lines and `STATUS: PASSED`, including `every vector (349) classifies through the hook as the file says` and `interlock-lib.cjs --vectors agrees (ok 349)`.
 
 - [ ] **Step 8: Run the neighbouring suites**
 

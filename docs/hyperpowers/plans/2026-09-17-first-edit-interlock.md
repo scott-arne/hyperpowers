@@ -2518,7 +2518,8 @@ only in a later turn, that no other arm saw a denial, and that every change
 to a fixture tree traces to a carried-out call (each scenario's setup
 baseline is rebuilt by running its `setup.sh` the way the harness does and
 matched by commit count and tree hash, so a rewritten setup history is
-refused and a multi-commit fixture is not mistaken for a change), then
+refused, a multi-commit fixture is not mistaken for a change, and the
+untracked files setup itself leaves are not read as one), then
 prints the per-cell
 table, the spec's acceptance criteria over planned counts, the attribution
 readout, and the cost readout, and writes `runs.json`. Indeterminate trials
@@ -3779,17 +3780,21 @@ def check_interlock(run: Run, transcripts: list[str]) -> None:
     run.stopped_to_ask = asked if run.arm == "full" and total_attempts else None
 
 
-_BASELINES: dict[str, tuple[int, str]] = {}
+_BASELINES: dict[str, tuple[int, str, frozenset[str]]] = {}
 
 
-def scenario_baseline(scenario: str) -> tuple[int, str]:
-    """(setup commit count, tree hash of the setup HEAD) for a scenario.
+def scenario_baseline(scenario: str) -> tuple[int, str, frozenset[str]]:
+    """(setup commit count, tree hash of the setup HEAD, status lines setup itself leaves) for a scenario.
 
     Rebuilt once per analysis by running the scenario's setup.sh the way the
     harness does (cwd and QUORUM_WORKDIR a fresh directory, QUORUM_REPO_ROOT the
     evals clone, BASH_ENV the check prelude), so the comparison is with what
     setup produced, not with a commit count. Setup content is fixed, so the
-    tree hash is the same in every run of the scenario.
+    tree hash is the same in every run of the scenario. A setup that leaves
+    an untracked file (the launch-cwd sentinel, for one) leaves it in every
+    run, so those status lines are recorded and not read as a change. The
+    working directory sits under a scratch run directory, as it does in the
+    harness, because some setups write beside it.
     """
 
     if scenario in _BASELINES:
@@ -3797,7 +3802,9 @@ def scenario_baseline(scenario: str) -> tuple[int, str]:
     script = os.path.join(SCENARIOS_ROOT, scenario, "setup.sh")
     if not os.path.exists(script):
         raise DesignError(f"{scenario}: no setup.sh under {SCENARIOS_ROOT}")
-    workdir = tempfile.mkdtemp(prefix="baseline-")
+    scratch = tempfile.mkdtemp(prefix="baseline-")
+    workdir = os.path.join(scratch, "coding-agent-workdir")
+    os.makedirs(workdir)
     try:
         env = dict(os.environ)
         env.update({"QUORUM_REPO_ROOT": EV, "QUORUM_WORKDIR": workdir})
@@ -3838,9 +3845,24 @@ def scenario_baseline(scenario: str) -> tuple[int, str]:
                 f"{scenario}: setup.sh left no committed repository to compare with "
                 f"({(count.stderr or tree.stderr).strip()[:120]})"
             )
-        _BASELINES[scenario] = (int(count.stdout.strip()), tree.stdout.strip())
+        left = subprocess.run(
+            git
+            + ["--no-optional-locks", "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if left.returncode != 0:
+            raise DesignError(
+                f"{scenario}: the rebuilt setup cannot be read (status failed: {left.stderr.strip()[:120]})"
+            )
+        _BASELINES[scenario] = (
+            int(count.stdout.strip()),
+            tree.stdout.strip(),
+            frozenset(left.stdout.splitlines()),
+        )
     finally:
-        shutil.rmtree(workdir, ignore_errors=True)
+        shutil.rmtree(scratch, ignore_errors=True)
     return _BASELINES[scenario]
 
 
@@ -3848,8 +3870,10 @@ def tree_changed(run_dir: str, name: str, scenario: str) -> bool:
     """Whether the fixture tree differs from the scenario's setup baseline; a fixture that cannot be compared is an error.
 
     The run's history must begin with the setup commits (same count, same tree
-    hash at the last of them); a rewritten or amended setup is a refusal. The
-    tree is changed when commits follow the setup or the working tree is dirty.
+    hash at the last of them); a rewritten or amended setup, or one the
+    scenario has changed since the run, is a refusal. The tree is changed when
+    commits follow the setup or the working tree holds a status line setup
+    itself did not leave.
     """
 
     workdir = os.path.join(run_dir, "coding-agent-workdir")
@@ -3879,7 +3903,7 @@ def tree_changed(run_dir: str, name: str, scenario: str) -> bool:
             f"(rev-list failed: {history.stderr.strip()[:120]})"
         )
     commits = history.stdout.split()
-    setup_count, setup_tree = scenario_baseline(scenario)
+    setup_count, setup_tree, setup_status = scenario_baseline(scenario)
     if len(commits) < setup_count:
         raise DesignError(
             f"{name}: the fixture has {len(commits)} commits, fewer than the {setup_count} its setup makes"
@@ -3892,19 +3916,21 @@ def tree_changed(run_dir: str, name: str, scenario: str) -> bool:
     )
     if tree.returncode != 0 or tree.stdout.strip() != setup_tree:
         raise DesignError(
-            f"{name}: the fixture's setup history differs from the scenario's setup (rewritten or amended)"
+            f"{name}: the fixture's setup history differs from the scenario's setup "
+            "(rewritten or amended, or the scenario's setup.sh changed after the run)"
         )
     # The harness keeps the repository's own directory inside the work tree as
     # git-dir, which git would list as untracked; exclude it from the status.
     status = subprocess.run(
         base
         + [
+            "--no-optional-locks",
             "status",
             "--porcelain",
             "--untracked-files=all",
             "--",
-            ".",
-            f":!{os.path.basename(git_dir)}",
+            ":(top)",
+            f":(top,exclude){os.path.basename(git_dir)}",
         ],
         capture_output=True,
         text=True,
@@ -3915,7 +3941,8 @@ def tree_changed(run_dir: str, name: str, scenario: str) -> bool:
             f"{name}: the fixture repository cannot be compared with its initial commit "
             f"(status failed: {status.stderr.strip()[:120]})"
         )
-    return len(commits) > setup_count or bool(status.stdout.strip())
+    left_by_run = set(status.stdout.splitlines()) - setup_status
+    return len(commits) > setup_count or bool(left_by_run)
 
 
 def token_total(run_dir: str, name: str) -> int:
@@ -4881,6 +4908,7 @@ git commit -q -m initial
 printf 'b\\n' > b.txt
 git add b.txt
 git commit -q -m second
+printf 'x\\n' > .setup-sentinel
 """
 
 
@@ -6019,6 +6047,12 @@ def self_test() -> int:
         ]
         subprocess.run(git + ["checkout", "-q", "--", "a.txt"], check=True)
 
+    def untracked_file_added(root: str) -> None:
+        unchanged_two_commit_fixture(root)
+        workdir = os.path.join(root, "results", "run-a", "coding-agent-workdir")
+        with open(os.path.join(workdir, "new.txt"), "w", encoding="utf-8") as handle:
+            handle.write("new\n")
+
     def integral_float_total(root: str) -> None:
         with open(
             os.path.join(root, "results", "run-a", "coding-agent-token-usage.json"),
@@ -6294,7 +6328,16 @@ def self_test() -> int:
             None,
         ),
         (
-            "an unchanged two-commit fixture with no mutation attempt",
+            "an untracked file added during a run with no mutation attempt",
+            two_passes,
+            None,
+            untracked_file_added,
+            "no transcript holds a carried-out mutation",
+            "plain",
+            None,
+        ),
+        (
+            "an unchanged two-commit fixture whose setup leaves an untracked file, no mutation attempt",
             two_passes,
             None,
             unchanged_two_commit_fixture,
@@ -7091,7 +7134,7 @@ shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh $E/logs
 /Users/johnss51/Applications/micromamba/envs/main/bin/python $E/analyze.py
 ```
 
-Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 87 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
+Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 88 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
 
 - [ ] **Step 11: Commit in the evals clone**
 

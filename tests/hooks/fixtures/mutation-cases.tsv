@@ -148,6 +148,12 @@ time -p rm f	mutation
 timeout 5 ls	read-only
 timeout 5 rm f	mutation
 timeout -k 2 5 ls	read-only
+timeout $DUR ls	mutation
+timeout -k $K 5 ls	mutation
+timeout 5 cat $FILE	read-only
+nice -n $N ls	mutation
+nice -$N ls	mutation
+nice -n 5 cat "$FILE"	read-only
 sudo ls	mutation
 xargs rm	mutation
 bash -c "ls"	mutation
@@ -270,8 +276,19 @@ env --split-string='touch f'	mutation
 env -i -u FOO ls	read-only
 env -0 ls	read-only
 env $OPT ls	mutation
+env LANG=$X ls	mutation
+env -u $V ls	mutation
+env LANG=C cat "$FILE"	read-only
 date $FMT	mutation
 rg $PAT x	mutation
+ag --pager 'touch f' x	mutation
+ag --pag=cmd x	mutation
+ag $PAT x	mutation
+ag pattern src	read-only
+file $F	mutation
+hostname $H	mutation
+export $NAME=1	mutation
+export LC_ALL=$X	mutation
 file -C -m magic	mutation
 file --compile magic	mutation
 file a.bin	read-only

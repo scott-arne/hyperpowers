@@ -360,7 +360,9 @@ function basename(word) {
 // Commands whose read-only status depends on their arguments: an argument
 // that carries a parameter expansion or a substitution could become any option
 // or subcommand once the shell expands it, so it makes the call a mutation.
-const ARGUMENT_SENSITIVE = new Set(['git', 'find', 'sort', 'file', 'date', 'hostname', 'rg', 'export']);
+// The wrappers apply the same rule to their own option, value, and assignment
+// slots, where word splitting moves the command boundary (timeout $DUR ls).
+const ARGUMENT_SENSITIVE = new Set(['git', 'find', 'sort', 'file', 'date', 'hostname', 'rg', 'ag', 'export']);
 
 function hasExpansion(word) {
   return word.indexOf('$') !== -1 || word.indexOf('__SUBST__') !== -1;
@@ -397,7 +399,7 @@ function simpleReadOnly(ws) {
   // that output is unknown here: always a mutation attempt.
   if (cmd === '__SUBST__') return false;
   if (WRAPPERS_MUTATING.has(cmd)) return false;
-  if (cmd === 'env') return !rest.slice(1).some(hasExpansion) && envReadOnly(rest.slice(1));
+  if (cmd === 'env') return envReadOnly(rest.slice(1));
   if (cmd === 'command') {
     if (rest[1] === '-v' || rest[1] === '-V') return true;
     return simpleReadOnly(rest.slice(rest[1] === '-p' ? 2 : 1));
@@ -405,6 +407,7 @@ function simpleReadOnly(ws) {
   if (cmd === 'nice') {
     let j = 1;
     while (j < rest.length && rest[j].startsWith('-')) { if (rest[j] === '-n') j += 1; j += 1; }
+    if (rest.slice(1, j).some(hasExpansion)) return false;
     return simpleReadOnly(rest.slice(j));
   }
   if (cmd === 'nohup') return simpleReadOnly(rest.slice(1));
@@ -412,13 +415,15 @@ function simpleReadOnly(ws) {
   if (cmd === 'timeout') {
     let j = 1;
     while (j < rest.length && rest[j].startsWith('-')) { if (rest[j] === '-k' || rest[j] === '-s') j += 1; j += 1; }
-    return simpleReadOnly(rest.slice(j + 1)); // j is the duration
+    if (rest.slice(1, j + 1).some(hasExpansion)) return false; // j is the duration
+    return simpleReadOnly(rest.slice(j + 1));
   }
   if (!ALLOW.has(cmd)) return false;
   const args = rest.slice(1);
   if (ARGUMENT_SENSITIVE.has(cmd) && args.some(hasExpansion)) return false;
   if (cmd === 'export') return args.every((a) => a === '-p' || a === '-n' || ALLOWED_ASSIGNMENTS.has(a) || (isAssignment(a) && assignmentAllowed(a)));
   if (cmd === 'rg') return !args.some((a) => longOption(a, '--pre'));
+  if (cmd === 'ag') return !args.some((a) => longOption(a, '--pager'));
   if (cmd === 'find') return !args.some((a) => FIND_MUTATING.has(a));
   if (cmd === 'sort') return !args.some((a) => longOption(a, '--output') || longOption(a, '--compress-program') || /^-[a-zA-Z]*o/.test(a));
   if (cmd === 'file') return !args.some((a) => longOption(a, '--compile') || /^-[a-zA-Z]*C/.test(a));
@@ -435,11 +440,16 @@ function envReadOnly(args) {
   let j = 0;
   while (j < args.length) {
     const a = args[j];
+    if (!isAssignment(a) && !a.startsWith('-')) break; // the wrapped command
+    if (hasExpansion(a)) return false;
     if (isAssignment(a)) { if (!assignmentAllowed(a)) return false; j += 1; continue; }
-    if (a === '-u' || a === '--unset' || a === '-C' || a === '--chdir') { j += 2; continue; }
+    if (a === '-u' || a === '--unset' || a === '-C' || a === '--chdir') {
+      if (j + 1 < args.length && hasExpansion(args[j + 1])) return false;
+      j += 2;
+      continue;
+    }
     if (a === '-i' || a === '--ignore-environment' || a === '-0' || a === '--null') { j += 1; continue; }
-    if (a.startsWith('-')) return false;
-    break;
+    return false;
   }
   return simpleReadOnly(args.slice(j));
 }

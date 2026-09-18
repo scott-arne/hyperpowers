@@ -2524,7 +2524,15 @@ aside there, and reports the count. `logs/measure-launch.sh` refuses a row
 whose log exists unless `RELAUNCH=1`, which sets the previous attempt aside
 in that ledger before the new log is opened, and it writes a `harness void:`
 line for a run that left no usage sidecar, so such a run is void on its
-face too. Subagent transcripts may name the models Claude Code assigns to
+face too. `launch-all.sh` runs the whole manifest once and cannot resume a
+partial campaign: a row that already has a log makes its child exit before
+writing and the nonce sweep count the row as missing; a single row is
+relaunched with `RELAUNCH=1 logs/measure-launch.sh <row>`. A relaunch that
+then fails a pin check leaves the set-aside entry without a replacement log,
+which the analysis refuses until the row is launched again. The plan's
+offline proof of the relaunch gate copies `manifest.base.tsv`, whose pins
+are placeholders by design, so it stops at the pin check and never reaches
+quorum. Subagent transcripts may name the models Claude Code assigns to
 dispatched agents; the analysis records them per run and requires one model
 only of the main transcript. Every `launch-all.sh` invocation writes
 its nonce into each log it produces and accepts only logs carrying it, so a
@@ -6485,7 +6493,7 @@ printf 'harness\t%s\ncontrol\t%s\nwording\t%s\nfull\t%s\nmodel\tm\nclaude_code\t
 printf 'harness\t%s\ncontrol\t%s\nwording\t%s\nfull\t%s\nmodel\tm\nclaude_code\t1.2.3\nwording\ts\t1\tp1\tdefault\n' aaaa bbbb cccc dddd > "$T/manifest-good.tsv"; echo "--- one good row:"; LAUNCHER="$T/stub-launch.sh" bash "$L" "$T/manifest-good.tsv" 2 2>&1 | tail -1; echo "exit=${PIPESTATUS[0]}"; cat "$T/logs/wording-s-p1.log"
 for m in 0 00 abc; do echo "--- max=$m:"; LAUNCHER="$T/stub-launch.sh" bash "$L" "$T/manifest-good.tsv" "$m" 2>&1 | tail -1; echo "exit=${PIPESTATUS[0]}"; done
 mkdir -p "$T/real/logs"; sed -e 's/<[A-Z_]*>/x/' "$E/manifest.base.tsv" > "$T/real/manifest.tsv"; cp "$E/logs/stub-launch.sh" "$T/real/stub-launch.sh"; echo "--- the real manifest validates:"; LAUNCHER="$T/real/stub-launch.sh" bash "$L" "$T/real/manifest.tsv" 8 2>&1 | grep -c '^started '
-mkdir -p "$T/ml/logs"; cp "$E/manifest.tsv" "$T/ml/manifest.tsv"; printf 'arm=full budget=default\nDONE full s p1\n' > "$T/ml/logs/full-s-p1.log"; echo "--- a row whose log exists, without RELAUNCH:"; MEASURE_E="$T/ml" bash "$E/logs/measure-launch.sh" full s 1 p1 default; echo "exit=$?"; ls "$T/ml/logs"
+mkdir -p "$T/ml/logs"; cp "$E/manifest.base.tsv" "$T/ml/manifest.tsv"; printf 'arm=full budget=default\nDONE full s p1\n' > "$T/ml/logs/full-s-p1.log"; echo "--- a row whose log exists, without RELAUNCH:"; MEASURE_E="$T/ml" bash "$E/logs/measure-launch.sh" full s 1 p1 default; echo "exit=$?"; ls "$T/ml/logs"
 echo "--- the same row with RELAUNCH=1 (set aside, then the pin check refuses):"; MEASURE_E="$T/ml" RELAUNCH=1 bash "$E/logs/measure-launch.sh" full s 1 p1 default; echo "exit=$?"; ls "$T/ml/logs" "$T/ml/logs/failed"
 ```
 

@@ -177,7 +177,7 @@ Record the commit sha in the report: Task 6 pins it as the wording arm.
 
 **Interfaces:**
 - Consumes: Task 1's texts (this task's commit sits on top of them; the skills tree is untouched here).
-- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--wave <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 244`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
+- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--wave <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 266`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
 
 - [ ] **Step 1: Write the failing suite `tests/hooks/test-first-edit-interlock.sh`**
 
@@ -440,6 +440,10 @@ cat a.txt	read-only
 head -n 20 src/app.js	read-only
 grep -rn "todo" src	read-only
 rg --files	read-only
+rg --pre=rm needle victim	mutation
+rg --pre rm x	mutation
+rg --pre-glob '*.pdf' x	read-only
+rg -p x	read-only
 wc -l *.py	read-only
 pwd	read-only
 echo hi	read-only
@@ -457,6 +461,8 @@ sort -uo f f	mutation
 sort --output=f f	mutation
 sort --outp=f f	mutation
 sort --out f f	mutation
+sort --compress-program=gzip f	mutation
+sort --comp=gzip f	mutation
 /bin/rm -rf build	mutation
 rm -f a.txt	mutation
 mv a b	mutation
@@ -605,6 +611,8 @@ $(cat run.txt)	mutation
 $(echo rm) -rf build	mutation
 $(echo ls) -la	mutation
 $(ls)	mutation
+$(echo touch) ls	mutation
+$(echo ls)	mutation
 echo "$(touch f)"	mutation
 echo "$(ls)"	read-only
 echo "`touch f`"	mutation
@@ -613,6 +621,9 @@ echo "a $(rm f) b"	mutation
 cat <<EOF > f\nhello\nEOF	mutation
 cat <<EOF\nhello | rm -rf /\nEOF	read-only
 cat <<'EOF'\nx\nEOF	read-only
+cat <<EOF\n$(echo\nrm -f target)\nEOF	mutation
+echo ok # <<EOF\nrm -f victim\nEOF	mutation
+echo '# <<EOF' <<REAL\nrm -f x\nREAL	read-only
 cat <<EOF\n$(touch f)\nEOF	mutation
 cat <<EOF\n`rm f`\nEOF	mutation
 cat <<EOF\n$(ls)\nEOF	read-only
@@ -624,7 +635,14 @@ ls && cat a	read-only
 ls || rm f	mutation
 ls & rm f	mutation
 cd src && ls	read-only
-export FOO=1	read-only
+export FOO=1	mutation
+export	read-only
+export -p	read-only
+export LC_ALL=C	read-only
+export LC_ALL=C; sort f	read-only
+export GIT_EXTERNAL_DIFF='touch victim'; git diff	mutation
+export PATH=/tmp:$PATH	mutation
+export FOO	mutation
 set -e	read-only
 unset FOO	read-only
 read x	read-only
@@ -662,6 +680,10 @@ ls <> f	mutation
 $CMD args	mutation
 ./script.sh	mutation
 ../tool	mutation
+/usr/bin/../../tmp/ls	mutation
+/usr/bin/./ls	mutation
+/usr/bin//ls	mutation
+/usr/bin/..	mutation
 ./ls	mutation
 /tmp/git status	mutation
 /usr/bin/git status	read-only
@@ -788,10 +810,13 @@ function stripHeredocs(text) {
     out.push(line);
     i += 1;
     for (const delim of delimiters) {
+      const body = [];
       while (i < lines.length && lines[i].replace(/^\t+/, '') !== delim.word) {
-        if (!delim.quoted) collectSubstitutions(lines[i], subs);
+        body.push(lines[i]);
         i += 1;
       }
+      // Substitutions may span lines, so the body is scanned as one text.
+      if (!delim.quoted) collectSubstitutions(body.join('\n'), subs);
       i += 1; // the delimiter line itself
     }
   }
@@ -833,6 +858,9 @@ function heredocDelimiters(line) {
     }
     if (c === '\\') { i += 1; continue; }
     if (c === "'" || c === '"') { q = c; continue; }
+    // An unquoted # at a word start opens a comment: the rest of the line,
+    // heredoc-looking or not, is text.
+    if (c === '#' && (i === 0 || /[\s;|&(]/.test(line[i - 1]))) break;
     if (c === '<' && line[i + 1] === '<' && line[i + 2] !== '<') {
       let j = i + 2;
       if (line[j] === '-') j += 1;
@@ -1024,16 +1052,17 @@ function words(segment) {
 // Classification
 // ---------------------------------------------------------------------------
 
-const SYSTEM_DIRS = ['/bin/', '/sbin/', '/usr/bin/', '/usr/sbin/', '/usr/local/bin/', '/opt/homebrew/bin/', '/opt/local/bin/'];
+const SYSTEM_PATH = /^(?:\/bin|\/sbin|\/usr\/bin|\/usr\/sbin|\/usr\/local\/bin|\/opt\/homebrew\/bin|\/opt\/local\/bin)\/([^/]+)$/;
 
-// The command name to look up: a bare word, or the basename of a path under a
-// system directory. Any other path (./ls, ../tool, /tmp/git, a home directory)
-// is an arbitrary executable and returns '' so that nothing matches it.
+// The command name to look up: a bare word, or the basename of a path that is
+// exactly one name under a system directory. Any other path (./ls, ../tool,
+// /tmp/git, a home directory, /usr/bin/../../tmp/ls, /usr/bin/./ls) is an
+// arbitrary executable and returns '' so that nothing matches it.
 function basename(word) {
-  const i = word.lastIndexOf('/');
-  if (i === -1) return word;
-  if (!SYSTEM_DIRS.some((dir) => word.startsWith(dir))) return '';
-  return word.slice(i + 1);
+  if (word.indexOf('/') === -1) return word;
+  const m = SYSTEM_PATH.exec(word);
+  if (!m || m[1] === '.' || m[1] === '..') return '';
+  return m[1];
 }
 
 // GNU getopt accepts any unambiguous prefix of a long option, so --out=f is
@@ -1063,9 +1092,9 @@ function simpleReadOnly(ws) {
   if (i >= ws.length) return true; // assignments only, all permitted
   const rest = ws.slice(i);
   const cmd = basename(rest[0]);
-  // A substitution in command position runs its output as the command: a
-  // mutation attempt unless allowlisted words follow it.
-  if (cmd === '__SUBST__') return rest.length > 1 && simpleReadOnly(rest.slice(1));
+  // A substitution in command position runs its output as the command, and
+  // that output is unknown here: always a mutation attempt.
+  if (cmd === '__SUBST__') return false;
   if (WRAPPERS_MUTATING.has(cmd)) return false;
   if (cmd === 'env') return envReadOnly(rest.slice(1));
   if (cmd === 'command') {
@@ -1086,8 +1115,10 @@ function simpleReadOnly(ws) {
   }
   if (!ALLOW.has(cmd)) return false;
   const args = rest.slice(1);
+  if (cmd === 'export') return args.every((a) => a === '-p' || a === '-n' || ALLOWED_ASSIGNMENTS.has(a) || (isAssignment(a) && assignmentAllowed(a)));
+  if (cmd === 'rg') return !args.some((a) => longOption(a, '--pre'));
   if (cmd === 'find') return !args.some((a) => FIND_MUTATING.has(a));
-  if (cmd === 'sort') return !args.some((a) => longOption(a, '--output') || /^-[a-zA-Z]*o/.test(a));
+  if (cmd === 'sort') return !args.some((a) => longOption(a, '--output') || longOption(a, '--compress-program') || /^-[a-zA-Z]*o/.test(a));
   if (cmd === 'file') return !args.some((a) => longOption(a, '--compile') || /^-[a-zA-Z]*C/.test(a));
   if (cmd === 'date') return !args.some((a) => longOption(a, '--set') || /^-[a-zA-Z]*s/.test(a));
   if (cmd === 'hostname') return args.every((a) => a.startsWith('-'));
@@ -1297,7 +1328,7 @@ module.exports = { classify, commandReadOnly, lastAssistantId };
 ```
 
 Then `chmod +x hooks/interlock-lib.cjs` and run: `node hooks/interlock-lib.cjs --vectors tests/hooks/fixtures/mutation-cases.tsv`
-Expected: `ok 244` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
+Expected: `ok 266` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
 
 - [ ] **Step 4: Write `hooks/first-edit-interlock`**
 
@@ -1474,7 +1505,7 @@ fi
 - [ ] **Step 7: Run the suite to verify it passes**
 
 Run: `bash tests/hooks/test-first-edit-interlock.sh < /dev/null`
-Expected: 38 `[PASS]` lines and `STATUS: PASSED`, including `every vector (244) classifies through the hook as the file says` and `interlock-lib.cjs --vectors agrees (ok 244)`.
+Expected: 38 `[PASS]` lines and `STATUS: PASSED`, including `every vector (266) classifies through the hook as the file says` and `interlock-lib.cjs --vectors agrees (ok 266)`.
 
 - [ ] **Step 8: Run the neighbouring suites**
 

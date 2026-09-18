@@ -177,7 +177,7 @@ Record the commit sha in the report: Task 6 pins it as the wording arm.
 
 **Interfaces:**
 - Consumes: Task 1's texts (this task's commit sits on top of them; the skills tree is untouched here).
-- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--wave <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 235`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
+- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--wave <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 244`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
 
 - [ ] **Step 1: Write the failing suite `tests/hooks/test-first-edit-interlock.sh`**
 
@@ -455,6 +455,8 @@ sort f	read-only
 sort -o f f	mutation
 sort -uo f f	mutation
 sort --output=f f	mutation
+sort --outp=f f	mutation
+sort --out f f	mutation
 /bin/rm -rf build	mutation
 rm -f a.txt	mutation
 mv a b	mutation
@@ -597,6 +599,12 @@ ls $(git rev-parse --show-toplevel)	read-only
 ls $(rm f)	mutation
 echo `date`	read-only
 echo `touch f`	mutation
+$(echo rm -rf build)	mutation
+`echo rm -rf build`	mutation
+$(cat run.txt)	mutation
+$(echo rm) -rf build	mutation
+$(echo ls) -la	mutation
+$(ls)	mutation
 echo "$(touch f)"	mutation
 echo "$(ls)"	read-only
 echo "`touch f`"	mutation
@@ -667,6 +675,7 @@ file -C -m magic	mutation
 file --compile magic	mutation
 file a.bin	read-only
 date -s 2020-01-01	mutation
+date --se=2020-01-01	mutation
 date +%s	read-only
 hostname newname	mutation
 hostname -f	read-only
@@ -1027,6 +1036,15 @@ function basename(word) {
   return word.slice(i + 1);
 }
 
+// GNU getopt accepts any unambiguous prefix of a long option, so --out=f is
+// --output=f: a word matches the option when its name (before any =) is at
+// least three characters and a prefix of the full spelling.
+function longOption(word, full) {
+  const eq = word.indexOf('=');
+  const name = eq === -1 ? word : word.slice(0, eq);
+  return name.length >= 3 && name.startsWith('--') && full.startsWith(name);
+}
+
 function isAssignment(word) {
   return /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
 }
@@ -1045,7 +1063,9 @@ function simpleReadOnly(ws) {
   if (i >= ws.length) return true; // assignments only, all permitted
   const rest = ws.slice(i);
   const cmd = basename(rest[0]);
-  if (cmd === '__SUBST__') return simpleReadOnly(rest.slice(1));
+  // A substitution in command position runs its output as the command: a
+  // mutation attempt unless allowlisted words follow it.
+  if (cmd === '__SUBST__') return rest.length > 1 && simpleReadOnly(rest.slice(1));
   if (WRAPPERS_MUTATING.has(cmd)) return false;
   if (cmd === 'env') return envReadOnly(rest.slice(1));
   if (cmd === 'command') {
@@ -1067,9 +1087,9 @@ function simpleReadOnly(ws) {
   if (!ALLOW.has(cmd)) return false;
   const args = rest.slice(1);
   if (cmd === 'find') return !args.some((a) => FIND_MUTATING.has(a));
-  if (cmd === 'sort') return !args.some((a) => a === '-o' || a === '--output' || a.startsWith('--output=') || /^-[a-zA-Z]*o/.test(a));
-  if (cmd === 'file') return !args.some((a) => a === '--compile' || /^-[a-zA-Z]*C/.test(a));
-  if (cmd === 'date') return !args.some((a) => a === '--set' || a.startsWith('--set=') || /^-[a-zA-Z]*s/.test(a));
+  if (cmd === 'sort') return !args.some((a) => longOption(a, '--output') || /^-[a-zA-Z]*o/.test(a));
+  if (cmd === 'file') return !args.some((a) => longOption(a, '--compile') || /^-[a-zA-Z]*C/.test(a));
+  if (cmd === 'date') return !args.some((a) => longOption(a, '--set') || /^-[a-zA-Z]*s/.test(a));
   if (cmd === 'hostname') return args.every((a) => a.startsWith('-'));
   if (cmd === 'git') return gitReadOnly(args);
   return true;
@@ -1277,7 +1297,7 @@ module.exports = { classify, commandReadOnly, lastAssistantId };
 ```
 
 Then `chmod +x hooks/interlock-lib.cjs` and run: `node hooks/interlock-lib.cjs --vectors tests/hooks/fixtures/mutation-cases.tsv`
-Expected: `ok 235` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
+Expected: `ok 244` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
 
 - [ ] **Step 4: Write `hooks/first-edit-interlock`**
 
@@ -1454,7 +1474,7 @@ fi
 - [ ] **Step 7: Run the suite to verify it passes**
 
 Run: `bash tests/hooks/test-first-edit-interlock.sh < /dev/null`
-Expected: 38 `[PASS]` lines and `STATUS: PASSED`, including `every vector (235) classifies through the hook as the file says` and `interlock-lib.cjs --vectors agrees (ok 235)`.
+Expected: 38 `[PASS]` lines and `STATUS: PASSED`, including `every vector (244) classifies through the hook as the file says` and `interlock-lib.cjs --vectors agrees (ok 244)`.
 
 - [ ] **Step 8: Run the neighbouring suites**
 

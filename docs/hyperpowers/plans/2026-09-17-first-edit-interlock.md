@@ -177,7 +177,7 @@ Record the commit sha in the report: Task 6 pins it as the wording arm.
 
 **Interfaces:**
 - Consumes: Task 1's texts (this task's commit sits on top of them; the skills tree is untouched here).
-- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--wave <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 266`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
+- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--wave <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 279`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
 
 - [ ] **Step 1: Write the failing suite `tests/hooks/test-first-edit-interlock.sh`**
 
@@ -463,6 +463,9 @@ sort --outp=f f	mutation
 sort --out f f	mutation
 sort --compress-program=gzip f	mutation
 sort --comp=gzip f	mutation
+sort "$(printf %s -o)" out input	mutation
+sort $OPT f	mutation
+sort ${OPT} f	mutation
 /bin/rm -rf build	mutation
 rm -f a.txt	mutation
 mv a b	mutation
@@ -480,6 +483,7 @@ find . -name x	read-only
 find . -name '*.log' -delete	mutation
 find . -name x -exec rm {} \;	mutation
 find src -type f -newer a	read-only
+find $DIR -name x	mutation
 git status	read-only
 git status --short	read-only
 git -C sub log --oneline	read-only
@@ -541,6 +545,9 @@ git config --global user.name x	mutation
 git -c diff.external='touch f' diff	mutation
 git -c core.pager=cat log	mutation
 git --no-pager log -1	read-only
+git $SUB	mutation
+git log $REF	mutation
+git "$(echo push)"	mutation
 git -P log -1	read-only
 git -p log	mutation
 git --paginate log	mutation
@@ -603,6 +610,9 @@ diff <(ls a) <(ls b)	read-only
 diff <(ls a) <(rm b)	mutation
 ls $(git rev-parse --show-toplevel)	read-only
 ls $(rm f)	mutation
+ls $DIR	read-only
+cat "$FILE"	read-only
+grep '$HOME' f	read-only
 echo `date`	read-only
 echo `touch f`	mutation
 $(echo rm -rf build)	mutation
@@ -693,6 +703,9 @@ env -S 'touch f'	mutation
 env --split-string='touch f'	mutation
 env -i -u FOO ls	read-only
 env -0 ls	read-only
+env $OPT ls	mutation
+date $FMT	mutation
+rg $PAT x	mutation
 file -C -m magic	mutation
 file --compile magic	mutation
 file a.bin	read-only
@@ -1065,6 +1078,15 @@ function basename(word) {
   return m[1];
 }
 
+// Commands whose read-only status depends on their arguments: an argument
+// that carries a parameter expansion or a substitution could become any option
+// or subcommand once the shell expands it, so it makes the call a mutation.
+const ARGUMENT_SENSITIVE = new Set(['git', 'find', 'sort', 'file', 'date', 'hostname', 'rg', 'export']);
+
+function hasExpansion(word) {
+  return word.indexOf('$') !== -1 || word.indexOf('__SUBST__') !== -1;
+}
+
 // GNU getopt accepts any unambiguous prefix of a long option, so --out=f is
 // --output=f: a word matches the option when its name (before any =) is at
 // least three characters and a prefix of the full spelling.
@@ -1096,7 +1118,7 @@ function simpleReadOnly(ws) {
   // that output is unknown here: always a mutation attempt.
   if (cmd === '__SUBST__') return false;
   if (WRAPPERS_MUTATING.has(cmd)) return false;
-  if (cmd === 'env') return envReadOnly(rest.slice(1));
+  if (cmd === 'env') return !rest.slice(1).some(hasExpansion) && envReadOnly(rest.slice(1));
   if (cmd === 'command') {
     if (rest[1] === '-v' || rest[1] === '-V') return true;
     return simpleReadOnly(rest.slice(rest[1] === '-p' ? 2 : 1));
@@ -1115,6 +1137,7 @@ function simpleReadOnly(ws) {
   }
   if (!ALLOW.has(cmd)) return false;
   const args = rest.slice(1);
+  if (ARGUMENT_SENSITIVE.has(cmd) && args.some(hasExpansion)) return false;
   if (cmd === 'export') return args.every((a) => a === '-p' || a === '-n' || ALLOWED_ASSIGNMENTS.has(a) || (isAssignment(a) && assignmentAllowed(a)));
   if (cmd === 'rg') return !args.some((a) => longOption(a, '--pre'));
   if (cmd === 'find') return !args.some((a) => FIND_MUTATING.has(a));
@@ -1328,7 +1351,7 @@ module.exports = { classify, commandReadOnly, lastAssistantId };
 ```
 
 Then `chmod +x hooks/interlock-lib.cjs` and run: `node hooks/interlock-lib.cjs --vectors tests/hooks/fixtures/mutation-cases.tsv`
-Expected: `ok 266` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
+Expected: `ok 279` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
 
 - [ ] **Step 4: Write `hooks/first-edit-interlock`**
 
@@ -1505,7 +1528,7 @@ fi
 - [ ] **Step 7: Run the suite to verify it passes**
 
 Run: `bash tests/hooks/test-first-edit-interlock.sh < /dev/null`
-Expected: 38 `[PASS]` lines and `STATUS: PASSED`, including `every vector (266) classifies through the hook as the file says` and `interlock-lib.cjs --vectors agrees (ok 266)`.
+Expected: 38 `[PASS]` lines and `STATUS: PASSED`, including `every vector (279) classifies through the hook as the file says` and `interlock-lib.cjs --vectors agrees (ok 279)`.
 
 - [ ] **Step 8: Run the neighbouring suites**
 

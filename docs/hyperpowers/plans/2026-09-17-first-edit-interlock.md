@@ -2462,7 +2462,7 @@ git commit -m "scenarios: four consequence boundaries and two benign one-liners 
 **Risk tier:** high — the analyzer's output is the durable record the ship decision rests on.
 
 **Files:**
-- Create, in the evals clone under `evidence/2026-09-17-first-edit-interlock/`: `README.md`, `manifest.base.tsv`, `manifest.tsv` (identical to the base at creation), `mutation-cases.tsv` (a byte-identical copy of hyperpowers `tests/hooks/fixtures/mutation-cases.tsv` at Task 2's commit), `logs/measure-launch.sh`, `launch-all.sh`, `logs/stub-launch.sh`, `analyze.py`
+- Create, in the evals clone under `evidence/2026-09-17-first-edit-interlock/`: `README.md`, `manifest.base.tsv`, `manifest.tsv` (identical to the base at creation), `mutation-cases.tsv` (a byte-identical copy of hyperpowers `tests/hooks/fixtures/mutation-cases.tsv` at Task 2's commit), `logs/measure-launch.sh`, `launch-all.sh`, `logs/stub-launch.sh`, `logs/void-check.sh` (the launcher's per-run void check, which the offline proof also runs), `analyze.py`
 
 **Interfaces:**
 - Consumes: Task 2's `hooks/interlock-lib.cjs` and vector file (read at analysis time from the full arm's pinned commit, never from a checkout; the copy here must equal them), Task 3's scenario ids, the arms' worktree paths in Global Constraints.
@@ -2505,7 +2505,10 @@ rerun, or control run, and the analysis refuses anything else);
 `launch-all.sh` runs it through `logs/measure-launch.sh`; `analyze.py`
 refuses to report unless the observed runs match the manifest exactly,
 classifies every tool call with the pinned plugin's own
-`hooks/interlock-lib.cjs` (its vector file is copied here as
+`hooks/interlock-lib.cjs`, reads a call as denied only when its single tool
+result is an error ending with the hook's message as pinned in
+`hooks/first-edit-interlock`, requires every transcript to carry the pinned
+Claude Code version (its vector file is copied here as
 `mutation-cases.tsv` and must be byte-identical to the pinned copy), checks
 that every full-arm context was denied at its first attempt and mutated
 only in a later turn, that no other arm saw a denial, and that every change
@@ -2522,9 +2525,12 @@ analysis reads that directory as the void ledger, requires every entry to
 carry the pins and to be void on its face, refuses a completed attempt set
 aside there, and reports the count. `logs/measure-launch.sh` refuses a row
 whose log exists unless `RELAUNCH=1`, which sets the previous attempt aside
-in that ledger before the new log is opened, and it writes a `harness void:`
-line for a run that left no usage sidecar, so such a run is void on its
-face too. `launch-all.sh` runs the whole manifest once and cannot resume a
+in that ledger before the new log is opened, and it runs
+`logs/void-check.sh` on every run directory quorum names, which prints a
+`harness void:` line for a run with no readable verdict, no grader block, a
+grader that exited without a result, or no usable usage sidecar; the ledger
+accepts an entry only on its own `FAILED` last line or such a line, never on
+free text, so a graded trial cannot be set aside as a void. `launch-all.sh` runs the whole manifest once and cannot resume a
 partial campaign: a row that already has a log makes its child exit before
 writing and the nonce sweep count the row as missing; a single row is
 relaunched with `RELAUNCH=1 logs/measure-launch.sh <row>`. A relaunch that
@@ -2697,9 +2703,10 @@ Expected: the two digests are identical (the analyzer refuses to run otherwise).
 # session). Writes logs/<arm>-<scenario>-<proc>.log (proc is p<n> for a
 # manifest row or r<n> for a rerun) with the pins, the budget, the launch
 # nonce (LAUNCH_NONCE from launch-all.sh, `manual` for a row launched by
-# hand), the time, the exact command, quorum's output, and a `harness void:`
-# line for every run directory quorum named that has no
-# coding-agent-token-usage.json (a void attempt the analysis refuses to count).
+# hand), the time, the exact command, quorum's output, and the `harness void:`
+# lines logs/void-check.sh prints for every run directory quorum named that
+# cannot count as a trial (no readable verdict, no grader block, a grader that
+# exited without a result, no usable coding-agent-token-usage.json).
 # The last line is DONE only when quorum exited 0, 1, or 2 (a pass, a fail, or
 # an indeterminate are measurements); anything else is FAILED <code>. Refuses
 # to launch when the proxy variables the sessions need are not set (validated,
@@ -2761,8 +2768,8 @@ export SUPERPOWERS_ROOT="$root"
   echo "\$ env -u SLASH_COMMAND_TOOL_CHAR_BUDGET bun run quorum run scenarios/$scen --coding-agent claude-auto --repeat $rep"
   env -u SLASH_COMMAND_TOOL_CHAR_BUDGET bun run quorum run "scenarios/$scen" --coding-agent claude-auto --repeat "$rep"
   code=$?
-  grep -o 'run-dir  *[^[:space:]]*' "$log" | awk '{print $2}' | while read -r d; do
-    [ -f "$d/coding-agent-token-usage.json" ] || echo "harness void: no coding-agent-token-usage.json in $d"
+  grep -oE 'run-dir[[:space:]]+[^[:space:]]+' "$log" | awk '{print $2}' | while read -r d; do
+    bash "$E/logs/void-check.sh" "$d"
   done
   echo "EXIT=$code"; date -u +%Y-%m-%dT%H:%M:%SZ
   case "$code" in 0|1|2) echo "DONE $arm $scen $proc" ;; *) echo "FAILED $code $arm $scen $proc" ;; esac
@@ -2861,7 +2868,55 @@ case "$4" in
 esac
 ```
 
-- [ ] **Step 7: Write `analyze.py`**
+- [ ] **Step 7: Write `logs/void-check.sh`** (the launcher runs it on every run directory quorum names; the analysis accepts a void ledger entry only on the lines it prints or on the row's own `FAILED` line)
+
+```bash
+#!/usr/bin/env bash
+# void-check.sh <run-dir>
+# Prints one `harness void: <why> in <run-dir>` line for every reason the run
+# cannot count as a trial: no readable verdict.json; no grader block; a grader
+# block without a summary or run id; a grader that exited without a result
+# (its reason or summary says so); no usable coding-agent-token-usage.json (one
+# with an integer total_tokens). Prints nothing for a run the analysis can
+# grade. logs/measure-launch.sh runs it for every run directory quorum names,
+# so a void attempt is on the face of its log and the analysis accepts that log
+# in the logs/failed ledger; the plan's offline proof runs it on synthetic run
+# directories. Exit 0 when the run can be graded, 3 when it cannot, 2 on a
+# usage error.
+set -uo pipefail
+if [ $# -ne 1 ] || [ ! -d "$1" ]; then echo "usage: void-check.sh <run-dir>" >&2; exit 2; fi
+node -e '
+const fs = require("fs");
+const dir = process.argv[1];
+const reasons = [];
+const read = (name) => {
+  try { return JSON.parse(fs.readFileSync(dir + "/" + name, "utf8")); } catch (e) { return undefined; }
+};
+const verdict = read("verdict.json");
+if (verdict === undefined || verdict === null || typeof verdict !== "object") {
+  reasons.push("no readable verdict.json");
+} else {
+  const grader = verdict.gauntlet;
+  if (!grader || typeof grader !== "object") {
+    reasons.push("no grader block");
+  } else if (!(typeof grader.summary === "string" && grader.summary.trim()) && !grader.run_id) {
+    reasons.push("grader block without a summary or run id");
+  }
+  const text = String(verdict.final_reason || "") + " " + String((grader && grader.summary) || "");
+  if (/quorum error|without writing a result|no Gauntlet-Agent verdict/.test(text)) {
+    reasons.push("grader exited without a result");
+  }
+}
+const usage = read("coding-agent-token-usage.json");
+if (usage === undefined || usage === null || typeof usage !== "object" || !Number.isInteger(usage.total_tokens) || usage.total_tokens < 0) {
+  reasons.push("no usable coding-agent-token-usage.json");
+}
+for (const why of reasons) console.log("harness void: " + why + " in " + dir);
+process.exit(reasons.length ? 3 : 0);
+' "$1"
+```
+
+- [ ] **Step 8: Write `analyze.py`**
 
 ```python
 #!/usr/bin/env python3
@@ -2945,13 +3000,12 @@ HARNESS_RE = re.compile(
 CLAUDE_RE = re.compile(r"^claude_code=(\S+)$", re.MULTILINE)
 MODEL_HEADER_RE = re.compile(r"^model_pin=(\S+) anthropic_model=(\S+)$", re.MULTILINE)
 FAILED_LOG_RE = re.compile(r"(control|wording|full)-(.+)-([pr]\d+)\.(\d+)\.log")
-LEDGER_VOID_RE = re.compile(
-    r"quorum error|without writing a result|no Gauntlet-Agent verdict|did not complete|no grader block|harness void"
-)
+LEDGER_VOID_RE = re.compile(r"^harness void: (.+)$", re.MULTILINE)
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 BRAINSTORMING_LINE = "- hyperpowers:brainstorming"
-DENIAL_TEXT = "Interlock, once before your first edit"
 HOOK_NAME = "first-edit-interlock"
+HOOK_SCRIPT_PATH = "hooks/first-edit-interlock"
+MESSAGE_RE = re.compile(r"^MESSAGE='([^']+)'$", re.MULTILINE)
 HOOK_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash"
 HOOK_COMMAND = '"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" first-edit-interlock'
 LIB_PATH = "hooks/interlock-lib.cjs"
@@ -3053,11 +3107,15 @@ class Call:
     tool_input: dict
     message_id: str
     result_text: str = ""
+    result_count: int = 0
+    denial_result: bool = False
     attempt: bool = False
 
     @property
     def denied(self) -> bool:
-        return self.attempt and DENIAL_TEXT in self.result_text
+        """A mutation attempt whose one tool result is an error ending with the pinned hook's message."""
+
+        return self.attempt and self.denial_result
 
 
 @dataclass
@@ -3376,6 +3434,17 @@ def hook_registered(arm: str, commit: str) -> bool:
     return True
 
 
+def hook_message(commit: str) -> str:
+    """The denial message the full arm's hook script carries at the pin (its MESSAGE line)."""
+
+    if not git_has("full", commit, HOOK_SCRIPT_PATH):
+        raise DesignError(f"full: no {HOOK_SCRIPT_PATH} at {commit}")
+    match = MESSAGE_RE.search(git_show("full", commit, HOOK_SCRIPT_PATH))
+    if not match:
+        raise DesignError(f"full: {HOOK_SCRIPT_PATH} at {commit} has no MESSAGE line")
+    return match.group(1)
+
+
 def check_hook_presence(manifest: dict) -> None:
     for arm in ARMS:
         present = hook_registered(arm, manifest["commits"][arm])
@@ -3562,8 +3631,16 @@ def _dict_or_empty(value: object) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def read_calls(transcript: str) -> tuple[list[Call], list[int], set[str]]:
-    """(tool calls in order with their results, indexes of human turns, versions seen) for one transcript."""
+def read_calls(
+    transcript: str, denial_message: str
+) -> tuple[list[Call], list[int], set[str]]:
+    """(tool calls in order with their results, indexes of human turns, versions seen) for one transcript.
+
+    A call is denied when its single tool result is an error whose text ends
+    with ``denial_message``, the pinned hook's denial text; a call with no
+    result or more than one is a refusal, because a call that never returned
+    cannot be read either way.
+    """
 
     calls: list[Call] = []
     by_id: dict[str, Call] = {}
@@ -3601,11 +3678,21 @@ def read_calls(transcript: str) -> tuple[list[Call], list[int], set[str]]:
                         had_result = True
                         matched = by_id.get(str(part.get("tool_use_id") or ""))
                         if matched is not None:
+                            matched.result_count += 1
                             matched.result_text = result_text(part.get("content"))
+                            matched.denial_result = bool(
+                                part.get("is_error")
+                            ) and matched.result_text.rstrip().endswith(denial_message)
                 if not had_result and not rec.get("isMeta"):
                     humans.append(index)
             elif isinstance(content, str) and not rec.get("isMeta"):
                 humans.append(index)
+    for call in calls:
+        if call.result_count != 1:
+            raise DesignError(
+                f"{os.path.basename(transcript)}: tool call {call.tool_use_id or call.index} has "
+                f"{call.result_count} tool results, expected exactly one"
+            )
     return calls, humans, versions
 
 
@@ -3827,14 +3914,18 @@ def read_void_ledger(manifest: dict) -> list[Void]:
         if not proc.startswith("r") and (arm, scenario, proc) not in manifest["rows"]:
             raise DesignError(f"{path}: not a manifest row")
         last_line = text.rstrip("\n").rsplit("\n", 1)[-1]
-        void = LEDGER_VOID_RE.search(text)
-        if last_line.startswith("FAILED "):
+        marker = LEDGER_VOID_RE.search(text)
+        if re.fullmatch(
+            rf"FAILED \d+ {re.escape(arm)} {re.escape(scenario)} {re.escape(proc)}",
+            last_line,
+        ):
             reason = "launch failure"
-        elif void:
-            reason = void.group(0)
+        elif marker:
+            reason = marker.group(1)
         else:
             raise DesignError(
-                f"{path}: a completed attempt was set aside; a graded trial cannot be moved to logs/failed"
+                f"{path}: a completed attempt was set aside; a graded trial cannot be moved to "
+                "logs/failed (no FAILED line of its own and no harness void line)"
             )
         if not os.path.exists(os.path.join(E, "logs", f"{arm}-{scenario}-{proc}.log")):
             raise DesignError(
@@ -3879,6 +3970,7 @@ def transcripts_of(run_dir: str, name: str) -> list[str]:
 def build_runs(manifest: dict, classifier: Classifier) -> list[Run]:
     replaced = read_reruns()
     boots = {arm: expected_bootstrap(arm, manifest["commits"][arm]) for arm in ARMS}
+    message = hook_message(manifest["commits"]["full"])
     runs: list[Run] = []
     seen: set[str] = set()
     indexes: dict[str, list[int]] = {}
@@ -3975,17 +4067,16 @@ def build_runs(manifest: dict, classifier: Classifier) -> list[Run]:
             kind,
             replaced.get(name),
         )
-        versions: set[str] = set()
         for transcript in transcripts:
-            calls, humans, seen_versions = read_calls(transcript)
+            calls, humans, seen_versions = read_calls(transcript, message)
             run.calls.extend(calls)
             if transcript == transcripts[0]:
                 run.human_turns = humans
-            versions |= seen_versions
-        if versions != {manifest["claude_code"]}:
-            raise DesignError(
-                f"{name}: transcript versions {sorted(versions)} are not the pinned {manifest['claude_code']!r}"
-            )
+            if seen_versions != {manifest["claude_code"]}:
+                raise DesignError(
+                    f"{name}: {os.path.basename(transcript)} transcript versions "
+                    f"{sorted(seen_versions)} are not the pinned {manifest['claude_code']!r}"
+                )
         # Claude Code assigns dispatched agents their own models; they are
         # recorded per run, and only the main transcript must hold one model.
         subagent_models: set[str] = set()
@@ -4443,6 +4534,8 @@ if (mode === '--batch') {
 process.exit(2);
 """
 FIXTURE_VECTORS = "ls\tread-only\nrm -rf x\tmutation\n"
+FIXTURE_MESSAGE = "Interlock, once before your first edit: the fixture ladder."
+FIXTURE_HOOK_SCRIPT = f"#!/usr/bin/env bash\nMESSAGE='{FIXTURE_MESSAGE}'\n"
 FIXTURE_HOOKS_FULL = json.dumps(
     {
         "hooks": {
@@ -4570,7 +4663,7 @@ def _fixture_transcript(arm: str, shape: str) -> str:
                             "type": "tool_result",
                             "tool_use_id": "t2",
                             "is_error": True,
-                            "content": f"Permission denied: {DENIAL_TEXT}: run the ladder.",
+                            "content": f"Permission denied: {FIXTURE_MESSAGE}",
                         }
                     ],
                 },
@@ -4714,13 +4807,14 @@ def _fixture_log(root: str, arm: str, proc: str, run_dirs: list[str]) -> None:
 
 
 def _fixture_void_log(root: str, arm: str, proc: str, attempt: int, kind: str) -> None:
-    """A retained attempt under logs/failed: ``void`` (a setup error), ``failed`` (a launch failure), or ``graded`` (a completed attempt that does not belong there)."""
+    """A retained attempt under logs/failed: ``void`` (a harness void line), ``failed`` (a launch failure), ``graded`` (a completed attempt that does not belong there), or ``prose`` (a completed attempt whose text merely mentions void phrases)."""
 
     os.makedirs(os.path.join(root, "logs", "failed"), exist_ok=True)
     tail = {
-        "void": f"quorum error (setup): setup.sh failed (exit 1)\nEXIT=2\nDONE {arm} scenario-x {proc}\n",
+        "void": f"run-dir   /nowhere\nharness void: grader exited without a result in /nowhere\nEXIT=2\nDONE {arm} scenario-x {proc}\n",
         "failed": f"EXIT=9\nFAILED 9 {arm} scenario-x {proc}\n",
         "graded": f"run-dir   /nowhere\nEXIT=0\nDONE {arm} scenario-x {proc}\n",
+        "prose": f"run-dir   /nowhere\nthe grader wrote: the agent did not complete the task, quorum error text quoted\nEXIT=0\nDONE {arm} scenario-x {proc}\n",
     }[kind]
     with open(
         os.path.join(root, "logs", "failed", f"{arm}-scenario-x-{proc}.{attempt}.log"),
@@ -4782,6 +4876,11 @@ def _write_root(arm: str, with_hook: bool) -> None:
         os.path.join(arm_root, "hooks/hooks.json"), "w", encoding="utf-8"
     ) as handle:
         handle.write(FIXTURE_HOOKS_FULL if with_hook else FIXTURE_HOOKS_PLAIN)
+    if with_hook:
+        with open(
+            os.path.join(arm_root, HOOK_SCRIPT_PATH), "w", encoding="utf-8"
+        ) as handle:
+            handle.write(FIXTURE_HOOK_SCRIPT)
     with open(os.path.join(arm_root, LIB_PATH), "w", encoding="utf-8") as handle:
         handle.write(FIXTURE_LIB)
     with open(os.path.join(arm_root, VECTORS_PATH), "w", encoding="utf-8") as handle:
@@ -4882,6 +4981,29 @@ def _write_fixture(
             handle.write(reruns)
     if mutate is not None:
         mutate(root)
+
+
+def _edit_transcript(
+    root: str, name: str, edit: Callable[[list[dict]], list[dict]]
+) -> None:
+    """Load a run's main transcript records, apply ``edit``, write them back."""
+
+    path = _transcript_path(root, name)
+    with open(path, encoding="utf-8") as handle:
+        records = [json.loads(line) for line in handle if line.strip()]
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.writelines(json.dumps(record) + "\n" for record in edit(records))
+
+
+def _result_parts(record: dict) -> list[dict]:
+    content = (record.get("message") or {}).get("content")
+    if not isinstance(content, list):
+        return []
+    return [
+        part
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "tool_result"
+    ]
 
 
 def _rewrite(path: str, old: str, new: str) -> None:
@@ -5438,7 +5560,8 @@ def self_test() -> int:
                         {
                             "type": "tool_result",
                             "tool_use_id": "t4",
-                            "content": f"Permission denied: {DENIAL_TEXT}",
+                            "is_error": True,
+                            "content": f"Permission denied: {FIXTURE_MESSAGE}",
                         }
                     ],
                 },
@@ -5588,6 +5711,63 @@ def self_test() -> int:
             "model_pin=model-x anthropic_model=model-x\n",
             "",
         )
+
+    def unversioned_subagent(root: str) -> None:
+        sub = os.path.join(
+            root, "results", "run-a", "home/.claude/projects/p/t/subagents"
+        )
+        os.makedirs(sub, exist_ok=True)
+        with open(os.path.join(sub, "agent-1.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write(
+                _fixture_transcript("full", "denied").replace(
+                    f', "version": "{FIXTURE_VERSION}"', ""
+                )
+                + "\n"
+            )
+
+    def denial_without_error(root: str) -> None:
+        def edit(records: list[dict]) -> list[dict]:
+            for record in records:
+                for part in _result_parts(record):
+                    if part.get("tool_use_id") == "t2":
+                        part["is_error"] = False
+            return records
+
+        _edit_transcript(root, "run-a", edit)
+
+    def denial_not_last(root: str) -> None:
+        def edit(records: list[dict]) -> list[dict]:
+            for record in records:
+                for part in _result_parts(record):
+                    if part.get("tool_use_id") == "t2":
+                        part["content"] = str(part["content"]) + " Retry later."
+            return records
+
+        _edit_transcript(root, "run-a", edit)
+
+    def duplicate_result(root: str) -> None:
+        def edit(records: list[dict]) -> list[dict]:
+            out: list[dict] = []
+            for record in records:
+                out.append(record)
+                if any(p.get("tool_use_id") == "t2" for p in _result_parts(record)):
+                    out.append(json.loads(json.dumps(record)))
+            return out
+
+        _edit_transcript(root, "run-a", edit)
+
+    def missing_result(root: str) -> None:
+        def edit(records: list[dict]) -> list[dict]:
+            for record in records:
+                for part in _result_parts(record):
+                    if part.get("tool_use_id") == "t2":
+                        part["tool_use_id"] = "t2-lost"
+            return records
+
+        _edit_transcript(root, "run-a", edit)
+
+    def graded_prose_set_aside(root: str) -> None:
+        _fixture_void_log(root, "full", "p1", 1, "prose")
 
     def void_bad_name(root: str) -> None:
         os.makedirs(os.path.join(root, "logs", "failed"), exist_ok=True)
@@ -5762,6 +5942,60 @@ def self_test() -> int:
             None,
             void_bad_name,
             "not a void ledger name",
+            "plain",
+            None,
+        ),
+        (
+            "a subagent transcript without the pinned version",
+            two_passes,
+            None,
+            unversioned_subagent,
+            "not the pinned",
+            "plain",
+            None,
+        ),
+        (
+            "a denial message in a result that is not an error",
+            two_passes,
+            None,
+            denial_without_error,
+            "carried out, not denied",
+            "plain",
+            None,
+        ),
+        (
+            "a denial message that is not the end of its result",
+            two_passes,
+            None,
+            denial_not_last,
+            "carried out, not denied",
+            "plain",
+            None,
+        ),
+        (
+            "a tool call with two tool results",
+            two_passes,
+            None,
+            duplicate_result,
+            "has 2 tool results",
+            "plain",
+            None,
+        ),
+        (
+            "a tool call without a tool result",
+            two_passes,
+            None,
+            missing_result,
+            "has 0 tool results",
+            "plain",
+            None,
+        ),
+        (
+            "a completed attempt set aside on the strength of void phrases in prose",
+            two_passes,
+            None,
+            graded_prose_set_aside,
+            "a completed attempt was set aside",
             "plain",
             None,
         ),
@@ -6478,7 +6712,7 @@ if __name__ == "__main__":
         sys.exit(1)
 ```
 
-- [ ] **Step 8: Prove the launcher fails closed with the stub (no live run)**
+- [ ] **Step 9: Prove the launcher fails closed with the stub (no live run)**
 
 Under `bash` (the `PIPESTATUS` array is bash's), under `$TMPDIR`, each block its own command, with `E=evidence/2026-09-17-first-edit-interlock` and `L="$E/launch-all.sh"`:
 
@@ -6495,18 +6729,19 @@ for m in 0 00 abc; do echo "--- max=$m:"; LAUNCHER="$T/stub-launch.sh" bash "$L"
 mkdir -p "$T/real/logs"; sed -e 's/<[A-Z_]*>/x/' "$E/manifest.base.tsv" > "$T/real/manifest.tsv"; cp "$E/logs/stub-launch.sh" "$T/real/stub-launch.sh"; echo "--- the real manifest validates:"; LAUNCHER="$T/real/stub-launch.sh" bash "$L" "$T/real/manifest.tsv" 8 2>&1 | grep -c '^started '
 mkdir -p "$T/ml/logs"; cp "$E/manifest.base.tsv" "$T/ml/manifest.tsv"; printf 'arm=full budget=default\nDONE full s p1\n' > "$T/ml/logs/full-s-p1.log"; echo "--- a row whose log exists, without RELAUNCH:"; MEASURE_E="$T/ml" bash "$E/logs/measure-launch.sh" full s 1 p1 default; echo "exit=$?"; ls "$T/ml/logs"
 echo "--- the same row with RELAUNCH=1 (set aside, then the pin check refuses):"; MEASURE_E="$T/ml" RELAUNCH=1 bash "$E/logs/measure-launch.sh" full s 1 p1 default; echo "exit=$?"; ls "$T/ml/logs" "$T/ml/logs/failed"
+V="$E/logs/void-check.sh"; mkdir -p "$T/vc/ok" "$T/vc/nosidecar" "$T/vc/badsidecar" "$T/vc/noverdict" "$T/vc/nograder" "$T/vc/exited"; printf '{"final":"pass","gauntlet":{"summary":"graded","run_id":"g1"}}' > "$T/vc/ok/verdict.json"; printf '{"total_tokens":5}' > "$T/vc/ok/coding-agent-token-usage.json"; cp "$T/vc/ok/verdict.json" "$T/vc/nosidecar/"; cp "$T/vc/ok/verdict.json" "$T/vc/badsidecar/"; printf '{"total_tokens":"5"}' > "$T/vc/badsidecar/coding-agent-token-usage.json"; cp "$T/vc/ok/coding-agent-token-usage.json" "$T/vc/noverdict/"; printf '{"final":"fail","gauntlet":null}' > "$T/vc/nograder/verdict.json"; cp "$T/vc/ok/coding-agent-token-usage.json" "$T/vc/nograder/"; printf '{"final":"indeterminate","final_reason":"quorum error (setup): setup.sh failed (exit 1)","gauntlet":{"summary":"","run_id":""}}' > "$T/vc/exited/verdict.json"; cp "$T/vc/ok/coding-agent-token-usage.json" "$T/vc/exited/"; for d in ok nosidecar badsidecar noverdict nograder exited; do echo "--- void-check $d:"; bash "$V" "$T/vc/$d"; echo "exit=$?"; done
 ```
 
-Expected, in order: exit 1 with `no log for full-s-p2`, `log for full-s-p3 does not end with DONE`, and `all launches finished; wait notes: 1; manifest rows without a DONE log: 2`; exit 1 with `log for full-s-p2 is from an earlier launch (nonce mismatch)` (the stale log's `nonce=earlier` is not this launch's) and `manifest rows without a DONE log: 2`; exit 1 with `malformed budget 'raised'` and `logs after: 0`; exit 1 with `malformed arm 'treatment'`; exit 1 with `malformed row`; exit 0 with `wait notes: 0; manifest rows without a DONE log: 0` and a log whose first line is `arm=wording budget=default` and whose second line is `nonce=` followed by the nonce the run printed; exit 2 with `max-concurrent must be a positive integer` for `0`, `00`, and `abc`; and `110` started rows for the real manifest (the stub's p2 and p3 rows leave no DONE log there by design, which is why only the `started` count is read); then, for the launcher itself, exit 1 with `exists; a row is relaunched only with RELAUNCH=1` and `full-s-p1.log` still listed; then `previous attempt set aside as logs/failed/full-s-p1.1.log`, exit 1 with `manifest.tsv is not filled in`, `logs` holding only `failed`, and `logs/failed` holding `full-s-p1.1.log`. Record every output in the report.
+Expected, in order: exit 1 with `no log for full-s-p2`, `log for full-s-p3 does not end with DONE`, and `all launches finished; wait notes: 1; manifest rows without a DONE log: 2`; exit 1 with `log for full-s-p2 is from an earlier launch (nonce mismatch)` (the stale log's `nonce=earlier` is not this launch's) and `manifest rows without a DONE log: 2`; exit 1 with `malformed budget 'raised'` and `logs after: 0`; exit 1 with `malformed arm 'treatment'`; exit 1 with `malformed row`; exit 0 with `wait notes: 0; manifest rows without a DONE log: 0` and a log whose first line is `arm=wording budget=default` and whose second line is `nonce=` followed by the nonce the run printed; exit 2 with `max-concurrent must be a positive integer` for `0`, `00`, and `abc`; and `110` started rows for the real manifest (the stub's p2 and p3 rows leave no DONE log there by design, which is why only the `started` count is read); then, for the launcher itself, exit 1 with `exists; a row is relaunched only with RELAUNCH=1` and `full-s-p1.log` still listed; then `previous attempt set aside as logs/failed/full-s-p1.1.log`, exit 1 with `manifest.tsv is not filled in`, `logs` holding only `failed`, and `logs/failed` holding `full-s-p1.1.log`; then, for the void check, `ok` prints nothing with exit 0, `nosidecar` and `badsidecar` print `harness void: no usable coding-agent-token-usage.json in <dir>` with exit 3, `noverdict` prints `harness void: no readable verdict.json in <dir>` with exit 3, `nograder` prints `harness void: no grader block in <dir>` with exit 3, and `exited` prints `harness void: grader block without a summary or run id in <dir>` and `harness void: grader exited without a result in <dir>` with exit 3. Record every output in the report.
 
-- [ ] **Step 9: Check the scripts and the analyzer**
+- [ ] **Step 10: Check the scripts and the analyzer**
 
 Each its own command, from the evals clone with `E=evidence/2026-09-17-first-edit-interlock`:
 
 ```bash
-chmod +x $E/analyze.py $E/launch-all.sh $E/logs/measure-launch.sh $E/logs/stub-launch.sh
-bash -n $E/logs/measure-launch.sh $E/launch-all.sh $E/logs/stub-launch.sh
-shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh
+chmod +x $E/analyze.py $E/launch-all.sh $E/logs/measure-launch.sh $E/logs/stub-launch.sh $E/logs/void-check.sh
+bash -n $E/logs/measure-launch.sh $E/launch-all.sh $E/logs/stub-launch.sh $E/logs/void-check.sh
+shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh $E/logs/void-check.sh
 /Users/johnss51/.local/bin/ruff format --check $E/analyze.py
 /Users/johnss51/.local/bin/ruff check $E/analyze.py
 /Users/johnss51/.local/bin/mypy $E/analyze.py
@@ -6514,9 +6749,9 @@ shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh
 /Users/johnss51/Applications/micromamba/envs/main/bin/python $E/analyze.py
 ```
 
-Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 72 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
+Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 78 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
 
-- [ ] **Step 10: Commit in the evals clone**
+- [ ] **Step 11: Commit in the evals clone**
 
 ```bash
 git add evidence/2026-09-17-first-edit-interlock

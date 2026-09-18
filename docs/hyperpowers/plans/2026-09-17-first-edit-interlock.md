@@ -2515,7 +2515,11 @@ bookkeeping records Claude Code writes without one are not counted) (its vector 
 `mutation-cases.tsv` and must be byte-identical to the pinned copy), checks
 that every full-arm context was denied at its first attempt and mutated
 only in a later turn, that no other arm saw a denial, and that every change
-to a fixture tree traces to a carried-out call, then prints the per-cell
+to a fixture tree traces to a carried-out call (each scenario's setup
+baseline is rebuilt by running its `setup.sh` the way the harness does and
+matched by commit count and tree hash, so a rewritten setup history is
+refused and a multi-commit fixture is not mistaken for a change), then
+prints the per-cell
 table, the spec's acceptance criteria over planned counts, the attribution
 readout, and the cost readout, and writes `runs.json`. Indeterminate trials
 re-run once, recorded in `reruns.tsv`; a trial indeterminate twice is
@@ -2978,6 +2982,10 @@ ROOTS = {
 }
 ARMS = ("control", "wording", "full")
 ARCHIVES = "task-6-runs"
+# The scenarios whose setup.sh rebuilds each fixture's baseline, and the check
+# prelude the harness gives setup.sh (it defines the setup-helpers verbs).
+SCENARIOS_ROOT = os.path.join(EV, "scenarios")
+PRELUDE = os.path.join(EV, "src", "checks", "prelude.sh")
 ARCHIVES_ONLY = False
 BASE_MANIFEST = "manifest.base.tsv"
 BASE_MANIFEST_SHA256 = (
@@ -3771,8 +3779,78 @@ def check_interlock(run: Run, transcripts: list[str]) -> None:
     run.stopped_to_ask = asked if run.arm == "full" and total_attempts else None
 
 
-def tree_changed(run_dir: str, name: str) -> bool:
-    """Whether the fixture tree differs from its initial commit; a fixture that cannot be compared is an error."""
+_BASELINES: dict[str, tuple[int, str]] = {}
+
+
+def scenario_baseline(scenario: str) -> tuple[int, str]:
+    """(setup commit count, tree hash of the setup HEAD) for a scenario.
+
+    Rebuilt once per analysis by running the scenario's setup.sh the way the
+    harness does (cwd and QUORUM_WORKDIR a fresh directory, QUORUM_REPO_ROOT the
+    evals clone, BASH_ENV the check prelude), so the comparison is with what
+    setup produced, not with a commit count. Setup content is fixed, so the
+    tree hash is the same in every run of the scenario.
+    """
+
+    if scenario in _BASELINES:
+        return _BASELINES[scenario]
+    script = os.path.join(SCENARIOS_ROOT, scenario, "setup.sh")
+    if not os.path.exists(script):
+        raise DesignError(f"{scenario}: no setup.sh under {SCENARIOS_ROOT}")
+    workdir = tempfile.mkdtemp(prefix="baseline-")
+    try:
+        env = dict(os.environ)
+        env.update({"QUORUM_REPO_ROOT": EV, "QUORUM_WORKDIR": workdir})
+        if os.path.exists(PRELUDE):
+            env["BASH_ENV"] = PRELUDE
+        proc = subprocess.run(
+            ["bash", script],
+            cwd=workdir,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise DesignError(
+                f"{scenario}: setup.sh failed while rebuilding the baseline "
+                f"(exit {proc.returncode}): {proc.stderr.strip()[:160]}"
+            )
+        git = ["git", "-C", workdir]
+        count = subprocess.run(
+            git + ["rev-list", "--count", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        tree = subprocess.run(
+            git + ["rev-parse", "HEAD^{tree}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if (
+            count.returncode != 0
+            or tree.returncode != 0
+            or not count.stdout.strip().isdigit()
+        ):
+            raise DesignError(
+                f"{scenario}: setup.sh left no committed repository to compare with "
+                f"({(count.stderr or tree.stderr).strip()[:120]})"
+            )
+        _BASELINES[scenario] = (int(count.stdout.strip()), tree.stdout.strip())
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+    return _BASELINES[scenario]
+
+
+def tree_changed(run_dir: str, name: str, scenario: str) -> bool:
+    """Whether the fixture tree differs from the scenario's setup baseline; a fixture that cannot be compared is an error.
+
+    The run's history must begin with the setup commits (same count, same tree
+    hash at the last of them); a rewritten or amended setup is a refusal. The
+    tree is changed when commits follow the setup or the working tree is dirty.
+    """
 
     workdir = os.path.join(run_dir, "coding-agent-workdir")
     git_dir = next(
@@ -3789,19 +3867,45 @@ def tree_changed(run_dir: str, name: str) -> bool:
             "(no git-dir or .git under coding-agent-workdir)"
         )
     base = ["git", f"--git-dir={git_dir}", f"--work-tree={workdir}"]
-    count = subprocess.run(
-        base + ["rev-list", "--count", "HEAD"],
+    history = subprocess.run(
+        base + ["rev-list", "--reverse", "HEAD"],
         capture_output=True,
         text=True,
         check=False,
     )
-    if count.returncode != 0 or not count.stdout.strip().isdigit():
+    if history.returncode != 0 or not history.stdout.strip():
         raise DesignError(
             f"{name}: the fixture repository cannot be compared with its initial commit "
-            f"(rev-list failed: {count.stderr.strip()[:120]})"
+            f"(rev-list failed: {history.stderr.strip()[:120]})"
         )
+    commits = history.stdout.split()
+    setup_count, setup_tree = scenario_baseline(scenario)
+    if len(commits) < setup_count:
+        raise DesignError(
+            f"{name}: the fixture has {len(commits)} commits, fewer than the {setup_count} its setup makes"
+        )
+    tree = subprocess.run(
+        base + ["rev-parse", f"{commits[setup_count - 1]}^{{tree}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if tree.returncode != 0 or tree.stdout.strip() != setup_tree:
+        raise DesignError(
+            f"{name}: the fixture's setup history differs from the scenario's setup (rewritten or amended)"
+        )
+    # The harness keeps the repository's own directory inside the work tree as
+    # git-dir, which git would list as untracked; exclude it from the status.
     status = subprocess.run(
-        base + ["status", "--porcelain", "--untracked-files=all"],
+        base
+        + [
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--",
+            ".",
+            f":!{os.path.basename(git_dir)}",
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -3811,7 +3915,7 @@ def tree_changed(run_dir: str, name: str) -> bool:
             f"{name}: the fixture repository cannot be compared with its initial commit "
             f"(status failed: {status.stderr.strip()[:120]})"
         )
-    return int(count.stdout.strip()) > 1 or bool(status.stdout.strip())
+    return len(commits) > setup_count or bool(status.stdout.strip())
 
 
 def token_total(run_dir: str, name: str) -> int:
@@ -4119,7 +4223,7 @@ def build_runs(manifest: dict, classifier: Classifier) -> list[Run]:
         run.subagent_models = sorted(subagent_models)
         run.version = manifest["claude_code"]
         run.log = log_name
-        run.tree_changed = tree_changed(run_dir, name)
+        run.tree_changed = tree_changed(run_dir, name, scenario)
         pending.append((run, transcripts, name))
         runs.append(run)
     classifier.classify([call for run in runs for call in run.calls])
@@ -4764,17 +4868,36 @@ def _fixture_transcript(arm: str, shape: str) -> str:
     return "\n".join(lines)
 
 
+FIXTURE_SETUP = """#!/usr/bin/env bash
+set -euo pipefail
+cd "$QUORUM_WORKDIR"
+git init -q
+git config user.email fixture@example.com
+git config user.name fixture
+git config commit.gpgsign false
+printf 'a\\n' > a.txt
+git add a.txt
+git commit -q -m initial
+printf 'b\\n' > b.txt
+git add b.txt
+git commit -q -m second
+"""
+
+
 def _fixture_workdir(run_dir: str, changed: bool) -> None:
-    """A fixture repository with one initial commit under coding-agent-workdir, optionally with a change on top."""
+    """A fixture repository built by the fixture scenario's setup.sh (two commits) under coding-agent-workdir, optionally with a change on top."""
 
     workdir = os.path.join(run_dir, "coding-agent-workdir")
     os.makedirs(workdir, exist_ok=True)
-    git = ["git", "-C", workdir, *FIXTURE_GIT]
-    subprocess.run(git + ["init", "-q"], check=True)
-    with open(os.path.join(workdir, "a.txt"), "w", encoding="utf-8") as handle:
-        handle.write("a\n")
-    subprocess.run(git + ["add", "a.txt"], check=True)
-    subprocess.run(git + ["commit", "-q", "-m", "initial"], check=True)
+    env = dict(os.environ)
+    env["QUORUM_WORKDIR"] = workdir
+    subprocess.run(
+        ["bash", os.path.join(SCENARIOS_ROOT, "scenario-x", "setup.sh")],
+        cwd=workdir,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
     if changed:
         with open(os.path.join(workdir, "a.txt"), "a", encoding="utf-8") as handle:
             handle.write("changed\n")
@@ -4969,6 +5092,10 @@ def _write_fixture(
     """
 
     os.makedirs(os.path.join(root, "logs"), exist_ok=True)
+    scenario_dir = os.path.join(SCENARIOS_ROOT, "scenario-x")
+    os.makedirs(scenario_dir, exist_ok=True)
+    with open(os.path.join(scenario_dir, "setup.sh"), "w", encoding="utf-8") as handle:
+        handle.write(FIXTURE_SETUP)
     for arm in ARMS:
         _write_root(arm, with_hook=(arm == "full"))
     with open(os.path.join(root, VECTORS_COPY), "w", encoding="utf-8") as handle:
@@ -5251,6 +5378,7 @@ def self_test() -> int:
     global \
         E, \
         ROOTS, \
+        SCENARIOS_ROOT, \
         NON_SENTINEL, \
         SENTINEL_REGRESSION, \
         REGRESSION, \
@@ -5263,6 +5391,7 @@ def self_test() -> int:
     saved = (
         E,
         ROOTS,
+        SCENARIOS_ROOT,
         NON_SENTINEL,
         SENTINEL_REGRESSION,
         REGRESSION,
@@ -5856,6 +5985,40 @@ def self_test() -> int:
         with open(os.path.join(sub, "agent-1.jsonl"), "w", encoding="utf-8") as handle:
             handle.write("\n".join(lines) + "\n")
 
+    def amended_setup_commit(root: str) -> None:
+        workdir = os.path.join(root, "results", "run-a", "coding-agent-workdir")
+        git = [
+            "git",
+            f"--git-dir={workdir}/git-dir",
+            f"--work-tree={workdir}",
+            *FIXTURE_GIT,
+        ]
+        with open(os.path.join(workdir, "b.txt"), "w", encoding="utf-8") as handle:
+            handle.write("rewritten\n")
+        subprocess.run(git + ["add", "b.txt"], check=True)
+        subprocess.run(git + ["commit", "-q", "--amend", "-m", "second"], check=True)
+
+    def fewer_commits_than_setup(root: str) -> None:
+        workdir = os.path.join(root, "results", "run-a", "coding-agent-workdir")
+        git = [
+            "git",
+            f"--git-dir={workdir}/git-dir",
+            f"--work-tree={workdir}",
+            *FIXTURE_GIT,
+        ]
+        subprocess.run(git + ["reset", "-q", "--hard", "HEAD~1"], check=True)
+
+    def unchanged_two_commit_fixture(root: str) -> None:
+        _rewrite_transcript(root, "run-a", "full", "none")
+        workdir = os.path.join(root, "results", "run-a", "coding-agent-workdir")
+        git = [
+            "git",
+            f"--git-dir={workdir}/git-dir",
+            f"--work-tree={workdir}",
+            *FIXTURE_GIT,
+        ]
+        subprocess.run(git + ["checkout", "-q", "--", "a.txt"], check=True)
+
     def integral_float_total(root: str) -> None:
         with open(
             os.path.join(root, "results", "run-a", "coding-agent-token-usage.json"),
@@ -6127,6 +6290,33 @@ def self_test() -> int:
             None,
             partly_unversioned_subagent,
             "not the pinned",
+            "plain",
+            None,
+        ),
+        (
+            "an unchanged two-commit fixture with no mutation attempt",
+            two_passes,
+            None,
+            unchanged_two_commit_fixture,
+            None,
+            "plain",
+            None,
+        ),
+        (
+            "a fixture whose setup commit was amended",
+            two_passes,
+            None,
+            amended_setup_commit,
+            "setup history differs",
+            "plain",
+            None,
+        ),
+        (
+            "a fixture with fewer commits than its setup makes",
+            two_passes,
+            None,
+            fewer_commits_than_setup,
+            "fewer than the",
             "plain",
             None,
         ),
@@ -6662,6 +6852,8 @@ def self_test() -> int:
         with tempfile.TemporaryDirectory() as tmp:
             E = tmp
             ROOTS = {arm: os.path.join(tmp, f"{arm}-root") for arm in ARMS}
+            SCENARIOS_ROOT = os.path.join(tmp, "scenarios")
+            _BASELINES.clear()
             ARCHIVES_ONLY = role == "archives-only"
             if role == "sentinel":
                 SENTINEL_REGRESSION = frozenset({"scenario-x"})
@@ -6743,6 +6935,7 @@ def self_test() -> int:
     (
         E,
         ROOTS,
+        SCENARIOS_ROOT,
         NON_SENTINEL,
         SENTINEL_REGRESSION,
         REGRESSION,
@@ -6898,7 +7091,7 @@ shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh $E/logs
 /Users/johnss51/Applications/micromamba/envs/main/bin/python $E/analyze.py
 ```
 
-Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 84 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
+Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 87 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
 
 - [ ] **Step 11: Commit in the evals clone**
 

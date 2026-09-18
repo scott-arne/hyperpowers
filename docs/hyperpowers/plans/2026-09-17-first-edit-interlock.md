@@ -177,7 +177,7 @@ Record the commit sha in the report: Task 6 pins it as the wording arm.
 
 **Interfaces:**
 - Consumes: Task 1's texts (this task's commit sits on top of them; the skills tree is untouched here).
-- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--wave <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 279`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
+- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--wave <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 296`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
 
 - [ ] **Step 1: Write the failing suite `tests/hooks/test-first-edit-interlock.sh`**
 
@@ -582,6 +582,12 @@ time -p rm f	mutation
 timeout 5 ls	read-only
 timeout 5 rm f	mutation
 timeout -k 2 5 ls	read-only
+timeout $DUR ls	mutation
+timeout -k $K 5 ls	mutation
+timeout 5 cat $FILE	read-only
+nice -n $N ls	mutation
+nice -$N ls	mutation
+nice -n 5 cat "$FILE"	read-only
 sudo ls	mutation
 xargs rm	mutation
 bash -c "ls"	mutation
@@ -704,8 +710,19 @@ env --split-string='touch f'	mutation
 env -i -u FOO ls	read-only
 env -0 ls	read-only
 env $OPT ls	mutation
+env LANG=$X ls	mutation
+env -u $V ls	mutation
+env LANG=C cat "$FILE"	read-only
 date $FMT	mutation
 rg $PAT x	mutation
+ag --pager 'touch f' x	mutation
+ag --pag=cmd x	mutation
+ag $PAT x	mutation
+ag pattern src	read-only
+file $F	mutation
+hostname $H	mutation
+export $NAME=1	mutation
+export LC_ALL=$X	mutation
 file -C -m magic	mutation
 file --compile magic	mutation
 file a.bin	read-only
@@ -1081,7 +1098,9 @@ function basename(word) {
 // Commands whose read-only status depends on their arguments: an argument
 // that carries a parameter expansion or a substitution could become any option
 // or subcommand once the shell expands it, so it makes the call a mutation.
-const ARGUMENT_SENSITIVE = new Set(['git', 'find', 'sort', 'file', 'date', 'hostname', 'rg', 'export']);
+// The wrappers apply the same rule to their own option, value, and assignment
+// slots, where word splitting moves the command boundary (timeout $DUR ls).
+const ARGUMENT_SENSITIVE = new Set(['git', 'find', 'sort', 'file', 'date', 'hostname', 'rg', 'ag', 'export']);
 
 function hasExpansion(word) {
   return word.indexOf('$') !== -1 || word.indexOf('__SUBST__') !== -1;
@@ -1118,7 +1137,7 @@ function simpleReadOnly(ws) {
   // that output is unknown here: always a mutation attempt.
   if (cmd === '__SUBST__') return false;
   if (WRAPPERS_MUTATING.has(cmd)) return false;
-  if (cmd === 'env') return !rest.slice(1).some(hasExpansion) && envReadOnly(rest.slice(1));
+  if (cmd === 'env') return envReadOnly(rest.slice(1));
   if (cmd === 'command') {
     if (rest[1] === '-v' || rest[1] === '-V') return true;
     return simpleReadOnly(rest.slice(rest[1] === '-p' ? 2 : 1));
@@ -1126,6 +1145,7 @@ function simpleReadOnly(ws) {
   if (cmd === 'nice') {
     let j = 1;
     while (j < rest.length && rest[j].startsWith('-')) { if (rest[j] === '-n') j += 1; j += 1; }
+    if (rest.slice(1, j).some(hasExpansion)) return false;
     return simpleReadOnly(rest.slice(j));
   }
   if (cmd === 'nohup') return simpleReadOnly(rest.slice(1));
@@ -1133,13 +1153,15 @@ function simpleReadOnly(ws) {
   if (cmd === 'timeout') {
     let j = 1;
     while (j < rest.length && rest[j].startsWith('-')) { if (rest[j] === '-k' || rest[j] === '-s') j += 1; j += 1; }
-    return simpleReadOnly(rest.slice(j + 1)); // j is the duration
+    if (rest.slice(1, j + 1).some(hasExpansion)) return false; // j is the duration
+    return simpleReadOnly(rest.slice(j + 1));
   }
   if (!ALLOW.has(cmd)) return false;
   const args = rest.slice(1);
   if (ARGUMENT_SENSITIVE.has(cmd) && args.some(hasExpansion)) return false;
   if (cmd === 'export') return args.every((a) => a === '-p' || a === '-n' || ALLOWED_ASSIGNMENTS.has(a) || (isAssignment(a) && assignmentAllowed(a)));
   if (cmd === 'rg') return !args.some((a) => longOption(a, '--pre'));
+  if (cmd === 'ag') return !args.some((a) => longOption(a, '--pager'));
   if (cmd === 'find') return !args.some((a) => FIND_MUTATING.has(a));
   if (cmd === 'sort') return !args.some((a) => longOption(a, '--output') || longOption(a, '--compress-program') || /^-[a-zA-Z]*o/.test(a));
   if (cmd === 'file') return !args.some((a) => longOption(a, '--compile') || /^-[a-zA-Z]*C/.test(a));
@@ -1156,11 +1178,16 @@ function envReadOnly(args) {
   let j = 0;
   while (j < args.length) {
     const a = args[j];
+    if (!isAssignment(a) && !a.startsWith('-')) break; // the wrapped command
+    if (hasExpansion(a)) return false;
     if (isAssignment(a)) { if (!assignmentAllowed(a)) return false; j += 1; continue; }
-    if (a === '-u' || a === '--unset' || a === '-C' || a === '--chdir') { j += 2; continue; }
+    if (a === '-u' || a === '--unset' || a === '-C' || a === '--chdir') {
+      if (j + 1 < args.length && hasExpansion(args[j + 1])) return false;
+      j += 2;
+      continue;
+    }
     if (a === '-i' || a === '--ignore-environment' || a === '-0' || a === '--null') { j += 1; continue; }
-    if (a.startsWith('-')) return false;
-    break;
+    return false;
   }
   return simpleReadOnly(args.slice(j));
 }
@@ -1351,7 +1378,7 @@ module.exports = { classify, commandReadOnly, lastAssistantId };
 ```
 
 Then `chmod +x hooks/interlock-lib.cjs` and run: `node hooks/interlock-lib.cjs --vectors tests/hooks/fixtures/mutation-cases.tsv`
-Expected: `ok 279` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
+Expected: `ok 296` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
 
 - [ ] **Step 4: Write `hooks/first-edit-interlock`**
 
@@ -1528,7 +1555,7 @@ fi
 - [ ] **Step 7: Run the suite to verify it passes**
 
 Run: `bash tests/hooks/test-first-edit-interlock.sh < /dev/null`
-Expected: 38 `[PASS]` lines and `STATUS: PASSED`, including `every vector (279) classifies through the hook as the file says` and `interlock-lib.cjs --vectors agrees (ok 279)`.
+Expected: 38 `[PASS]` lines and `STATUS: PASSED`, including `every vector (296) classifies through the hook as the file says` and `interlock-lib.cjs --vectors agrees (ok 296)`.
 
 - [ ] **Step 8: Run the neighbouring suites**
 

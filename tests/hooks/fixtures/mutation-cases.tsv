@@ -21,6 +21,8 @@ sort f	read-only
 sort -o f f	mutation
 sort -uo f f	mutation
 sort --output=f f	mutation
+sort --outp=f f	mutation
+sort --out f f	mutation
 /bin/rm -rf build	mutation
 rm -f a.txt	mutation
 mv a b	mutation
@@ -163,6 +165,12 @@ ls $(git rev-parse --show-toplevel)	read-only
 ls $(rm f)	mutation
 echo `date`	read-only
 echo `touch f`	mutation
+$(echo rm -rf build)	mutation
+`echo rm -rf build`	mutation
+$(cat run.txt)	mutation
+$(echo rm) -rf build	mutation
+$(echo ls) -la	mutation
+$(ls)	mutation
 echo "$(touch f)"	mutation
 echo "$(ls)"	read-only
 echo "`touch f`"	mutation
@@ -233,6 +241,7 @@ file -C -m magic	mutation
 file --compile magic	mutation
 file a.bin	read-only
 date -s 2020-01-01	mutation
+date --se=2020-01-01	mutation
 date +%s	read-only
 hostname newname	mutation
 hostname -f	read-only

@@ -70,7 +70,7 @@ const HOSTNAME_DISPLAY = new Set([
   '-I', '--all-ip-addresses', '-a', '--alias', '-A', '--all-fqdns', '-y', '--yp', '--nis',
 ]);
 // Variables the shell or git consults for what to execute: read may not fill
-// them and printf -v may not assign at all.
+// them, unset may not clear them, and printf -v may not assign at all.
 const SHELL_SENSITIVE_NAME = /^(?:PATH|IFS|CDPATH|ENV|BASH_ENV|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|PS4|GLOBIGNORE|EXECIGNORE|HOME|TMPDIR|GIT_.*|LD_.*|DYLD_.*|BASH_.*)$/;
 const GIT_GLOBAL_SKIP_WITH_VALUE = new Set(['-C']);
 const GIT_GLOBAL_SKIP = new Set(['--no-pager', '-P', '--no-optional-locks']);
@@ -406,7 +406,7 @@ function basename(word) {
 // or subcommand once the shell expands it, so it makes the call a mutation.
 // The wrappers apply the same rule to their own option, value, and assignment
 // slots, where word splitting moves the command boundary (timeout $DUR ls).
-const ARGUMENT_SENSITIVE = new Set(['git', 'find', 'sort', 'file', 'date', 'hostname', 'rg', 'ag', 'export', 'uniq', 'read', 'printf']);
+const ARGUMENT_SENSITIVE = new Set(['git', 'find', 'sort', 'file', 'date', 'hostname', 'rg', 'ag', 'export', 'uniq', 'read', 'unset']);
 
 function hasExpansion(word) {
   return word.indexOf('$') !== -1 || word.indexOf('__SUBST__') !== -1 || word.indexOf(GLOB_MARK) !== -1;
@@ -491,12 +491,21 @@ function simpleReadOnly(ws) {
     for (let j = 0; j < args.length; j += 1) {
       const a = args[j];
       if (a === '-f' || a === '-s' || a === '-w') { j += 1; continue; }
-      if (!a.startsWith('-')) operands += 1;
+      if (a === '-' || !a.startsWith('-')) operands += 1; // - is standard input
     }
     return operands <= 1;
   }
-  if (cmd === 'printf') return !args.some((a) => /^-v/.test(a));
-  if (cmd === 'read') return !args.some((a) => !a.startsWith('-') && SHELL_SENSITIVE_NAME.test(a));
+  if (cmd === 'printf') {
+    // Options end at the format word, so only a leading word can become -v.
+    for (let j = 0; j < args.length; j += 1) {
+      const a = args[j];
+      if (a === '--') return true;
+      if (/^-v/.test(a) || hasExpansion(a)) return false;
+      if (!a.startsWith('-')) return true;
+    }
+    return true;
+  }
+  if (cmd === 'read' || cmd === 'unset') return !args.some((a) => !a.startsWith('-') && SHELL_SENSITIVE_NAME.test(a));
   if (cmd === 'git') return gitReadOnly(args);
   return true;
 }

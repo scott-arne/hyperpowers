@@ -2505,10 +2505,11 @@ rerun, or control run, and the analysis refuses anything else);
 `launch-all.sh` runs it through `logs/measure-launch.sh`; `analyze.py`
 refuses to report unless the observed runs match the manifest exactly,
 classifies every tool call with the pinned plugin's own
-`hooks/interlock-lib.cjs`, reads a call as denied only when its single tool
-result is an error ending with the hook's message as pinned in
-`hooks/first-edit-interlock`, requires every transcript to carry the pinned
-Claude Code version (its vector file is copied here as
+`hooks/interlock-lib.cjs`, reads a call as denied only when its one tool
+result is an error carrying the hook's message as pinned in
+`hooks/first-edit-interlock` (a call the session ended on, with no result,
+is neither denied nor carried out; a call with two results is refused),
+requires every transcript to carry the pinned Claude Code version (its vector file is copied here as
 `mutation-cases.tsv` and must be byte-identical to the pinned copy), checks
 that every full-arm context was denied at its first attempt and mutated
 only in a later turn, that no other arm saw a denial, and that every change
@@ -2528,9 +2529,10 @@ whose log exists unless `RELAUNCH=1`, which sets the previous attempt aside
 in that ledger before the new log is opened, and it runs
 `logs/void-check.sh` on every run directory quorum names, which prints a
 `harness void:` line for a run with no readable verdict, no grader block, a
-grader that exited without a result, or no usable usage sidecar; the ledger
-accepts an entry only on its own `FAILED` last line or such a line, never on
-free text, so a graded trial cannot be set aside as a void. `launch-all.sh` runs the whole manifest once and cannot resume a
+grader that exited without a result, a verdict without a final outcome, or
+no usable usage sidecar; the ledger accepts an entry only on its own
+`FAILED` last line or such a line naming a run directory the log launched,
+never on free text, so a graded trial cannot be set aside as a void. `launch-all.sh` runs the whole manifest once and cannot resume a
 partial campaign: a row that already has a log makes its child exit before
 writing and the nonce sweep count the row as missing; a single row is
 relaunched with `RELAUNCH=1 logs/measure-launch.sh <row>`. A relaunch that
@@ -2876,8 +2878,8 @@ esac
 # Prints one `harness void: <why> in <run-dir>` line for every reason the run
 # cannot count as a trial: no readable verdict.json; no grader block; a grader
 # block without a summary or run id; a grader that exited without a result
-# (its reason or summary says so); no usable coding-agent-token-usage.json (one
-# with an integer total_tokens). Prints nothing for a run the analysis can
+# (its reason or summary says so); a verdict without a final outcome; no usable
+# coding-agent-token-usage.json (one with an integer total_tokens). Prints nothing for a run the analysis can
 # grade. logs/measure-launch.sh runs it for every run directory quorum names,
 # so a void attempt is on the face of its log and the analysis accepts that log
 # in the logs/failed ledger; the plan's offline proof runs it on synthetic run
@@ -2896,6 +2898,7 @@ const verdict = read("verdict.json");
 if (verdict === undefined || verdict === null || typeof verdict !== "object") {
   reasons.push("no readable verdict.json");
 } else {
+  if (!["pass", "fail", "indeterminate"].includes(verdict.final)) reasons.push("verdict without a final outcome");
   const grader = verdict.gauntlet;
   if (!grader || typeof grader !== "object") {
     reasons.push("no grader block");
@@ -3000,7 +3003,7 @@ HARNESS_RE = re.compile(
 CLAUDE_RE = re.compile(r"^claude_code=(\S+)$", re.MULTILINE)
 MODEL_HEADER_RE = re.compile(r"^model_pin=(\S+) anthropic_model=(\S+)$", re.MULTILINE)
 FAILED_LOG_RE = re.compile(r"(control|wording|full)-(.+)-([pr]\d+)\.(\d+)\.log")
-LEDGER_VOID_RE = re.compile(r"^harness void: (.+)$", re.MULTILINE)
+LEDGER_VOID_RE = re.compile(r"^harness void: (.+) in (\S+)$", re.MULTILINE)
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 BRAINSTORMING_LINE = "- hyperpowers:brainstorming"
 HOOK_NAME = "first-edit-interlock"
@@ -3112,10 +3115,16 @@ class Call:
     attempt: bool = False
 
     @property
-    def denied(self) -> bool:
-        """A mutation attempt whose one tool result is an error ending with the pinned hook's message."""
+    def resolved(self) -> bool:
+        """The call has its one tool result; a call the session ended on has none and is read neither way."""
 
-        return self.attempt and self.denial_result
+        return self.result_count == 1
+
+    @property
+    def denied(self) -> bool:
+        """A resolved mutation attempt whose tool result is an error carrying the pinned hook's message."""
+
+        return self.attempt and self.resolved and self.denial_result
 
 
 @dataclass
@@ -3636,10 +3645,11 @@ def read_calls(
 ) -> tuple[list[Call], list[int], set[str]]:
     """(tool calls in order with their results, indexes of human turns, versions seen) for one transcript.
 
-    A call is denied when its single tool result is an error whose text ends
-    with ``denial_message``, the pinned hook's denial text; a call with no
-    result or more than one is a refusal, because a call that never returned
-    cannot be read either way.
+    A call is denied when its one tool result is an error carrying
+    ``denial_message``, the pinned hook's denial text, and is not a command's
+    own output (which begins with its exit code); a call with more than one
+    result is a refusal, and a call with none, the call a session ended on,
+    is resolved neither way.
     """
 
     calls: list[Call] = []
@@ -3680,18 +3690,20 @@ def read_calls(
                         if matched is not None:
                             matched.result_count += 1
                             matched.result_text = result_text(part.get("content"))
-                            matched.denial_result = bool(
-                                part.get("is_error")
-                            ) and matched.result_text.rstrip().endswith(denial_message)
+                            matched.denial_result = (
+                                bool(part.get("is_error"))
+                                and denial_message in matched.result_text
+                                and not matched.result_text.startswith("Exit code ")
+                            )
                 if not had_result and not rec.get("isMeta"):
                     humans.append(index)
             elif isinstance(content, str) and not rec.get("isMeta"):
                 humans.append(index)
     for call in calls:
-        if call.result_count != 1:
+        if call.result_count > 1:
             raise DesignError(
                 f"{os.path.basename(transcript)}: tool call {call.tool_use_id or call.index} has "
-                f"{call.result_count} tool results, expected exactly one"
+                f"{call.result_count} tool results, expected at most one"
             )
     return calls, humans, versions
 
@@ -3705,7 +3717,7 @@ def check_interlock(run: Run, transcripts: list[str]) -> None:
     asked: bool | None = None
     for transcript in transcripts:
         calls = [c for c in run.calls if c.transcript == transcript]
-        attempts = [c for c in calls if c.attempt]
+        attempts = [c for c in calls if c.attempt and c.resolved]
         denials = [c for c in attempts if c.denied]
         total_attempts += len(attempts)
         total_denials += len(denials)
@@ -3798,12 +3810,17 @@ def token_total(run_dir: str, name: str) -> int:
 
     path = os.path.join(run_dir, "coding-agent-token-usage.json")
     total = load_json(path).get("total_tokens") if os.path.exists(path) else None
-    if type(total) is not int or total < 0:
+    if (
+        isinstance(total, bool)
+        or not isinstance(total, (int, float))
+        or total < 0
+        or float(total) != int(total)
+    ):
         raise DesignError(
             f"{name}: void attempt left in the logs (the harness wrote no usable coding-agent-token-usage.json); "
             "move its log to logs/failed/<log name>.<attempt>.log and relaunch the row"
         )
-    return total
+    return int(total)
 
 
 def read_logs(manifest: dict) -> list[tuple[str, str, str, bool, int, str]]:
@@ -3921,6 +3938,11 @@ def read_void_ledger(manifest: dict) -> list[Void]:
         ):
             reason = "launch failure"
         elif marker:
+            launched = {m.group(1).rstrip("/") for m in RUN_DIR_RE.finditer(text)}
+            if marker.group(2).rstrip("/") not in launched:
+                raise DesignError(
+                    f"{path}: the harness void line names {marker.group(2)}, a run directory this log did not launch"
+                )
             reason = marker.group(1)
         else:
             raise DesignError(
@@ -4002,7 +4024,10 @@ def build_runs(manifest: dict, classifier: Classifier) -> list[Run]:
         verdict = load_json(verdict_path)
         final = str(verdict.get("final"))
         if final not in ("pass", "fail", "indeterminate"):
-            raise DesignError(f"{name}: unexpected final verdict {final!r}")
+            raise DesignError(
+                f"{name}: void attempt left in the logs (verdict.json has no final outcome, {final!r}); "
+                "move its log to logs/failed/<log name>.<attempt>.log and relaunch the row"
+            )
         reason = str(verdict.get("final_reason") or "")
         grader = verdict.get("gauntlet")
         summary = str(grader.get("summary") or "") if isinstance(grader, dict) else ""
@@ -4807,7 +4832,7 @@ def _fixture_log(root: str, arm: str, proc: str, run_dirs: list[str]) -> None:
 
 
 def _fixture_void_log(root: str, arm: str, proc: str, attempt: int, kind: str) -> None:
-    """A retained attempt under logs/failed: ``void`` (a harness void line), ``failed`` (a launch failure), ``graded`` (a completed attempt that does not belong there), or ``prose`` (a completed attempt whose text merely mentions void phrases)."""
+    """A retained attempt under logs/failed: ``void`` (a harness void line), ``failed`` (a launch failure), ``graded`` (a completed attempt that does not belong there), or ``prose`` (a completed attempt whose text merely mentions void phrases), or ``foreign`` (a marker naming a run directory the log did not launch)."""
 
     os.makedirs(os.path.join(root, "logs", "failed"), exist_ok=True)
     tail = {
@@ -4815,6 +4840,7 @@ def _fixture_void_log(root: str, arm: str, proc: str, attempt: int, kind: str) -
         "failed": f"EXIT=9\nFAILED 9 {arm} scenario-x {proc}\n",
         "graded": f"run-dir   /nowhere\nEXIT=0\nDONE {arm} scenario-x {proc}\n",
         "prose": f"run-dir   /nowhere\nthe grader wrote: the agent did not complete the task, quorum error text quoted\nEXIT=0\nDONE {arm} scenario-x {proc}\n",
+        "foreign": f"run-dir   /nowhere\nharness void: grader exited without a result in /elsewhere\nEXIT=2\nDONE {arm} scenario-x {proc}\n",
     }[kind]
     with open(
         os.path.join(root, "logs", "failed", f"{arm}-scenario-x-{proc}.{attempt}.log"),
@@ -5769,6 +5795,40 @@ def self_test() -> int:
     def graded_prose_set_aside(root: str) -> None:
         _fixture_void_log(root, "full", "p1", 1, "prose")
 
+    def marker_for_foreign_dir(root: str) -> None:
+        _fixture_void_log(root, "full", "p1", 1, "foreign")
+
+    def dangling_readonly_call(root: str) -> None:
+        _append_record(
+            root,
+            "run-a",
+            {
+                "type": "assistant",
+                "version": FIXTURE_VERSION,
+                "uuid": "a9",
+                "message": {
+                    "id": "msg_9",
+                    "model": "model-x",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "t9",
+                            "name": "Bash",
+                            "input": {"command": "ls"},
+                        }
+                    ],
+                },
+            },
+        )
+
+    def integral_float_total(root: str) -> None:
+        with open(
+            os.path.join(root, "results", "run-a", "coding-agent-token-usage.json"),
+            "w",
+            encoding="utf-8",
+        ) as handle:
+            json.dump({"total_tokens": 1001.0, "model": "model-x"}, handle)
+
     def void_bad_name(root: str) -> None:
         os.makedirs(os.path.join(root, "logs", "failed"), exist_ok=True)
         with open(
@@ -5964,11 +6024,11 @@ def self_test() -> int:
             None,
         ),
         (
-            "a denial message that is not the end of its result",
+            "a denial message followed by more text in its result, still a denial",
             two_passes,
             None,
             denial_not_last,
-            "carried out, not denied",
+            None,
             "plain",
             None,
         ),
@@ -5982,11 +6042,38 @@ def self_test() -> int:
             None,
         ),
         (
-            "a tool call without a tool result",
+            "a first mutation attempt whose result never arrived",
             two_passes,
             None,
             missing_result,
-            "has 0 tool results",
+            "carried out, not denied",
+            "plain",
+            None,
+        ),
+        (
+            "a dangling read-only call at the end of a session",
+            two_passes,
+            None,
+            dangling_readonly_call,
+            None,
+            "plain",
+            None,
+        ),
+        (
+            "a harness void line naming a run directory the log did not launch",
+            two_passes,
+            None,
+            marker_for_foreign_dir,
+            "a run directory this log did not launch",
+            "plain",
+            None,
+        ),
+        (
+            "a token total written as an integral float",
+            two_passes,
+            None,
+            integral_float_total,
+            None,
             "plain",
             None,
         ),
@@ -6729,10 +6816,10 @@ for m in 0 00 abc; do echo "--- max=$m:"; LAUNCHER="$T/stub-launch.sh" bash "$L"
 mkdir -p "$T/real/logs"; sed -e 's/<[A-Z_]*>/x/' "$E/manifest.base.tsv" > "$T/real/manifest.tsv"; cp "$E/logs/stub-launch.sh" "$T/real/stub-launch.sh"; echo "--- the real manifest validates:"; LAUNCHER="$T/real/stub-launch.sh" bash "$L" "$T/real/manifest.tsv" 8 2>&1 | grep -c '^started '
 mkdir -p "$T/ml/logs"; cp "$E/manifest.base.tsv" "$T/ml/manifest.tsv"; printf 'arm=full budget=default\nDONE full s p1\n' > "$T/ml/logs/full-s-p1.log"; echo "--- a row whose log exists, without RELAUNCH:"; MEASURE_E="$T/ml" bash "$E/logs/measure-launch.sh" full s 1 p1 default; echo "exit=$?"; ls "$T/ml/logs"
 echo "--- the same row with RELAUNCH=1 (set aside, then the pin check refuses):"; MEASURE_E="$T/ml" RELAUNCH=1 bash "$E/logs/measure-launch.sh" full s 1 p1 default; echo "exit=$?"; ls "$T/ml/logs" "$T/ml/logs/failed"
-V="$E/logs/void-check.sh"; mkdir -p "$T/vc/ok" "$T/vc/nosidecar" "$T/vc/badsidecar" "$T/vc/noverdict" "$T/vc/nograder" "$T/vc/exited"; printf '{"final":"pass","gauntlet":{"summary":"graded","run_id":"g1"}}' > "$T/vc/ok/verdict.json"; printf '{"total_tokens":5}' > "$T/vc/ok/coding-agent-token-usage.json"; cp "$T/vc/ok/verdict.json" "$T/vc/nosidecar/"; cp "$T/vc/ok/verdict.json" "$T/vc/badsidecar/"; printf '{"total_tokens":"5"}' > "$T/vc/badsidecar/coding-agent-token-usage.json"; cp "$T/vc/ok/coding-agent-token-usage.json" "$T/vc/noverdict/"; printf '{"final":"fail","gauntlet":null}' > "$T/vc/nograder/verdict.json"; cp "$T/vc/ok/coding-agent-token-usage.json" "$T/vc/nograder/"; printf '{"final":"indeterminate","final_reason":"quorum error (setup): setup.sh failed (exit 1)","gauntlet":{"summary":"","run_id":""}}' > "$T/vc/exited/verdict.json"; cp "$T/vc/ok/coding-agent-token-usage.json" "$T/vc/exited/"; for d in ok nosidecar badsidecar noverdict nograder exited; do echo "--- void-check $d:"; bash "$V" "$T/vc/$d"; echo "exit=$?"; done
+V="$E/logs/void-check.sh"; mkdir -p "$T/vc/ok" "$T/vc/nosidecar" "$T/vc/badsidecar" "$T/vc/noverdict" "$T/vc/nograder" "$T/vc/exited" "$T/vc/nofinal"; printf '{"final":"pass","gauntlet":{"summary":"graded","run_id":"g1"}}' > "$T/vc/ok/verdict.json"; printf '{"total_tokens":5}' > "$T/vc/ok/coding-agent-token-usage.json"; cp "$T/vc/ok/verdict.json" "$T/vc/nosidecar/"; cp "$T/vc/ok/verdict.json" "$T/vc/badsidecar/"; printf '{"total_tokens":"5"}' > "$T/vc/badsidecar/coding-agent-token-usage.json"; cp "$T/vc/ok/coding-agent-token-usage.json" "$T/vc/noverdict/"; printf '{"final":"fail","gauntlet":null}' > "$T/vc/nograder/verdict.json"; cp "$T/vc/ok/coding-agent-token-usage.json" "$T/vc/nograder/"; printf '{"final":"indeterminate","final_reason":"quorum error (setup): setup.sh failed (exit 1)","gauntlet":{"summary":"","run_id":""}}' > "$T/vc/exited/verdict.json"; cp "$T/vc/ok/coding-agent-token-usage.json" "$T/vc/exited/"; printf '{"gauntlet":{"summary":"graded","run_id":"g1"}}' > "$T/vc/nofinal/verdict.json"; cp "$T/vc/ok/coding-agent-token-usage.json" "$T/vc/nofinal/"; for d in ok nosidecar badsidecar noverdict nograder exited nofinal; do echo "--- void-check $d:"; bash "$V" "$T/vc/$d"; echo "exit=$?"; done
 ```
 
-Expected, in order: exit 1 with `no log for full-s-p2`, `log for full-s-p3 does not end with DONE`, and `all launches finished; wait notes: 1; manifest rows without a DONE log: 2`; exit 1 with `log for full-s-p2 is from an earlier launch (nonce mismatch)` (the stale log's `nonce=earlier` is not this launch's) and `manifest rows without a DONE log: 2`; exit 1 with `malformed budget 'raised'` and `logs after: 0`; exit 1 with `malformed arm 'treatment'`; exit 1 with `malformed row`; exit 0 with `wait notes: 0; manifest rows without a DONE log: 0` and a log whose first line is `arm=wording budget=default` and whose second line is `nonce=` followed by the nonce the run printed; exit 2 with `max-concurrent must be a positive integer` for `0`, `00`, and `abc`; and `110` started rows for the real manifest (the stub's p2 and p3 rows leave no DONE log there by design, which is why only the `started` count is read); then, for the launcher itself, exit 1 with `exists; a row is relaunched only with RELAUNCH=1` and `full-s-p1.log` still listed; then `previous attempt set aside as logs/failed/full-s-p1.1.log`, exit 1 with `manifest.tsv is not filled in`, `logs` holding only `failed`, and `logs/failed` holding `full-s-p1.1.log`; then, for the void check, `ok` prints nothing with exit 0, `nosidecar` and `badsidecar` print `harness void: no usable coding-agent-token-usage.json in <dir>` with exit 3, `noverdict` prints `harness void: no readable verdict.json in <dir>` with exit 3, `nograder` prints `harness void: no grader block in <dir>` with exit 3, and `exited` prints `harness void: grader block without a summary or run id in <dir>` and `harness void: grader exited without a result in <dir>` with exit 3. Record every output in the report.
+Expected, in order: exit 1 with `no log for full-s-p2`, `log for full-s-p3 does not end with DONE`, and `all launches finished; wait notes: 1; manifest rows without a DONE log: 2`; exit 1 with `log for full-s-p2 is from an earlier launch (nonce mismatch)` (the stale log's `nonce=earlier` is not this launch's) and `manifest rows without a DONE log: 2`; exit 1 with `malformed budget 'raised'` and `logs after: 0`; exit 1 with `malformed arm 'treatment'`; exit 1 with `malformed row`; exit 0 with `wait notes: 0; manifest rows without a DONE log: 0` and a log whose first line is `arm=wording budget=default` and whose second line is `nonce=` followed by the nonce the run printed; exit 2 with `max-concurrent must be a positive integer` for `0`, `00`, and `abc`; and `110` started rows for the real manifest (the stub's p2 and p3 rows leave no DONE log there by design, which is why only the `started` count is read); then, for the launcher itself, exit 1 with `exists; a row is relaunched only with RELAUNCH=1` and `full-s-p1.log` still listed; then `previous attempt set aside as logs/failed/full-s-p1.1.log`, exit 1 with `manifest.tsv is not filled in`, `logs` holding only `failed`, and `logs/failed` holding `full-s-p1.1.log`; then, for the void check, `ok` prints nothing with exit 0, `nosidecar` and `badsidecar` print `harness void: no usable coding-agent-token-usage.json in <dir>` with exit 3, `noverdict` prints `harness void: no readable verdict.json in <dir>` with exit 3, `nograder` prints `harness void: no grader block in <dir>` with exit 3, `exited` prints `harness void: grader block without a summary or run id in <dir>` and `harness void: grader exited without a result in <dir>` with exit 3, and `nofinal` prints `harness void: verdict without a final outcome in <dir>` with exit 3. Record every output in the report.
 
 - [ ] **Step 10: Check the scripts and the analyzer**
 
@@ -6749,7 +6836,7 @@ shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh $E/logs
 /Users/johnss51/Applications/micromamba/envs/main/bin/python $E/analyze.py
 ```
 
-Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 78 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
+Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 81 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
 
 - [ ] **Step 11: Commit in the evals clone**
 

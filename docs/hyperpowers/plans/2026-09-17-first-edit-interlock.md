@@ -2509,7 +2509,9 @@ classifies every tool call with the pinned plugin's own
 result is an error carrying the hook's message as pinned in
 `hooks/first-edit-interlock` (a call the session ended on, with no result,
 is neither denied nor carried out; a call with two results is refused),
-requires every transcript to carry the pinned Claude Code version (its vector file is copied here as
+requires every attachment, user, assistant, and system
+record of every transcript to carry the pinned Claude Code version (the
+bookkeeping records Claude Code writes without one are not counted) (its vector file is copied here as
 `mutation-cases.tsv` and must be byte-identical to the pinned copy), checks
 that every full-arm context was denied at its first attempt and mutated
 only in a later turn, that no other arm saw a denial, and that every change
@@ -2527,7 +2529,9 @@ carry the pins and to be void on its face, refuses a completed attempt set
 aside there, and reports the count. `logs/measure-launch.sh` refuses a row
 whose log exists unless `RELAUNCH=1`, which sets the previous attempt aside
 in that ledger before the new log is opened, and it runs
-`logs/void-check.sh` on every run directory quorum names, which prints a
+`logs/void-check.sh` on every run directory quorum names (its own
+`run-dir` line: the word at the start of a line, spaces, an absolute path;
+prose that mentions run-dir mid-line is never read), which prints a
 `harness void:` line for a run with no readable verdict, no grader block, a
 grader that exited without a result, a verdict without a final outcome, or
 no usable usage sidecar; the ledger accepts an entry only on its own
@@ -2770,7 +2774,7 @@ export SUPERPOWERS_ROOT="$root"
   echo "\$ env -u SLASH_COMMAND_TOOL_CHAR_BUDGET bun run quorum run scenarios/$scen --coding-agent claude-auto --repeat $rep"
   env -u SLASH_COMMAND_TOOL_CHAR_BUDGET bun run quorum run "scenarios/$scen" --coding-agent claude-auto --repeat "$rep"
   code=$?
-  grep -oE 'run-dir[[:space:]]+[^[:space:]]+' "$log" | awk '{print $2}' | while read -r d; do
+  grep -E '^run-dir[[:space:]]+/[^[:space:]]+[[:space:]]*$' "$log" | awk '{print $2}' | while read -r d; do
     bash "$E/logs/void-check.sh" "$d"
   done
   echo "EXIT=$code"; date -u +%Y-%m-%dT%H:%M:%SZ
@@ -2987,7 +2991,12 @@ TOPUP_RE = re.compile(r"^# top-up: (\S+) indeterminate twice$")
 SENTINEL_RERUN_RE = re.compile(r"^# sentinel rerun: (\S+) failed$")
 CONTROL_RUN_RE = re.compile(r"^# control run for criterion 4: (\S+) (.+)$")
 VOID_RE = re.compile(r"quorum error|without writing a result|no Gauntlet-Agent verdict")
-RUN_DIR_RE = re.compile(r"run-dir\s+(\S+)")
+# quorum's renderer prints the run directory as its own line, "run-dir", spaces,
+# an absolute path; prose that mentions run-dir mid-line never matches.
+RUN_DIR_RE = re.compile(r"^run-dir[ \t]+(/\S+)[ \t]*$", re.MULTILINE)
+# The record types Claude Code stamps with its version; bookkeeping records
+# (mode, last-prompt, file-history-snapshot, ...) carry none.
+VERSIONED_RECORD_TYPES = frozenset({"attachment", "user", "assistant", "system"})
 LOG_RE = re.compile(r"(control|wording|full)-(.+)-([pr]\d+)\.log")
 PROC_RE = re.compile(r"p\d{1,3}")
 CODING_AGENT = "claude-auto"
@@ -3657,10 +3666,10 @@ def read_calls(
     humans: list[int] = []
     versions: set[str] = set()
     for index, rec in enumerate(iter_records(transcript)):
-        version = rec.get("version")
-        if isinstance(version, str) and version:
-            versions.add(version)
         kind = rec.get("type")
+        if kind in VERSIONED_RECORD_TYPES:
+            version = rec.get("version")
+            versions.add(version if isinstance(version, str) and version else "")
         message = rec.get("message") or {}
         content = message.get("content")
         if kind == "assistant":
@@ -4621,6 +4630,7 @@ def _fixture_transcript(arm: str, shape: str) -> str:
         json.dumps(
             {
                 "type": "attachment",
+                "version": FIXTURE_VERSION,
                 "attachment": {
                     "type": "hook_additional_context",
                     "content": [f"<wrap>\n{_fixture_boot(arm)}</wrap>"],
@@ -4630,6 +4640,7 @@ def _fixture_transcript(arm: str, shape: str) -> str:
         json.dumps(
             {
                 "type": "attachment",
+                "version": FIXTURE_VERSION,
                 "attachment": {"type": "skill_listing", "content": FIXTURE_LISTING},
             }
         ),
@@ -4832,7 +4843,7 @@ def _fixture_log(root: str, arm: str, proc: str, run_dirs: list[str]) -> None:
 
 
 def _fixture_void_log(root: str, arm: str, proc: str, attempt: int, kind: str) -> None:
-    """A retained attempt under logs/failed: ``void`` (a harness void line), ``failed`` (a launch failure), ``graded`` (a completed attempt that does not belong there), or ``prose`` (a completed attempt whose text merely mentions void phrases), or ``foreign`` (a marker naming a run directory the log did not launch)."""
+    """A retained attempt under logs/failed: ``void`` (a harness void line), ``failed`` (a launch failure), ``graded`` (a completed attempt that does not belong there), or ``prose`` (a completed attempt whose text merely mentions void phrases), ``foreign`` (a marker naming a run directory the log did not launch), or ``prose-dir`` (prose that mentions run-dir mid-line beside a marker naming that token)."""
 
     os.makedirs(os.path.join(root, "logs", "failed"), exist_ok=True)
     tail = {
@@ -4841,6 +4852,7 @@ def _fixture_void_log(root: str, arm: str, proc: str, attempt: int, kind: str) -
         "graded": f"run-dir   /nowhere\nEXIT=0\nDONE {arm} scenario-x {proc}\n",
         "prose": f"run-dir   /nowhere\nthe grader wrote: the agent did not complete the task, quorum error text quoted\nEXIT=0\nDONE {arm} scenario-x {proc}\n",
         "foreign": f"run-dir   /nowhere\nharness void: grader exited without a result in /elsewhere\nEXIT=2\nDONE {arm} scenario-x {proc}\n",
+        "prose-dir": f"run-dir   /nowhere\nthe grader wrote: see run-dir . for the details\nharness void: grader exited without a result in .\nEXIT=2\nDONE {arm} scenario-x {proc}\n",
     }[kind]
     with open(
         os.path.join(root, "logs", "failed", f"{arm}-scenario-x-{proc}.{attempt}.log"),
@@ -5821,6 +5833,29 @@ def self_test() -> int:
             },
         )
 
+    def marker_from_prose_dir(root: str) -> None:
+        _fixture_void_log(root, "full", "p1", 1, "prose-dir")
+
+    def unversioned_assistant_record(root: str) -> None:
+        def edit(records: list[dict]) -> list[dict]:
+            for record in records:
+                if record.get("type") == "assistant":
+                    record.pop("version", None)
+                    break
+            return records
+
+        _edit_transcript(root, "run-a", edit)
+
+    def partly_unversioned_subagent(root: str) -> None:
+        sub = os.path.join(
+            root, "results", "run-a", "home/.claude/projects/p/t/subagents"
+        )
+        os.makedirs(sub, exist_ok=True)
+        lines = _fixture_transcript("full", "denied").split("\n")
+        lines[2] = lines[2].replace(f', "version": "{FIXTURE_VERSION}"', "", 1)
+        with open(os.path.join(sub, "agent-1.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+
     def integral_float_total(root: str) -> None:
         with open(
             os.path.join(root, "results", "run-a", "coding-agent-token-usage.json"),
@@ -6065,6 +6100,33 @@ def self_test() -> int:
             None,
             marker_for_foreign_dir,
             "a run directory this log did not launch",
+            "plain",
+            None,
+        ),
+        (
+            "a harness void line whose run directory comes from prose",
+            two_passes,
+            None,
+            marker_from_prose_dir,
+            "a run directory this log did not launch",
+            "plain",
+            None,
+        ),
+        (
+            "a main transcript with one unversioned assistant record",
+            two_passes,
+            None,
+            unversioned_assistant_record,
+            "not the pinned",
+            "plain",
+            None,
+        ),
+        (
+            "a subagent transcript with one unversioned record",
+            two_passes,
+            None,
+            partly_unversioned_subagent,
+            "not the pinned",
             "plain",
             None,
         ),
@@ -6836,7 +6898,7 @@ shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh $E/logs
 /Users/johnss51/Applications/micromamba/envs/main/bin/python $E/analyze.py
 ```
 
-Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 81 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
+Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 84 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
 
 - [ ] **Step 11: Commit in the evals clone**
 

@@ -32,6 +32,7 @@ sort --comp=gzip f	mutation
 sort "$(printf %s -o)" out input	mutation
 sort $OPT f	mutation
 sort ${OPT} f	mutation
+sort {-o,victim} f	mutation
 /bin/rm -rf build	mutation
 rm -f a.txt	mutation
 mv a b	mutation
@@ -50,6 +51,10 @@ find . -name '*.log' -delete	mutation
 find . -name x -exec rm {} \;	mutation
 find src -type f -newer a	read-only
 find $DIR -name x	mutation
+find {.,-delete}	mutation
+find . -name *.py	mutation
+find . -name '*.py'	read-only
+find . -name "*.py" -newer a	read-only
 git status	read-only
 git status --short	read-only
 git -C sub log --oneline	read-only
@@ -113,6 +118,8 @@ git -c core.pager=cat log	mutation
 git --no-pager log -1	read-only
 git $SUB	mutation
 git log $REF	mutation
+git log -- *.md	mutation
+git log -- '*.md'	read-only
 git "$(echo push)"	mutation
 git -P log -1	read-only
 git -p log	mutation
@@ -149,6 +156,8 @@ timeout 5 ls	read-only
 timeout 5 rm f	mutation
 timeout -k 2 5 ls	read-only
 timeout $DUR ls	mutation
+timeout {5,rm,-f,victim} ls	mutation
+env {LANG=C,rm,-f,victim} ls	mutation
 timeout -k $K 5 ls	mutation
 timeout 5 cat $FILE	read-only
 nice -n $N ls	mutation
@@ -185,6 +194,11 @@ ls $(rm f)	mutation
 ls $DIR	read-only
 cat "$FILE"	read-only
 grep '$HOME' f	read-only
+ls *.py	read-only
+cat src/*.md	read-only
+grep -n foo src/*.py	read-only
+du -sh *	read-only
+[ -f a ] && cat a	read-only
 echo `date`	read-only
 echo `touch f`	mutation
 $(echo rm -rf build)	mutation
@@ -198,6 +212,10 @@ $(echo ls)	mutation
 echo "$(touch f)"	mutation
 echo "$(ls)"	read-only
 echo "`touch f`"	mutation
+echo `echo \`rm -f victim\``	mutation
+echo "`echo \`rm -f victim\``"	mutation
+echo `basename \$HOME`	read-only
+cat <<EOF\n`echo \`rm f\``\nEOF	mutation
 echo '$(touch f)'	read-only
 echo "a $(rm f) b"	mutation
 cat <<EOF > f\nhello\nEOF	mutation
@@ -280,6 +298,14 @@ env LANG=$X ls	mutation
 env -u $V ls	mutation
 env LANG=C cat "$FILE"	read-only
 date $FMT	mutation
+date 1200	mutation
+date -f fmt 2026-01-01	mutation
+date +%s	read-only
+date -u +%Y-%m-%d	read-only
+date -r f +%s	read-only
+date -d yesterday +%F	read-only
+date -v+1d +%F	read-only
+date -Iseconds	read-only
 rg $PAT x	mutation
 ag --pager 'touch f' x	mutation
 ag --pag=cmd x	mutation
@@ -289,6 +315,27 @@ file $F	mutation
 hostname $H	mutation
 export $NAME=1	mutation
 export LC_ALL=$X	mutation
+uniq in out	mutation
+uniq -c f	read-only
+uniq -f 1 f	read-only
+printf -v PATH /tmp	mutation
+printf -vPATH /tmp	mutation
+printf '%s ' x	read-only
+read PATH < f	mutation
+read GIT_DIR	mutation
+read -r line < f	read-only
+git --version	read-only
+git config -l	read-only
+git config --global --get user.name	read-only
+git config user.name x	mutation
+git config --get k --unset k	mutation
+git reflog	read-only
+git reflog -n 3	read-only
+git reflog expire --all	mutation
+git for-each-ref --format='%(refname)'	read-only
+git check-ignore -q x	read-only
+git help --web log	mutation
+git symbolic-ref HEAD refs/heads/x	mutation
 file -C -m magic	mutation
 file --compile magic	mutation
 file a.bin	read-only
@@ -297,3 +344,9 @@ date --se=2020-01-01	mutation
 date +%s	read-only
 hostname newname	mutation
 hostname -f	read-only
+hostname -F /etc/hn	mutation
+hostname --file=/etc/hn	mutation
+hostname -b	mutation
+hostname -fs	mutation
+hostname -I	read-only
+hostname --fqdn	read-only

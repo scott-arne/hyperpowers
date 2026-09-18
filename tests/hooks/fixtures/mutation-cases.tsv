@@ -29,6 +29,9 @@ sort --outp=f f	mutation
 sort --out f f	mutation
 sort --compress-program=gzip f	mutation
 sort --comp=gzip f	mutation
+sort "$(printf %s -o)" out input	mutation
+sort $OPT f	mutation
+sort ${OPT} f	mutation
 /bin/rm -rf build	mutation
 rm -f a.txt	mutation
 mv a b	mutation
@@ -46,6 +49,7 @@ find . -name x	read-only
 find . -name '*.log' -delete	mutation
 find . -name x -exec rm {} \;	mutation
 find src -type f -newer a	read-only
+find $DIR -name x	mutation
 git status	read-only
 git status --short	read-only
 git -C sub log --oneline	read-only
@@ -107,6 +111,9 @@ git config --global user.name x	mutation
 git -c diff.external='touch f' diff	mutation
 git -c core.pager=cat log	mutation
 git --no-pager log -1	read-only
+git $SUB	mutation
+git log $REF	mutation
+git "$(echo push)"	mutation
 git -P log -1	read-only
 git -p log	mutation
 git --paginate log	mutation
@@ -169,6 +176,9 @@ diff <(ls a) <(ls b)	read-only
 diff <(ls a) <(rm b)	mutation
 ls $(git rev-parse --show-toplevel)	read-only
 ls $(rm f)	mutation
+ls $DIR	read-only
+cat "$FILE"	read-only
+grep '$HOME' f	read-only
 echo `date`	read-only
 echo `touch f`	mutation
 $(echo rm -rf build)	mutation
@@ -259,6 +269,9 @@ env -S 'touch f'	mutation
 env --split-string='touch f'	mutation
 env -i -u FOO ls	read-only
 env -0 ls	read-only
+env $OPT ls	mutation
+date $FMT	mutation
+rg $PAT x	mutation
 file -C -m magic	mutation
 file --compile magic	mutation
 file a.bin	read-only

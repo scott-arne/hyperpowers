@@ -357,6 +357,15 @@ function basename(word) {
   return m[1];
 }
 
+// Commands whose read-only status depends on their arguments: an argument
+// that carries a parameter expansion or a substitution could become any option
+// or subcommand once the shell expands it, so it makes the call a mutation.
+const ARGUMENT_SENSITIVE = new Set(['git', 'find', 'sort', 'file', 'date', 'hostname', 'rg', 'export']);
+
+function hasExpansion(word) {
+  return word.indexOf('$') !== -1 || word.indexOf('__SUBST__') !== -1;
+}
+
 // GNU getopt accepts any unambiguous prefix of a long option, so --out=f is
 // --output=f: a word matches the option when its name (before any =) is at
 // least three characters and a prefix of the full spelling.
@@ -388,7 +397,7 @@ function simpleReadOnly(ws) {
   // that output is unknown here: always a mutation attempt.
   if (cmd === '__SUBST__') return false;
   if (WRAPPERS_MUTATING.has(cmd)) return false;
-  if (cmd === 'env') return envReadOnly(rest.slice(1));
+  if (cmd === 'env') return !rest.slice(1).some(hasExpansion) && envReadOnly(rest.slice(1));
   if (cmd === 'command') {
     if (rest[1] === '-v' || rest[1] === '-V') return true;
     return simpleReadOnly(rest.slice(rest[1] === '-p' ? 2 : 1));
@@ -407,6 +416,7 @@ function simpleReadOnly(ws) {
   }
   if (!ALLOW.has(cmd)) return false;
   const args = rest.slice(1);
+  if (ARGUMENT_SENSITIVE.has(cmd) && args.some(hasExpansion)) return false;
   if (cmd === 'export') return args.every((a) => a === '-p' || a === '-n' || ALLOWED_ASSIGNMENTS.has(a) || (isAssignment(a) && assignmentAllowed(a)));
   if (cmd === 'rg') return !args.some((a) => longOption(a, '--pre'));
   if (cmd === 'find') return !args.some((a) => FIND_MUTATING.has(a));

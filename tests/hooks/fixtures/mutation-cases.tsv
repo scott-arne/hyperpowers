@@ -300,6 +300,7 @@ env LANG=C cat "$FILE"	read-only
 date $FMT	mutation
 date 1200	mutation
 date -f fmt 2026-01-01	mutation
+date --set=2020-01-01	mutation
 date +%s	read-only
 date -u +%Y-%m-%d	read-only
 date -r f +%s	read-only
@@ -318,12 +319,24 @@ export LC_ALL=$X	mutation
 uniq in out	mutation
 uniq -c f	read-only
 uniq -f 1 f	read-only
+uniq - out	mutation
+uniq -c - out	mutation
+uniq -	read-only
 printf -v PATH /tmp	mutation
 printf -vPATH /tmp	mutation
 printf '%s ' x	read-only
+printf '%s\n' "$x"	read-only
+printf "$fmt" x	mutation
+printf -- "$fmt" x	read-only
+printf $OPT x	mutation
+printf '%s' -v	read-only
 read PATH < f	mutation
 read GIT_DIR	mutation
 read -r line < f	read-only
+unset PATH	mutation
+unset -v GIT_DIR	mutation
+unset FOO	read-only
+unset $NAME	mutation
 git --version	read-only
 git config -l	read-only
 git config --global --get user.name	read-only
@@ -331,6 +344,7 @@ git config user.name x	mutation
 git config --get k --unset k	mutation
 git reflog	read-only
 git reflog -n 3	read-only
+git reflog show	read-only
 git reflog expire --all	mutation
 git for-each-ref --format='%(refname)'	read-only
 git check-ignore -q x	read-only

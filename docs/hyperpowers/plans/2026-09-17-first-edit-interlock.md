@@ -7694,6 +7694,8 @@ Control runs (criterion 4): for each non-sentinel regression scenario (`triggeri
 
 - [ ] **Step 3: Analyze**
 
+Run this on the campaign host, with the toolchain the runs were made with, before upgrading anything. The analysis rebuilds each scenario's setup baseline where it runs, and the two rebuilds only tell it which files the setup fails to reproduce from one directory to the next. A file whose content depends on the tool that wrote it rather than on where it was built stays stable across both rebuilds and is therefore compared by content: `.venv/pyvenv.cfg` records the uv version, so an upgraded uv makes every archived run of the three venv-leaving scenarios read as an unexplained change.
+
 Run (no pipe, so the exit status is the analyzer's; `rc`, not `status`, because zsh reserves `status`):
 
 ```bash

@@ -2524,9 +2524,10 @@ refused, a multi-commit fixture is not mistaken for a change, and the
 untracked or ignored files setup itself leaves are compared by content,
 walking ignored directories and reading symlink targets, with the work
 tree's own path inside a file normalised, so editing or deleting one, or
-adding another, is a change; the archives-only replay leaves out the
-paths this repository's ignore rules keep out of the archive, such as
-`.venv/`, because the archive cannot hold them), then
+adding another, is a change; each baseline is rebuilt twice and a file
+whose content the two rebuilds do not agree on, such as a package's RECORD
+file, is compared by presence alone; the archive keeps the whole work
+directory, so the replay compares what the live analysis compared), then
 prints the per-cell
 table, the spec's acceptance criteria over planned counts, the attribution
 readout, and the cost readout, and writes `runs.json`. Indeterminate trials
@@ -3672,9 +3673,11 @@ def read_calls(
 
     A call is denied when its one tool result is an error carrying
     ``denial_message``, the pinned hook's denial text, and is not a command's
-    own output (which begins with its exit code); a call with more than one
-    result is a refusal, and a call with none, the call a session ended on,
-    is resolved neither way.
+    own output (which begins with its exit code). A call with more than one
+    result, a result that matches no call, and a duplicated call id are
+    refusals; a call with no result is tolerated only when no assistant record
+    follows it, the call the session ended on, and is then resolved neither
+    way.
     """
 
     calls: list[Call] = []
@@ -3811,7 +3814,7 @@ _BASELINES: dict[str, tuple[int, str, dict[str, str]]] = {}
 def _loose_files(
     git: list[str], workdir: str, pathspec: list[str], name: str, aliases: list[str]
 ) -> tuple[dict[str, str], list[str]]:
-    """(untracked and ignored files by path with a content hash, other status entries) of a work tree.
+    """(untracked and ignored entries by path with a content record, other status entries) of a work tree.
 
     Untracked and ignored files are compared by content later, so an edit or
     a deletion of a file setup left is seen; an ignored directory, which git
@@ -3825,7 +3828,6 @@ def _loose_files(
     """
 
     aliases = sorted({a.rstrip("/") for a in aliases if a}, key=len, reverse=True)
-
     status = subprocess.run(
         git
         + [
@@ -3839,6 +3841,7 @@ def _loose_files(
         ],
         capture_output=True,
         text=True,
+        errors="surrogateescape",
         check=False,
     )
     if status.returncode != 0:
@@ -3858,85 +3861,73 @@ def _loose_files(
         if code[0] in "RC":
             skip = True  # a rename carries its source in the next entry
         if code in ("??", "!!"):
-            _record_loose(loose, workdir, path.rstrip("/"), aliases)
+            _record_loose(loose, workdir, path.rstrip("/"), aliases, name)
         else:
             others.append(entry)
     return loose, others
 
 
 def _record_loose(
-    loose: dict[str, str], workdir: str, path: str, aliases: list[str]
+    loose: dict[str, str], workdir: str, path: str, aliases: list[str], name: str
 ) -> None:
     """Record one loose entry by content: a file's hash, a symlink's target, and every entry under a directory (git reports an ignored directory as one entry)."""
 
     full = os.path.join(workdir, path)
-    if os.path.islink(full):
-        target = os.readlink(full)
-        for alias in aliases:
-            target = target.replace(alias, "<workdir>")
-        loose[path] = "symlink:" + target
-    elif os.path.isdir(full):
-        children = sorted(os.listdir(full))
-        if not children:
-            loose[path] = "empty directory"
-        for child in children:
-            _record_loose(loose, workdir, os.path.join(path, child), aliases)
-    elif os.path.isfile(full):
-        with open(full, "rb") as handle:
-            data = handle.read()
-        for alias in aliases:
-            data = data.replace(alias.encode(), b"<workdir>")
-        loose[path] = hashlib.sha256(data).hexdigest()
-    else:
-        loose[path] = "not a regular file"
-
-
-def _archive_dropped(paths: set[str]) -> set[str]:
-    """The loose paths the evals repository's own ignore rules keep out of a committed archive (.venv/, node_modules/, ...).
-
-    An archive replay can only compare what the archive holds, so these paths
-    are left out of the comparison in archives-only mode; the live analysis
-    compares everything.
-    """
-
-    if not paths:
-        return set()
-    prefix = os.path.join(ARCHIVES, "scenario", "arm", "run", "coding-agent-workdir")
-    probe = subprocess.run(
-        ["git", "-C", EV, "check-ignore", "--no-index", "--stdin"],
-        input="".join(f"{prefix}/{path}\n" for path in sorted(paths)),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if probe.returncode not in (0, 1):
+    try:
+        if os.path.islink(full):
+            target = os.readlink(full)
+            for alias in aliases:
+                target = target.replace(alias, "<workdir>")
+            loose[path] = "symlink:" + target
+        elif os.path.isdir(full):
+            children = sorted(os.listdir(full))
+            if not children:
+                loose[path] = "empty directory"
+            for child in children:
+                _record_loose(loose, workdir, os.path.join(path, child), aliases, name)
+        elif os.path.isfile(full):
+            with open(full, "rb") as handle:
+                data = handle.read()
+            for alias in aliases:
+                data = data.replace(alias.encode(), b"<workdir>")
+            loose[path] = hashlib.sha256(data).hexdigest()
+        else:
+            loose[path] = "not a regular file"
+    except OSError as error:
         raise DesignError(
-            f"the evals repository's ignore rules cannot be read (check-ignore failed: {probe.stderr.strip()[:120]})"
-        )
-    return {line[len(prefix) + 1 :] for line in probe.stdout.splitlines() if line}
+            f"{name}: {path} in the work tree cannot be read ({error.strerror})"
+        ) from None
 
 
-def scenario_baseline(scenario: str) -> tuple[int, str, dict[str, str]]:
-    """(setup commit count, tree hash of the setup HEAD, untracked and ignored files setup itself leaves with their content hashes) for a scenario.
+VOLATILE = "volatile"
 
-    Rebuilt once per analysis by running the scenario's setup.sh the way the
-    harness does (cwd and QUORUM_WORKDIR a fresh directory, QUORUM_REPO_ROOT the
-    evals clone, BASH_ENV the check prelude), so the comparison is with what
-    setup produced, not with a commit count. Setup content is fixed, so the
-    tree hash is the same in every run of the scenario. A setup that leaves
-    an untracked or ignored file (the launch-cwd sentinel, for one) leaves it
-    in every run, so those files are recorded with their content and a run
-    counts as changed when one is edited, deleted, or joined by another. The
-    working directory sits under a scratch run directory beside a home
-    directory, as in the harness, because some setups write beside it.
+
+def _rmtree(path: str) -> None:
+    """Remove a scratch tree, including the read-only files a setup can leave."""
+
+    def retry(func: Callable[..., object], target: str, _exc: BaseException) -> None:
+        with contextlib.suppress(OSError):
+            os.chmod(os.path.dirname(target), 0o700)
+            os.chmod(target, 0o700)
+            func(target)
+
+    shutil.rmtree(path, onexc=retry)
+
+
+def _rebuild_setup(
+    scenario: str, script: str, prefix: str
+) -> tuple[int, str, dict[str, str]]:
+    """Run a scenario's setup.sh the way the harness does, in a scratch run directory, and record what it built.
+
+    ``prefix`` names the scratch directory. The two rebuilds use prefixes of
+    different lengths on purpose: a tool that writes its own location into a
+    file it generates (uv writes a console script as a plain shebang when the
+    interpreter path is short and as a /bin/sh wrapper when it is long) then
+    produces different content in the two rebuilds, and the comparison marks
+    that file volatile instead of reading it as a change in every run.
     """
 
-    if scenario in _BASELINES:
-        return _BASELINES[scenario]
-    script = os.path.join(SCENARIOS_ROOT, scenario, "setup.sh")
-    if not os.path.exists(script):
-        raise DesignError(f"{scenario}: no setup.sh under {SCENARIOS_ROOT}")
-    scratch = tempfile.mkdtemp(prefix="baseline-")
+    scratch = tempfile.mkdtemp(prefix=prefix)
     workdir = os.path.join(scratch, "coding-agent-workdir")
     os.makedirs(workdir)
     os.makedirs(os.path.join(scratch, "home"))
@@ -3987,9 +3978,48 @@ def scenario_baseline(scenario: str) -> tuple[int, str, dict[str, str]]:
             raise DesignError(
                 f"{scenario}: the rebuilt setup leaves tracked files modified ({others[0][:60]!r})"
             )
-        _BASELINES[scenario] = (int(count.stdout.strip()), tree.stdout.strip(), loose)
+        return int(count.stdout.strip()), tree.stdout.strip(), loose
     finally:
-        shutil.rmtree(scratch, ignore_errors=True)
+        _rmtree(scratch)
+
+
+def scenario_baseline(scenario: str) -> tuple[int, str, dict[str, str]]:
+    """(setup commit count, tree hash of the setup HEAD, loose entries setup itself leaves) for a scenario.
+
+    Rebuilt twice per analysis by running the scenario's setup.sh the way the
+    harness does (cwd and QUORUM_WORKDIR a fresh directory under a scratch run
+    directory, QUORUM_REPO_ROOT the evals clone, BASH_ENV the check prelude),
+    so the comparison is with what setup produced, not with a commit count.
+    The two scratch directories have names of different lengths, so a file
+    whose content depends on where it was built differs between them. The two
+    rebuilds must agree on the commits, the tree, and the set of loose paths;
+    a loose file whose content they do not agree on (a package's RECORD file,
+    a cache stamp, a generated console script) is volatile and is compared by
+    presence alone, because content the setup does not reproduce cannot be
+    evidence of a change; everything else is compared by content.
+    """
+
+    if scenario in _BASELINES:
+        return _BASELINES[scenario]
+    script = os.path.join(SCENARIOS_ROOT, scenario, "setup.sh")
+    if not os.path.exists(script):
+        raise DesignError(f"{scenario}: no setup.sh under {SCENARIOS_ROOT}")
+    first = _rebuild_setup(scenario, script, "baseline-")
+    second = _rebuild_setup(scenario, script, "baseline-" + "x" * 64 + "-")
+    if first[:2] != second[:2]:
+        raise DesignError(
+            f"{scenario}: setup.sh is not reproducible (two rebuilds differ in commit count or tree)"
+        )
+    if set(first[2]) != set(second[2]):
+        raise DesignError(
+            f"{scenario}: setup.sh is not reproducible (two rebuilds leave different files: "
+            f"{sorted(set(first[2]) ^ set(second[2]))[:3]})"
+        )
+    loose = {
+        path: (VOLATILE if first[2][path] != second[2][path] else first[2][path])
+        for path in first[2]
+    }
+    _BASELINES[scenario] = (first[0], first[1], loose)
     return _BASELINES[scenario]
 
 
@@ -4000,7 +4030,8 @@ def tree_changed(run_dir: str, name: str, scenario: str) -> bool:
     hash at the last of them); a rewritten or amended setup, or one the
     scenario has changed since the run, is a refusal. The tree is changed when
     commits follow the setup, a tracked file is modified, or the untracked and
-    ignored files differ from the ones setup left (added, edited, or deleted).
+    ignored files differ from the ones setup left (added, edited, or deleted;
+    a volatile one, which setup itself does not reproduce, by presence alone).
     """
 
     workdir = os.path.join(run_dir, "coding-agent-workdir")
@@ -4063,12 +4094,11 @@ def tree_changed(run_dir: str, name: str, scenario: str) -> bool:
             ),
         ],
     )
-    expected = setup_files
-    if ARCHIVES_ONLY:
-        dropped = _archive_dropped(set(loose) | set(setup_files))
-        loose = {k: v for k, v in loose.items() if k not in dropped}
-        expected = {k: v for k, v in setup_files.items() if k not in dropped}
-    return len(commits) > setup_count or bool(others) or loose != expected
+    volatile = {path for path, value in setup_files.items() if value == VOLATILE}
+    observed = {
+        path: (VOLATILE if path in volatile else value) for path, value in loose.items()
+    }
+    return len(commits) > setup_count or bool(others) or observed != setup_files
 
 
 def token_total(run_dir: str, name: str) -> int:
@@ -4079,6 +4109,7 @@ def token_total(run_dir: str, name: str) -> int:
     if (
         isinstance(total, bool)
         or not isinstance(total, (int, float))
+        or not math.isfinite(float(total))
         or total < 0
         or float(total) != int(total)
     ):
@@ -5041,6 +5072,7 @@ printf 'kept\\n' > scratch/keep.txt
 ln -s a.txt link.txt
 mkdir .venv
 printf 'uv = 1\\n' > .venv/pyvenv.cfg
+printf '%s%s\\n' "$RANDOM" "$RANDOM" > scratch/stamp.txt
 """
 
 
@@ -5621,25 +5653,21 @@ def self_test() -> int:
             shutil.copytree(src, dst)
         _set_verdict(root, "run-a", final="pass")
 
-    def all_archived_stripped(root: str) -> None:
-        all_archived(root)
-        for arm, name in (
-            ("full", "run-a"),
-            ("full", "run-b"),
-            ("wording", "run-w"),
-            ("control", "run-c"),
-        ):
-            shutil.rmtree(
-                os.path.join(
-                    root,
-                    ARCHIVES,
-                    "scenario-x",
-                    arm,
-                    name,
-                    "coding-agent-workdir",
-                    ".venv",
-                )
+    def volatile_file_rewritten(root: str) -> None:
+        unchanged_two_commit_fixture(root)
+        stamp = os.path.join(
+            root, "results", "run-a", "coding-agent-workdir", "scratch", "stamp.txt"
+        )
+        with open(stamp, "w", encoding="utf-8") as handle:
+            handle.write("another stamp\n")
+
+    def volatile_file_deleted(root: str) -> None:
+        unchanged_two_commit_fixture(root)
+        os.remove(
+            os.path.join(
+                root, "results", "run-a", "coding-agent-workdir", "scratch", "stamp.txt"
             )
+        )
 
     def venv_file_deleted(root: str) -> None:
         unchanged_two_commit_fixture(root)
@@ -6852,13 +6880,22 @@ def self_test() -> int:
             "scenario-x full gated: 1/2",
         ),
         (
-            "an archives-only analysis over copies stripped of the paths the repository ignores",
+            "a setup-left file the setup does not reproduce, rewritten in a run with no mutation attempt",
             two_passes,
             None,
-            all_archived_stripped,
+            volatile_file_rewritten,
             None,
-            "archives-only",
-            "scenario-x full gated: 1/2",
+            "plain",
+            None,
+        ),
+        (
+            "a setup-left file the setup does not reproduce, deleted in a run with no mutation attempt",
+            two_passes,
+            None,
+            volatile_file_deleted,
+            "no transcript holds a carried-out mutation",
+            "plain",
+            None,
         ),
         (
             "a setup-left file under .venv deleted during a live run with no mutation attempt",
@@ -7491,7 +7528,7 @@ shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh $E/logs
 /Users/johnss51/Applications/micromamba/envs/main/bin/python $E/analyze.py
 ```
 
-Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 99 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
+Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 100 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
 
 - [ ] **Step 11: Commit in the evals clone**
 

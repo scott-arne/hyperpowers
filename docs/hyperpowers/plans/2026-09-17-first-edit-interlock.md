@@ -2509,8 +2509,9 @@ classifies every tool call with the pinned plugin's own
 result is an error carrying the hook's message as pinned in
 `hooks/first-edit-interlock` (only the call a session ended on may lack its
 result, and it is then neither denied nor carried out; a call the session
-went on after without a result, a result matching no call, a duplicated
-call id, or a call with two results is refused),
+went on after without a result, where a later human turn proves the session
+went on just as a later assistant record does, a result matching no call, a
+duplicated call id, or a call with two results is refused),
 requires every attachment, user, assistant, and system
 record of every transcript to carry the pinned Claude Code version (the
 bookkeeping records Claude Code writes without one are not counted) (its vector file is copied here as
@@ -2524,9 +2525,18 @@ refused, a multi-commit fixture is not mistaken for a change, and the
 untracked or ignored files setup itself leaves are compared by content,
 walking ignored directories and reading symlink targets, with the work
 tree's own path inside a file normalised, so editing or deleting one, or
-adding another, is a change; each baseline is rebuilt twice and a file
-whose content the two rebuilds do not agree on, such as a package's RECORD
-file, is compared by presence alone; the archive keeps the whole work
+adding another, is a change; a work tree git cannot list completely, such
+as one holding an unreadable directory, is refused rather than read as
+unchanged; each baseline is rebuilt twice and a file whose content the two
+rebuilds do not agree on, such as a package's RECORD file, is compared by
+its kind alone, so a symlink or a directory where the setup left a regular
+file is still a change and two rebuilds that disagree on an entry's kind are
+refused; every fixture setup resolves its packages from one pinned index
+instant (`UV_EXCLUDE_NEWER`, the analyzer's own constant, exported by the
+launcher and set by every rebuild), so a package release during the campaign
+cannot split the runs into two package sets; a tree that changed with no
+carried-out mutation is refused with what differs, the paths added, removed,
+or altered; the archive keeps the whole work
 directory, so the replay compares what the live analysis compared), then
 prints the per-cell
 table, the spec's acceptance criteria over planned counts, the attribution
@@ -2539,10 +2549,15 @@ without a verdict, or a launch that did not end in DONE) is relaunched and
 its log is kept as `logs/failed/<arm>-<scenario>-<proc>.<attempt>.log`; the
 analysis reads that directory as the void ledger, requires every entry to
 carry the pins and to be void on its face, refuses a completed attempt set
-aside there, and reports the count. `logs/measure-launch.sh` refuses a row
-whose log exists unless `RELAUNCH=1`, which sets the previous attempt aside
-in that ledger before the new log is opened, and it runs
-`logs/void-check.sh` on every run directory quorum names (its own
+aside there, and reports the count together with, for each void, how many of
+the run directories its log named a grader had already returned a verdict
+for, so a void that throws away finished sessions is visible in the report
+rather than folded into a total. `logs/measure-launch.sh` exports
+the analyzer's `UV_EXCLUDE_NEWER` before launching quorum and refuses the
+row if it cannot read it, refuses a row whose log exists unless
+`RELAUNCH=1`, which sets the previous attempt aside in that ledger before
+the new log is opened, and it runs `logs/void-check.sh` on every run
+directory quorum names (its own
 `run-dir` line: the word at the start of a line, spaces, an absolute path;
 prose that mentions run-dir mid-line is never read), which prints a
 `harness void:` line for a run with no readable verdict, no grader block, a
@@ -2734,8 +2749,15 @@ Expected: the two digests are identical (the analyzer refuses to run otherwise).
 # when a git status check fails. A row whose log already exists is refused
 # unless RELAUNCH=1, which first sets the previous attempt aside as
 # logs/failed/<arm>-<scenario>-<proc>.<attempt>.log, the void ledger the
-# analysis reads. MEASURE_E overrides the evidence directory for the offline
-# proof in the plan only.
+# analysis reads. Before launching quorum it exports UV_EXCLUDE_NEWER, read
+# from the analyzer's own constant so the campaign and the analysis have one
+# source of truth: the fixture setups install their packages with uv, which
+# honours that variable, so a package release during the campaign cannot leave
+# one row's fixture resolved from a different index than another's, and each
+# baseline rebuild resolves the same instant. A launcher that cannot read the
+# constant refuses rather than launching an unpinned row. MEASURE_E overrides
+# the evidence directory for the offline proof in the plan only; the analyzer
+# is read from its real path under $EV, which MEASURE_E does not redirect.
 set -uo pipefail
 arm="$1"; scen="$2"; rep="$3"; proc="$4"; budget="$5"
 EV=/Users/johnss51/Development/agents/hyperpowers/evals
@@ -2775,6 +2797,10 @@ git diff --quiet "$harness_pin" HEAD -- $HARNESS_PATHS || { echo "harness paths 
 # shellcheck disable=SC2086
 harness_status=$(git status --short -- $HARNESS_PATHS) || { echo "git status failed in $EV" >&2; exit 1; }
 [ -z "$harness_status" ] || { echo "harness paths have uncommitted changes" >&2; exit 1; }
+analyzer="$EV/evidence/2026-09-17-first-edit-interlock/analyze.py"
+uv_cutoff=$("$analyzer" --uv-exclude-newer) || { echo "$analyzer --uv-exclude-newer failed; the package index instant the fixture setups resolve from is unknown" >&2; exit 1; }
+[ -n "$uv_cutoff" ] || { echo "$analyzer --uv-exclude-newer printed nothing; the package index instant the fixture setups resolve from is unknown" >&2; exit 1; }
+export UV_EXCLUDE_NEWER="$uv_cutoff"
 export SUPERPOWERS_ROOT="$root"
 {
   echo "arm=$arm scenario=$scen repeat=$rep proc=$proc budget=$budget"
@@ -2962,7 +2988,8 @@ Writes ``runs.json`` and prints the per-cell table, the conditional rows, the
 spec's acceptance criteria over planned counts, the attribution readout, and
 the cost readout. ``--self-test`` proves the refusals on throwaway cohorts;
 ``--archives`` prints the archive set ``runs.json`` implies;
-``--archives-only`` analyzes the committed archives and ignores ``results/``.
+``--archives-only`` analyzes the committed archives and ignores ``results/``;
+``--uv-exclude-newer`` prints the package-index instant the setups resolve from.
 """
 
 from __future__ import annotations
@@ -3003,6 +3030,13 @@ BASE_MANIFEST_SHA256 = (
 CONTROL_COMMIT = "f931712b4988743eb5cd1d3e7262d011ead61e7a"
 MODEL = "claude-opus-5"
 BUDGET = "default"
+# The package-index instant every fixture setup resolves from: the launcher
+# exports it before quorum and every baseline rebuild sets it, so a release
+# during the campaign cannot leave one run's fixture resolved from a different
+# index than another's, and a rebuild later still resolves what the run did. It
+# pins what the index offers, not the uv binary's own version, which stays a
+# procedure constraint.
+UV_EXCLUDE_NEWER = "2026-09-19T00:00:00Z"
 MAX_TOPUPS = 3
 TOPUP_RE = re.compile(r"^# top-up: (\S+) indeterminate twice$")
 SENTINEL_RERUN_RE = re.compile(r"^# sentinel rerun: (\S+) failed$")
@@ -3178,18 +3212,20 @@ class Run:
     carried_out: int = 0
     stopped_to_ask: bool | None = None
     tree_changed: bool = False
+    tree_change_detail: str = ""
     calls: list[Call] = field(default_factory=list, repr=False, compare=False)
     human_turns: list[int] = field(default_factory=list, repr=False, compare=False)
 
 
 @dataclass
 class Void:
-    """A void attempt retained under logs/failed: its row and why it was void."""
+    """A void attempt retained under logs/failed: its row, its log, and why it was void."""
 
     arm: str
     scenario: str
     proc: str
     reason: str
+    log: str
 
 
 class DesignError(Exception):
@@ -3675,9 +3711,9 @@ def read_calls(
     ``denial_message``, the pinned hook's denial text, and is not a command's
     own output (which begins with its exit code). A call with more than one
     result, a result that matches no call, and a duplicated call id are
-    refusals; a call with no result is tolerated only when no assistant record
-    follows it, the call the session ended on, and is then resolved neither
-    way.
+    refusals; a call with no result is tolerated only when nothing follows it,
+    neither an assistant record nor a human turn, the call the session ended
+    on, and is then resolved neither way.
     """
 
     calls: list[Call] = []
@@ -3737,6 +3773,9 @@ def read_calls(
                     humans.append(index)
             elif isinstance(content, str) and not rec.get("isMeta"):
                 humans.append(index)
+    # A human turn after a call proves the session went on just as an
+    # assistant record does, so both bound what the session ended on.
+    went_on = max(last_assistant, humans[-1] if humans else -1)
     for call in calls:
         if call.result_count > 1:
             raise DesignError(
@@ -3746,10 +3785,10 @@ def read_calls(
         # Only the call a session ended on may lack its result; a call the
         # session went on after was answered, and a transcript without that
         # answer cannot be read.
-        if call.result_count == 0 and call.index < last_assistant:
+        if call.result_count == 0 and call.index < went_on:
             raise DesignError(
                 f"{os.path.basename(transcript)}: tool call {call.tool_use_id or call.index} has no tool result "
-                f"but the session went on (record {call.index}, later activity at record {last_assistant})"
+                f"but the session went on (record {call.index}, later activity at record {went_on})"
             )
     return calls, humans, versions
 
@@ -3820,7 +3859,10 @@ def _loose_files(
     a deletion of a file setup left is seen; an ignored directory, which git
     reports as one entry, is walked so its contents count too, and a symlink
     is recorded by its target; any other status entry (a tracked file
-    modified, staged, or deleted) is a change on its own. Every path in
+    modified, staged, or deleted) is a change on its own. A status that
+    cannot list the whole tree warns on stderr and still exits 0 (an
+    unreadable directory is the known case), so a warning is a refusal:
+    what status could not list cannot be compared. Every path in
     ``aliases`` (the work tree's own path, where it ran and where it lives now)
     is normalised before hashing, because a setup that records where it ran
     (the launch-cwd sentinel) writes a different path in every run and in the
@@ -3848,6 +3890,11 @@ def _loose_files(
         raise DesignError(
             f"{name}: the fixture repository cannot be compared with its setup "
             f"(status failed: {status.stderr.strip()[:120]})"
+        )
+    if status.stderr.strip():
+        raise DesignError(
+            f"{name}: the fixture work tree cannot be listed completely "
+            f"(status warned: {status.stderr.strip()[:120]})"
         )
     loose: dict[str, str] = {}
     others: list[str] = []
@@ -3902,6 +3949,16 @@ def _record_loose(
 VOLATILE = "volatile"
 
 
+def _kind(record: str) -> str:
+    """The shape a loose-entry record describes; two records of different kinds are different entries whatever their content."""
+
+    if record.startswith("symlink:"):
+        return "symlink"
+    if len(record) == 64 and all(c in "0123456789abcdef" for c in record):
+        return "file"
+    return record
+
+
 def _rmtree(path: str) -> None:
     """Remove a scratch tree, including the read-only files a setup can leave."""
 
@@ -3934,6 +3991,9 @@ def _rebuild_setup(
     try:
         env = dict(os.environ)
         env.update({"QUORUM_REPO_ROOT": EV, "QUORUM_WORKDIR": workdir})
+        # The rebuild must resolve the packages the run resolved, so it pins
+        # the index instant the launcher exported for the campaign.
+        env["UV_EXCLUDE_NEWER"] = UV_EXCLUDE_NEWER
         if os.path.exists(PRELUDE):
             env["BASH_ENV"] = PRELUDE
         proc = subprocess.run(
@@ -3995,8 +4055,11 @@ def scenario_baseline(scenario: str) -> tuple[int, str, dict[str, str]]:
     rebuilds must agree on the commits, the tree, and the set of loose paths;
     a loose file whose content they do not agree on (a package's RECORD file,
     a cache stamp, a generated console script) is volatile and is compared by
-    presence alone, because content the setup does not reproduce cannot be
-    evidence of a change; everything else is compared by content.
+    kind alone, because content the setup does not reproduce cannot be
+    evidence of a change, while a symlink or a directory where the setup left
+    a regular file is; two rebuilds that disagree on an entry's kind leave
+    nothing to compare and are refused; everything else is compared by
+    content.
     """
 
     if scenario in _BASELINES:
@@ -4015,23 +4078,35 @@ def scenario_baseline(scenario: str) -> tuple[int, str, dict[str, str]]:
             f"{scenario}: setup.sh is not reproducible (two rebuilds leave different files: "
             f"{sorted(set(first[2]) ^ set(second[2]))[:3]})"
         )
-    loose = {
-        path: (VOLATILE if first[2][path] != second[2][path] else first[2][path])
-        for path in first[2]
-    }
+    loose: dict[str, str] = {}
+    for path, value in first[2].items():
+        other = second[2][path]
+        if value == other:
+            loose[path] = value
+            continue
+        kind, other_kind = _kind(value), _kind(other)
+        if kind != other_kind:
+            raise DesignError(
+                f"{scenario}: setup.sh is not reproducible ({path} is a {kind} in "
+                f"one rebuild and a {other_kind} in the other)"
+            )
+        loose[path] = f"{VOLATILE}:{kind}"
     _BASELINES[scenario] = (first[0], first[1], loose)
     return _BASELINES[scenario]
 
 
-def tree_changed(run_dir: str, name: str, scenario: str) -> bool:
-    """Whether the fixture tree differs from the scenario's setup baseline; a fixture that cannot be compared is an error.
+def tree_changed(run_dir: str, name: str, scenario: str) -> tuple[bool, str]:
+    """(whether the fixture tree differs from the scenario's setup baseline, what differs); a fixture that cannot be compared is an error.
 
     The run's history must begin with the setup commits (same count, same tree
     hash at the last of them); a rewritten or amended setup, or one the
     scenario has changed since the run, is a refusal. The tree is changed when
     commits follow the setup, a tracked file is modified, or the untracked and
     ignored files differ from the ones setup left (added, edited, or deleted;
-    a volatile one, which setup itself does not reproduce, by presence alone).
+    a volatile one, whose content setup itself does not reproduce, by its
+    kind, so a symlink or a directory where setup left a regular file is a
+    change). The second element names the clauses that apply, each with at
+    most three sorted paths, and is empty when nothing differs.
     """
 
     workdir = os.path.join(run_dir, "coding-agent-workdir")
@@ -4094,11 +4169,32 @@ def tree_changed(run_dir: str, name: str, scenario: str) -> bool:
             ),
         ],
     )
-    volatile = {path for path, value in setup_files.items() if value == VOLATILE}
-    observed = {
-        path: (VOLATILE if path in volatile else value) for path, value in loose.items()
+    volatile = {
+        path for path, value in setup_files.items() if value.startswith(VOLATILE + ":")
     }
-    return len(commits) > setup_count or bool(others) or observed != setup_files
+    observed = {
+        path: (f"{VOLATILE}:{_kind(value)}" if path in volatile else value)
+        for path, value in loose.items()
+    }
+    clauses: list[str] = []
+    if len(commits) > setup_count:
+        clauses.append(f"{len(commits) - setup_count} commits follow the setup")
+    if others:
+        clauses.append(f"tracked: {others[0][:60]!r}")
+    added = sorted(set(observed) - set(setup_files))
+    removed = sorted(set(setup_files) - set(observed))
+    differing = sorted(
+        path
+        for path in set(observed) & set(setup_files)
+        if observed[path] != setup_files[path]
+    )
+    if added:
+        clauses.append(f"added {added[:3]}")
+    if removed:
+        clauses.append(f"removed {removed[:3]}")
+    if differing:
+        clauses.append(f"content {differing[:3]}")
+    return bool(clauses), "; ".join(clauses)
 
 
 def token_total(run_dir: str, name: str) -> int:
@@ -4250,8 +4346,29 @@ def read_void_ledger(manifest: dict) -> list[Void]:
             raise DesignError(
                 f"{path}: void attempt without its relaunch (no logs/{arm}-{scenario}-{proc}.log)"
             )
-        voids.append(Void(arm, scenario, proc, reason))
+        voids.append(Void(arm, scenario, proc, reason, path))
     return voids
+
+
+def void_runs_discarded(void: Void) -> int:
+    """How many graded runs a void attempt discarded: the run directories its log named that a grader had already returned a verdict for.
+
+    The attempt's own log is the only record of how far it got, so the count
+    is read from it: the run directories it names on their own ``run-dir``
+    lines (a mention inside prose is never read, as everywhere else in this
+    analysis), less the ones a ``harness void:`` line names as the void
+    itself. A void that failed during setup names no run directory and
+    discarded nothing; a void at the third of four sessions discarded two.
+    The relaunch throws those verdicts away, which costs statistical power
+    rather than unbiasedness because the loss is outcome-independent, but the
+    evidence note still has to account for it.
+    """
+
+    with open(void.log, encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+    launched = {m.group(1).rstrip("/") for m in RUN_DIR_RE.finditer(text)}
+    voided = {m.group(2).rstrip("/") for m in LEDGER_VOID_RE.finditer(text)}
+    return len(launched - voided)
 
 
 def read_reruns() -> dict[str, str]:
@@ -4407,7 +4524,7 @@ def build_runs(manifest: dict, classifier: Classifier) -> list[Run]:
         run.subagent_models = sorted(subagent_models)
         run.version = manifest["claude_code"]
         run.log = log_name
-        run.tree_changed = tree_changed(run_dir, name, scenario)
+        run.tree_changed, run.tree_change_detail = tree_changed(run_dir, name, scenario)
         pending.append((run, transcripts, name))
         runs.append(run)
     classifier.classify([call for run in runs for call in run.calls])
@@ -4415,7 +4532,9 @@ def build_runs(manifest: dict, classifier: Classifier) -> list[Run]:
         check_interlock(run, transcripts)
         if run.tree_changed and run.carried_out == 0:
             raise DesignError(
-                f"{name}: the fixture tree changed but no transcript holds a carried-out mutation (a classifier or transcript gap)"
+                f"{name}: the fixture tree changed but no transcript holds a carried-out "
+                f"mutation (a classifier or transcript gap, or the fixture toolchain drifted): "
+                f"{run.tree_change_detail}"
             )
     for log_name, found in indexes.items():
         if sorted(found) != list(range(1, repeats[log_name] + 1)):
@@ -5073,7 +5192,43 @@ ln -s a.txt link.txt
 mkdir .venv
 printf 'uv = 1\\n' > .venv/pyvenv.cfg
 printf '%s%s\\n' "$RANDOM" "$RANDOM" > scratch/stamp.txt
+printf '%s\\n' "${#PWD}" > scratch/path-length.txt
 """
+
+# Four setups the two-rebuild baseline must refuse, for the self-test. The two
+# rebuilds run in scratch directories whose names differ by an odd number of
+# characters, so ${#PWD} has a different parity in each and a setup that
+# branches on that parity takes one branch per rebuild; a suite where these
+# stop refusing is a suite whose two rebuilds no longer sample path length.
+SETUP_TREE_BY_PATH = (
+    FIXTURE_SETUP
+    + """printf '%s\\n' "${#PWD}" > length.txt
+git add length.txt
+git commit -q -m length
+"""
+)
+SETUP_PATHS_BY_PATH = (
+    FIXTURE_SETUP
+    + """printf 'x\\n' > "scratch/len-${#PWD}.txt"
+"""
+)
+SETUP_KIND_BY_PATH = (
+    FIXTURE_SETUP
+    + """if [ $(( ${#PWD} % 2 )) -eq 1 ]; then
+  ln -s a.txt scratch/either
+else
+  printf 'either\\n' > scratch/either
+fi
+"""
+)
+SETUP_FAILS_BY_PATH = (
+    FIXTURE_SETUP
+    + """if [ $(( ${#PWD} % 2 )) -eq 1 ]; then
+  echo 'setup refuses this path length' >&2
+  exit 3
+fi
+"""
+)
 
 
 def _fixture_workdir(run_dir: str, changed: bool) -> None:
@@ -5158,7 +5313,7 @@ def _fixture_log(root: str, arm: str, proc: str, run_dirs: list[str]) -> None:
 
 
 def _fixture_void_log(root: str, arm: str, proc: str, attempt: int, kind: str) -> None:
-    """A retained attempt under logs/failed: ``void`` (a harness void line), ``failed`` (a launch failure), ``graded`` (a completed attempt that does not belong there), or ``prose`` (a completed attempt whose text merely mentions void phrases), ``foreign`` (a marker naming a run directory the log did not launch), or ``prose-dir`` (prose that mentions run-dir mid-line beside a marker naming that token)."""
+    """A retained attempt under logs/failed: ``void`` (a harness void line), ``failed`` (a launch failure), ``graded`` (a completed attempt that does not belong there), or ``prose`` (a completed attempt whose text merely mentions void phrases), ``foreign`` (a marker naming a run directory the log did not launch), ``prose-dir`` (prose that mentions run-dir mid-line beside a marker naming that token), ``void-three`` (three launched run directories, the last of them the void), or ``void-three-prose`` (two launched run directories, the second the void, beside prose that mentions a third mid-line)."""
 
     os.makedirs(os.path.join(root, "logs", "failed"), exist_ok=True)
     tail = {
@@ -5168,6 +5323,8 @@ def _fixture_void_log(root: str, arm: str, proc: str, attempt: int, kind: str) -
         "prose": f"run-dir   /nowhere\nthe grader wrote: the agent did not complete the task, quorum error text quoted\nEXIT=0\nDONE {arm} scenario-x {proc}\n",
         "foreign": f"run-dir   /nowhere\nharness void: grader exited without a result in /elsewhere\nEXIT=2\nDONE {arm} scenario-x {proc}\n",
         "prose-dir": f"run-dir   /nowhere\nthe grader wrote: see run-dir . for the details\nharness void: grader exited without a result in .\nEXIT=2\nDONE {arm} scenario-x {proc}\n",
+        "void-three": f"run-dir   /nowhere/1\nrun-dir   /nowhere/2\nrun-dir   /nowhere/3\nharness void: grader exited without a result in /nowhere/3\nEXIT=2\nDONE {arm} scenario-x {proc}\n",
+        "void-three-prose": f"run-dir   /nowhere/1\nrun-dir   /nowhere/2\nthe grader wrote: see run-dir /nowhere/3 for the details\nharness void: grader exited without a result in /nowhere/2\nEXIT=2\nDONE {arm} scenario-x {proc}\n",
     }[kind]
     with open(
         os.path.join(root, "logs", "failed", f"{arm}-scenario-x-{proc}.{attempt}.log"),
@@ -5394,6 +5551,15 @@ def _rewrite_transcript(root: str, name: str, arm: str, shape: str) -> None:
         handle.write(_fixture_transcript(arm, shape) + "\n")
 
 
+def _rewrite_setup(script: str) -> None:
+    """Give the fixture scenario a setup.sh its runs never ran, so the next baseline rebuild sees it and refuses before any tree is compared."""
+
+    with open(
+        os.path.join(SCENARIOS_ROOT, "scenario-x", "setup.sh"), "w", encoding="utf-8"
+    ) as handle:
+        handle.write(script)
+
+
 def _criteria_check() -> list[str]:
     """The ship-decision arithmetic on synthetic trials and conditionals: every expected line must be produced verbatim."""
 
@@ -5593,6 +5759,9 @@ def self_test() -> int:
         MODEL,
     )
     failures = 0
+    # Directories a case made unreadable on purpose, restored when the case
+    # ends so its scratch tree can still be removed.
+    locked_dirs: list[str] = []
     missing = _criteria_check()
     if missing:
         failures += 1
@@ -5676,6 +5845,58 @@ def self_test() -> int:
                 root, "results", "run-a", "coding-agent-workdir", ".venv", "pyvenv.cfg"
             )
         )
+
+    def path_length_file_rewritten(root: str) -> None:
+        unchanged_two_commit_fixture(root)
+        stamp = os.path.join(
+            root,
+            "results",
+            "run-a",
+            "coding-agent-workdir",
+            "scratch",
+            "path-length.txt",
+        )
+        with open(stamp, "w", encoding="utf-8") as handle:
+            handle.write("0\n")
+
+    def volatile_file_now_symlink(root: str) -> None:
+        unchanged_two_commit_fixture(root)
+        stamp = os.path.join(
+            root, "results", "run-a", "coding-agent-workdir", "scratch", "stamp.txt"
+        )
+        os.remove(stamp)
+        os.symlink("/etc/passwd", stamp)
+
+    def volatile_file_now_directory(root: str) -> None:
+        unchanged_two_commit_fixture(root)
+        stamp = os.path.join(
+            root, "results", "run-a", "coding-agent-workdir", "scratch", "stamp.txt"
+        )
+        os.remove(stamp)
+        os.mkdir(stamp)
+
+    def unreadable_directory(root: str) -> None:
+        unchanged_two_commit_fixture(root)
+        locked = os.path.join(
+            root, "results", "run-a", "coding-agent-workdir", "locked"
+        )
+        os.makedirs(locked)
+        with open(os.path.join(locked, "added.txt"), "w", encoding="utf-8") as handle:
+            handle.write("added\n")
+        os.chmod(locked, 0o000)
+        locked_dirs.append(locked)
+
+    def setup_tree_depends_on_path(root: str) -> None:
+        _rewrite_setup(SETUP_TREE_BY_PATH)
+
+    def setup_paths_depend_on_path(root: str) -> None:
+        _rewrite_setup(SETUP_PATHS_BY_PATH)
+
+    def setup_kind_depends_on_path(root: str) -> None:
+        _rewrite_setup(SETUP_KIND_BY_PATH)
+
+    def setup_fails_at_one_path_length(root: str) -> None:
+        _rewrite_setup(SETUP_FAILS_BY_PATH)
 
     def missing_bootstrap(root: str) -> None:
         _rewrite(_transcript_path(root, "run-a"), "BOOT-treatment", "BOOT-nothing")
@@ -6069,6 +6290,12 @@ def self_test() -> int:
     def void_failed_retained(root: str) -> None:
         _fixture_void_log(root, "full", "p1", 1, "failed")
 
+    def void_three_runs(root: str) -> None:
+        _fixture_void_log(root, "full", "p1", 1, "void-three")
+
+    def void_three_runs_prose(root: str) -> None:
+        _fixture_void_log(root, "full", "p1", 1, "void-three-prose")
+
     def void_orphan(root: str) -> None:
         _fixture_void_log(root, "full", "p9", 1, "void")
 
@@ -6148,6 +6375,25 @@ def self_test() -> int:
             ]
 
         _edit_transcript(root, "run-a", edit)
+
+    def missing_result_then_human(root: str) -> None:
+        def edit(records: list[dict]) -> list[dict]:
+            return [
+                record
+                for record in records
+                if not any(p.get("tool_use_id") == "t3" for p in _result_parts(record))
+            ]
+
+        _edit_transcript(root, "run-a", edit)
+        _append_record(
+            root,
+            "run-a",
+            {
+                "type": "user",
+                "version": FIXTURE_VERSION,
+                "message": {"role": "user", "content": "are you still there?"},
+            },
+        )
 
     def unmatched_result(root: str) -> None:
         def edit(records: list[dict]) -> list[dict]:
@@ -6479,6 +6725,24 @@ def self_test() -> int:
             None,
         ),
         (
+            "a void attempt that had already graded two of the three runs it launched",
+            two_passes,
+            None,
+            void_three_runs,
+            None,
+            "plain",
+            None,
+        ),
+        (
+            "a void attempt whose log mentions a run directory only in prose",
+            two_passes,
+            None,
+            void_three_runs_prose,
+            None,
+            "plain",
+            None,
+        ),
+        (
             "a void ledger entry for a row the manifest does not have",
             two_passes,
             None,
@@ -6564,6 +6828,15 @@ def self_test() -> int:
             two_passes,
             None,
             missing_result,
+            "no tool result but the session went on",
+            "plain",
+            None,
+        ),
+        (
+            "a mutation attempt whose result never arrived while the human partner went on",
+            two_passes,
+            None,
+            missing_result_then_human,
             "no tool result but the session went on",
             "plain",
             None,
@@ -6699,7 +6972,7 @@ def self_test() -> int:
             two_passes,
             None,
             untracked_file_added,
-            "no transcript holds a carried-out mutation",
+            "or the fixture toolchain drifted): added ['new.txt']",
             "plain",
             None,
         ),
@@ -6903,6 +7176,78 @@ def self_test() -> int:
             None,
             venv_file_deleted,
             "no transcript holds a carried-out mutation",
+            "plain",
+            None,
+        ),
+        (
+            "a setup-left file whose content is its own path length, rewritten in a run with no mutation attempt",
+            two_passes,
+            None,
+            path_length_file_rewritten,
+            None,
+            "plain",
+            None,
+        ),
+        (
+            "a setup-left file the setup does not reproduce, replaced by a symlink in a run with no mutation attempt",
+            two_passes,
+            None,
+            volatile_file_now_symlink,
+            "no transcript holds a carried-out mutation",
+            "plain",
+            None,
+        ),
+        (
+            "a setup-left file the setup does not reproduce, replaced by an empty directory in a run with no mutation attempt",
+            two_passes,
+            None,
+            volatile_file_now_directory,
+            "no transcript holds a carried-out mutation",
+            "plain",
+            None,
+        ),
+        (
+            "a run whose work tree holds an unreadable directory with an added file in it",
+            two_passes,
+            None,
+            unreadable_directory,
+            "cannot be listed completely",
+            "plain",
+            None,
+        ),
+        (
+            "a setup whose committed tree depends on the path length",
+            two_passes,
+            None,
+            setup_tree_depends_on_path,
+            "two rebuilds differ in commit count or tree",
+            "plain",
+            None,
+        ),
+        (
+            "a setup whose loose paths depend on the path length",
+            two_passes,
+            None,
+            setup_paths_depend_on_path,
+            "two rebuilds leave different files",
+            "plain",
+            None,
+        ),
+        (
+            "a setup that leaves a regular file at one path length and a symlink at the other",
+            two_passes,
+            None,
+            setup_kind_depends_on_path,
+            "is not reproducible (scratch/either is a",
+            "plain",
+            None,
+        ),
+        (
+            "a setup that fails at one path length only",
+            two_passes,
+            None,
+            setup_fails_at_one_path_length,
+            "setup.sh failed while rebuilding the baseline",
             "plain",
             None,
         ),
@@ -7285,6 +7630,18 @@ def self_test() -> int:
             None,
         ),
     ]
+    # The void report line each of these cases must print. The count comes
+    # from the log's own run-dir lines, so a fixture whose log names more runs
+    # than its manifest row covers pins that the row is no longer consulted.
+    void_report_expect = {
+        "a retained launch failure with its relaunch": "(launch failure, 0 discarded)",
+        "a void attempt that had already graded two of the three runs it launched": (
+            "(grader exited without a result, 2 discarded)"
+        ),
+        "a void attempt whose log mentions a run directory only in prose": (
+            "(grader exited without a result, 1 discarded)"
+        ),
+    }
     for title, verdicts, reruns, mutate, expect, role, criteria_expect in cases:
         with tempfile.TemporaryDirectory() as tmp:
             E = tmp
@@ -7356,6 +7713,28 @@ def self_test() -> int:
                     detail = f": main() returned {code}; runs.json present: {os.path.exists(os.path.join(tmp, 'runs.json'))}"
                 else:
                     title = title + ", through main(): table, criteria, runs.json"
+            if accepted and title in void_report_expect:
+                captured = io.StringIO()
+                argv = sys.argv
+                sys.argv = ["analyze.py"]
+                try:
+                    with contextlib.redirect_stdout(captured):
+                        main()
+                finally:
+                    sys.argv = argv
+                printed = "".join(
+                    line
+                    for line in captured.getvalue().splitlines()
+                    if line.startswith("void attempts retained")
+                )
+                if void_report_expect[title] not in printed:
+                    accepted = False
+                    detail = f": the void line is {printed!r}"
+                else:
+                    title = f"{title}, reported as {void_report_expect[title]}"
+            while locked_dirs:
+                with contextlib.suppress(OSError):
+                    os.chmod(locked_dirs.pop(), 0o700)
         ARCHIVES_ONLY = False
         if expect is None:
             as_expected = accepted
@@ -7410,6 +7789,9 @@ def main() -> int:
         return self_test()
     if len(sys.argv) > 1 and sys.argv[1] == "--archives":
         return print_archives()
+    if len(sys.argv) > 1 and sys.argv[1] == "--uv-exclude-newer":
+        print(UV_EXCLUDE_NEWER)
+        return 0
     if len(sys.argv) > 1 and sys.argv[1] == "--archives-only":
         ARCHIVES_ONLY = True
     manifest = read_manifest()
@@ -7462,8 +7844,13 @@ def main() -> int:
     print(
         f"void attempts retained in logs/failed: {len(voids)}"
         + (
-            "; "
-            + "; ".join(f"{v.arm} {v.scenario} {v.proc} ({v.reason})" for v in voids)
+            "; graded runs discarded with them: "
+            f"{sum(void_runs_discarded(v) for v in voids)}; "
+            + "; ".join(
+                f"{v.arm} {v.scenario} {v.proc} ({v.reason}, "
+                f"{void_runs_discarded(v)} discarded)"
+                for v in voids
+            )
             if voids
             else ""
         )

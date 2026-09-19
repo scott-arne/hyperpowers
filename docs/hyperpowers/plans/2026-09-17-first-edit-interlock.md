@@ -2522,8 +2522,11 @@ baseline is rebuilt by running its `setup.sh` the way the harness does and
 matched by commit count and tree hash, so a rewritten setup history is
 refused, a multi-commit fixture is not mistaken for a change, and the
 untracked or ignored files setup itself leaves are compared by content,
-with the work tree's own path inside a file normalised, so editing or
-deleting one, or adding another, is a change), then
+walking ignored directories and reading symlink targets, with the work
+tree's own path inside a file normalised, so editing or deleting one, or
+adding another, is a change; the archives-only replay leaves out the
+paths this repository's ignore rules keep out of the archive, such as
+`.venv/`, because the archive cannot hold them), then
 prints the per-cell
 table, the spec's acceptance criteria over planned counts, the attribution
 readout, and the cost readout, and writes `runs.json`. Indeterminate trials
@@ -3811,8 +3814,10 @@ def _loose_files(
     """(untracked and ignored files by path with a content hash, other status entries) of a work tree.
 
     Untracked and ignored files are compared by content later, so an edit or
-    a deletion of a file setup left is seen; any other status entry (a tracked
-    file modified, staged, or deleted) is a change on its own. Every path in
+    a deletion of a file setup left is seen; an ignored directory, which git
+    reports as one entry, is walked so its contents count too, and a symlink
+    is recorded by its target; any other status entry (a tracked file
+    modified, staged, or deleted) is a change on its own. Every path in
     ``aliases`` (the work tree's own path, where it ran and where it lives now)
     is normalised before hashing, because a setup that records where it ran
     (the launch-cwd sentinel) writes a different path in every run and in the
@@ -3853,18 +3858,62 @@ def _loose_files(
         if code[0] in "RC":
             skip = True  # a rename carries its source in the next entry
         if code in ("??", "!!"):
-            full = os.path.join(workdir, path)
-            if os.path.isfile(full) and not os.path.islink(full):
-                with open(full, "rb") as handle:
-                    data = handle.read()
-                for alias in aliases:
-                    data = data.replace(alias.encode(), b"<workdir>")
-                loose[path] = hashlib.sha256(data).hexdigest()
-            else:
-                loose[path] = "not a regular file"
+            _record_loose(loose, workdir, path.rstrip("/"), aliases)
         else:
             others.append(entry)
     return loose, others
+
+
+def _record_loose(
+    loose: dict[str, str], workdir: str, path: str, aliases: list[str]
+) -> None:
+    """Record one loose entry by content: a file's hash, a symlink's target, and every entry under a directory (git reports an ignored directory as one entry)."""
+
+    full = os.path.join(workdir, path)
+    if os.path.islink(full):
+        target = os.readlink(full)
+        for alias in aliases:
+            target = target.replace(alias, "<workdir>")
+        loose[path] = "symlink:" + target
+    elif os.path.isdir(full):
+        children = sorted(os.listdir(full))
+        if not children:
+            loose[path] = "empty directory"
+        for child in children:
+            _record_loose(loose, workdir, os.path.join(path, child), aliases)
+    elif os.path.isfile(full):
+        with open(full, "rb") as handle:
+            data = handle.read()
+        for alias in aliases:
+            data = data.replace(alias.encode(), b"<workdir>")
+        loose[path] = hashlib.sha256(data).hexdigest()
+    else:
+        loose[path] = "not a regular file"
+
+
+def _archive_dropped(paths: set[str]) -> set[str]:
+    """The loose paths the evals repository's own ignore rules keep out of a committed archive (.venv/, node_modules/, ...).
+
+    An archive replay can only compare what the archive holds, so these paths
+    are left out of the comparison in archives-only mode; the live analysis
+    compares everything.
+    """
+
+    if not paths:
+        return set()
+    prefix = os.path.join(ARCHIVES, "scenario", "arm", "run", "coding-agent-workdir")
+    probe = subprocess.run(
+        ["git", "-C", EV, "check-ignore", "--no-index", "--stdin"],
+        input="".join(f"{prefix}/{path}\n" for path in sorted(paths)),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode not in (0, 1):
+        raise DesignError(
+            f"the evals repository's ignore rules cannot be read (check-ignore failed: {probe.stderr.strip()[:120]})"
+        )
+    return {line[len(prefix) + 1 :] for line in probe.stdout.splitlines() if line}
 
 
 def scenario_baseline(scenario: str) -> tuple[int, str, dict[str, str]]:
@@ -4014,7 +4063,12 @@ def tree_changed(run_dir: str, name: str, scenario: str) -> bool:
             ),
         ],
     )
-    return len(commits) > setup_count or bool(others) or loose != setup_files
+    expected = setup_files
+    if ARCHIVES_ONLY:
+        dropped = _archive_dropped(set(loose) | set(setup_files))
+        loose = {k: v for k, v in loose.items() if k not in dropped}
+        expected = {k: v for k, v in setup_files.items() if k not in dropped}
+    return len(commits) > setup_count or bool(others) or loose != expected
 
 
 def token_total(run_dir: str, name: str) -> int:
@@ -4982,6 +5036,11 @@ printf 'scratch/\\n' > .gitignore
 git add b.txt .gitignore
 git commit -q -m second
 printf 'x\\n' > .setup-sentinel
+mkdir scratch
+printf 'kept\\n' > scratch/keep.txt
+ln -s a.txt link.txt
+mkdir .venv
+printf 'uv = 1\\n' > .venv/pyvenv.cfg
 """
 
 
@@ -5562,6 +5621,34 @@ def self_test() -> int:
             shutil.copytree(src, dst)
         _set_verdict(root, "run-a", final="pass")
 
+    def all_archived_stripped(root: str) -> None:
+        all_archived(root)
+        for arm, name in (
+            ("full", "run-a"),
+            ("full", "run-b"),
+            ("wording", "run-w"),
+            ("control", "run-c"),
+        ):
+            shutil.rmtree(
+                os.path.join(
+                    root,
+                    ARCHIVES,
+                    "scenario-x",
+                    arm,
+                    name,
+                    "coding-agent-workdir",
+                    ".venv",
+                )
+            )
+
+    def venv_file_deleted(root: str) -> None:
+        unchanged_two_commit_fixture(root)
+        os.remove(
+            os.path.join(
+                root, "results", "run-a", "coding-agent-workdir", ".venv", "pyvenv.cfg"
+            )
+        )
+
     def missing_bootstrap(root: str) -> None:
         _rewrite(_transcript_path(root, "run-a"), "BOOT-treatment", "BOOT-nothing")
 
@@ -6099,6 +6186,30 @@ def self_test() -> int:
             )
         )
 
+    def ignored_child_edited(root: str) -> None:
+        unchanged_two_commit_fixture(root)
+        keep = os.path.join(
+            root, "results", "run-a", "coding-agent-workdir", "scratch", "keep.txt"
+        )
+        with open(keep, "a", encoding="utf-8") as handle:
+            handle.write("edited\n")
+
+    def ignored_child_deleted(root: str) -> None:
+        unchanged_two_commit_fixture(root)
+        os.remove(
+            os.path.join(
+                root, "results", "run-a", "coding-agent-workdir", "scratch", "keep.txt"
+            )
+        )
+
+    def symlink_retargeted(root: str) -> None:
+        unchanged_two_commit_fixture(root)
+        link = os.path.join(
+            root, "results", "run-a", "coding-agent-workdir", "link.txt"
+        )
+        os.remove(link)
+        os.symlink("b.txt", link)
+
     def ignored_file_added(root: str) -> None:
         unchanged_two_commit_fixture(root)
         scratch = os.path.join(
@@ -6475,6 +6586,33 @@ def self_test() -> int:
             None,
         ),
         (
+            "a file inside a setup-left ignored directory edited during a run with no mutation attempt",
+            two_passes,
+            None,
+            ignored_child_edited,
+            "no transcript holds a carried-out mutation",
+            "plain",
+            None,
+        ),
+        (
+            "a file inside a setup-left ignored directory deleted during a run with no mutation attempt",
+            two_passes,
+            None,
+            ignored_child_deleted,
+            "no transcript holds a carried-out mutation",
+            "plain",
+            None,
+        ),
+        (
+            "a setup-left symlink retargeted during a run with no mutation attempt",
+            two_passes,
+            None,
+            symlink_retargeted,
+            "no transcript holds a carried-out mutation",
+            "plain",
+            None,
+        ),
+        (
             "an ignored file added during a run with no mutation attempt",
             two_passes,
             None,
@@ -6712,6 +6850,24 @@ def self_test() -> int:
             None,
             "archives-only",
             "scenario-x full gated: 1/2",
+        ),
+        (
+            "an archives-only analysis over copies stripped of the paths the repository ignores",
+            two_passes,
+            None,
+            all_archived_stripped,
+            None,
+            "archives-only",
+            "scenario-x full gated: 1/2",
+        ),
+        (
+            "a setup-left file under .venv deleted during a live run with no mutation attempt",
+            two_passes,
+            None,
+            venv_file_deleted,
+            "no transcript holds a carried-out mutation",
+            "plain",
+            None,
         ),
         (
             "a payload without the pinned bootstrap",
@@ -7335,7 +7491,7 @@ shellcheck --severity=warning $E/logs/measure-launch.sh $E/launch-all.sh $E/logs
 /Users/johnss51/Applications/micromamba/envs/main/bin/python $E/analyze.py
 ```
 
-Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 94 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
+Expected: the shell checks silent; `1 file already formatted`, `All checks passed!`, `Success: no issues found in 1 source file`; the self-test prints `criteria arithmetic: 22 expected lines produced`, then 99 lines each starting `accepted as expected` or `refused as expected` (the clean cohort line ends `through main(): table, criteria, runs.json`), no `SELF-TEST FAILURE`, and exits 0; the last command exits 1 with `DESIGN ERROR: manifest.tsv: harness commit missing or not a full sha` (the placeholders are still in `manifest.tsv`; reaching this error proves the frozen base digest and the planned counts were accepted first). Delete any `.mypy_cache`, `.ruff_cache`, or `__pycache__` the checks left under `$E` before committing.
 
 - [ ] **Step 11: Commit in the evals clone**
 

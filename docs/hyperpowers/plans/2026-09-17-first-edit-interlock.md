@@ -8116,7 +8116,7 @@ git commit -m "evidence: manifest, launchers, vector copy, and fail-closed analy
 
 - [ ] **Step 1: Freeze the full root and build the probe copy of the plugin with a logging wrapper around the hook**
 
-The copy is the branch head with the hook wrapped so that every call appends its payload and the wave identifier it read to a log; nothing in the worktree changes. The full worktree must be clean and every plan revision committed first (Global Constraints); the head and the Claude Code version are recorded now and checked again by Task 6.
+The copy is the branch head with the hook wrapped so that every call appends its payload, the context the hook derived, and that context's wave identifier to a log; nothing in the worktree changes. The wrapper asks `interlock-lib.cjs --hook` for those fields rather than reading `transcript_path` itself: for a subagent call `transcript_path` names the **controller's** transcript, so a wrapper that took the wave from it would log the very value session two must prove the hook does not use, and every check below would read as passed. The full worktree must be clean and every plan revision committed first (Global Constraints); the head and the Claude Code version are recorded now and checked again by Task 6.
 
 ```bash
 #!/usr/bin/env bash
@@ -8128,7 +8128,7 @@ P="$TMPDIR/interlock-probe"; rm -rf "$P"; mkdir -p "$P/plugin"
 printf 'full_root=%s\nclaude_code=%s\n' "$(git -C "$HP" rev-parse HEAD)" "$(claude --version | awk '{print $1}')" > "$P/probe-pins.txt"; cat "$P/probe-pins.txt"
 git -C "$HP" archive HEAD | tar -x -C "$P/plugin"
 mv "$P/plugin/hooks/first-edit-interlock" "$P/plugin/hooks/first-edit-interlock.real"
-printf '%s\n' '#!/usr/bin/env bash' 'here="$(cd "$(dirname "$0")" && pwd)"' 'input="$(cat)"' "log=\"$P/hook.log\"" 'tp="$(printf "%s" "$input" | node -e "try{const p=JSON.parse(require(\"fs\").readFileSync(0,\"utf8\"));process.stdout.write(String(p.transcript_path||\"\"))}catch(e){}")"' 'wave="$(node "$here/interlock-lib.cjs" --wave "$tp" 2>/dev/null)"' 'printf -- "--- %s wave=%s\n%s\n" "$(date -u +%H:%M:%SZ)" "$wave" "$input" >> "$log"' 'printf "%s" "$input" | bash "$here/first-edit-interlock.real"' > "$P/plugin/hooks/first-edit-interlock"
+printf '%s\n' '#!/usr/bin/env bash' 'here="$(cd "$(dirname "$0")" && pwd)"' 'input="$(cat)"' "log=\"$P/hook.log\"" 'fields="$(printf "%s" "$input" | node "$here/interlock-lib.cjs" --hook 2>/dev/null)"' 'decision="$(printf "%s" "$fields" | cut -f1)"' 'context="$(printf "%s" "$fields" | cut -f3)"' 'ctx_transcript="$(printf "%s" "$fields" | cut -f4)"' 'wave="$(node "$here/interlock-lib.cjs" --wave "$ctx_transcript" 2>/dev/null)"' 'printf -- "--- %s decision=%s context=%s wave=%s ctx_transcript=%s\n%s\n" "$(date -u +%H:%M:%SZ)" "$decision" "$context" "$wave" "$ctx_transcript" "$input" >> "$log"' 'printf "%s" "$input" | bash "$here/first-edit-interlock.real"' > "$P/plugin/hooks/first-edit-interlock"
 chmod +x "$P/plugin/hooks/first-edit-interlock" "$P/plugin/hooks/first-edit-interlock.real"
 echo "probe plugin at $P/plugin"; ls "$P/plugin/hooks"
 ```
@@ -8145,7 +8145,7 @@ env -i PATH="$PATH" HOME="$S/home" XDG_CACHE_HOME="$S/cache" bash "$P/plugin/hoo
 tail -3 "$P/hook.log"
 ```
 
-Expected: one JSON line with `"permissionDecision":"deny"` and `rc=0`; the log's new entry starts `--- <time> wave=msg_smoke` and carries the payload. Anything else (no output, an `invalid option` message, a missing `wave=` line) means the wrapper is broken: fix Step 1 before Step 3. Delete the log's smoke entry afterwards (`: > "$P/hook.log"`).
+Expected: one JSON line with `"permissionDecision":"deny"` and `rc=0`; the log's new entry starts `--- <time> decision=attempt context=s wave=msg_smoke ctx_transcript=<the fixture path>` and carries the payload. Anything else (no output, an `invalid option` message, a missing or empty `wave=` field, a `context=` that is not `s`) means the wrapper is broken: fix Step 1 before Step 3. Delete the log's smoke entry afterwards (`: > "$P/hook.log"`).
 
 - [ ] **Step 3: Session one, the main agent creates a file**
 

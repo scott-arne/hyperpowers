@@ -2308,7 +2308,7 @@ fi
 - [ ] **Step 7: Run the suite to verify it passes**
 
 Run: `bash tests/hooks/test-first-edit-interlock.sh < /dev/null`
-Expected: 93 `[PASS]` lines and `STATUS: PASSED`, including `a sibling of the denied call, in the same assistant turn, is denied`, `a zero budget reports an absent record instead of waiting for it`, `a record that lands mid-poll traces first=absent result=present`, `an unset INTERLOCK_PROBE_TRACE writes no trace at all`, `every vector (363) classifies through the hook as the file says`, and `interlock-lib.cjs --vectors agrees (ok 363)`. The timing cases in section 4 are the only ones that can be slow: the suite as a whole takes a few minutes, most of it the 363-vector loop.
+Expected: 91 `[PASS]` lines and `STATUS: PASSED`, including `a sibling of the denied call, in the same assistant turn, is denied`, `a zero budget reports an absent record instead of waiting for it`, `a record that lands mid-poll traces first=absent result=present`, `an unset INTERLOCK_PROBE_TRACE writes no trace at all`, `every vector (363) classifies through the hook as the file says`, and `interlock-lib.cjs --vectors agrees (ok 363)`. The timing cases in section 4 are the only ones that can be slow: the suite as a whole takes a few minutes, most of it the 363-vector loop.
 
 - [ ] **Step 8: Run the neighbouring suites**
 

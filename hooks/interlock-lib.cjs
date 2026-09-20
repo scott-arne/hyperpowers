@@ -5,8 +5,12 @@
 //
 // Modes:
 //   --hook              stdin: the PreToolUse payload. stdout: one line,
-//                       "<decision>\t<session_id>\t<transcript_path>" where
-//                       decision is "attempt" (a mutation attempt) or "skip".
+//                       "<decision>\t<session_id>\t<context>\t<transcript>"
+//                       where decision is "attempt" (a mutation attempt) or
+//                       "skip". <context> names the calling agent context and
+//                       <transcript> is that context's own transcript; see
+//                       contextOf() for why neither comes from transcript_path
+//                       alone.
 //   --wave <transcript> stdout: the message id of the last assistant record in
 //                       the transcript's last 64 KiB, or "unknown".
 //   --publish <tmp> <marker>
@@ -27,6 +31,7 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 
 const MUTATING_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
@@ -646,15 +651,46 @@ function readStdin() {
   try { return fs.readFileSync(0, 'utf8'); } catch (e) { return ''; }
 }
 
+const SAFE_NAME = /^[A-Za-z0-9._-]+$/;
+
+// Name the agent context a payload came from, and find that context's own
+// transcript.
+//
+// A subagent's tool call does not carry the subagent's transcript_path: Claude
+// Code puts the controller's path in every payload, whoever made the call
+// (measured 2026-09-19 on 2.1.276, evidence/2026-09-17-first-edit-interlock/
+// probe/). agent_id is the only field that tells one context from another, and
+// keying on transcript_path alone collapsed a controller and both its
+// subagents into one interlock -- trapping the first subagent and never gating
+// the second. So agent_id, when present, supplies both the marker's name and
+// the transcript every wave read uses; Claude Code lays a subagent's transcript
+// out beside its controller's as <dir>/<stem>/subagents/agent-<id>.jsonl.
+function contextOf(transcriptPath, agentId) {
+  const stem = path.basename(transcriptPath).replace(/\.[^.]*$/, '');
+  if (!agentId) return { name: stem, transcript: transcriptPath };
+  const name = 'agent-' + agentId;
+  return {
+    name: name,
+    transcript: path.join(path.dirname(transcriptPath), stem, 'subagents', name + '.jsonl'),
+  };
+}
+
 function modeHook() {
+  const skip = () => { process.stdout.write('skip\t\t\t\n'); return 0; };
   let payload;
-  try { payload = JSON.parse(readStdin()); } catch (e) { process.stdout.write('skip\t\t\n'); return 0; }
-  if (!payload || typeof payload !== 'object') { process.stdout.write('skip\t\t\n'); return 0; }
+  try { payload = JSON.parse(readStdin()); } catch (e) { return skip(); }
+  if (!payload || typeof payload !== 'object') return skip();
   const sid = typeof payload.session_id === 'string' ? payload.session_id : '';
   const tp = typeof payload.transcript_path === 'string' ? payload.transcript_path : '';
-  const decision = sid && tp ? classify(payload.tool_name, payload.tool_input) : 'read-only';
+  if (!sid || !tp) return skip();
+  const agentId = typeof payload.agent_id === 'string' ? payload.agent_id : '';
+  // Rejected here rather than downstream: a stripped separator would otherwise
+  // turn an unusable agent_id into a name that keys some other context's marker.
+  if (agentId && !SAFE_NAME.test(agentId)) return skip();
+  if (classify(payload.tool_name, payload.tool_input) !== 'attempt') return skip();
+  const ctx = contextOf(tp, agentId);
   const clean = (s) => s.replace(/[\t\n\r]/g, '');
-  process.stdout.write((decision === 'attempt' ? 'attempt' : 'skip') + '\t' + clean(sid) + '\t' + clean(tp) + '\n');
+  process.stdout.write('attempt\t' + clean(sid) + '\t' + clean(ctx.name) + '\t' + clean(ctx.transcript) + '\n');
   return 0;
 }
 
@@ -715,4 +751,4 @@ function main(argv) {
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
 
-module.exports = { classify, commandReadOnly, lastAssistantId };
+module.exports = { classify, commandReadOnly, contextOf, lastAssistantId };

@@ -42,9 +42,17 @@ write_transcript() { # <path> <message-id> [<second-message-id>]
     fi
 }
 
-write_payload() { # <path> <session-id> <transcript-path> <tool-name> <tool-input-json>
-    printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":%s}' \
-        "$2" "$3" "$4" "$5" > "$1"
+write_payload() { # <path> <session-id> <transcript-path> <tool-name> <tool-input-json> [<agent-id>]
+    # A subagent's payload carries its CONTROLLER's transcript_path plus an
+    # agent_id -- the only shape Claude Code produces (measured 2026-09-19 on
+    # 2.1.276). Never synthesize a payload naming a subagent's own transcript:
+    # such a vector passes while the real harness never produces that input.
+    local extra=""
+    if [ "$#" -ge 6 ] && [ -n "$6" ]; then
+        extra="$(printf ',"agent_id":"%s","agent_type":"claude"' "$6")"
+    fi
+    printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":%s%s}' \
+        "$2" "$3" "$4" "$5" "$extra" > "$1"
 }
 
 json_string() { # <text> -> a JSON string literal (for tool_input.command)
@@ -111,20 +119,54 @@ assert_allow "and stays allowed"
 c="$(new_case)"; t="$c/home/proj/sess-b.jsonl"; write_transcript "$t" "msg_b"
 write_payload "$c/in" "sess-b" "$t" "Write" '{"file_path":"/tmp/x","content":"hi"}'
 run_hook "$c" "$c/in"; assert_deny "Write denies when unarmed"
-t2="$c/home/proj/sess-b/subagents/agent-1234abcd.jsonl"; write_transcript "$t2" "msg_sub"
-write_payload "$c/in2" "sess-b" "$t2" "MultiEdit" '{"file_path":"/tmp/x","edits":[]}'
+# The controller's transcript is written once here and never rewritten: every
+# subagent verdict below has to come from the subagent's own transcript.
+sub="$c/home/proj/sess-b/subagents/agent-1234abcd.jsonl"; write_transcript "$sub" "msg_sub"
+write_payload "$c/in2" "sess-b" "$t" "MultiEdit" '{"file_path":"/tmp/x","edits":[]}' "1234abcd"
 run_hook "$c" "$c/in2"; assert_deny "a subagent context of the same session is denied at its own first attempt"
 if [ -d "$(marker_dir "$c" sess-b sess-b)" ] && [ -d "$(marker_dir "$c" sess-b agent-1234abcd)" ]; then
     pass "two contexts of one session hold two markers"
 else
     fail "two contexts of one session hold two markers"
 fi
-write_transcript "$t2" "msg_sub" "msg_sub2"
-run_hook "$c" "$c/in2"; assert_allow "the subagent's later-turn retry is allowed"
+sub_wave="$(cat "$(marker_dir "$c" sess-b agent-1234abcd)/wave" 2>/dev/null || true)"
+if [ "$sub_wave" = "msg_sub" ]; then
+    pass "the subagent's wave is read from its own transcript, not the controller's"
+else
+    fail "the subagent's wave is read from its own transcript, not the controller's (got '$sub_wave')"
+fi
+run_hook "$c" "$c/in2"; assert_deny "a second subagent attempt in the same wave is denied"
+write_transcript "$sub" "msg_sub" "msg_sub2"
+run_hook "$c" "$c/in2"; assert_allow "the subagent's retry is allowed once its own transcript advances"
 run_hook "$c" "$c/in"; assert_deny "the controller's own wave is unaffected by the subagent's state"
+# The controller has moved on by the time it dispatches its second subagent.
+# Under the refuted per-transcript model that alone waved the second subagent
+# through: the shared marker's wave no longer matched, so nothing gated it.
+write_transcript "$t" "msg_b" "msg_b2"
+sub2="$c/home/proj/sess-b/subagents/agent-5678efab.jsonl"; write_transcript "$sub2" "msg_sub_b"
+write_payload "$c/in3" "sess-b" "$t" "Write" '{"file_path":"/tmp/y","content":"hi"}' "5678efab"
+run_hook "$c" "$c/in3"; assert_deny "a second subagent in the same session is interlocked at its own first attempt"
 c="$(new_case)"; t="$c/home/proj/sess-c.jsonl"; write_transcript "$t" "msg_c"
 write_payload "$c/in" "sess-c" "$t" "NotebookEdit" '{"notebook_path":"/tmp/n.ipynb","new_source":"x"}'
 run_hook "$c" "$c/in"; assert_deny "NotebookEdit denies when unarmed"
+
+# --- 3b. agent_id that names no transcript, and agent_id with a bad character -
+c="$(new_case)"; t="$c/home/proj/sess-m.jsonl"; write_transcript "$t" "msg_m"
+write_payload "$c/in" "sess-m" "$t" "Edit" '{}' "nosuchagent"
+run_hook "$c" "$c/in"; assert_deny "a subagent whose transcript cannot be read is denied once"
+if [ "$(cat "$(marker_dir "$c" sess-m agent-nosuchagent)/wave" 2>/dev/null || true)" = "unknown" ]; then
+    pass "and records its wave as unknown"
+else
+    fail "and records its wave as unknown"
+fi
+run_hook "$c" "$c/in"; assert_allow "so that subagent is stopped once and never trapped"
+write_payload "$c/in2" "sess-m" "$t" "Edit" '{}' "bad/id"
+run_hook "$c" "$c/in2"; assert_allow "an agent_id outside A-Za-z0-9._- allows"
+if [ "$(ls "$c/cache/hyperpowers/interlock/sess-m" | wc -l | tr -d ' ')" = "1" ]; then
+    pass "and leaves no marker of its own"
+else
+    fail "and leaves no marker of its own ($(ls "$c/cache/hyperpowers/interlock/sess-m" | tr '\n' ' '))"
+fi
 
 # --- 4. Bash: the classifier decides; read-only calls leave no marker --------
 c="$(new_case)"; t="$c/home/proj/sess-d.jsonl"; write_transcript "$t" "msg_d"
@@ -199,7 +241,8 @@ wait "$p1" || true; wait "$p2" || true
 if grep -q '"permissionDecision":"deny"' "$c/out1" && grep -q '"permissionDecision":"deny"' "$c/out2"; then pass "two concurrent first attempts are both denied"; else fail "two concurrent first attempts are both denied"; fi
 if [ "$(ls -d "$c/cache/hyperpowers/interlock/sess-j"/* | wc -l | tr -d ' ')" = "1" ]; then pass "they leave one marker and no temporary directory"; else fail "they leave one marker and no temporary directory ($(ls "$c/cache/hyperpowers/interlock/sess-j"))"; fi
 c="$(new_case)"; t1="$c/home/proj/s.jsonl"; t2="$c/home/proj/s/subagents/agent-x.jsonl"; write_transcript "$t1" "m1"; write_transcript "$t2" "m9"
-write_payload "$c/in1" "sess-k" "$t1" "Edit" '{}'; write_payload "$c/in2" "sess-k" "$t2" "Edit" '{}'
+# Both payloads name the same transcript_path; only agent_id separates them.
+write_payload "$c/in1" "sess-k" "$t1" "Edit" '{}'; write_payload "$c/in2" "sess-k" "$t1" "Edit" '{}' "x"
 ( env -i PATH="${PATH:-}" HOME="$c/home" XDG_CACHE_HOME="$c/cache" bash "$HOOK" < "$c/in1" > "$c/out1" 2>/dev/null ) &
 p1=$!
 ( env -i PATH="${PATH:-}" HOME="$c/home" XDG_CACHE_HOME="$c/cache" bash "$HOOK" < "$c/in2" > "$c/out2" 2>/dev/null ) &

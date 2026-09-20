@@ -10,11 +10,14 @@
 # here-strings (tests/hooks/test-no-heredocs-in-hooks.sh); bash 3.2.
 #
 # State lives under ${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/interlock/
-# <session_id>/<agent>/wave, where <agent> is the transcript's basename: a
-# controller and each of its subagents is interlocked once. The marker is
-# published by renaming a prepared temporary directory, so it is either absent
-# or complete, and a caller that dies early leaves only a temporary directory
-# that hooks/session-start prunes.
+# <session_id>/<context>/wave, where <context> names the calling agent context:
+# a controller and each of its subagents is interlocked once. The library
+# derives that name and the context's own transcript from the payload, because
+# a subagent's call carries its controller's transcript_path and only agent_id
+# tells the two apart; see contextOf() there. The marker is published by
+# renaming a prepared temporary directory, so it is either absent or complete,
+# and a caller that dies early leaves only a temporary directory that
+# hooks/session-start prunes.
 
 set -uo pipefail
 
@@ -62,13 +65,13 @@ tab=$'\t'
 decision="${decision_line%%${tab}*}"
 rest="${decision_line#*${tab}}"
 sid="${rest%%${tab}*}"
+rest="${rest#*${tab}}"
+agent="${rest%%${tab}*}"
 transcript="${rest#*${tab}}"
 [ "$decision" = "attempt" ] || exit 0
 case "$sid" in ''|*[!A-Za-z0-9._-]*) exit 0 ;; esac
-[ -n "$transcript" ] || exit 0
-agent="${transcript##*/}"
-agent="${agent%.*}"
 case "$agent" in ''|*[!A-Za-z0-9._-]*) exit 0 ;; esac
+[ -n "$transcript" ] || exit 0
 
 root="${XDG_CACHE_HOME:-${HOME:-}/.cache}/hyperpowers/interlock/${sid}"
 marker="${root}/${agent}"

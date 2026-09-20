@@ -631,7 +631,12 @@ function lastAssistantId(transcriptPath) {
       try { rec = JSON.parse(line); } catch (e) { continue; }
       if (rec && rec.type === 'assistant') {
         const m = rec.message && typeof rec.message === 'object' ? rec.message : {};
-        const id = [m.id, rec.requestId, rec.uuid].find((v) => typeof v === 'string' && v !== '');
+        // The fallback stops at requestId. Both it and message.id are one value
+        // per assistant turn; a record's uuid is one per content block, so a uuid
+        // fallback would give each block of a turn its own wave and let a sibling
+        // of the denied call pass as a later turn. Neither present degrades that
+        // context to deny-once, which stops it once instead.
+        const id = [m.id, rec.requestId].find((v) => typeof v === 'string' && v !== '');
         return id || 'unknown';
       }
     }

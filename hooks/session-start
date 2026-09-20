@@ -86,7 +86,7 @@ fi
 
 # --- First-edit interlock housekeeping --------------------------------------
 # hooks/first-edit-interlock keeps one marker directory per agent context
-# under the user cache (<session>/<agent>/wave) and publishes it by renaming a
+# under the user cache (<session>/<agent>/call) and publishes it by renaming a
 # prepared temporary directory. Remove markers idle for three days, temporary
 # directories idle for an hour (a caller that died before its rename), and
 # session directories left empty. Best-effort: never fails the hook, prints

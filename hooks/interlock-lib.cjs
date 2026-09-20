@@ -4,15 +4,53 @@
 // the evals analyzer calls the same file from the pinned plugin commit).
 //
 // Modes:
-//   --hook              stdin: the PreToolUse payload. stdout: one line,
-//                       "<decision>\t<session_id>\t<context>\t<transcript>"
+//   --hook              stdin: the PreToolUse payload. stdout: one line of five
+//                       tab-separated fields,
+//                       "<decision>\t<session_id>\t<context>\t<transcript>\t<call>"
 //                       where decision is "attempt" (a mutation attempt) or
 //                       "skip". <context> names the calling agent context and
 //                       <transcript> is that context's own transcript; see
 //                       contextOf() for why neither comes from transcript_path
-//                       alone.
-//   --wave <transcript> stdout: the message id of the last assistant record in
-//                       the transcript's last 64 KiB, or "unknown".
+//                       alone. <call> is the payload's own tool_use_id, empty
+//                       when it carries none. A "skip" line is the word
+//                       followed by four empty fields.
+//   --resolve <transcript> <tool-use-id> [<poll-ms>]
+//                       find the assistant record carrying a tool_use block
+//                       with that id, reading the whole file backwards, and
+//                       print one line: "id<TAB><turn identifier>" when that
+//                       record carries message.id or requestId, "noid" when it
+//                       carries neither, "absent" when no such record is in the
+//                       file, "unreadable" when the file cannot be read. Polls
+//                       every 50 ms for up to 400 ms while the answer is
+//                       "absent"; the other three answers return at once. The
+//                       optional poll-ms budget replaces the 400; the hook never
+//                       passes it, and a budget of 0 makes the lookup a single
+//                       non-polling read. That exists for the live probe, which
+//                       has to ask whether a record was on disk at a moment
+//                       rather than wait for it to arrive; a negative or
+//                       non-numeric budget falls back to the 400.
+//
+// Probe trace. When INTERLOCK_PROBE_TRACE names a file, --resolve and --last
+// append one tab-separated line to it describing the reads they just did:
+//   resolve<TAB><id><TAB>reads=<n><TAB>first=<f><TAB>result=<r>
+//   last<TAB>result=<id|none|unreadable>
+// where <f> and <r> are present, absent, noid or unreadable. Nothing in
+// production sets the variable, so the cost there is one environment lookup
+// per process and no output of any kind. The live probe sets it, and this is
+// the only faithful way it can learn what the hook's own reads saw: a second
+// reader running alongside the hook answers for its own moment rather than
+// the hook's, and running one before the hook delays the read it is measuring.
+// The line is appended after the reads it reports, so it cannot change them.
+//   --delivered <transcript> <tool-use-id>
+//                       exit 0 when the transcript holds a tool_result whose
+//                       tool_use_id is that id AND whose content contains the
+//                       interlock message's opening sentence, 3 when it holds
+//                       no such result, 1 when the file cannot be read. Both
+//                       halves are required: the message is the hook's own
+//                       text, and any cat or rg of this repository prints it.
+//   --last <transcript> print "id<TAB><turn identifier>" for the last assistant
+//                       record that carries one, skipping trailing records that
+//                       carry neither, or "none", or "unreadable".
 //   --publish <tmp> <marker>
 //                       rename(2) tmp onto marker. Exit 0 published, 3 lost the
 //                       race (marker exists and is not empty), 1 anything else.
@@ -615,37 +653,86 @@ function classify(toolName, toolInput) {
 // Transcript
 // ---------------------------------------------------------------------------
 
-function lastAssistantId(transcriptPath) {
-  let fd;
-  try {
-    fd = fs.openSync(transcriptPath, 'r');
-    const size = fs.fstatSync(fd).size;
-    const span = Math.min(size, 65536);
-    const buf = Buffer.alloc(span);
-    fs.readSync(fd, buf, 0, span, size - span);
-    const lines = buf.toString('utf8').split('\n');
-    for (let i = lines.length - 1; i >= 0; i -= 1) {
-      const line = lines[i].trim();
-      if (!line) continue;
-      let rec;
-      try { rec = JSON.parse(line); } catch (e) { continue; }
-      if (rec && rec.type === 'assistant') {
-        const m = rec.message && typeof rec.message === 'object' ? rec.message : {};
-        // The fallback stops at requestId. Both it and message.id are one value
-        // per assistant turn; a record's uuid is one per content block, so a uuid
-        // fallback would give each block of a turn its own wave and let a sibling
-        // of the denied call pass as a later turn. Neither present degrades that
-        // context to deny-once, which stops it once instead.
-        const id = [m.id, rec.requestId].find((v) => typeof v === 'string' && v !== '');
-        return id || 'unknown';
-      }
-    }
-    return 'unknown';
-  } catch (e) {
-    return 'unknown';
-  } finally {
-    if (fd !== undefined) { try { fs.closeSync(fd); } catch (e) { /* nothing to do */ } }
+// Every read below is a whole-file read. A fixed tail window was the first
+// draft and it was wrong: treating anything outside the last megabyte as "many
+// turns ago" holds only if one turn cannot fill the window, and nothing bounds
+// a turn's size. Several parallel Write calls with large contents, or one
+// oversized record, evict the denied call from a tail read while its own turn
+// is still current -- the leak this rule exists to close. The cost is what the
+// file costs, and these files are small: the 2026-09-20 campaign's 1309 context
+// transcripts run to a median of 208 KB and a maximum of 1.24 MB, with no
+// single record above 105 KB.
+const POLL_INTERVAL_MS = 50;
+const POLL_BUDGET_MS = 400;
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function readRecords(transcriptPath) {
+  let text;
+  try { text = fs.readFileSync(transcriptPath, 'utf8'); } catch (e) { return null; }
+  const out = [];
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    // A record still being flushed is skipped, not fatal: the poll comes round
+    // again and the whole line is there the next time.
+    try { out.push(JSON.parse(line)); } catch (e) { /* partially written */ }
   }
+  return out;
+}
+
+// message.id, falling back to requestId, and never the record's uuid. Both of
+// the first two are one value per assistant turn -- the 2026-09-19 probe's
+// subagent transcript holds fifteen assistant records carrying six of each --
+// while uuid is one per content block, fifteen distinct values across those
+// same fifteen records. A uuid identifier would give each block of a turn its
+// own identity, so a sibling of the denied call would read as a later turn and
+// be allowed: the one failure the rule exists to prevent. Empty string means
+// the record names no turn at all.
+function turnIdOf(rec) {
+  const m = rec && rec.message && typeof rec.message === 'object' ? rec.message : {};
+  const id = [m.id, rec && rec.requestId].find((v) => typeof v === 'string' && v !== '');
+  return id || '';
+}
+
+function contentBlocks(rec) {
+  const c = rec && rec.message && typeof rec.message === 'object' ? rec.message.content : null;
+  return Array.isArray(c) ? c : [];
+}
+
+// The assistant record carrying a tool_use block with this id. Backwards,
+// because the id a caller asks about is nearly always recent.
+function findCallRecord(records, id) {
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const rec = records[i];
+    if (!rec || rec.type !== 'assistant') continue;
+    const blocks = contentBlocks(rec);
+    for (let j = 0; j < blocks.length; j += 1) {
+      const b = blocks[j];
+      if (b && b.type === 'tool_use' && b.id === id) return rec;
+    }
+  }
+  return null;
+}
+
+// The interlock message's opening sentence. The 2026-09-20 probe found this
+// substring in exactly one tool_result per denied context.
+const DENIAL_OPENING = 'Interlock, once before your first edit:';
+
+function resultText(block) {
+  const c = block && block.content;
+  if (typeof c === 'string') return c;
+  if (!Array.isArray(c)) return '';
+  let out = '';
+  for (let i = 0; i < c.length; i += 1) {
+    const part = c[i];
+    if (typeof part === 'string') out += part;
+    else if (part && typeof part.text === 'string') out += part.text;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -681,7 +768,7 @@ function contextOf(transcriptPath, agentId) {
 }
 
 function modeHook() {
-  const skip = () => { process.stdout.write('skip\t\t\t\n'); return 0; };
+  const skip = () => { process.stdout.write('skip\t\t\t\t\n'); return 0; };
   let payload;
   try { payload = JSON.parse(readStdin()); } catch (e) { return skip(); }
   if (!payload || typeof payload !== 'object') return skip();
@@ -694,13 +781,112 @@ function modeHook() {
   if (agentId && !SAFE_NAME.test(agentId)) return skip();
   if (classify(payload.tool_name, payload.tool_input) !== 'attempt') return skip();
   const ctx = contextOf(tp, agentId);
+  // The payload's own tool_use_id is the one value the hook can trust about
+  // this call: it arrives in the payload, so reading it races nothing. The
+  // marker stores it, and both lookups below are keyed on it.
+  const callId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : '';
   const clean = (s) => s.replace(/[\t\n\r]/g, '');
-  process.stdout.write('attempt\t' + clean(sid) + '\t' + clean(ctx.name) + '\t' + clean(ctx.transcript) + '\n');
+  process.stdout.write('attempt\t' + clean(sid) + '\t' + clean(ctx.name) + '\t' + clean(ctx.transcript) + '\t' + clean(callId) + '\n');
   return 0;
 }
 
-function modeWave(path) {
-  process.stdout.write(lastAssistantId(path) + '\n');
+// Step 6 and step 7 both call this: step 6 with the denied call's id to resolve
+// the wave, step 7 with this call's own id to resolve its turn. The poll is for
+// the concurrent first wave -- the caller that lost the rename is a sibling of
+// the winner, dispatched in the same turn, and the winner's record may still be
+// in flight. Only "absent" polls; the other answers are final on the first read.
+// The probe trace (see the header). Inert unless INTERLOCK_PROBE_TRACE names a
+// file; a trace that cannot be written is the probe's problem, never the
+// hook's, so the append swallows its own failure.
+const PROBE_TRACE = process.env.INTERLOCK_PROBE_TRACE || '';
+function trace(line) {
+  if (!PROBE_TRACE) return;
+  try { fs.appendFileSync(PROBE_TRACE, line + '\n'); } catch (e) { /* not the hook's business */ }
+}
+
+function modeResolve(transcriptPath, id, budgetArg) {
+  const asked = budgetArg === undefined ? POLL_BUDGET_MS : Number(budgetArg);
+  const budget = Number.isFinite(asked) && asked >= 0 ? asked : POLL_BUDGET_MS;
+  const deadline = Date.now() + budget;
+  // `first` is what the very first read saw. That, and not the final answer,
+  // is the population step 7's poll exists for: a record the hook found only
+  // after polling was not on disk when the hook reached this step.
+  let reads = 0;
+  let first = '';
+  for (;;) {
+    const records = readRecords(transcriptPath);
+    reads += 1;
+    if (records === null) {
+      if (!first) first = 'unreadable';
+      trace('resolve\t' + id + '\treads=' + reads + '\tfirst=' + first + '\tresult=unreadable');
+      process.stdout.write('unreadable\n');
+      return 0;
+    }
+    const rec = findCallRecord(records, id);
+    if (rec) {
+      const turn = turnIdOf(rec);
+      const answer = turn ? 'present' : 'noid';
+      if (!first) first = answer;
+      trace('resolve\t' + id + '\treads=' + reads + '\tfirst=' + first + '\tresult=' + answer);
+      process.stdout.write(turn ? 'id\t' + turn + '\n' : 'noid\n');
+      return 0;
+    }
+    if (!first) first = 'absent';
+    if (Date.now() >= deadline) {
+      trace('resolve\t' + id + '\treads=' + reads + '\tfirst=' + first + '\tresult=absent');
+      process.stdout.write('absent\n');
+      return 0;
+    }
+    sleepSync(POLL_INTERVAL_MS);
+  }
+}
+
+// A denial demonstrably delivered, bound to the call that is holding this
+// context. Both halves matter. The id proves the result belongs to the denied
+// call; an unbound text search would release a sibling on the output of any cat
+// or rg that happens to print the hook's own message, and the read-only
+// allowlist above lets both run.
+function modeDelivered(transcriptPath, id) {
+  const records = readRecords(transcriptPath);
+  if (records === null) return 1;
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const blocks = contentBlocks(records[i]);
+    for (let j = 0; j < blocks.length; j += 1) {
+      const b = blocks[j];
+      if (b && b.type === 'tool_result' && b.tool_use_id === id
+          && resultText(b).indexOf(DENIAL_OPENING) !== -1) return 0;
+    }
+  }
+  return 3;
+}
+
+// Step 8's fallback. Trailing records that name no turn are skipped rather than
+// stopped on: such a record can neither match the wave nor witness a later
+// turn, so reading it as a different turn would release the same-turn sibling
+// the wave rule exists to stop. The scan terminates on a real value whenever a
+// wave was resolved, because the denied call's own record is then in the file
+// and carries an identifier.
+function modeLast(transcriptPath) {
+  const records = readRecords(transcriptPath);
+  if (records === null) {
+    trace('last\tresult=unreadable');
+    process.stdout.write('unreadable\n');
+    return 0;
+  }
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const rec = records[i];
+    if (!rec || rec.type !== 'assistant') continue;
+    const turn = turnIdOf(rec);
+    if (turn) {
+      // The hook calls --last at step 8 and nowhere else, so a trace holding a
+      // last line is exactly a call that fell through the step-7 poll.
+      trace('last\tresult=id');
+      process.stdout.write('id\t' + turn + '\n');
+      return 0;
+    }
+  }
+  trace('last\tresult=none');
+  process.stdout.write('none\n');
   return 0;
 }
 
@@ -746,14 +932,16 @@ function modeVectors(path) {
 function main(argv) {
   const mode = argv[0];
   if (mode === '--hook') return modeHook();
-  if (mode === '--wave' && argv[1]) return modeWave(argv[1]);
+  if (mode === '--resolve' && argv[1] && argv[2]) return modeResolve(argv[1], argv[2], argv[3]);
+  if (mode === '--delivered' && argv[1] && argv[2]) return modeDelivered(argv[1], argv[2]);
+  if (mode === '--last' && argv[1]) return modeLast(argv[1]);
   if (mode === '--publish' && argv[1] && argv[2]) return modePublish(argv[1], argv[2]);
   if (mode === '--batch') return modeBatch();
   if (mode === '--vectors' && argv[1]) return modeVectors(argv[1]);
-  process.stderr.write('usage: interlock-lib.cjs --hook | --wave <transcript> | --publish <tmp> <marker> | --batch | --vectors <tsv>\n');
+  process.stderr.write('usage: interlock-lib.cjs --hook | --resolve <transcript> <id> [<poll-ms>] | --delivered <transcript> <id> | --last <transcript> | --publish <tmp> <marker> | --batch | --vectors <tsv>\n');
   return 2;
 }
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
 
-module.exports = { classify, commandReadOnly, contextOf, lastAssistantId };
+module.exports = { classify, commandReadOnly, contextOf, findCallRecord, readRecords, turnIdOf };

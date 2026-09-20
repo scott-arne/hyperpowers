@@ -239,6 +239,26 @@ write_transcript() { # <path> <message-id> [<second-message-id>]
     fi
 }
 
+append_assistant() { # <path> <uuid> <message-id-or-empty> <request-id-or-empty>
+    # One content block of an assistant turn. Claude Code writes a record per
+    # block as the turn streams, so the sibling of a denied call sees the
+    # transcript one record longer -- with a new uuid and the same message.id
+    # and requestId. That is why the wave may only come from the latter two.
+    mkdir -p "$(dirname "$1")"
+    local msg='{"role":"assistant","content":[{"type":"tool_use","id":"toolu","name":"Edit","input":{}}]}'
+    if [ -n "$3" ]; then
+        msg="$(printf '{"id":"%s","role":"assistant","content":[{"type":"tool_use","id":"toolu","name":"Edit","input":{}}]}' "$3")"
+    fi
+    local req=""
+    if [ -n "$4" ]; then req="$(printf ',"requestId":"%s"' "$4")"; fi
+    printf '{"type":"assistant","uuid":"%s"%s,"message":%s}\n' "$2" "$req" "$msg" >> "$1"
+}
+
+start_turn_transcript() { # <path>
+    mkdir -p "$(dirname "$1")"
+    printf '{"type":"user","uuid":"u1","message":{"role":"user","content":"go"}}\n' > "$1"
+}
+
 write_payload() { # <path> <session-id> <transcript-path> <tool-name> <tool-input-json> [<agent-id>]
     # A subagent's payload carries its CONTROLLER's transcript_path plus an
     # agent_id -- the only shape Claude Code produces (measured 2026-09-19 on
@@ -364,6 +384,46 @@ if [ "$(ls "$c/cache/hyperpowers/interlock/sess-m" | wc -l | tr -d ' ')" = "1" ]
 else
     fail "and leaves no marker of its own ($(ls "$c/cache/hyperpowers/interlock/sess-m" | tr '\n' ' '))"
 fi
+
+# --- 3c. A sibling call in one turn, on every wave-identifier fallback -------
+# Codex round 1: a wave taken from anything that varies within a turn lets the
+# sibling of a denied call through, which is the one failure the wave rule
+# exists to prevent. Each case below appends a sibling record before the second
+# attempt, so a per-record identifier would read it as a later turn.
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_turn_transcript "$t"
+append_assistant "$t" a1 msg_1 req_1
+write_payload "$c/in" "sess-w1" "$t" "Edit" '{}'
+run_hook "$c" "$c/in"; assert_deny "message.id: the first call of a turn is denied"
+append_assistant "$t" a2 msg_1 req_1
+run_hook "$c" "$c/in"; assert_deny "message.id: its sibling in the same turn is denied too"
+append_assistant "$t" a3 msg_2 req_2
+run_hook "$c" "$c/in"; assert_allow "message.id: the next turn is allowed"
+
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_turn_transcript "$t"
+append_assistant "$t" a1 "" req_1
+write_payload "$c/in" "sess-w2" "$t" "Edit" '{}'
+run_hook "$c" "$c/in"; assert_deny "requestId fallback: the first call of a turn is denied"
+if [ "$(cat "$(marker_dir "$c" sess-w2 s)/wave" 2>/dev/null || true)" = "req_1" ]; then
+    pass "requestId fallback: the wave is the record's requestId"
+else
+    fail "requestId fallback: the wave is the record's requestId (got '$(cat "$(marker_dir "$c" sess-w2 s)/wave" 2>/dev/null || true)')"
+fi
+append_assistant "$t" a2 "" req_1
+run_hook "$c" "$c/in"; assert_deny "requestId fallback: its sibling in the same turn is denied too"
+append_assistant "$t" a3 "" req_2
+run_hook "$c" "$c/in"; assert_allow "requestId fallback: the next turn is allowed"
+
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_turn_transcript "$t"
+append_assistant "$t" a1 "" ""
+write_payload "$c/in" "sess-w3" "$t" "Edit" '{}'
+run_hook "$c" "$c/in"; assert_deny "neither identifier: the first call is denied"
+if [ "$(cat "$(marker_dir "$c" sess-w3 s)/wave" 2>/dev/null || true)" = "unknown" ]; then
+    pass "neither identifier: the wave is unknown, never the record's uuid"
+else
+    fail "neither identifier: the wave is unknown, never the record's uuid (got '$(cat "$(marker_dir "$c" sess-w3 s)/wave" 2>/dev/null || true)')"
+fi
+append_assistant "$t" a2 "" ""
+run_hook "$c" "$c/in"; assert_allow "neither identifier: the sibling is allowed -- the documented deny-once degradation"
 
 # --- 4. Bash: the classifier decides; read-only calls leave no marker --------
 c="$(new_case)"; t="$c/home/proj/sess-d.jsonl"; write_transcript "$t" "msg_d"
@@ -1492,7 +1552,12 @@ function lastAssistantId(transcriptPath) {
       try { rec = JSON.parse(line); } catch (e) { continue; }
       if (rec && rec.type === 'assistant') {
         const m = rec.message && typeof rec.message === 'object' ? rec.message : {};
-        const id = [m.id, rec.requestId, rec.uuid].find((v) => typeof v === 'string' && v !== '');
+        // The fallback stops at requestId. Both it and message.id are one value
+        // per assistant turn; a record's uuid is one per content block, so a uuid
+        // fallback would give each block of a turn its own wave and let a sibling
+        // of the denied call pass as a later turn. Neither present degrades that
+        // context to deny-once, which stops it once instead.
+        const id = [m.id, rec.requestId].find((v) => typeof v === 'string' && v !== '');
         return id || 'unknown';
       }
     }
@@ -3825,9 +3890,14 @@ def read_calls(
         content = message.get("content")
         if kind == "assistant":
             last_assistant = index
-            message_id = str(
-                message.get("id") or rec.get("requestId") or rec.get("uuid") or ""
-            )
+            # The wave identifier, derived exactly as the hook derives it.
+            # The fallback stops at requestId: both it and message.id are one
+            # value per assistant turn, while a record's uuid is one per
+            # content block. A uuid here would give each block of a turn its
+            # own wave, so a sibling mutation carried out during the denied
+            # turn would compare unequal to the denial and pass the check
+            # below that exists to catch it.
+            message_id = str(message.get("id") or rec.get("requestId") or "")
             for part in content or []:
                 if isinstance(part, dict) and part.get("type") == "tool_use":
                     call = Call(
@@ -8027,9 +8097,11 @@ git commit -m "evidence: manifest, launchers, vector copy, and fail-closed analy
 > held the campaign. Session one passed every check; session two showed the
 > subagent denials carrying the controller's wave id and the second subagent
 > never gated. Task 2 was amended to key on `agent_id` and this task re-runs
-> from Step 1 against the amended hook. Step 4's checks below are the amended
-> ones -- they now name the three things that run got wrong, so a repeat cannot
-> pass. The held run is preserved at
+> from Step 1 against the amended hook. Session two is a different session now:
+> three files and three writers, because the checks need three mutating
+> contexts and the old story produced one. Step 4's four checks below are the
+> amended ones -- they name what that run got wrong, so a repeat cannot pass.
+> The held run is preserved at
 > `evidence/2026-09-17-first-edit-interlock/probe/` (evals commit `091fa06`);
 > move it aside rather than overwriting it, so both runs stay citable.
 
@@ -8082,26 +8154,32 @@ Create the two throwaway probe scenarios (never committed), check them, and run 
 ```bash
 P="$TMPDIR/interlock-probe"; for s in probe-create probe-subagent; do mkdir -p "$P/scenarios/$s"; done
 printf '%s\n' '---' 'id: probe-create' 'title: Probe, the main agent makes the first edit' 'status: ready' 'tags: probe' '---' '' 'You are a developer. When the agent is ready for input, send this exact message:' '' '"Create a file named hello.txt containing the single word hello in this directory. Do not ask questions."' '' 'If the agent asks anything, answer "just do it, one file". You are done when hello.txt exists and the agent reports done.' '' '## Acceptance Criteria' '' '- hello.txt exists with the word hello.' > "$P/scenarios/probe-create/story.md"
-printf '%s\n' '---' 'id: probe-subagent' 'title: Probe, a subagent makes the first edit' 'status: ready' 'tags: probe' '---' '' 'You are a developer. When the agent is ready for input, send this exact message:' '' '"Use the Agent tool to dispatch a subagent that creates a file named hello.txt containing the single word hello in this directory. Do not create or edit any file yourself; wait for the subagent."' '' 'If the agent asks anything, answer "just do it, one file". You are done when hello.txt exists or the agent reports that the subagent finished.' '' '## Acceptance Criteria' '' '- hello.txt exists with the word hello.' > "$P/scenarios/probe-subagent/story.md"
-for s in probe-create probe-subagent; do printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'cd "$QUORUM_WORKDIR"' 'git init -qb main' 'git config user.email "drill@test.local"' 'git config user.name "Drill Test"' 'printf "# probe\n" > README.md' 'git add README.md' 'git commit -qm "initial"' > "$P/scenarios/$s/setup.sh"; chmod +x "$P/scenarios/$s/setup.sh"; printf '%s\n' 'pre() {' '    git-repo' '}' '' 'post() {' '    file-exists "hello.txt"' '}' > "$P/scenarios/$s/checks.sh"; done
+printf '%s\n' '---' 'id: probe-subagent' 'title: Probe, three writers in one session' 'status: ready' 'tags: probe' '---' '' 'You are a developer. When the agent is ready for input, send this exact message:' '' '"Three files, three writers, in this directory. First create one.txt containing the single word one yourself. Then use the Agent tool to dispatch a subagent that creates two.txt containing the single word two. After that subagent finishes, dispatch a second subagent that creates three.txt containing the single word three. Do not write two.txt or three.txt yourself."' '' 'If the agent asks anything, answer "just do it, three files, one writer each". You are done when all three files exist.' '' '## Acceptance Criteria' '' '- one.txt, two.txt, and three.txt each exist, holding their own word.' > "$P/scenarios/probe-subagent/story.md"
+for s in probe-create probe-subagent; do printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'cd "$QUORUM_WORKDIR"' 'git init -qb main' 'git config user.email "drill@test.local"' 'git config user.name "Drill Test"' 'printf "# probe\n" > README.md' 'git add README.md' 'git commit -qm "initial"' > "$P/scenarios/$s/setup.sh"; chmod +x "$P/scenarios/$s/setup.sh"; done
+printf '%s\n' 'pre() {' '    git-repo' '}' '' 'post() {' '    file-exists "hello.txt"' '}' > "$P/scenarios/probe-create/checks.sh"
+printf '%s\n' 'pre() {' '    git-repo' '}' '' 'post() {' '    file-exists "one.txt"' '    file-exists "two.txt"' '    file-exists "three.txt"' '}' > "$P/scenarios/probe-subagent/checks.sh"
 bun run quorum check --scenarios-root "$P/scenarios"
 SUPERPOWERS_ROOT="$P/plugin" env -u SLASH_COMMAND_TOOL_CHAR_BUDGET bun run quorum run --scenarios-root "$P/scenarios" probe-create --coding-agent claude-auto --repeat 1 2>&1 | tee "$P/session-one.out"
 ```
 
 Read the `run-dir` from the output. In that run's main transcript (`home/.claude/projects/*/*.jsonl`), there must be exactly one `tool_result` whose content contains `Interlock, once before your first edit`, whose `tool_use_id` names a `Write` or `Edit` call (or a Bash command the classifier counts as a mutation), and a later mutation call whose result is not a denial; `hello.txt` must exist in `<run-dir>/coding-agent-workdir` with the word `hello`. In `hook.log`, the entry for the denied call must show `wave=<id>` equal to the `message.id` of the assistant record that carries the denied `tool_use` (find it with `grep -n '"id":"<tool_use_id>"' <transcript>` and read that record's `message.id`), and no entry may show `wave=unknown`.
 
-- [ ] **Step 4: Session two, a delegated edit**
+- [ ] **Step 4: Session two, three writers in one session**
 
 ```bash
 P="$TMPDIR/interlock-probe"
 SUPERPOWERS_ROOT="$P/plugin" env -u SLASH_COMMAND_TOOL_CHAR_BUDGET bun run quorum run --scenarios-root "$P/scenarios" probe-subagent --coding-agent claude-auto --repeat 1 2>&1 | tee "$P/session-two.out"
 ```
 
-In the run's subagent transcript (`home/.claude/projects/*/*/subagents/agent-*.jsonl`) the first mutation attempt must be denied with the interlock message and a retry in a later assistant message must succeed; the main transcript must hold no denial (the controller made no mutation attempt) or, if the main agent did attempt one, its own denial first; `hello.txt` must exist in the workdir. `hook.log` must show a wave identifier for the subagent's denied call equal to the `message.id` of the subagent record carrying it -- that record is in the **subagent's** transcript, and a wave that instead matches a controller record is the 2026-09-19 failure, not a pass. Three more checks come from that run, and any one of them failing holds the campaign the same way: every subagent payload in `hook.log` carries an `agent_id` (its absence means the payload shape changed and the context rule needs re-deriving); the run leaves one marker directory per context under `home/.cache/hyperpowers/interlock/<session_id>/`, named `agent-<agent_id>` for each subagent and the session id for the controller, never one shared directory; and if the session dispatches more than one subagent, each one's first mutation attempt is denied, not just the first subagent's.
+Three contexts mutate in this session, and each must be interlocked at its own first write. The main transcript (`home/.claude/projects/*/*.jsonl`) must hold a denial of the controller's `one.txt` write and a later retry that succeeds; each of the two subagent transcripts (`home/.claude/projects/*/*/subagents/agent-*.jsonl`) must hold a denial of that subagent's own first mutation attempt and a retry in a later assistant record that succeeds; and `one.txt`, `two.txt`, and `three.txt` must all exist in `<run-dir>/coding-agent-workdir`.
+
+Four checks then decide the campaign, because they are what this probe's first run got wrong. Any one of them failing holds it. First, `hook.log` must show, for each subagent's denied call, a `wave=<id>` equal to the `message.id` of a record in **that subagent's own** transcript; a wave that instead matches a controller record is the 2026-09-19 failure, not a pass. Second, the second subagent's first mutation attempt must be denied too, not only the first subagent's. Third, the run must leave exactly three marker directories under `<run-dir>/home/.cache/hyperpowers/interlock/<session_id>/` -- the session id for the controller and `agent-<agent_id>` for each subagent -- never one shared directory; count them with `ls "<run-dir>"/home/.cache/hyperpowers/interlock/*/` **before** Step 5, whose strip deletes that tree, and record the three names in `probe/README.md`. Fourth, every subagent payload in `hook.log` must carry an `agent_id`; its absence means the payload shape has changed and the context rule needs deriving again.
+
+A session that produces fewer than three mutating contexts -- the controller delegating `one.txt`, or only one subagent ever dispatched -- has not run this probe. Re-send the story rather than reading a check as passed on a session that could not have failed it.
 
 - [ ] **Step 5: Decide, record, and commit**
 
-Copy both runs' `verdict.json` and `home/.claude/projects/` trees into `probe/session-one/` and `probe/session-two/` under the evidence directory, and `hook.log` into `probe/`; strip them as Task 6 Step 4 strips a run (no workdir is copied; remove `home/.claude/plugins`, `home/.claude/.claude-env`, `home/.claude/sessions`, `home/.codex`, `home/.cache/hyperpowers/interlock`, and the tool caches; the same `(must be 0)` grep lines apply). Write `probe/README.md`: the two commands as run, the run directories, the denied tool_use ids and their message ids, the wave identifiers logged, the result of each check above, then the two lines of `probe-pins.txt` verbatim (`full_root=<sha>` and `claude_code=<version>`), and as the last line `campaign: may start` when every check held. If any check failed (no denial, a denial without the in-flight record's id, a wave of `unknown`, a subagent write that was not denied), write `campaign: held` with the failing check as the last line, stop, and hand back: the spec says the wave rule is revised and the spec re-gated before any measured session runs. Then, from the evals clone:
+Copy both runs' `verdict.json` and `home/.claude/projects/` trees into `probe/session-one/` and `probe/session-two/` under the evidence directory, and `hook.log` into `probe/`; strip them as Task 6 Step 4 strips a run (no workdir is copied; remove `home/.claude/plugins`, `home/.claude/.claude-env`, `home/.claude/sessions`, `home/.codex`, `home/.cache/hyperpowers/interlock`, and the tool caches; the same `(must be 0)` grep lines apply). Write `probe/README.md`: the two commands as run, the run directories, the denied tool_use ids and their message ids, the wave identifiers logged, the result of each check above, then the two lines of `probe-pins.txt` verbatim (`full_root=<sha>` and `claude_code=<version>`), and as the last line `campaign: may start` when every check held. If any check failed (no denial, a denial without the in-flight record's id, a wave of `unknown`, a subagent write that was not denied, a second subagent that was never gated, two contexts sharing one marker directory, or a subagent payload with no `agent_id`), write `campaign: held` with the failing check as the last line, stop, and hand back: the spec says the wave rule is revised and the spec re-gated before any measured session runs. Then, from the evals clone:
 
 ```bash
 git add -f evidence/2026-09-17-first-edit-interlock/probe

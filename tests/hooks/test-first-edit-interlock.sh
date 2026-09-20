@@ -42,6 +42,26 @@ write_transcript() { # <path> <message-id> [<second-message-id>]
     fi
 }
 
+append_assistant() { # <path> <uuid> <message-id-or-empty> <request-id-or-empty>
+    # One content block of an assistant turn. Claude Code writes a record per
+    # block as the turn streams, so the sibling of a denied call sees the
+    # transcript one record longer -- with a new uuid and the same message.id
+    # and requestId. That is why the wave may only come from the latter two.
+    mkdir -p "$(dirname "$1")"
+    local msg='{"role":"assistant","content":[{"type":"tool_use","id":"toolu","name":"Edit","input":{}}]}'
+    if [ -n "$3" ]; then
+        msg="$(printf '{"id":"%s","role":"assistant","content":[{"type":"tool_use","id":"toolu","name":"Edit","input":{}}]}' "$3")"
+    fi
+    local req=""
+    if [ -n "$4" ]; then req="$(printf ',"requestId":"%s"' "$4")"; fi
+    printf '{"type":"assistant","uuid":"%s"%s,"message":%s}\n' "$2" "$req" "$msg" >> "$1"
+}
+
+start_turn_transcript() { # <path>
+    mkdir -p "$(dirname "$1")"
+    printf '{"type":"user","uuid":"u1","message":{"role":"user","content":"go"}}\n' > "$1"
+}
+
 write_payload() { # <path> <session-id> <transcript-path> <tool-name> <tool-input-json> [<agent-id>]
     # A subagent's payload carries its CONTROLLER's transcript_path plus an
     # agent_id -- the only shape Claude Code produces (measured 2026-09-19 on
@@ -167,6 +187,46 @@ if [ "$(ls "$c/cache/hyperpowers/interlock/sess-m" | wc -l | tr -d ' ')" = "1" ]
 else
     fail "and leaves no marker of its own ($(ls "$c/cache/hyperpowers/interlock/sess-m" | tr '\n' ' '))"
 fi
+
+# --- 3c. A sibling call in one turn, on every wave-identifier fallback -------
+# Codex round 1: a wave taken from anything that varies within a turn lets the
+# sibling of a denied call through, which is the one failure the wave rule
+# exists to prevent. Each case below appends a sibling record before the second
+# attempt, so a per-record identifier would read it as a later turn.
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_turn_transcript "$t"
+append_assistant "$t" a1 msg_1 req_1
+write_payload "$c/in" "sess-w1" "$t" "Edit" '{}'
+run_hook "$c" "$c/in"; assert_deny "message.id: the first call of a turn is denied"
+append_assistant "$t" a2 msg_1 req_1
+run_hook "$c" "$c/in"; assert_deny "message.id: its sibling in the same turn is denied too"
+append_assistant "$t" a3 msg_2 req_2
+run_hook "$c" "$c/in"; assert_allow "message.id: the next turn is allowed"
+
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_turn_transcript "$t"
+append_assistant "$t" a1 "" req_1
+write_payload "$c/in" "sess-w2" "$t" "Edit" '{}'
+run_hook "$c" "$c/in"; assert_deny "requestId fallback: the first call of a turn is denied"
+if [ "$(cat "$(marker_dir "$c" sess-w2 s)/wave" 2>/dev/null || true)" = "req_1" ]; then
+    pass "requestId fallback: the wave is the record's requestId"
+else
+    fail "requestId fallback: the wave is the record's requestId (got '$(cat "$(marker_dir "$c" sess-w2 s)/wave" 2>/dev/null || true)')"
+fi
+append_assistant "$t" a2 "" req_1
+run_hook "$c" "$c/in"; assert_deny "requestId fallback: its sibling in the same turn is denied too"
+append_assistant "$t" a3 "" req_2
+run_hook "$c" "$c/in"; assert_allow "requestId fallback: the next turn is allowed"
+
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_turn_transcript "$t"
+append_assistant "$t" a1 "" ""
+write_payload "$c/in" "sess-w3" "$t" "Edit" '{}'
+run_hook "$c" "$c/in"; assert_deny "neither identifier: the first call is denied"
+if [ "$(cat "$(marker_dir "$c" sess-w3 s)/wave" 2>/dev/null || true)" = "unknown" ]; then
+    pass "neither identifier: the wave is unknown, never the record's uuid"
+else
+    fail "neither identifier: the wave is unknown, never the record's uuid (got '$(cat "$(marker_dir "$c" sess-w3 s)/wave" 2>/dev/null || true)')"
+fi
+append_assistant "$t" a2 "" ""
+run_hook "$c" "$c/in"; assert_allow "neither identifier: the sibling is allowed -- the documented deny-once degradation"
 
 # --- 4. Bash: the classifier decides; read-only calls leave no marker --------
 c="$(new_case)"; t="$c/home/proj/sess-d.jsonl"; write_transcript "$t" "msg_d"

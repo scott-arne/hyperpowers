@@ -209,7 +209,7 @@ Record the commit sha in the report: Task 6 pins it as the wording arm.
 
 **Interfaces:**
 - Consumes: Task 1's texts (this task's commit sits on top of them; the skills tree is untouched here).
-- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--resolve <transcript> <tool-use-id> [<poll-ms>]`, `--delivered <transcript> <tool-use-id>`, `--last <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; when the environment variable `INTERLOCK_PROBE_TRACE` names a file, `--resolve` and `--last` each append one tab-separated line to it after the reads they just did (`resolve<TAB><id><TAB>reads=<n><TAB>first=<f><TAB>result=<r>` and `last<TAB>result=<id|none|unreadable>`, `<f>` and `<r>` from `present absent noid unreadable`), and stdout is byte-identical whether or not the variable is set -- this is the live probe's only faithful reading of what the hook's own transcript reads saw, and nothing in production sets it; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 363`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
+- Produces: `hooks/interlock-lib.cjs` with the modes `--hook`, `--resolve <transcript> <tool-use-id> [<poll-ms>]`, `--delivered <transcript> <tool-use-id>`, `--last <transcript>`, `--publish <tmp> <marker>`, `--batch`, `--vectors <tsv>`; when the environment variable `INTERLOCK_PROBE_TRACE` names a file, `--resolve` and `--last` each append one tab-separated line to it after the reads they just did (`resolve<TAB><id><TAB>reads=<n><TAB>first=<f><TAB>result=<r>` and `last<TAB>result=<id|none|unreadable>`, `<f>` and `<r>` from `present absent noid unreadable`), and stdout is byte-identical whether or not the variable is set -- this is the live probe's only faithful reading of what the hook's own transcript reads saw, and nothing in production sets it; the analyzer in Task 4 extracts this file and `tests/hooks/fixtures/mutation-cases.tsv` from the full arm's pinned commit with `git show` and calls `node interlock-lib.cjs --vectors <copy>` (must print `ok 368`) and `node interlock-lib.cjs --batch` (stdin a JSON array of `{"tool_name","tool_input"}`, stdout one line per item, `attempt` or `read-only`). The denial text the analyzer matches is the message's opening, `Interlock, once before your first edit`. `hooks/hooks.json` registers `first-edit-interlock` under `PreToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`.
 
 - [ ] **Step 1: Write the failing suite `tests/hooks/test-first-edit-interlock.sh`**
 
@@ -481,6 +481,23 @@ write_payload "$c/in2" "sess-n1" "$t" "Edit" '{}' "toolu_sib"
 run_hook "$c" "$c/in2"; assert_allow "its same-turn sibling is allowed -- deny-once, not a context held on a comparison the hook cannot make"
 run_hook "$c" "$c/in"; assert_allow "and the denied call's own retry is allowed too"
 
+# --- 6b. A record identified by requestId alone ------------------------------
+# turnIdOf reads message.id and falls back to requestId, and a record can carry
+# the second without the first. The fallback is load-bearing: without it such a
+# record resolves to no turn at all, step 6 answers noid, and every sibling of
+# the denied call runs.
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_transcript "$t"
+append_call "$t" a1 "" req_1 toolu_1
+write_payload "$c/in" "sess-req" "$t" "Edit" '{}' "toolu_1"
+run_hook "$c" "$c/in"; assert_deny "a first attempt whose record carries a requestId and no message.id is denied"
+append_call "$t" a2 "" req_1 toolu_sib
+write_payload "$c/in2" "sess-req" "$t" "Edit" '{}' "toolu_sib"
+run_hook "$c" "$c/in2"; assert_deny "its same-turn sibling, identified by requestId alone, is denied"
+append_call "$t" a3 "" req_2 toolu_later
+write_payload "$c/in3" "sess-req" "$t" "Edit" '{}' "toolu_later"
+run_hook "$c" "$c/in3"; assert_allow "a later turn, identified by requestId alone, is allowed"
+if [ "$(node "$LIB" --resolve "$t" toolu_1 0)" = "$(printf 'id\treq_1')" ]; then pass "--resolve names that turn by its requestId"; else fail "--resolve named the requestId-only turn '$(node "$LIB" --resolve "$t" toolu_1 0)'"; fi
+
 # --- 7. The wave resolves but this call's own record names no turn -----------
 # Step 8 must skip that record and read the last one that does carry an
 # identifier. Reading the trailing record as a different turn would allow a
@@ -494,6 +511,22 @@ write_payload "$c/in2" "sess-n2" "$t" "Edit" '{}' "toolu_sib"
 run_hook "$c" "$c/in2"; assert_deny "a later call whose own record names no turn, and is last, is denied"
 append_call "$t" a3 msg_two req_2 toolu_next
 run_hook "$c" "$c/in2"; assert_allow "and is allowed once a later record carrying an identifier is appended"
+
+# --- 7b. The wave resolves and THIS call carries no tool_use_id of its own ---
+# The other half of step 7's fallthrough. Section 7 covers a call whose own
+# record names no turn; here the payload names no call at all, so there is
+# nothing to resolve and step 8 has to place it. Allowing such a call outright
+# would release a mutation from inside the denied wave, and the marker here
+# holds a resolvable call, so the wave is known.
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_transcript "$t"
+append_call "$t" a1 msg_one req_1 toolu_1
+write_payload "$c/in" "sess-own" "$t" "Edit" '{}' "toolu_1"
+run_hook "$c" "$c/in"; assert_deny "the first attempt is denied"
+if [ "$(cat "$(marker_dir "$c" sess-own s)/call" 2>/dev/null || true)" = "toolu_1" ]; then pass "the marker holds a resolvable call"; else fail "the marker holds a resolvable call (got '$(cat "$(marker_dir "$c" sess-own s)/call" 2>/dev/null || true)')"; fi
+write_payload "$c/in2" "sess-own" "$t" "Edit" '{}' ""
+run_hook "$c" "$c/in2"; assert_deny "a payload carrying no tool_use_id is denied while the denied turn is still the last one"
+append_call "$t" a2 msg_two req_2 toolu_other
+run_hook "$c" "$c/in2"; assert_allow "and is allowed once a later assistant record is appended"
 
 # --- 8. Degraded markers all allow -------------------------------------------
 c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_transcript "$t"; append_call "$t" a1 m1 r1 toolu_1
@@ -626,6 +659,44 @@ write_payload "$c/in" "sess-rec2" "$t" "Edit" '{}' "toolu_gone"
 run_hook "$c" "$c/in"; assert_deny "the first attempt is denied"
 write_payload "$c/in2" "sess-rec2" "$t" "Edit" '{}' "toolu_next"
 run_hook "$c" "$c/in2"; assert_deny "the same text under a different tool_use_id -- what a cat or an rg of this repository prints -- does not release the sibling"
+
+# --- 17b. The recovery may not act on a record its own snapshot can see ------
+# Step 6 and the recovery run as separate processes, so each takes its own
+# snapshot. If the denied call's record and its denial result both land between
+# them, a recovery that looks only for the result releases a caller the wave
+# rule never cleared -- a pre-composed sibling of the denied call among them.
+# The design's safety argument, that a result carrying an id is appended after
+# the record carrying it and the record has just been found absent, holds only
+# inside ONE snapshot; the recovery therefore re-checks the record in its own.
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_transcript "$t"
+write_payload "$c/in" "sess-gap" "$t" "Edit" '{}' "toolu_win"
+run_hook "$c" "$c/in"; assert_deny "the winner of a concurrent wave is denied with no record on disk"
+append_call "$t" a1 msg_one req_1 toolu_win
+append_result "$t" toolu_win "$OPENING"
+set +e; node "$LIB" --delivered "$t" toolu_win >/dev/null 2>&1; d_rc=$?; set -e
+if [ "$d_rc" -ne 0 ]; then pass "--delivered refuses a delivered denial whose record its own snapshot carries (exit $d_rc)"; else fail "--delivered accepted a delivered denial whose record its own snapshot carries"; fi
+
+# The same rule through the hook, with both records landing in the window
+# between step 6's last read and the recovery's read. The probe trace is
+# appended after --resolve's final read, so a writer that waits for it puts the
+# append exactly in that window and leaves step 6's answer deterministically
+# absent.
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_transcript "$t"
+write_payload "$c/in" "sess-gap2" "$t" "Edit" '{}' "toolu_win"
+run_hook "$c" "$c/in"; assert_deny "the winner of a second concurrent wave is denied with no record on disk"
+write_payload "$c/in2" "sess-gap2" "$t" "Edit" '{}' "toolu_sib"
+trc="$c/trace"; : > "$trc"
+( i=0
+  while [ "$i" -lt 400 ] && [ ! -s "$trc" ]; do sleep 0.01; i=$((i + 1)); done
+  append_call "$t" a1 msg_one req_1 toolu_win
+  append_result "$t" toolu_win "$OPENING" ) &
+writer=$!
+set +e
+OUTPUT="$(env -i PATH="${PATH:-}" HOME="$c/home" XDG_CACHE_HOME="$c/cache" INTERLOCK_PROBE_TRACE="$trc" bash "$HOOK" < "$c/in2" 2>/dev/null)"
+RC=$?
+set -e
+wait "$writer" || true
+assert_deny "a denial delivered in the gap between step 6 and the recovery does not release a same-wave sibling"
 
 # --- 18. Concurrency: one context, two calls; then two contexts --------------
 c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_transcript "$t"
@@ -1072,6 +1143,11 @@ printf '%s' -v	read-only
 read PATH < f	mutation
 read GIT_DIR	mutation
 read -r line < f	read-only
+read -aPATH < in	mutation
+read -raPATH < in	mutation
+read -aIFS < in	mutation
+read -aPATH < in; ls	mutation
+read -aline < in	read-only
 unset PATH	mutation
 unset -v GIT_DIR	mutation
 unset FOO	read-only
@@ -1155,9 +1231,14 @@ hostname --fqdn	read-only
 //                       exit 0 when the transcript holds a tool_result whose
 //                       tool_use_id is that id AND whose content contains the
 //                       interlock message's opening sentence, 3 when it holds
-//                       no such result, 1 when the file cannot be read. Both
-//                       halves are required: the message is the hook's own
-//                       text, and any cat or rg of this repository prints it.
+//                       no such result OR when that same read also finds the
+//                       assistant record carrying that id, 1 when the file
+//                       cannot be read. Both halves of the match are required:
+//                       the message is the hook's own text, and any cat or rg
+//                       of this repository prints it. The record check makes
+//                       this one read the whole basis of the answer rather
+//                       than trusting an absence another process established;
+//                       see modeDelivered.
 //   --last <transcript> print "id<TAB><turn identifier>" for the last assistant
 //                       record that carries one, skipping trailing records that
 //                       carry neither, or "none", or "unreadable".
@@ -1658,7 +1739,21 @@ function simpleReadOnly(ws) {
     }
     return true;
   }
-  if (cmd === 'read' || cmd === 'unset') return !args.some((a) => !a.startsWith('-') && SHELL_SENSITIVE_NAME.test(a));
+  if (cmd === 'read') {
+    // A name can also ride an option: bash 3.2 assigns from `read -aPATH < f`
+    // and from the clustered `read -raPATH < f`, and skipping every dash-led
+    // argument let both through. An option cluster ending in `a` takes the
+    // rest of the word as its array variable, so that operand is a name and is
+    // checked like a separated one. `unset` below is not reachable this way --
+    // bash 3.2 rejects `unset -vPATH` as an invalid option -- so it keeps the
+    // separated-operand check alone.
+    return !args.some((a) => {
+      const attached = /^-[A-Za-z]*a(.+)$/.exec(a);
+      if (attached) return SHELL_SENSITIVE_NAME.test(attached[1]);
+      return !a.startsWith('-') && SHELL_SENSITIVE_NAME.test(a);
+    });
+  }
+  if (cmd === 'unset') return !args.some((a) => !a.startsWith('-') && SHELL_SENSITIVE_NAME.test(a));
   if (cmd === 'git') return gitReadOnly(args);
   return true;
 }
@@ -1959,6 +2054,15 @@ function modeResolve(transcriptPath, id, budgetArg) {
 function modeDelivered(transcriptPath, id) {
   const records = readRecords(transcriptPath);
   if (records === null) return 1;
+  // The escape is sound only while the denied call's own record is still
+  // missing: a result carrying that id is appended after the record carrying
+  // it, so a result with no record is a denial the file lost rather than one
+  // this wave produced. Step 6 established that absence in a DIFFERENT
+  // process, and Claude Code can append both the record and its denial result
+  // between the two reads -- which would release a pre-composed sibling of the
+  // denied call. So the absence is re-established here, in the one snapshot
+  // this decision is taken from.
+  if (findCallRecord(records, id)) return 3;
   for (let i = records.length - 1; i >= 0; i -= 1) {
     const blocks = contentBlocks(records[i]);
     for (let j = 0; j < blocks.length; j += 1) {
@@ -2058,7 +2162,7 @@ module.exports = { classify, commandReadOnly, contextOf, findCallRecord, readRec
 ```
 
 Then `chmod +x hooks/interlock-lib.cjs` and run: `node hooks/interlock-lib.cjs --vectors tests/hooks/fixtures/mutation-cases.tsv`
-Expected: `ok 363` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
+Expected: `ok 368` and exit 0. A `mismatch:` line means the helper was not copied verbatim.
 
 - [ ] **Step 4: Write `hooks/first-edit-interlock`**
 
@@ -2308,7 +2412,7 @@ fi
 - [ ] **Step 7: Run the suite to verify it passes**
 
 Run: `bash tests/hooks/test-first-edit-interlock.sh < /dev/null`
-Expected: 91 `[PASS]` lines and `STATUS: PASSED`, including `a sibling of the denied call, in the same assistant turn, is denied`, `a zero budget reports an absent record instead of waiting for it`, `a record that lands mid-poll traces first=absent result=present`, `an unset INTERLOCK_PROBE_TRACE writes no trace at all`, `every vector (363) classifies through the hook as the file says`, and `interlock-lib.cjs --vectors agrees (ok 363)`. The timing cases in section 4 are the only ones that can be slow: the suite as a whole takes a few minutes, most of it the 363-vector loop.
+Expected: 103 `[PASS]` lines and `STATUS: PASSED`, including `a sibling of the denied call, in the same assistant turn, is denied`, `a zero budget reports an absent record instead of waiting for it`, `a record that lands mid-poll traces first=absent result=present`, `an unset INTERLOCK_PROBE_TRACE writes no trace at all`, `every vector (368) classifies through the hook as the file says`, and `interlock-lib.cjs --vectors agrees (ok 368)`. Twelve of those passes are sections 6b, 7b and 17b, which the first Codex code gate added: a turn identified by requestId alone, a payload carrying no tool_use_id of its own against a resolvable wave, and the recovery refusing a denial delivered in the window between step 6's read and its own. The timing cases in section 4 are the only ones that can be slow: the suite as a whole takes a few minutes, most of it the 368-vector loop.
 
 - [ ] **Step 8: Run the neighbouring suites**
 

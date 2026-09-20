@@ -179,8 +179,8 @@ Record the commit sha in the report: Task 6 pins it as the wording arm.
 > apart. The code and vectors below are the amended ones: the library derives a
 > context name and a context transcript from `agent_id`, and the two-context
 > vectors use the payload shape the harness actually produces. Run
-> `evidence/2026-09-17-first-edit-interlock/probe/` in the evals clone is the
-> measurement; the design spec's "The context transcript" section is the rule.
+> `evidence/2026-09-17-first-edit-interlock/probe-2026-09-19-held/` in the
+> evals clone is the measurement; the design spec's "The context transcript" section is the rule.
 
 **Risk tier:** high — a hook that denies tool calls, with per-context state, atomic publication, and a fail-closed classifier; concurrency and a security-adjacent surface.
 
@@ -8102,8 +8102,9 @@ git commit -m "evidence: manifest, launchers, vector copy, and fail-closed analy
 > contexts and the old story produced one. Step 4's four checks below are the
 > amended ones -- they name what that run got wrong, so a repeat cannot pass.
 > The held run is preserved at
-> `evidence/2026-09-17-first-edit-interlock/probe/` (evals commit `091fa06`);
-> move it aside rather than overwriting it, so both runs stay citable.
+> `evidence/2026-09-17-first-edit-interlock/probe-2026-09-19-held/` (moved
+> there in evals commit `87ba8c6`; it was written at `091fa06`), so both runs
+> stay citable. This re-run writes a fresh `probe/`.
 
 **Risk tier:** high — two live Claude Code sessions and the durable `campaign: may start` authorization Task 6 trusts.
 

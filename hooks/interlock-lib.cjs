@@ -45,9 +45,14 @@
 //                       exit 0 when the transcript holds a tool_result whose
 //                       tool_use_id is that id AND whose content contains the
 //                       interlock message's opening sentence, 3 when it holds
-//                       no such result, 1 when the file cannot be read. Both
-//                       halves are required: the message is the hook's own
-//                       text, and any cat or rg of this repository prints it.
+//                       no such result OR when that same read also finds the
+//                       assistant record carrying that id, 1 when the file
+//                       cannot be read. Both halves of the match are required:
+//                       the message is the hook's own text, and any cat or rg
+//                       of this repository prints it. The record check makes
+//                       this one read the whole basis of the answer rather
+//                       than trusting an absence another process established;
+//                       see modeDelivered.
 //   --last <transcript> print "id<TAB><turn identifier>" for the last assistant
 //                       record that carries one, skipping trailing records that
 //                       carry neither, or "none", or "unreadable".
@@ -548,7 +553,21 @@ function simpleReadOnly(ws) {
     }
     return true;
   }
-  if (cmd === 'read' || cmd === 'unset') return !args.some((a) => !a.startsWith('-') && SHELL_SENSITIVE_NAME.test(a));
+  if (cmd === 'read') {
+    // A name can also ride an option: bash 3.2 assigns from `read -aPATH < f`
+    // and from the clustered `read -raPATH < f`, and skipping every dash-led
+    // argument let both through. An option cluster ending in `a` takes the
+    // rest of the word as its array variable, so that operand is a name and is
+    // checked like a separated one. `unset` below is not reachable this way --
+    // bash 3.2 rejects `unset -vPATH` as an invalid option -- so it keeps the
+    // separated-operand check alone.
+    return !args.some((a) => {
+      const attached = /^-[A-Za-z]*a(.+)$/.exec(a);
+      if (attached) return SHELL_SENSITIVE_NAME.test(attached[1]);
+      return !a.startsWith('-') && SHELL_SENSITIVE_NAME.test(a);
+    });
+  }
+  if (cmd === 'unset') return !args.some((a) => !a.startsWith('-') && SHELL_SENSITIVE_NAME.test(a));
   if (cmd === 'git') return gitReadOnly(args);
   return true;
 }
@@ -849,6 +868,15 @@ function modeResolve(transcriptPath, id, budgetArg) {
 function modeDelivered(transcriptPath, id) {
   const records = readRecords(transcriptPath);
   if (records === null) return 1;
+  // The escape is sound only while the denied call's own record is still
+  // missing: a result carrying that id is appended after the record carrying
+  // it, so a result with no record is a denial the file lost rather than one
+  // this wave produced. Step 6 established that absence in a DIFFERENT
+  // process, and Claude Code can append both the record and its denial result
+  // between the two reads -- which would release a pre-composed sibling of the
+  // denied call. So the absence is re-established here, in the one snapshot
+  // this decision is taken from.
+  if (findCallRecord(records, id)) return 3;
   for (let i = records.length - 1; i >= 0; i -= 1) {
     const blocks = contentBlocks(records[i]);
     for (let j = 0; j < blocks.length; j += 1) {

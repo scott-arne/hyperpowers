@@ -265,6 +265,23 @@ write_payload "$c/in2" "sess-n1" "$t" "Edit" '{}' "toolu_sib"
 run_hook "$c" "$c/in2"; assert_allow "its same-turn sibling is allowed -- deny-once, not a context held on a comparison the hook cannot make"
 run_hook "$c" "$c/in"; assert_allow "and the denied call's own retry is allowed too"
 
+# --- 6b. A record identified by requestId alone ------------------------------
+# turnIdOf reads message.id and falls back to requestId, and a record can carry
+# the second without the first. The fallback is load-bearing: without it such a
+# record resolves to no turn at all, step 6 answers noid, and every sibling of
+# the denied call runs.
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_transcript "$t"
+append_call "$t" a1 "" req_1 toolu_1
+write_payload "$c/in" "sess-req" "$t" "Edit" '{}' "toolu_1"
+run_hook "$c" "$c/in"; assert_deny "a first attempt whose record carries a requestId and no message.id is denied"
+append_call "$t" a2 "" req_1 toolu_sib
+write_payload "$c/in2" "sess-req" "$t" "Edit" '{}' "toolu_sib"
+run_hook "$c" "$c/in2"; assert_deny "its same-turn sibling, identified by requestId alone, is denied"
+append_call "$t" a3 "" req_2 toolu_later
+write_payload "$c/in3" "sess-req" "$t" "Edit" '{}' "toolu_later"
+run_hook "$c" "$c/in3"; assert_allow "a later turn, identified by requestId alone, is allowed"
+if [ "$(node "$LIB" --resolve "$t" toolu_1 0)" = "$(printf 'id\treq_1')" ]; then pass "--resolve names that turn by its requestId"; else fail "--resolve named the requestId-only turn '$(node "$LIB" --resolve "$t" toolu_1 0)'"; fi
+
 # --- 7. The wave resolves but this call's own record names no turn -----------
 # Step 8 must skip that record and read the last one that does carry an
 # identifier. Reading the trailing record as a different turn would allow a
@@ -278,6 +295,22 @@ write_payload "$c/in2" "sess-n2" "$t" "Edit" '{}' "toolu_sib"
 run_hook "$c" "$c/in2"; assert_deny "a later call whose own record names no turn, and is last, is denied"
 append_call "$t" a3 msg_two req_2 toolu_next
 run_hook "$c" "$c/in2"; assert_allow "and is allowed once a later record carrying an identifier is appended"
+
+# --- 7b. The wave resolves and THIS call carries no tool_use_id of its own ---
+# The other half of step 7's fallthrough. Section 7 covers a call whose own
+# record names no turn; here the payload names no call at all, so there is
+# nothing to resolve and step 8 has to place it. Allowing such a call outright
+# would release a mutation from inside the denied wave, and the marker here
+# holds a resolvable call, so the wave is known.
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_transcript "$t"
+append_call "$t" a1 msg_one req_1 toolu_1
+write_payload "$c/in" "sess-own" "$t" "Edit" '{}' "toolu_1"
+run_hook "$c" "$c/in"; assert_deny "the first attempt is denied"
+if [ "$(cat "$(marker_dir "$c" sess-own s)/call" 2>/dev/null || true)" = "toolu_1" ]; then pass "the marker holds a resolvable call"; else fail "the marker holds a resolvable call (got '$(cat "$(marker_dir "$c" sess-own s)/call" 2>/dev/null || true)')"; fi
+write_payload "$c/in2" "sess-own" "$t" "Edit" '{}' ""
+run_hook "$c" "$c/in2"; assert_deny "a payload carrying no tool_use_id is denied while the denied turn is still the last one"
+append_call "$t" a2 msg_two req_2 toolu_other
+run_hook "$c" "$c/in2"; assert_allow "and is allowed once a later assistant record is appended"
 
 # --- 8. Degraded markers all allow -------------------------------------------
 c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_transcript "$t"; append_call "$t" a1 m1 r1 toolu_1
@@ -410,6 +443,44 @@ write_payload "$c/in" "sess-rec2" "$t" "Edit" '{}' "toolu_gone"
 run_hook "$c" "$c/in"; assert_deny "the first attempt is denied"
 write_payload "$c/in2" "sess-rec2" "$t" "Edit" '{}' "toolu_next"
 run_hook "$c" "$c/in2"; assert_deny "the same text under a different tool_use_id -- what a cat or an rg of this repository prints -- does not release the sibling"
+
+# --- 17b. The recovery may not act on a record its own snapshot can see ------
+# Step 6 and the recovery run as separate processes, so each takes its own
+# snapshot. If the denied call's record and its denial result both land between
+# them, a recovery that looks only for the result releases a caller the wave
+# rule never cleared -- a pre-composed sibling of the denied call among them.
+# The design's safety argument, that a result carrying an id is appended after
+# the record carrying it and the record has just been found absent, holds only
+# inside ONE snapshot; the recovery therefore re-checks the record in its own.
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_transcript "$t"
+write_payload "$c/in" "sess-gap" "$t" "Edit" '{}' "toolu_win"
+run_hook "$c" "$c/in"; assert_deny "the winner of a concurrent wave is denied with no record on disk"
+append_call "$t" a1 msg_one req_1 toolu_win
+append_result "$t" toolu_win "$OPENING"
+set +e; node "$LIB" --delivered "$t" toolu_win >/dev/null 2>&1; d_rc=$?; set -e
+if [ "$d_rc" -ne 0 ]; then pass "--delivered refuses a delivered denial whose record its own snapshot carries (exit $d_rc)"; else fail "--delivered accepted a delivered denial whose record its own snapshot carries"; fi
+
+# The same rule through the hook, with both records landing in the window
+# between step 6's last read and the recovery's read. The probe trace is
+# appended after --resolve's final read, so a writer that waits for it puts the
+# append exactly in that window and leaves step 6's answer deterministically
+# absent.
+c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_transcript "$t"
+write_payload "$c/in" "sess-gap2" "$t" "Edit" '{}' "toolu_win"
+run_hook "$c" "$c/in"; assert_deny "the winner of a second concurrent wave is denied with no record on disk"
+write_payload "$c/in2" "sess-gap2" "$t" "Edit" '{}' "toolu_sib"
+trc="$c/trace"; : > "$trc"
+( i=0
+  while [ "$i" -lt 400 ] && [ ! -s "$trc" ]; do sleep 0.01; i=$((i + 1)); done
+  append_call "$t" a1 msg_one req_1 toolu_win
+  append_result "$t" toolu_win "$OPENING" ) &
+writer=$!
+set +e
+OUTPUT="$(env -i PATH="${PATH:-}" HOME="$c/home" XDG_CACHE_HOME="$c/cache" INTERLOCK_PROBE_TRACE="$trc" bash "$HOOK" < "$c/in2" 2>/dev/null)"
+RC=$?
+set -e
+wait "$writer" || true
+assert_deny "a denial delivered in the gap between step 6 and the recovery does not release a same-wave sibling"
 
 # --- 18. Concurrency: one context, two calls; then two contexts --------------
 c="$(new_case)"; t="$c/home/proj/s.jsonl"; start_transcript "$t"

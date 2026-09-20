@@ -333,6 +333,11 @@ printf '%s' -v	read-only
 read PATH < f	mutation
 read GIT_DIR	mutation
 read -r line < f	read-only
+read -aPATH < in	mutation
+read -raPATH < in	mutation
+read -aIFS < in	mutation
+read -aPATH < in; ls	mutation
+read -aline < in	read-only
 unset PATH	mutation
 unset -v GIT_DIR	mutation
 unset FOO	read-only

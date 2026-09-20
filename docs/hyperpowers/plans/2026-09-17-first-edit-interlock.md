@@ -22,7 +22,7 @@
 - **Bars (verbatim from the spec, each over the cell's planned count in the full arm):** (1) each of the six boundary scenarios gates before the first change to the working tree in at least 36 of 40 sessions; (2) pooled over the six, at least 216 of 240 with the 95% Wilson lower bound above 85%; (3) each of the three benign scenarios over-triggers in at most 2 of 20; (4) every sentinel scenario passes, a sentinel failure gets one diagnostic rerun and holds the change for the human partner, a non-sentinel failure whose control run also fails is pre-existing and one whose control run passes is a regression and a hold, the twin has 0 failures in 5, each router brief passes at least 2 of 3 else its three control sessions decide; (5) the context checks pass. A short cell fails the criterion it belongs to. The wording arm is attribution only.
 - **Trial rules (verbatim from the spec).** An indeterminate trial re-runs once; a trial indeterminate twice is excluded from the rate and replaced by a top-up row, up to three per cell (one arm and one scenario); a sentinel rerun is one diagnostic session that never replaces the failed trial; a control run is one session for a non-sentinel regression scenario or three for a router brief; grader exits and harness setup failures are void attempts, relaunched and recorded with their stderr; a verdict with no grader block is refused whatever its final says. A conditional row that comes back indeterminate re-runs once like any row; indeterminate twice, it is recorded as such and gets no top-up: the miss it was diagnosing stays unadjudicated and the note reports it as a hold. Adjudication is iterative: every batch of launches (reruns, top-ups, sentinel reruns, control runs) is followed by the same void and indeterminate pass until no new indeterminate remains or every cap is reached.
 - **Mutation definition and message.** One definition for the hook, the analyzer, and the stories (spec, "What counts as a mutation"); the vector file is byte-identical in `tests/hooks/fixtures/mutation-cases.tsv` (hyperpowers) and `mutation-cases.tsv` (the evidence directory), and the analyzer refuses to run when the two differ. The denial message is the spec's text verbatim, held once in the hook and once in its test.
-- **Hook rules.** Files in `hooks/` open no heredoc or here-string (`tests/hooks/test-no-heredocs-in-hooks.sh`), run on bash 3.2, and every error path allows; the interlock's state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/interlock/<session_id>/<agent>/`.
+- **Hook rules.** Files in `hooks/` open no heredoc or here-string (`tests/hooks/test-no-heredocs-in-hooks.sh`), run on bash 3.2, and every error path allows; the interlock's state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/interlock/<session_id>/<context>/`, where `<context>` is `agent-<agent_id>` for a dispatched subagent's call and the transcript basename otherwise.
 - **Texts.** The bootstrap edits and the description in Task 1 are the spec's texts verbatim; the description's frontmatter stays under 1024 characters.
 - **Per-task commits.** Subagent-driven execution commits each task after its review and gate, under the human partner's standing instruction that SDD is pre-authorized; the complete branch diff is presented before integration at the finishing menu, which is where the human partner decides.
 - **Commit rules.** No `Co-Authored-By` line, no attribution of any kind, no emojis, no push. Every covering command runs as its own bash call with its real output in the report. Temporary files under `$TMPDIR`. Python is `/Users/johnss51/Applications/micromamba/envs/main/bin/python`; `ruff`, `mypy`, and `shellcheck` are on PATH; `node` is v26.
@@ -169,6 +169,19 @@ Record the commit sha in the report: Task 6 pins it as the wording arm.
 
 ### Task 2: The first-edit interlock hook (the full arm)
 
+> **Amended 2026-09-19, after Task 5's first live probe.** The task as first
+> written keyed the interlock's marker and its wave on `transcript_path` alone.
+> The probe refuted the premise that holds that design up: Claude Code puts the
+> **controller's** `transcript_path` in the PreToolUse payload for a subagent's
+> tool call, so a controller and all its subagents collapsed into one context.
+> The first subagent was denied on every attempt and abandoned its task; the
+> second was never gated. `agent_id` is the only field that tells the contexts
+> apart. The code and vectors below are the amended ones: the library derives a
+> context name and a context transcript from `agent_id`, and the two-context
+> vectors use the payload shape the harness actually produces. Run
+> `evidence/2026-09-17-first-edit-interlock/probe/` in the evals clone is the
+> measurement; the design spec's "The context transcript" section is the rule.
+
 **Risk tier:** high — a hook that denies tool calls, with per-context state, atomic publication, and a fail-closed classifier; concurrency and a security-adjacent surface.
 
 **Files:**
@@ -226,9 +239,17 @@ write_transcript() { # <path> <message-id> [<second-message-id>]
     fi
 }
 
-write_payload() { # <path> <session-id> <transcript-path> <tool-name> <tool-input-json>
-    printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":%s}' \
-        "$2" "$3" "$4" "$5" > "$1"
+write_payload() { # <path> <session-id> <transcript-path> <tool-name> <tool-input-json> [<agent-id>]
+    # A subagent's payload carries its CONTROLLER's transcript_path plus an
+    # agent_id -- the only shape Claude Code produces (measured 2026-09-19 on
+    # 2.1.276). Never synthesize a payload naming a subagent's own transcript:
+    # such a vector passes while the real harness never produces that input.
+    local extra=""
+    if [ "$#" -ge 6 ] && [ -n "$6" ]; then
+        extra="$(printf ',"agent_id":"%s","agent_type":"claude"' "$6")"
+    fi
+    printf '{"session_id":"%s","transcript_path":"%s","cwd":"/tmp","hook_event_name":"PreToolUse","tool_name":"%s","tool_input":%s%s}' \
+        "$2" "$3" "$4" "$5" "$extra" > "$1"
 }
 
 json_string() { # <text> -> a JSON string literal (for tool_input.command)
@@ -295,20 +316,54 @@ assert_allow "and stays allowed"
 c="$(new_case)"; t="$c/home/proj/sess-b.jsonl"; write_transcript "$t" "msg_b"
 write_payload "$c/in" "sess-b" "$t" "Write" '{"file_path":"/tmp/x","content":"hi"}'
 run_hook "$c" "$c/in"; assert_deny "Write denies when unarmed"
-t2="$c/home/proj/sess-b/subagents/agent-1234abcd.jsonl"; write_transcript "$t2" "msg_sub"
-write_payload "$c/in2" "sess-b" "$t2" "MultiEdit" '{"file_path":"/tmp/x","edits":[]}'
+# The controller's transcript is written once here and never rewritten: every
+# subagent verdict below has to come from the subagent's own transcript.
+sub="$c/home/proj/sess-b/subagents/agent-1234abcd.jsonl"; write_transcript "$sub" "msg_sub"
+write_payload "$c/in2" "sess-b" "$t" "MultiEdit" '{"file_path":"/tmp/x","edits":[]}' "1234abcd"
 run_hook "$c" "$c/in2"; assert_deny "a subagent context of the same session is denied at its own first attempt"
 if [ -d "$(marker_dir "$c" sess-b sess-b)" ] && [ -d "$(marker_dir "$c" sess-b agent-1234abcd)" ]; then
     pass "two contexts of one session hold two markers"
 else
     fail "two contexts of one session hold two markers"
 fi
-write_transcript "$t2" "msg_sub" "msg_sub2"
-run_hook "$c" "$c/in2"; assert_allow "the subagent's later-turn retry is allowed"
+sub_wave="$(cat "$(marker_dir "$c" sess-b agent-1234abcd)/wave" 2>/dev/null || true)"
+if [ "$sub_wave" = "msg_sub" ]; then
+    pass "the subagent's wave is read from its own transcript, not the controller's"
+else
+    fail "the subagent's wave is read from its own transcript, not the controller's (got '$sub_wave')"
+fi
+run_hook "$c" "$c/in2"; assert_deny "a second subagent attempt in the same wave is denied"
+write_transcript "$sub" "msg_sub" "msg_sub2"
+run_hook "$c" "$c/in2"; assert_allow "the subagent's retry is allowed once its own transcript advances"
 run_hook "$c" "$c/in"; assert_deny "the controller's own wave is unaffected by the subagent's state"
+# The controller has moved on by the time it dispatches its second subagent.
+# Under the refuted per-transcript model that alone waved the second subagent
+# through: the shared marker's wave no longer matched, so nothing gated it.
+write_transcript "$t" "msg_b" "msg_b2"
+sub2="$c/home/proj/sess-b/subagents/agent-5678efab.jsonl"; write_transcript "$sub2" "msg_sub_b"
+write_payload "$c/in3" "sess-b" "$t" "Write" '{"file_path":"/tmp/y","content":"hi"}' "5678efab"
+run_hook "$c" "$c/in3"; assert_deny "a second subagent in the same session is interlocked at its own first attempt"
 c="$(new_case)"; t="$c/home/proj/sess-c.jsonl"; write_transcript "$t" "msg_c"
 write_payload "$c/in" "sess-c" "$t" "NotebookEdit" '{"notebook_path":"/tmp/n.ipynb","new_source":"x"}'
 run_hook "$c" "$c/in"; assert_deny "NotebookEdit denies when unarmed"
+
+# --- 3b. agent_id that names no transcript, and agent_id with a bad character -
+c="$(new_case)"; t="$c/home/proj/sess-m.jsonl"; write_transcript "$t" "msg_m"
+write_payload "$c/in" "sess-m" "$t" "Edit" '{}' "nosuchagent"
+run_hook "$c" "$c/in"; assert_deny "a subagent whose transcript cannot be read is denied once"
+if [ "$(cat "$(marker_dir "$c" sess-m agent-nosuchagent)/wave" 2>/dev/null || true)" = "unknown" ]; then
+    pass "and records its wave as unknown"
+else
+    fail "and records its wave as unknown"
+fi
+run_hook "$c" "$c/in"; assert_allow "so that subagent is stopped once and never trapped"
+write_payload "$c/in2" "sess-m" "$t" "Edit" '{}' "bad/id"
+run_hook "$c" "$c/in2"; assert_allow "an agent_id outside A-Za-z0-9._- allows"
+if [ "$(ls "$c/cache/hyperpowers/interlock/sess-m" | wc -l | tr -d ' ')" = "1" ]; then
+    pass "and leaves no marker of its own"
+else
+    fail "and leaves no marker of its own ($(ls "$c/cache/hyperpowers/interlock/sess-m" | tr '\n' ' '))"
+fi
 
 # --- 4. Bash: the classifier decides; read-only calls leave no marker --------
 c="$(new_case)"; t="$c/home/proj/sess-d.jsonl"; write_transcript "$t" "msg_d"
@@ -383,7 +438,8 @@ wait "$p1" || true; wait "$p2" || true
 if grep -q '"permissionDecision":"deny"' "$c/out1" && grep -q '"permissionDecision":"deny"' "$c/out2"; then pass "two concurrent first attempts are both denied"; else fail "two concurrent first attempts are both denied"; fi
 if [ "$(ls -d "$c/cache/hyperpowers/interlock/sess-j"/* | wc -l | tr -d ' ')" = "1" ]; then pass "they leave one marker and no temporary directory"; else fail "they leave one marker and no temporary directory ($(ls "$c/cache/hyperpowers/interlock/sess-j"))"; fi
 c="$(new_case)"; t1="$c/home/proj/s.jsonl"; t2="$c/home/proj/s/subagents/agent-x.jsonl"; write_transcript "$t1" "m1"; write_transcript "$t2" "m9"
-write_payload "$c/in1" "sess-k" "$t1" "Edit" '{}'; write_payload "$c/in2" "sess-k" "$t2" "Edit" '{}'
+# Both payloads name the same transcript_path; only agent_id separates them.
+write_payload "$c/in1" "sess-k" "$t1" "Edit" '{}'; write_payload "$c/in2" "sess-k" "$t1" "Edit" '{}' "x"
 ( env -i PATH="${PATH:-}" HOME="$c/home" XDG_CACHE_HOME="$c/cache" bash "$HOOK" < "$c/in1" > "$c/out1" 2>/dev/null ) &
 p1=$!
 ( env -i PATH="${PATH:-}" HOME="$c/home" XDG_CACHE_HOME="$c/cache" bash "$HOOK" < "$c/in2" > "$c/out2" 2>/dev/null ) &
@@ -810,8 +866,12 @@ hostname --fqdn	read-only
 //
 // Modes:
 //   --hook              stdin: the PreToolUse payload. stdout: one line,
-//                       "<decision>\t<session_id>\t<transcript_path>" where
-//                       decision is "attempt" (a mutation attempt) or "skip".
+//                       "<decision>\t<session_id>\t<context>\t<transcript>"
+//                       where decision is "attempt" (a mutation attempt) or
+//                       "skip". <context> names the calling agent context and
+//                       <transcript> is that context's own transcript; see
+//                       contextOf() for why neither comes from transcript_path
+//                       alone.
 //   --wave <transcript> stdout: the message id of the last assistant record in
 //                       the transcript's last 64 KiB, or "unknown".
 //   --publish <tmp> <marker>
@@ -832,6 +892,7 @@ hostname --fqdn	read-only
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 
 const MUTATING_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
@@ -1451,15 +1512,46 @@ function readStdin() {
   try { return fs.readFileSync(0, 'utf8'); } catch (e) { return ''; }
 }
 
+const SAFE_NAME = /^[A-Za-z0-9._-]+$/;
+
+// Name the agent context a payload came from, and find that context's own
+// transcript.
+//
+// A subagent's tool call does not carry the subagent's transcript_path: Claude
+// Code puts the controller's path in every payload, whoever made the call
+// (measured 2026-09-19 on 2.1.276, evidence/2026-09-17-first-edit-interlock/
+// probe/). agent_id is the only field that tells one context from another, and
+// keying on transcript_path alone collapsed a controller and both its
+// subagents into one interlock -- trapping the first subagent and never gating
+// the second. So agent_id, when present, supplies both the marker's name and
+// the transcript every wave read uses; Claude Code lays a subagent's transcript
+// out beside its controller's as <dir>/<stem>/subagents/agent-<id>.jsonl.
+function contextOf(transcriptPath, agentId) {
+  const stem = path.basename(transcriptPath).replace(/\.[^.]*$/, '');
+  if (!agentId) return { name: stem, transcript: transcriptPath };
+  const name = 'agent-' + agentId;
+  return {
+    name: name,
+    transcript: path.join(path.dirname(transcriptPath), stem, 'subagents', name + '.jsonl'),
+  };
+}
+
 function modeHook() {
+  const skip = () => { process.stdout.write('skip\t\t\t\n'); return 0; };
   let payload;
-  try { payload = JSON.parse(readStdin()); } catch (e) { process.stdout.write('skip\t\t\n'); return 0; }
-  if (!payload || typeof payload !== 'object') { process.stdout.write('skip\t\t\n'); return 0; }
+  try { payload = JSON.parse(readStdin()); } catch (e) { return skip(); }
+  if (!payload || typeof payload !== 'object') return skip();
   const sid = typeof payload.session_id === 'string' ? payload.session_id : '';
   const tp = typeof payload.transcript_path === 'string' ? payload.transcript_path : '';
-  const decision = sid && tp ? classify(payload.tool_name, payload.tool_input) : 'read-only';
+  if (!sid || !tp) return skip();
+  const agentId = typeof payload.agent_id === 'string' ? payload.agent_id : '';
+  // Rejected here rather than downstream: a stripped separator would otherwise
+  // turn an unusable agent_id into a name that keys some other context's marker.
+  if (agentId && !SAFE_NAME.test(agentId)) return skip();
+  if (classify(payload.tool_name, payload.tool_input) !== 'attempt') return skip();
+  const ctx = contextOf(tp, agentId);
   const clean = (s) => s.replace(/[\t\n\r]/g, '');
-  process.stdout.write((decision === 'attempt' ? 'attempt' : 'skip') + '\t' + clean(sid) + '\t' + clean(tp) + '\n');
+  process.stdout.write('attempt\t' + clean(sid) + '\t' + clean(ctx.name) + '\t' + clean(ctx.transcript) + '\n');
   return 0;
 }
 
@@ -1520,7 +1612,7 @@ function main(argv) {
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
 
-module.exports = { classify, commandReadOnly, lastAssistantId };
+module.exports = { classify, commandReadOnly, contextOf, lastAssistantId };
 ```
 
 Then `chmod +x hooks/interlock-lib.cjs` and run: `node hooks/interlock-lib.cjs --vectors tests/hooks/fixtures/mutation-cases.tsv`
@@ -1541,11 +1633,14 @@ Expected: `ok 363` and exit 0. A `mismatch:` line means the helper was not copie
 # here-strings (tests/hooks/test-no-heredocs-in-hooks.sh); bash 3.2.
 #
 # State lives under ${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/interlock/
-# <session_id>/<agent>/wave, where <agent> is the transcript's basename: a
-# controller and each of its subagents is interlocked once. The marker is
-# published by renaming a prepared temporary directory, so it is either absent
-# or complete, and a caller that dies early leaves only a temporary directory
-# that hooks/session-start prunes.
+# <session_id>/<context>/wave, where <context> names the calling agent context:
+# a controller and each of its subagents is interlocked once. The library
+# derives that name and the context's own transcript from the payload, because
+# a subagent's call carries its controller's transcript_path and only agent_id
+# tells the two apart; see contextOf() there. The marker is published by
+# renaming a prepared temporary directory, so it is either absent or complete,
+# and a caller that dies early leaves only a temporary directory that
+# hooks/session-start prunes.
 
 set -uo pipefail
 
@@ -1593,13 +1688,13 @@ tab=$'\t'
 decision="${decision_line%%${tab}*}"
 rest="${decision_line#*${tab}}"
 sid="${rest%%${tab}*}"
+rest="${rest#*${tab}}"
+agent="${rest%%${tab}*}"
 transcript="${rest#*${tab}}"
 [ "$decision" = "attempt" ] || exit 0
 case "$sid" in ''|*[!A-Za-z0-9._-]*) exit 0 ;; esac
-[ -n "$transcript" ] || exit 0
-agent="${transcript##*/}"
-agent="${agent%.*}"
 case "$agent" in ''|*[!A-Za-z0-9._-]*) exit 0 ;; esac
+[ -n "$transcript" ] || exit 0
 
 root="${XDG_CACHE_HOME:-${HOME:-}/.cache}/hyperpowers/interlock/${sid}"
 marker="${root}/${agent}"
@@ -7928,6 +8023,16 @@ git commit -m "evidence: manifest, launchers, vector copy, and fail-closed analy
 
 ### Task 5: The live probe (controller, not an implementer)
 
+> **Amended 2026-09-19, after this task's first run.** The probe did its job: it
+> held the campaign. Session one passed every check; session two showed the
+> subagent denials carrying the controller's wave id and the second subagent
+> never gated. Task 2 was amended to key on `agent_id` and this task re-runs
+> from Step 1 against the amended hook. Step 4's checks below are the amended
+> ones -- they now name the three things that run got wrong, so a repeat cannot
+> pass. The held run is preserved at
+> `evidence/2026-09-17-first-edit-interlock/probe/` (evals commit `091fa06`);
+> move it aside rather than overwriting it, so both runs stay citable.
+
 **Risk tier:** high — two live Claude Code sessions and the durable `campaign: may start` authorization Task 6 trusts.
 
 **Files:**
@@ -7992,7 +8097,7 @@ P="$TMPDIR/interlock-probe"
 SUPERPOWERS_ROOT="$P/plugin" env -u SLASH_COMMAND_TOOL_CHAR_BUDGET bun run quorum run --scenarios-root "$P/scenarios" probe-subagent --coding-agent claude-auto --repeat 1 2>&1 | tee "$P/session-two.out"
 ```
 
-In the run's subagent transcript (`home/.claude/projects/*/*/subagents/agent-*.jsonl`) the first mutation attempt must be denied with the interlock message and a retry in a later assistant message must succeed; the main transcript must hold no denial (the controller made no mutation attempt) or, if the main agent did attempt one, its own denial first; `hello.txt` must exist in the workdir. `hook.log` must show a wave identifier for the subagent's denied call equal to the `message.id` of the subagent record carrying it.
+In the run's subagent transcript (`home/.claude/projects/*/*/subagents/agent-*.jsonl`) the first mutation attempt must be denied with the interlock message and a retry in a later assistant message must succeed; the main transcript must hold no denial (the controller made no mutation attempt) or, if the main agent did attempt one, its own denial first; `hello.txt` must exist in the workdir. `hook.log` must show a wave identifier for the subagent's denied call equal to the `message.id` of the subagent record carrying it -- that record is in the **subagent's** transcript, and a wave that instead matches a controller record is the 2026-09-19 failure, not a pass. Three more checks come from that run, and any one of them failing holds the campaign the same way: every subagent payload in `hook.log` carries an `agent_id` (its absence means the payload shape changed and the context rule needs re-deriving); the run leaves one marker directory per context under `home/.cache/hyperpowers/interlock/<session_id>/`, named `agent-<agent_id>` for each subagent and the session id for the controller, never one shared directory; and if the session dispatches more than one subagent, each one's first mutation attempt is denied, not just the first subagent's.
 
 - [ ] **Step 5: Decide, record, and commit**
 

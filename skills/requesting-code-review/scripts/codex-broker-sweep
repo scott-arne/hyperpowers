@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # codex-broker-sweep [--kill] [--include-unreferenced] [--state-root DIR]
+#                    [--only-pids PID,PID]
 # Finds codex-plugin-cc brokers that nothing will ever use again and, with
 # --kill, retires them. Two shapes of leak, both seen in real runs:
 #   stale-record  — a <state-root>/<workspace>/broker.json whose endpoint is
@@ -21,6 +22,16 @@
 # its endpoint answers, that widening also re-reads the records at the moment it
 # decides and skips any broker still young enough to be registering.
 #
+# --only-pids narrows the process scan to exactly the pids listed: no other
+# process is inspected or classified, and every identity and safety check still
+# applies to each one that is. This is the fence the regression test runs
+# behind — it isolates the records it sweeps with --state-root, but the scan
+# below reads the host process table, and a broker whose working directory was
+# deleted is retired for that alone, before anything asks whether a record
+# names it — and the flag a targeted retirement uses. The residual is
+# unchanged: a production sweep has no list to be given and scans the whole
+# table, as it must to find leaks nothing recorded.
+#
 # The sweep signals other people's processes, so it fails closed. Every check
 # has three answers, not two — live, dead, or could-not-tell — and only a
 # confirmed-dead answer authorizes action. Anything it could not determine is
@@ -28,19 +39,69 @@
 # says the sweep was incomplete. Without --kill nothing changes.
 # Exit 0 with a report; exit 1 if a retirement failed; exit 2 for usage.
 set -uo pipefail
-kill=0; unref=0; root="${HOME}/.claude/plugins/data/codex-openai-codex/state"
+kill=0; unref=0; only=""; only_set=0; root="${HOME}/.claude/plugins/data/codex-openai-codex/state"
 while [ $# -gt 0 ]; do
   case "$1" in
     --kill) kill=1; shift ;;
     --include-unreferenced) unref=1; shift ;;
     --state-root) [ $# -ge 2 ] || { echo "codex-broker-sweep: --state-root needs a value" >&2; exit 2; }; root="$2"; shift 2 ;;
-    *) echo "usage: codex-broker-sweep [--kill] [--include-unreferenced] [--state-root DIR]" >&2; exit 2 ;;
+    --only-pids) [ $# -ge 2 ] || { echo "codex-broker-sweep: --only-pids needs a value" >&2; exit 2; }; only="$2"; only_set=1; shift 2 ;;
+    *) echo "usage: codex-broker-sweep [--kill] [--include-unreferenced] [--state-root DIR] [--only-pids PID,PID]" >&2; exit 2 ;;
   esac
 done
-node - "$root" "$kill" "$unref" <<'JS'
+# Presence and value are separate facts: an empty list is a caller asking for
+# something this tool cannot do, and reading it as an absent flag would widen
+# the scan to the whole host — the opposite of what was asked. A list that
+# cannot be parsed is refused for the same reason a silent no-op is: it looks
+# exactly like a clean host.
+if [ "$only_set" -eq 1 ]; then
+  case "$only" in
+    ''|*[!0-9,]*|,*|*,|*,,*) echo "codex-broker-sweep: --only-pids must be a comma-separated list of pids (got '$only')" >&2; exit 2 ;;
+  esac
+fi
+# Leading zeros are padding, not magnitude. Stripping them first means the
+# bounds below measure the number the caller meant, and leaves a string that is
+# already canonical decimal -- so nothing downstream has to convert it.
+strip_leading_zeros() {
+  local s
+  s="${1#"${1%%[!0]*}"}"
+  [ -n "$s" ] || s=0
+  printf '%s' "$s"
+}
+# The registration window below, in seconds. A value the script cannot read
+# would become NaN in every age comparison and silently disarm the fence that
+# protects a broker which has not registered yet, so a bad one is a usage
+# error rather than a default -- and an empty value is a caller asking for a
+# window this tool cannot give, not an absent variable, so only an unset
+# variable takes the default.
+#
+# Both bounds are decided on the canonical STRING, because the value is read by
+# node, not by bash: `00` and `000` are digits and are not the literal `0`, yet
+# Number("00") is 0, which makes every unregistered broker instantly old enough
+# and disarms the very fence the window exists to hold; and a 20-digit value
+# lands past Number.MAX_SAFE_INTEGER, so node holds a rounded magnitude no
+# elapsed time will ever reach and the widened sweep stops retiring anything.
+# Six digits is eleven days of registration grace, far past any real window.
+WINDOW_MAX_DIGITS=6
+window_raw="${CODEX_BROKER_SWEEP_WINDOW_S-60}"
+reject_window() {
+  echo "codex-broker-sweep: CODEX_BROKER_SWEEP_WINDOW_S must be a positive integer of at most $WINDOW_MAX_DIGITS digits (got '$window_raw')" >&2
+  exit 2
+}
+case "$window_raw" in
+  ''|*[!0-9]*) reject_window ;;
+esac
+window="$(strip_leading_zeros "$window_raw")"
+[ "$window" != 0 ] || reject_window
+[ "${#window}" -le "$WINDOW_MAX_DIGITS" ] || reject_window
+node - "$root" "$kill" "$unref" "$only" "$window" <<'JS'
 const fs = require("fs"), path = require("path"), net = require("net"), cp = require("child_process");
-const [root, killArg, unrefArg] = process.argv.slice(2);
+const [root, killArg, unrefArg, onlyArg, windowArg] = process.argv.slice(2);
 const kill = killArg === "1", sweepUnreferenced = unrefArg === "1";
+// The pids this run may consider, or null for "whatever the process table
+// holds". An empty value is refused in the shell above, so "" here is
+// unambiguously an absent flag rather than an empty list.
+const onlyPids = onlyArg === "" ? null : new Set(onlyArg.split(",").map(Number).filter((n) => Number.isInteger(n) && n > 1));
 const sockOf = (ep) => (typeof ep === "string" && ep.startsWith("unix:")) ? ep.slice(5) : null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
@@ -107,12 +168,18 @@ const isBroker = (pid, ep) => {
   catch { return false; }
   return BROKER_CMD.test(cmd) && hasEndpoint(cmd, ep);
 };
-// How long a broker may be pgrep-visible before any record names it.
+// How long a broker may be visible to this scan before any record names it.
 // broker-lifecycle.mjs spawns the process, waits up to 2s for its endpoint to
 // answer, and only then writes broker.json -- so during that window a perfectly
-// healthy broker is running, listening, and unreferenced. Ten seconds is that
-// window with room for a loaded host.
-const REGISTRATION_WINDOW_S = 10;
+// healthy broker is running, listening, and unreferenced. That 2s is how long
+// the companion waits after spawning, not a bound on how old an unrecorded
+// broker can be: a parent stalled anywhere between the spawn and the write
+// leaves a healthy, listening, unrecorded broker of any age at all. Sixty
+// seconds is not a proof either, only a wider guess -- the honest fence would
+// be a signal the broker writes about itself, which the companion does not
+// provide -- and all the widening costs is fifty more seconds of life for an
+// unreferenced leak. CODEX_BROKER_SWEEP_WINDOW_S overrides it.
+const REGISTRATION_WINDOW_S = Number(windowArg);
 // Seconds this pid has been running, or null if that cannot be established.
 // `ps -o etime=` prints [[DD-]HH:]MM:SS; anything else is an answer this script
 // does not understand, which is not the same as a young process.
@@ -215,8 +282,16 @@ const readReferenced = () => {
   // swallowed throw would read as "no brokers", which is the one answer this
   // tool must never give silently.
   let pids = [];
-  try { pids = cp.execFileSync("pgrep", ["-f", "app-server-broker\\.mjs serve"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n").map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 1 && n !== process.pid); }
-  catch (e) { if (e && e.status === 1) pids = []; else { unverifiable++; console.log(`unverifiable-processlist reason=${e && e.code ? e.code : e}`); pids = []; } }
+  if (onlyPids !== null) {
+    // A targeted run reads no process table at all. Discovery is the whole of
+    // what --only-pids replaces -- every check below still runs on each pid --
+    // so nothing outside the list can be classified, and a pgrep that cannot
+    // answer cannot make such a run look clean either.
+    pids = [...onlyPids].filter((n) => n !== process.pid);
+  } else {
+    try { pids = cp.execFileSync("pgrep", ["-f", "app-server-broker\\.mjs serve"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\n").map((x) => Number(x)).filter((n) => Number.isInteger(n) && n > 1 && n !== process.pid); }
+    catch (e) { if (e && e.status === 1) pids = []; else { unverifiable++; console.log(`unverifiable-processlist reason=${e && e.code ? e.code : e}`); pids = []; } }
+  }
   for (const pid of pids) {
     let cmd;
     try { cmd = cp.execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 4 * 1024 * 1024 }).trim(); }

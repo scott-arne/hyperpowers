@@ -8,7 +8,7 @@
 **Full root:** 9e9d665 (hook commit 23a7d6e, registered at 58f224c)
 **Harness:** evals 51ea31d — the pin every launch verified the harness paths (`src scenarios coding-agents package.json bun.lock`) against, and all 120 launch logs record `harness_paths_identical=yes`. The evals working tree itself moved during the campaign, so those logs show four different evals heads (86 × `fc99ccd`, 31 × `43b8d97`, 2 × `0b0f7f0`, 1 × `8bf278d`); none of them changed a harness path.
 **Claude Code:** 2.1.276
-**Evidence:** evals evidence/2026-09-17-first-edit-interlock/ at f276db4, first committed at e3f84e7 (archives under `task-6-runs/`, the probe under `probe/`, the experiment-log entry at `docs/experiments/2026-09-17-first-edit-interlock.md`)
+**Evidence:** evals evidence/2026-09-17-first-edit-interlock/ at cdcdb04, first committed at e3f84e7 (archives under `task-6-runs/`, the probe under `probe/`, the experiment-log entry at `docs/experiments/2026-09-17-first-edit-interlock.md`)
 **Branch state:** `first-edit-interlock` at 86526d6, the parent of the commit that first added this note. The only change on the branch between the full root and that commit is this spec's own amendment (+13/-11), so the bootstrap texts and the hook are on the branch byte-identical to what was measured. For any later head, `git diff 9e9d665..HEAD -- hooks skills/using-hyperpowers/SKILL.md skills/brainstorming/SKILL.md` settles the same question without trusting this line.
 
 ## What was measured

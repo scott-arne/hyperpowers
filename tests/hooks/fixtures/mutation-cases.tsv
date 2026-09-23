@@ -218,6 +218,11 @@ echo `basename \$HOME`	read-only
 cat <<EOF\n`echo \`rm f\``\nEOF	mutation
 echo '$(touch f)'	read-only
 echo "a $(rm f) b"	mutation
+# Arithmetic expansion opens with the same $( the scanner reads as a command
+# substitution, so these classify as mutation. That is the safe direction: a
+# false positive costs one denial before any edit, never a missed mutation.
+echo $((1+2))	mutation
+n=$((n+1)); echo $n	mutation
 cat <<EOF > f\nhello\nEOF	mutation
 cat <<EOF\nhello | rm -rf /\nEOF	read-only
 cat <<'EOF'\nx\nEOF	read-only

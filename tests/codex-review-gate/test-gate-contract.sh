@@ -5,7 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # The gate is an index plus section-file siblings; assert against the union.
 GATE="$(mktemp)"
-trap 'rm -f "$GATE"' EXIT
+BLOCKS="$(mktemp -d)"
+trap 'rm -f "$GATE"; rm -rf "$BLOCKS"' EXIT
 bash "$SCRIPT_DIR/assemble-gate.sh" "$REPO_ROOT" "$GATE" || exit 1
 BRAINSTORMING="$REPO_ROOT/skills/brainstorming/SKILL.md"
 WRITING_PLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
@@ -313,6 +314,40 @@ if [ "$n" -eq 3 ]; then
 else
   fail "all three code-review focus strings carry the severity calibration (found $n)"
 fi
+
+
+# The count above is over the assembled gate, so it is satisfied by three
+# copies anywhere in it -- two in one recipe command and none in another, or
+# three in prose with the commands bare. Each command carries its own.
+RECIPE="$REPO_ROOT/skills/requesting-code-review/recipe-code.md"
+awk -v dir="$BLOCKS" '
+  /^```/ { fence = !fence; if (fence) { n += 1; out = sprintf("%s/%02d", dir, n) } next }
+  fence { print > out }
+' "$RECIPE"
+launches=0
+for block in "$BLOCKS"/*; do
+  grep -Fq -- "adversarial-review --base" "$block" || continue
+  launches=$((launches + 1))
+  hits="$(grep -F -o -- "$full_cal" "$block" | grep -c .)"
+  if [ "$hits" -eq 1 ]; then
+    pass "code recipe launch $launches carries the severity calibration in its own command"
+  else
+    fail "code recipe launch $launches carries the severity calibration in its own command (found $hits)"
+    echo "    in the block beginning: $(head -n 1 "$block")"
+  fi
+done
+if [ "$launches" -eq 3 ]; then
+  pass "all three code recipe launches were checked for the calibration"
+else
+  fail "expected three adversarial-review commands in $RECIPE, found $launches"
+fi
+
+# The calibration reaches a lens launch only through the clause that composes
+# the recipe focus into the lens prompt. Counting the calibration cannot see
+# that clause go: the copies it counts are in the recipe either way.
+lens_composition="Each lens's detached launch delivers its lens prompt as the review focus: the \`adversarial-review\` focus argument composes that lens's \`lens-<name>-prompt.md\` content (dossier line, charter, exhaustiveness demand, required \`Coverage:\` section) together with the code recipe's complete adversarial-review focus string for that gate type — its context paths and its severity calibration sentences, verbatim from that recipe; a lens focus that carries the paths without the calibration is the defect this clause exists to prevent — one launch per lens, each carrying its own lens prompt."
+assert_contains "$GATE" "$lens_composition" \
+  "the lens focus composes the lens prompt with the recipe focus string"
 
 
 assert_contains "$GATE" "the capture carries medium/low notes: read them and record each in the round ledger" \

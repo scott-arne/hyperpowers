@@ -116,6 +116,27 @@ expect "$(bash "$GR" "$gd8" --peek --ceiling 0)" '"verdict":"backstop"' "peek at
 gd9="$work/gate9"; mkdir -p "$gd9"
 expect "$(bash "$GR" "$gd9" --peek)" '"verdict":"proceed"' "peek with no ceiling known -> proceed"
 
+# A peek answers with the ceiling THIS call supplies, and falls back to the
+# persisted one only when the call supplies none. Preferring what was on disk
+# let a peek proceed on a cap a newer --consumed had already spent: round 1
+# recorded while the cap was intact, then a peek reporting five rounds spent,
+# read back the stale five and said proceed -- the one answer the counter
+# exists to refuse.
+gd9b="$work/gate9b"; mkdir -p "$gd9b"
+expect "$(bash "$GR" "$gd9b" --consumed 0 --gate task)" '"ceiling":5' "--consumed 0 records ceiling 5"
+snap="$(cat "$gd9b/gate-round.json")"
+out="$(bash "$GR" "$gd9b" --peek --consumed 5 --gate task)"
+expect "$out" '"ceiling":0' "a peek answers with the ceiling its own --consumed derives"
+expect "$out" '"verdict":"backstop"' "a peek on a cap this call reports spent backstops"
+same_state "a peek with a newer --consumed leaves state untouched" "$snap" "$gd9b"
+out="$(bash "$GR" "$gd9b" --peek --gate task)"
+expect "$out" '"ceiling":5' "a peek that supplies no ceiling still reads the persisted one"
+expect "$out" '"verdict":"proceed"' "the persisted ceiling still proceeds at round 1 of 5"
+
+gd9c="$work/gate9c"; mkdir -p "$gd9c"
+bash "$GR" "$gd9c" --ceiling 3 --gate task >/dev/null
+expect "$(bash "$GR" "$gd9c" --peek --ceiling 1)" '"ceiling":1' "a peek answers with the --ceiling this call supplies"
+
 # --consumed usage errors: exclusive with --ceiling, bounded by the cap, needs a value
 gd10="$work/gate10"; mkdir -p "$gd10"
 exit2 "--consumed with --ceiling exits 2" bash "$GR" "$gd10" --consumed 2 --ceiling 3

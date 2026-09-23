@@ -1,6 +1,6 @@
 ---
 name: brainstorming
-description: "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation."
+description: "Use when a request changes what the software does or how it is built and is not one obvious, self-contained, local edit: new structure or behavior, more than one reasonable approach, an unclear scope, or a consequence beyond the edit that comes with a choice (security posture, data, deleting or disabling something that works, an interface others call). Not for a single element, value, or line with one obvious implementation and nothing else depending on it: a basic form control, a label, a typo, a constant."
 ---
 
 # Brainstorming Ideas Into Designs

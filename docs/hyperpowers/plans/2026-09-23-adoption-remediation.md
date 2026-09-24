@@ -418,7 +418,7 @@ git commit -m "revert(brainstorming): restore upstream's description"
 
 **Files:**
 - Modify: `skills/dispatching-parallel-agents/SKILL.md` (delete lines 81-87 plus the blank after)
-- Modify: `tests/skills/test-skill-contract.sh` (delete the `DPA=` line at 8, the comment at 35, and the seven assertions at 36, 38, 40, 42, 44, 46, 48; edit the header comment at line 3)
+- Modify: `tests/skills/test-skill-contract.sh` (delete lines 35-50 as one contiguous span — the section comment, the seven two-line assertions, and the trailing blank — then the `DPA=` line at 8; edit the header comment at line 3)
 - Test: `bash tests/skills/test-skill-contract.sh < /dev/null`
 
 **Interfaces:**
@@ -514,8 +514,8 @@ git commit -m "revert(A8): remove the collection paragraph and its needles"
 **Files:**
 - Modify: `skills/requesting-code-review/code-reviewer.md` (delete lines 109-127 plus the blank after)
 - Modify: `skills/subagent-driven-development/task-reviewer-prompt.md` (delete lines 180-198 plus the blank after)
-- Modify: `tests/sdd/test-sdd-contract.sh` (delete line 300 and lines 302-319)
-- Modify: `tests/codex-review-gate/test-gate-contract.sh` (delete line 394 and lines 396-413)
+- Modify: `tests/sdd/test-sdd-contract.sh` (delete lines 300-319 as one contiguous span)
+- Modify: `tests/codex-review-gate/test-gate-contract.sh` (delete lines 394-413 as one contiguous span)
 - Test: `bash tests/sdd/test-sdd-contract.sh < /dev/null`, `bash tests/codex-review-gate/test-gate-contract.sh < /dev/null`
 
 **Interfaces:**

@@ -201,3 +201,19 @@ How far the caveat reaches is also unsettled, and an earlier draft of this note 
 Two claims an earlier draft of this note made are withdrawn: the "about 0.02 ms per invocation" from the Task 2 review, whose reading was never retained and which re-measurement puts three to thirteen times higher across the one-to-three-record range, and the attribution of the 2-16 ms figure that prompted R1-5 to this Bash sandbox's per-open-for-write interposition, which nothing committed substantiates.
 
 For the next change, which the spec's ship rule makes a new measured change rather than an edit to this one: settle the criterion 1 reading the Decision leaves open — say in the spec whether the criterion is scored on the gating behavior its prose describes or on the grader's composed verdict, so the bar and the analyzer cannot disagree again — and either way write the boundary fixtures' third acceptance criterion so a defensible stronger fix is not scored as a failure to make the change. Re-measure `cost-tls-verify-boundary` before reading its number again. The denial message should also be brought back into agreement with the ladder it cites (B9) before the arm that carries it is measured.
+
+## Reversion (2026-09-23)
+
+The hook, its library, its registration, its tests, its vector file, and the
+session-start housekeeping block were removed at fb0b4d1. The bootstrap
+ladder that shipped beside it stays. The reasons, from the assessment that
+preceded the removal: the attribution table above shows the wording arm
+alone at 10/10 on five of the six boundary scenarios and 6/10 on tls, so the
+hook's marginal contribution at the measured resolution is zero on five and
+eight points inside noise on one; its marginal token cost over wording is
+21% to 26% on the benign scenarios; and its whole-transcript reads, two per
+mutation attempt after each context's first denial, cost 0.68 s each on a
+197 MB transcript, a size thirteen sessions on the measuring machine
+exceed, which the campaign's short sessions could not show. The
+`.worktrees/first-edit-interlock-wording` pin and the three arm pins remain
+reachable; nothing here is rewritten.

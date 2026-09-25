@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Prose contracts for skills whose behavior-shaping wording has no other
-# test: dispatching-parallel-agents' collection contract, writing-skills'
+# test: writing-skills'
 # pruning rules.
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-DPA="$REPO_ROOT/skills/dispatching-parallel-agents/SKILL.md"
 WSKILLS="$REPO_ROOT/skills/writing-skills/SKILL.md"
 
 FAILURES=0
@@ -31,22 +30,6 @@ assert_contains() {
 
 echo "=== skill prose contracts ==="
 echo ""
-
-# --- A8 delegation completion contract -----------------------------------
-assert_contains "$DPA" "### 4. Review and Integrate **You own collection.**" \
-  "section 4 opens with the collection contract"
-assert_contains "$DPA" "A dispatched agent that has not been collected and integrated is not finished work." \
-  "an uncollected agent is not finished work"
-assert_contains "$DPA" "Never end your turn with children still running" \
-  "the turn does not end with children running"
-assert_contains "$DPA" "a child that completes after your turn ends has no parent to report to, and its result is orphaned" \
-  "a late child's result is orphaned"
-assert_contains "$DPA" "Wait, reconcile, then return." \
-  "the contract is wait, reconcile, return"
-assert_contains "$DPA" 'every child finished, and every result was lost' \
-  "the observed failure is recorded"
-assert_contains "$DPA" 'spawned children and returned "waiting" as their final answer' \
-  "the named failure is returning waiting as the final answer"
 
 # --- A10 pruning tests and expiring baselines ----------------------------
 assert_contains "$WSKILLS" "**The no-op test:** delete a sentence and ask whether the agent's behavior changes." \

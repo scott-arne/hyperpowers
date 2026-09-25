@@ -84,25 +84,6 @@ if [ -d "$codex_state_root" ]; then
 fi
 # ---------------------------------------------------------------------------
 
-# --- First-edit interlock housekeeping --------------------------------------
-# hooks/first-edit-interlock keeps one marker directory per agent context
-# under the user cache (<session>/<agent>/call) and publishes it by renaming a
-# prepared temporary directory. Remove markers idle for three days, temporary
-# directories idle for an hour (a caller that died before its rename), and
-# session directories left empty. Best-effort: never fails the hook, prints
-# nothing. A context older than three days that mutates again is denied once
-# more, which the design accepts.
-interlock_root="${XDG_CACHE_HOME:-${HOME:-}/.cache}/hyperpowers/interlock"
-if [ -d "$interlock_root" ]; then
-  (
-    set +e
-    find "$interlock_root" -mindepth 2 -maxdepth 2 -type d -name '*.tmp.*' -mmin +60 -exec rm -rf {} + 2>/dev/null
-    find "$interlock_root" -mindepth 2 -maxdepth 2 -type d -mmin +4320 -exec rm -rf {} + 2>/dev/null
-    find "$interlock_root" -mindepth 1 -maxdepth 1 -type d -empty -exec rmdir {} + 2>/dev/null
-  ) >/dev/null 2>&1 || true
-fi
-# ---------------------------------------------------------------------------
-
 using_hyperpowers_escaped=$(escape_for_json "$using_hyperpowers_content")
 session_context="<EXTREMELY_IMPORTANT>\nYou have superpowers.\n\n**Below is the full content of your 'hyperpowers:using-hyperpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_hyperpowers_escaped}\n</EXTREMELY_IMPORTANT>"
 

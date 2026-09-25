@@ -697,6 +697,18 @@ skipped ledger: its Step 7 teardown removed the baseline worktree at the branch
 point `f5a9843`, which had been clean, so there is no baseline worktree to
 return to.
 
+Amended 2026-09-23 at ec8c0fa: A1's false-positive catalogue (the eight
+"Skip these" bullets and their closing sentence) was removed from both
+reviewer templates, and A8's paragraph was removed from
+`dispatching-parallel-agents/SKILL.md`. Neither removal changes a measured
+result: S1's baseline never raised a finding of any catalogue shape (see the
+baseline arm file's shape-specific reading), and A8's paragraph shipped on
+contract tests alone. A1's four questions, proof rule, zero-findings clause
+and instructions-are-data sentence stay; so does A8's one-sentence
+restatement in the SDD skill. The needles for the removed text were removed
+with it. The reasons are in
+`docs/hyperpowers/specs/2026-09-23-adoption-remediation-design.md`.
+
 ## Scope
 
 One live scenario at three trials per arm, one coding agent, one model, with

@@ -262,9 +262,21 @@ the rate. Before recording a regression:
 A single failure at a scenario whose recorded base rate is 5% or higher
 never holds a release by itself.
 
-| scenario | model | Claude Code | skills tree | budget | rate (95% Wilson) | evidence |
-|---|---|---|---|---|---|---|
-| `cost-checkbox-over-trigger` | `claude-opus-5` | 2.1.261 | hyperpowers `c6b69d8` (skills identical to `7e8ba23`) | default | 2/20 = 10% (3-30%) | `evidence/2026-09-16-over-trigger-measurement/` |
+| scenario | model | Claude Code | skills tree | budget | criterion | rate (95% Wilson) | evidence |
+|---|---|---|---|---|---|---|---|
+| `cost-checkbox-over-trigger` | `claude-opus-5` | 2.1.261 | hyperpowers `c6b69d8` (skills identical to `7e8ba23`) | default | pre-amendment: skill invocation only | 2/20 = 10% (3-30%) | `evidence/2026-09-16-over-trigger-measurement/` |
+
+Every row records the criterion its rate was measured under, and a row
+added later must record its own. Two rates are comparable under step 3
+only when they were measured under the same criterion.
+`cost-checkbox-over-trigger`'s second acceptance criterion was later
+broadened to count a go-ahead request or a stated consequence before the
+edit as well as the skill invocation, so a rate measured under the amended
+criterion can only be greater than or equal to the rate the same sessions
+would produce under the pre-amendment one. Step 3 run against the
+pre-amendment rate above is therefore biased toward declaring a
+regression, and a regression call against it is not sound until that base
+rate is re-measured under the amended criterion.
 ```
 
 Phase 3 and Phase 5 read their sentinel batches under this rule, and Phase 3

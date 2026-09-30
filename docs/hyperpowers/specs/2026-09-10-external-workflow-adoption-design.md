@@ -467,10 +467,11 @@ following the same fail-silent, no-quote, no-newline discipline. Contract:
   read-only.
 - With several ledgers, the newest by modification time is named.
 - A path whose JSON spelling differs from its bytes (a quote, a backslash, or
-  a C0 control character, below 0x20, in it) is named as that JSON string
-  literal, escapes visible, on one line, so that no filename data can add a
-  line to the context; every other path is named verbatim. DEL, C1 code points
-  and U+2028/U+2029 are legal inside a JSON string, add no line to the
+  a C0 control character, below 0x20, in it), or that carries a Unicode line
+  terminator outside C0 (U+0085, U+2028 or U+2029), is named as that JSON
+  string literal, escapes visible, on one line, so that no filename data can
+  add a line to the context; every other path is named verbatim. DEL and the
+  other C1 code points are legal inside a JSON string, add no line to the
   context, and are named verbatim.
 - A ledger path that is not valid UTF-8 (legal on Linux file systems) has no
   faithful spelling in a JSON string, so the notice is skipped for it rather

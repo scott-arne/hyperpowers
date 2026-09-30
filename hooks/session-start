@@ -194,20 +194,28 @@ if [ "$hook_source" = "compact" ]; then
         printf '%s' "$newest" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || exit 0
       fi
       # Every notice is ONE line, and the decoded text must not carry a
-      # control character: a plan basename is repository data, and a newline
-      # in it would otherwise land in the context of the resumed session as a
-      # line of its own. A path whose JSON spelling differs from its bytes (a
-      # quote, a backslash, or a C0 byte in it) is named as that JSON string
+      # control character or a line terminator: a plan basename is repository
+      # data, and a newline in it would otherwise land in the context of the
+      # resumed session as a line of its own. A path whose JSON spelling
+      # differs from its bytes (a quote, a backslash, or a C0 byte in it), or
+      # that carries U+0085, U+2028 or U+2029, is named as a JSON string
       # literal, escapes visible, on one line; every other path is named
-      # verbatim. escape_for_json is byte-exact in every locale; printf %q is
-      # not: bash 3.2 quotes byte-wise under a UTF-8 locale and emits invalid
-      # UTF-8 for a path with non-ASCII letters.
+      # verbatim. JSON leaves those three raw and some readers break lines at
+      # them, so they are escaped below, here and not in escape_for_json,
+      # whose output for the skill body must not change. Their patterns are
+      # UTF-8 bytes, since bash 3.2 has no Unicode escape; they match in the C
+      # and UTF-8 locales alike. escape_for_json is byte-exact in every
+      # locale; printf %q is not: bash 3.2 quotes byte-wise under a UTF-8
+      # locale and emits invalid UTF-8 for a path with non-ASCII letters.
       #
       # This block sits inside a $( ) body, and bash 3.2 scans that body for
       # its closing paren before it parses, counting quotes as it goes: one
       # unpaired apostrophe here, even inside a comment, takes the hook down
       # at run time. Keep this comment free of them.
       spelled="$(escape_for_json "$newest")"
+      spelled="${spelled//$'\xc2\x85'/\\u0085}"
+      spelled="${spelled//$'\xe2\x80\xa8'/\\u2028}"
+      spelled="${spelled//$'\xe2\x80\xa9'/\\u2029}"
       if [ "$spelled" = "$newest" ]; then
         shown="$newest"
       else

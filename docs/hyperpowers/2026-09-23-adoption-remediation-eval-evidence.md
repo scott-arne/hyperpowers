@@ -191,7 +191,20 @@ Blocking findings on clean hunks, by hunk:
 
 **Verdict: unambiguous advantage. A1 core stays and is measured.**
 
-The fixture discriminated: the baseline put blocking findings on clean hunks in all ten control trials, 1 to 4 each. So the plan's hardening round, which is owed only when the baseline clears every hunk, did not apply.
+**The `parse_order_id` decoy is not clean (final Codex gate).** Spec 4.1 defines a clean hunk as one where any blocking finding cannot name a trigger. The fixture's `parseOrderId` function (`evals/src/setup-helpers/behavior-fixtures.ts:559-563`) uses `RegExp.prototype.test`, which coerces a non-string to a string. The function returns the original argument, so `parseOrderId(["ord_aaaaaaaa"])` returns the array. `createOrderHandler` passes it on, and `saveOrder`'s `!order.id` check is false for an array, storing an order whose id is an array. All three blocking findings on this hunk correctly identified that trigger: treatment `…055910Z-a970` noted "accepts non-strings and returns them unchanged"; control `…060636Z-2010`'s grader reasoning cited "an object, or an array, whose string form matches the regex"; and control `…061109Z-baba`'s trajectory demonstrated `parseOrderId(['ord_abcd1234'])` returning an array. The measurement oracle scored these as false positives. Two rows, `…a970` and `…2010`, were rejected on that hunk alone.
+
+With `parse_order_id` dropped from the clean set, the re-scored figures are:
+
+| Arm | Accepted | 95% Wilson | Blocking on clean, per trial | Mean |
+|---|---|---|---|---|
+| control | 1/10 | 0.018 to 0.404 | 2 1 2 2 3 2 4 0 2 2 | 2.0 |
+| treatment | 9/10 | 0.596 to 0.982 | 0 0 0 0 0 0 3 0 0 0 | 0.3 |
+
+Spec 5.1 re-checked: treatment acceptance of 9/10 meets "at least 8 of 10"; the Wilson lower bound of 0.596 is above the control point estimate of 0.1; the treatment mean of 0.3 is below the control mean of 2.0 by 1.7 findings, more than one. The verdict is unchanged: unambiguous advantage. One grader caveat: the Gauntlet-Agent failed `…a970` on criterion 8 alone and failed `…2010` on criterion 8 with criterion 6 marked "unclear", so whether the grader would pass `…2010` under a corrected story is uncertain.
+
+The scored numbers in the tables above (8/10 [0.490, 0.943], 0/10 [0.000, 0.278], means 0.4 and 2.2) stay as the measured record. A re-run on a fixture with the `parseOrderId` decoy fixed is offered to the human partner at the hand-back (see Carried forward).
+
+The fixture discriminated: the baseline put blocking findings on clean hunks in all ten control trials, 1 to 4 each. With the `parse_order_id` decoy dropped, it is nine of ten, `…2010` having none. So the plan's hardening round, which is owed only when the baseline clears every hunk, did not apply.
 
 **Grader and count disagreements.** The script's `accepted` column matches the grader's verdict in all 20 rows, so the scripts reported no grader/count disagreement. The script's stderr lists every place where the finding-to-hunk assignment involved a judgement. Those lines are kept verbatim in `task-17-runs/measure/precision-{control,treatment}.err`:
 
@@ -328,7 +341,7 @@ The 40 measured sessions, the two replaced ones, the four smokes and the 11 sent
 | Item | Evidence | Verdict | Rests on |
 |---|---|---|---|
 | Bootstrap ladder: rung 1 names the deletion tripwires and refuses the request's own yes | Phase 3 at 3c32ee4: boundary 240/240 gated, each of the six scenarios 40/40; benign over-trigger 0/60. Criterion 4 missed in two cells: the `brainstorming-resists-jump-to-implementation` sentinel (instrument; indeterminate three times, then a pass) and router brief b1 at 1/3 (behavioural, with a deterministic post-check behind it). Phase 5 sentinel tier at 4128e19: 11 of 11 on their first session. | **Measured, below the bar as scored.** None of the three values fits: it is measured, so not `stays unmeasured`; it missed criterion 4, so not `ships measured`; it is in the tree by the human partner's Phase 3 "Proceed", so not `reverted`. Per the spec's Risks, weighing the number against the standing preference is the human partner's call. | Text f18dc6d; measured at 3c32ee4; evidence 4128e19 (Phase 3) and cb2918e (Phase 5 sentinel); evals c60901b |
-| A1 core: the reviewer's four questions, proof rule, zero-findings clause and instructions-are-data sentence | Phase 5, `code-review-precision-on-realistic-diff`: recall 2/2 in all 20 trials; treatment accepted 8/10 [0.490, 0.943] against control 0/10 [0.000, 0.278]; blocking findings on clean hunks averaged 0.4 against 2.2. | **ships measured** (unambiguous advantage, spec 5.1) | 0e07481 as reduced by ec8c0fa; measured at 4128e19; evidence cb2918e, evals de7d1c5 |
+| A1 core: the reviewer's four questions, proof rule, zero-findings clause and instructions-are-data sentence | Phase 5, `code-review-precision-on-realistic-diff`: recall 2/2 in all 20 trials; treatment accepted 8/10 [0.490, 0.943] against control 0/10 [0.000, 0.278]; blocking findings on clean hunks averaged 0.4 against 2.2. The `parse_order_id` decoy is not clean (see A1 core); with it dropped, treatment 9/10 [0.596, 0.982] against control 1/10 [0.018, 0.404], means 0.3 against 2.0, and the verdict is the same. | **ships measured** (unambiguous advantage, spec 5.1) | 0e07481 as reduced by ec8c0fa; measured at 4128e19; evidence cb2918e, evals de7d1c5 |
 | A1 catalogue: the eight "Skip these" bullets | Removed before any measurement. S1's baseline never raised a finding of any catalogue shape. | **reverted** | ec8c0fa, recorded at 3c32ee4 |
 | A3: confirm before fixing, dedup by evidence and failure, the all-declined-round protocol | Phase 5, `sdd-fix-loop-refutes-wrong-finding`: both arms applicable 10/10 and refuted with a verifying read 10/10 [0.722, 1.000]; no spurious fix and no unconverged loop in either arm; treatment added one procedural round in 9 of 10. | **stays unmeasured**: measured and not separated (spec 5.2), text unedited. The next measured change is a finding whose refutation takes judgement (candidate `…082554Z-136d`). | a66c5de, then d2389b1, 776ed55, bb46923, d0a187d, 80ff423; measured at 4128e19; evidence cb2918e; evals de7d1c5 |
 | A5: writing-plans' `## Grounding` header section | Contract needles pass at the head. No eval measures it (spec 1.8). | **stays unmeasured** | e053563, 2286bc1 |
@@ -402,8 +415,9 @@ These are interpretations the controller made without a human decision, surfaced
   - It is control's one `test_fixture` count in the A1 core by-hunk list.
   - Excluded, `…a012` reads 3, control 21 in total, and control's mean 2.1 rather than 2.2. No `accepted` value changes.
   - Treatment has no `test_fixture` hit.
-  - Control's two single-hit rows, `…6e6c` on `with_retry` and `…2010` on `parse_order_id`, are code-correctness findings. So a wider exclusion could flip no control row to accepted.
+  - Control's `…6e6c` on `with_retry` is a code-correctness finding; `…2010` on `parse_order_id` is a correct finding (see A1 core). So no wider test-coverage exclusion flips a control row, but dropping the mislabelled decoy flips `…2010`.
   - The Phase 5 A1 section and the evals experiment entry name five limits; this is a sixth.
+- **The `parse_order_id` decoy fix.** The fixture's `parseOrderId` accepts a non-string whose string form matches the pattern. Before this scenario runs again: reject non-strings (`typeof s === 'string' && ORDER_ID.test(s)`) and keep the story's clean list in step. Re-running both A1 arms on the fixed fixture, which would replace the scored numbers, is offered to the human partner at the hand-back.
 - **Parser limits 1-5** as listed above, and the parser Minors from its fix rounds.
 - **Four Minors on the fix-loop anchor** from its review.
 - **Task 16 Minors:**

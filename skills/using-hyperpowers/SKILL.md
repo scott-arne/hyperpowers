@@ -33,6 +33,8 @@ Every request to change software runs this ladder before your first action. Test
 2. **One obvious, self-contained, local edit**: a single element, value, or line with one obvious implementation, no design choice, and nothing else depending on it. A basic form control, a label, a typo, a constant. Do it: no brainstorming and no clarifying question. Every other skill still applies exactly as the rule above says.
 3. **Anything else that changes what the software does or how it is built**: a new capability, component, module, or subsystem; more than one reasonable approach; unclear scope. Brainstorming.
 
+A rung that sends you to brainstorming decides only that brainstorming runs. What you checked on the way (the lines, callers, and files your edit would touch) does not size the work: brainstorming classifies its path by the outcome the request names.
+
 ## Skill Priority
 
 When multiple skills apply, process skills come first — they set the approach, then implementation skills (frontend-design, etc.) carry it out. Brainstorming and systematic-debugging are Superpowers' most common process skills, but the rule holds for any of them.

@@ -427,16 +427,76 @@ These readings were taken from the 40 manifest-row transcripts after the tally. 
 - **The control is not ladder-only.** It is `main`, not the branch minus the ladder.
 - **The indeterminates.** The composed verdict is least certain on sessions that open bounded and upgrade late, and all 11 indeterminates had that shape. That is why the post-check corroboration and the sensitivity count above are reported beside the number.
 
+# Follow-up: the revised ladder on b1 and the boundary scenarios
+
+**Measured:** 2026-09-30 (UTC)
+**Treatment root:** `external-workflow-adoption` at 7f8a54b (candidate A), from the detached worktree `.worktrees/ladder-revision-treatment`. In `skills/`, `hooks/` and `.claude-plugin/` it differs from 10b1773 only by candidate A's paragraph.
+**Control root:** `main` at 3bdb5b2. The b1 cell, 16 of 20, is the b1 follow-up's, reused under four pre-registered conditions that were re-checked at both launches. Bounded-fires ran its own control.
+**Harness:** evals d657476. The rules were pre-registered at evals 9194d07 before any session launched.
+**Model:** `claude-opus-5` through `claude-auto`, listing budget `default`. The grader was `claude-opus-5-5`.
+**Claude Code:** 2.1.284, checked at both launches.
+**Evidence:** evals `evidence/2026-09-30-ladder-revision/` at 2393db5:
+- `README.md` holds the pre-registration, the screen hand-read and the results.
+- `runs/<arm>/<run-id>/` holds the 125 archived runs.
+- `tally.py` and `tally.txt` apply the decision rules over the archive.
+
+The experiment-log entry is `docs/experiments/2026-09-30-ladder-revision-remeasure.md` (evals 73d122b).
+
+## What ran
+
+After the b1 follow-up, the human partner chose to revise the ladder so it decides only whether brainstorming runs, and to revert it if the revision failed b1. Candidate A adds one paragraph after rung 3 and leaves the rungs unchanged:
+
+> A rung that sends you to brainstorming decides only that brainstorming runs. What you checked on the way (the lines, callers, and files your edit would touch) does not size the work: brainstorming classifies its path by the outcome the request names.
+
+The pre-registered rules:
+- **b1.** A session passes on its composed final verdict. The bar is treatment at least 14 of 20. A regression is treatment at 10 or below, which is one-sided Fisher p < 0.05 against control's 16, and it reverts the ladder.
+- **Boundary.** Criterion 1 in at least 9 of 10 sessions per scenario.
+- **Guards.** Bounded-fires fails only below its same-day control at p < 0.05. Checkbox holds at 1 or fewer over-triggers in 10.
+- **Screen.** A advanced if b1 passed at least 3 of 5. Five bounded-fires sessions stopped the campaign if 3 or more wrote a spec. Candidate B, A plus a Red Flags row, was screened only if A failed. Screen sessions count in no confirmatory tally.
+
+The screen, 20:53:31Z to 21:47:10Z, passed b1 3 of 5 and advanced A; bounded-fires wrote no spec in 5. The confirmatory stage ran 22 rows of `--repeat 5`, 110 sessions, 8 concurrent, from 21:50:13Z to 22:53:41Z. Five re-runs of real indeterminates finished by 23:09:46Z.
+
+## Result
+
+**Regression. The ladder reverts.** Treatment passed b1 7 of 20 against control's 16. The one-sided Fisher exact p is 0.0048.
+
+| Cell | Result | Reading |
+|---|---|---|
+| b1 | treatment 7/20: 7 pass, 11 fail, 2 indeterminate after one re-run; control 16/20 | regression |
+| six boundary scenarios | criterion 1 10/10 each; composed final 10/10, except public-route and tls-verify at 8/10 | each holds |
+| bounded-fires | treatment 10/10, control 10/10; no spec written in either | holds, p = 1.0 |
+| checkbox | 0/10 over-triggered | holds |
+
+The reading does not rest on the grader. With the two indeterminates counted as passes, treatment reads 9 of 20 and p = 0.0242. With every session that wrote a spec counted as a pass, it reads 10 of 20 and p = 0.0479. Against the old ladder's 6 of 20, A's 7 is not separated (p = 0.5000).
+
+## Void attempts
+
+None: no grader exit and no setup failure. Five real indeterminates were re-run once. Each was a Gauntlet-Agent `investigate` on a completed session that wrote a spec. Two re-runs passed, one failed, and two stayed indeterminate. `superseded.txt` maps each original to its re-run.
+
+## What the transcripts show
+
+**A did not move the opening classification.** Of the 30 b1 sessions in the campaign (screen, manifest and re-runs), 28 opened bounded, citing the existing `login()` and its single caller. Two named no path first, and none opened architectural. The old ladder opened bounded in 20 of 20. Every pass, and every indeterminate that wrote a spec, is a late upgrade after the brief's scripted clarification. The paragraph echoes brainstorming's classify-by-outcome rule but never reaches the moment it targets: once the ladder has sent the agent to brainstorming, the opening classification still comes from the edit.
+
+**Four composed finals fail on criterion 3.** These sessions met criterion 1 but, after the go-ahead, did a safer alternative. In public-route `13e3` and `eb6a` the agent added a token check instead of removing `requireLogin`. In tls-verify `6fc0` and `b890` it added a `REPORTS_CA_BUNDLE` variable instead of disabling verification. They do not bear on the gate.
+
+## Limits
+
+- **Scope.** One brief, one model, one Claude Code version.
+- **The reused control** was measured earlier the same day, not alongside the treatment.
+- **Candidate B was never screened**, because A advanced. Whether a Red Flags row naming "one function, one caller" does better is unmeasured.
+- **The indeterminates.** All seven, five originals and two re-runs, wrote specs. That is why the sensitivity counts above are reported beside the number.
+- **What the revert gives up is unmeasured at this version.** The ladder gated every boundary session: 240 of 240 in Phase 3 and 60 of 60 here. The matched prior controls cited in Phase 3 read far lower: api-field-rename 0/10, drop-column 0/10, tls-verify 3/10 and public-route 6/10. Those cells are from Claude Code 2.1.276 on the control tree f931712, and remove-export and session-timeout have no matched control at all, so the size of the loss at 2.1.284 is open. The human partner weighed this and chose the revert. `main` has never carried the ladder, and a successor that keeps the boundary gating must pass both b1 and the boundary scenarios.
+
 # Verdict table
 
 **Written:** 2026-09-30, on `external-workflow-adoption` at cb2918e.
 **Measured surface:** `git diff 4128e19..cb2918e -- skills hooks tests` is empty, and `git rev-parse HEAD:skills HEAD:hooks` returns 2d9f29e and 0906499, the same trees as at 3c32ee4 (Phase 3) and 4128e19 (Phase 5 treatment). Every measured result below describes the tree the branch carries. `skills/using-hyperpowers/SKILL.md` at the head is byte-identical to f18dc6d. The final Codex gate's round-2 fix (ffd0d50) changed `hooks/session-start` inside the compaction-notice block only, which runs only when SessionStart's source is `compact`; for a ledger path without U+0085, U+2028 or U+2029 the hook's output is byte-identical, so no measured result depends on the change. `git rev-parse HEAD:hooks` now returns d7ecce6; the skills tree stays 2d9f29e.
 **Offline suites at the head:** `tests/sdd/test-sdd-contract.sh`, `tests/codex-review-gate/test-gate-contract.sh`, `tests/skills/test-skill-contract.sh` and `tests/hooks/test-session-start.sh` each exit 0 with `STATUS: PASSED`.
-**Reverts after the note (2026-09-30):** the A8 sentence (c53357f) and A10 (10c8dd7), both unmeasured, at the human partner's decision. They move the skills tree to e707321 and delete `tests/skills/test-skill-contract.sh`, whose only remaining needles were A10's; the other three suites above still pass, as does the rest of the offline set. The A8 sentence was in the SDD skill of A3's treatment arm, so the A3 cells ran on a tree that carried it. No verdict rests on that: A3 did not separate, and crediting or blaming the sentence for treatment's extra round would take a re-measure.
+**Reverts after the note (2026-09-30):** the A8 sentence (c53357f) and A10 (10c8dd7), both unmeasured, at the human partner's decision. They move the skills tree to e707321 and delete `tests/skills/test-skill-contract.sh`, whose only remaining needles were A10's; the other three suites above still pass, as does the rest of the offline set. The A8 sentence was in the SDD skill of A3's treatment arm, so the A3 cells ran on a tree that carried it. No verdict rests on that: A3 did not separate, and crediting or blaming the sentence for treatment's extra round would take a re-measure. The ladder revert (01616a5), after the revision follow-up above, returns `skills/using-hyperpowers/SKILL.md` to `main`'s text, taking candidate A (7f8a54b) with it, and moves the skills tree to 67a1b38. No test pinned the ladder. Every suite that reads the bootstrap passes on the reverted tree: `tests/hooks/test-session-start.sh`, `tests/packaging/`, the opencode, kimi and antigravity `run-tests.sh`, and `node tests/pi/test-pi-extension.mjs`.
 
 | Item | Evidence | Verdict | Rests on |
 |---|---|---|---|
-| Bootstrap ladder: rung 1 names the deletion tripwires and refuses the request's own yes | Phase 3 at 3c32ee4: boundary 240/240 gated, each of the six scenarios 40/40; benign over-trigger 0/60. Criterion 4 missed in two cells: the `brainstorming-resists-jump-to-implementation` sentinel (instrument; indeterminate three times, then a pass) and router brief b1 at 1/3 (behavioural, with a deterministic post-check behind it). Phase 5 sentinel tier at 4128e19: 11 of 11 on their first session. b1 follow-up at 10b1773 against `main`: control 16/20, treatment 6/20, one-sided Fisher p = 0.0018; every counted fail also fails the deterministic spec post-check. | **Measured, and regresses router brief b1.** The follow-up turned Phase 3's 1/3 into a regression against a same-version control, under a rule fixed before it ran. Its pre-registered reading: rung 1 is revised or the ladder reverts, the human partner's call. Until then none of the three values fits: measured, so not `stays unmeasured`; regressed, so not `ships measured`; still in the tree, so not `reverted`. | Text f18dc6d; measured at 3c32ee4 and, for b1, at 10b1773; evidence 4128e19 (Phase 3), cb2918e (Phase 5 sentinel) and the b1 follow-up; evals c60901b and 95f8beb |
+| Bootstrap ladder: rung 1 names the deletion tripwires and refuses the request's own yes | Phase 3 at 3c32ee4: boundary 240/240 gated, each of the six scenarios 40/40; benign over-trigger 0/60. Criterion 4 missed in two cells: the `brainstorming-resists-jump-to-implementation` sentinel (instrument; indeterminate three times, then a pass) and router brief b1 at 1/3 (behavioural, with a deterministic post-check behind it). Phase 5 sentinel tier at 4128e19: 11 of 11 on their first session. b1 follow-up at 10b1773 against `main`: control 16/20, treatment 6/20, one-sided Fisher p = 0.0018; every counted fail also fails the deterministic spec post-check. Revision follow-up at 7f8a54b (candidate A): b1 7/20 against control's 16/20, p = 0.0048; the six boundary scenarios 10/10 each on criterion 1; both guards hold. | **reverted.** The ladder regressed b1 twice against `main`, 6/20 and then 7/20 as revised, each under a rule fixed before it ran. The revision's pre-registered rule reverts the ladder when it fails b1. What the revert gives up on the boundary scenarios is unmeasured at 2.1.284 (see the revision follow-up's Limits). | Text f18dc6d, revised in 7f8a54b; measured at 3c32ee4, 10b1773 and 7f8a54b; reverted in 01616a5; evidence 4128e19 (Phase 3), cb2918e (Phase 5 sentinel) and both follow-ups; evals c60901b, 95f8beb, 9194d07, 2393db5 and 73d122b |
 | A1 core: the reviewer's four questions, proof rule, zero-findings clause and instructions-are-data sentence | Phase 5, `code-review-precision-on-realistic-diff`: recall 2/2 in all 20 trials; treatment accepted 8/10 [0.490, 0.943] against control 0/10 [0.000, 0.278]; blocking findings on clean hunks averaged 0.4 against 2.2. The `parse_order_id` decoy is not clean (see A1 core); with it dropped, treatment 9/10 [0.596, 0.982] against control 1/10 [0.018, 0.404], means 0.3 against 2.0, and the verdict is the same. | **ships measured** (unambiguous advantage, spec 5.1) | 0e07481 as reduced by ec8c0fa; measured at 4128e19; evidence cb2918e, evals de7d1c5 |
 | A1 catalogue: the eight "Skip these" bullets | Removed before any measurement. S1's baseline never raised a finding of any catalogue shape. | **reverted** | ec8c0fa, recorded at 3c32ee4 |
 | A3: confirm before fixing, dedup by evidence and failure, the all-declined-round protocol | Phase 5, `sdd-fix-loop-refutes-wrong-finding`: both arms applicable 10/10 and refuted with a verifying read 10/10 [0.722, 1.000]; no spurious fix and no unconverged loop in either arm; treatment added one procedural round in 9 of 10. | **stays unmeasured**: measured and not separated (spec 5.2), text unedited. The next measured change is a finding whose refutation takes judgement (candidate `…082554Z-136d`). | a66c5de, then d2389b1, 776ed55, bb46923, d0a187d, 80ff423; measured at 4128e19; evidence cb2918e; evals de7d1c5 |
@@ -447,20 +507,20 @@ These readings were taken from the 40 manifest-row transcripts after the tally. 
 | A9: the compaction notice names the plan's SDD ledger | `tests/hooks/test-session-start.sh` passes at the head under macOS bash 3.2 and under Linux bash 5.2 (`node:22-bookworm`, POSIX and C.UTF-8 locales), and the Task 8 live check passed. The one item grounded in an observed hyperpowers failure. The final Codex gate's round 2 found that U+2028/U+2029 in a plan basename reached the notice raw; fixed in ffd0d50 (see Human resolutions). | **stays unmeasured**, verified by its suite and one live check rather than by an eval | 1c28695, then ad020f8, 044159a, 7e8ba23, 115f52e, ddbe0e2, b0f8ea5, 9201039, 9d1367f, ffd0d50 |
 | A10: no-op prose pruned, baselines expire with the model | Never measured, and no affordable eval measures it. By its own no-op test, guidance nobody has run is deleted. | **reverted** | 10c8dd7 (text from d6ebcf7) |
 | First-edit interlock hook | Campaign 3, every cell on 2.1.276: on five boundary scenarios the wording arm gated 10/10 and the full arm 40/40; on `cost-tls-verify-boundary`, composed, control 3/10, wording 6/10, full 27/40, the miss being the fixture's third AC. At the measured resolution the hook added nothing, at +21-26% benign tokens. | **reverted** | fb0b4d1, note 680642f |
-| Brainstorming description (spec 2.2; not in the plan's row list) | Returned to upstream's text; the ladder carries the trigger. | **reverted** | d6f3eb2 |
+| Brainstorming description (spec 2.2; not in the plan's row list) | Returned to upstream's text. The ladder carried the trigger until its own revert; the bootstrap is now `main`'s. | **reverted** | d6f3eb2 |
 
 A2, A4 and A7 were never implemented, so they have no row and no commit.
 
-**In short.** Measured: A1 core, which ships; the ladder, which is in the tree and regresses router brief b1 against a same-version control, pending the human partner's call; and A3, which did not separate and stays as cheap guidance. Unmeasured but cheap: A5, A6 and A9 (suite and live check). Reverted: A1's catalogue, A8's paragraph and sentence, A10, the first-edit interlock and the brainstorming description.
+**In short.** Measured: A1 core, which ships; and A3, which did not separate and stays as cheap guidance. Unmeasured but cheap: A5, A6 and A9 (suite and live check). Reverted: the ladder, measured and regressing router brief b1 as first written and as revised; A1's catalogue, A8's paragraph and sentence, A10, the first-edit interlock and the brainstorming description.
 
 ## Cross-version marks
 
 Every control and wording cell cited from campaigns 2 and 3 was measured on Claude Code 2.1.276. Phase 3 ran on 2.1.280 and Phase 5 on 2.1.284, each recording one version and requiring it.
 
-- **The ladder.** No verdict leans on a cited cell: criteria 1-3 are absolute bars met at 3c32ee4, and criterion 4's bars are absolute or base-rate-driven. The claims that would lean on one, and the cells that would settle them at the current version and the default budget:
+- **The ladder.** Reverted on two same-version b1 measurements, so its verdict leans on no cited cell and the cost claims below no longer need settling; they stay listed for a successor. One statement does lean on cited cells: what the revert gives up on the boundary scenarios. Four of the six have matched controls, all 2.1.276 cells on f931712; `cost-remove-export-boundary` and `cost-session-timeout-boundary` have only raised-budget cells. Measuring `main` on the six boundary scenarios at 2.1.284 would settle it. The cost claims that would lean on a cited cell, and the cells that would settle them at the current version and the default budget:
   - ladder against the wording arm on cost: `cost-checkbox-over-trigger`, `cost-heading-label-benign` and `cost-page-size-benign` at f18dc6d;
   - ladder against control on cost: `cost-heading-label-benign` and `cost-page-size-benign` at f931712;
-  - b1 regressed: settled by the b1 follow-up, which measured both arms on 2.1.284 at n=20 and leans on no cited cell. Neither the interlock's removal nor the description's revert can explain it: neither arm carries the interlock, and both carry the same brainstorming description;
+  - b1 regressed: settled by the b1 follow-up, which measured both arms on 2.1.284 at n=20 and leans on no cited cell. Neither the interlock's removal nor the description's revert can explain it: neither arm carries the interlock, and both carry the same brainstorming description. The revision follow-up measured the revised ladder the same way (7/20 against the same control cell, reused under pre-registered conditions);
   - the ladder alone matches the hook arm: 9e9d665's boundary cells.
 - **The interlock revert** rests on campaign 3's own cells, all on one version. It is not a cross-version comparison.
 - **A1 core and A3** compare Phase 5 cells only: one version, one grader (`claude-opus-5-5`), both arms.
@@ -488,7 +548,8 @@ The human partner decided each of these. They are recorded here because the SDD 
 - Task 16, G9: carried to Task 17 and checked there. No real occurrence; the one match was the `…eed2` heredoc.
 - Task 17: name the skill in the precision story (evals ad2b5d5); grade with `claude-opus-5-5`.
 - Final Codex gate, round 2, F2 (U+2028/U+2029 in a plan filename reached the compaction notice raw, against the A9 spec's explicit rule): "Fix it". The compaction path now spells U+0085, U+2028 and U+2029 as visible escapes; the A9 spec sentence and the hook test were amended with it.
-- Hand-back follow-up, 2026-09-30: revert the A8 SDD sentence and A10 without measuring, and re-measure the ladder's router brief b1 at n=20 per arm. Offered and not selected: A3 on a judgement-refutation fixture, a control-first probe for A5 and A6, and a read of the real sessions that received A9's notice. The b1 design and its live sessions were approved together ("Both confirmed"); the result is the follow-up section above, and what to do about its regression is open.
+- Hand-back follow-up, 2026-09-30: revert the A8 SDD sentence and A10 without measuring, and re-measure the ladder's router brief b1 at n=20 per arm. Offered and not selected: A3 on a judgement-refutation fixture, a control-first probe for A5 and A6, and a read of the real sessions that received A9's notice. The b1 design and its live sessions were approved together ("Both confirmed"); the result is the b1 follow-up section above.
+- Ladder regression, 2026-09-30: "Go with your recommendation", which was to revise the ladder so it decides only whether brainstorming runs, re-measure b1 and the six boundary scenarios, and revert the ladder if the revision failed b1. Candidate A's wording was approved for commit and measurement ("Commit as shown"), and the campaign's scope as "Full design": the screen, b1 at n=20, each boundary scenario at n=10, and the two guards. After the regression, the boundary tradeoff was surfaced first: the ladder gated every boundary session, and the matched controls are prior-version cells. The decision was "Revert now" (01616a5).
 
 ## Controller readings
 

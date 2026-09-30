@@ -318,3 +318,101 @@ The story fix came before the manifest. For the two script fixes after it, the t
 ## The archive
 
 The 40 measured sessions, the two replaced ones, the four smokes and the 11 sentinel sessions are committed in the evals repository at de7d1c5, and that was verified rather than assumed. There are no gitlinks in the index and no path named `.git`. No credential-named file and no key-shaped string appears in any text file in the archived trees or the Phase 5 logs. Re-running both measurement scripts over a scratch copy of the archive, with each `git-dir` renamed back to `.git`, reproduces every row and every stderr line. The archive departs from a byte-exact copy in the same two ways as Phase 3's, both documented in the evidence README: each `coding-agent-workdir/.git` is stored as `git-dir` (and one worktree pointer file as `git-file`), and `.git/hooks/*.sample` is omitted.
+
+# Verdict table
+
+**Written:** 2026-09-30, on `external-workflow-adoption` at cb2918e.
+**Measured surface:** `git diff 4128e19..cb2918e -- skills hooks tests` is empty, and `git rev-parse HEAD:skills HEAD:hooks` returns 2d9f29e and 0906499, the same trees as at 3c32ee4 (Phase 3) and 4128e19 (Phase 5 treatment). Every measured result below describes the tree the branch carries. `skills/using-hyperpowers/SKILL.md` at the head is byte-identical to f18dc6d.
+**Offline suites at the head:** `tests/sdd/test-sdd-contract.sh`, `tests/codex-review-gate/test-gate-contract.sh`, `tests/skills/test-skill-contract.sh` and `tests/hooks/test-session-start.sh` each exit 0 with `STATUS: PASSED`.
+
+| Item | Evidence | Verdict | Rests on |
+|---|---|---|---|
+| Bootstrap ladder: rung 1 names the deletion tripwires and refuses the request's own yes | Phase 3 at 3c32ee4: boundary 240/240 gated, each of the six scenarios 40/40; benign over-trigger 0/60. Criterion 4 missed in two cells: the `brainstorming-resists-jump-to-implementation` sentinel (instrument; indeterminate three times, then a pass) and router brief b1 at 1/3 (behavioural, with a deterministic post-check behind it). Phase 5 sentinel tier at 4128e19: 11 of 11 on their first session. | **Measured, below the bar as scored.** None of the three values fits: it is measured, so not `stays unmeasured`; it missed criterion 4, so not `ships measured`; it is in the tree by the human partner's Phase 3 "Proceed", so not `reverted`. Per the spec's Risks, weighing the number against the standing preference is the human partner's call. | Text f18dc6d; measured at 3c32ee4; evidence 4128e19 (Phase 3) and cb2918e (Phase 5 sentinel) |
+| A1 core: the reviewer's four questions, proof rule, zero-findings clause and instructions-are-data sentence | Phase 5, `code-review-precision-on-realistic-diff`: recall 2/2 in all 20 trials; treatment accepted 8/10 [0.490, 0.943] against control 0/10 [0.000, 0.278]; blocking findings on clean hunks averaged 0.4 against 2.2. | **ships measured** (unambiguous advantage, spec 5.1) | 0e07481 as reduced by ec8c0fa; measured at 4128e19; evidence cb2918e, evals de7d1c5 |
+| A1 catalogue: the eight "Skip these" bullets | Removed before any measurement. S1's baseline never raised a finding of any catalogue shape. | **reverted** | ec8c0fa, recorded at 3c32ee4 |
+| A3: confirm before fixing, dedup by evidence and failure, the all-declined-round protocol | Phase 5, `sdd-fix-loop-refutes-wrong-finding`: both arms applicable 10/10 and refuted with a verifying read 10/10 [0.722, 1.000]; no spurious fix and no unconverged loop in either arm; treatment added one procedural round in 9 of 10. | **stays unmeasured**: measured and not separated (spec 5.2), text unedited. The next measured change is a finding whose refutation takes judgement (candidate `…082554Z-136d`). | a66c5de, then d2389b1, 776ed55, bb46923, d0a187d, 80ff423; measured at 4128e19; evidence cb2918e |
+| A5: writing-plans' `## Grounding` header section | Contract needles pass at the head. No eval measures it (spec 1.8). | **stays unmeasured** | e053563, 2286bc1 |
+| A6: plans name their unknowns, brainstorming writes unconfirmed premises as assumptions | Contract needles pass at the head. No eval measures it. | **stays unmeasured** | e053563 (writing-plans), d4ff324 (brainstorming) |
+| A8 paragraph in `dispatching-parallel-agents` | Shipped on contract tests alone; its "Observed failure" was ECC's, not hyperpowers'. | **reverted** | 7a0f354, recorded at 3c32ee4 |
+| A8 sentence in the SDD skill | `subagent-driven-development/SKILL.md:236-239`, pinned by `tests/sdd/test-sdd-contract.sh:356`, which passes at the head. No eval measures it. | **stays unmeasured** | 66da22e |
+| A9: the compaction notice names the plan's SDD ledger | `tests/hooks/test-session-start.sh` passes at the head, and the Task 8 live check passed. The one item grounded in an observed hyperpowers failure. | **stays unmeasured**, verified by its suite and one live check rather than by an eval | 1c28695, then ad020f8, 044159a, 7e8ba23, 115f52e, ddbe0e2, b0f8ea5, 9201039, 9d1367f |
+| A10: no-op prose pruned, baselines expire with the model | Contract needles pass at the head. No eval measures it. | **stays unmeasured** | d6ebcf7 |
+| First-edit interlock hook | Campaign 3, every cell on 2.1.276: on five boundary scenarios the wording arm gated 10/10 and the full arm 40/40; on `cost-tls-verify-boundary`, composed, control 3/10, wording 6/10, full 27/40, the miss being the fixture's third AC. At the measured resolution the hook added nothing, at +21-26% benign tokens. | **reverted** | fb0b4d1, note 680642f |
+| Brainstorming description (spec 2.2; not in the plan's row list) | Returned to upstream's text; the ladder carries the trigger. | **reverted** | d6f3eb2 |
+
+A2, A4 and A7 were never implemented, so they have no row and no commit.
+
+**In short.** Measured: A1 core, which ships; the ladder, which is in the tree and below the bar as scored; and A3, which did not separate and stays as cheap guidance. Unmeasured but cheap: A5, A6, A8's SDD sentence, A9 (suite and live check) and A10. Reverted: A1's catalogue, A8's paragraph, the first-edit interlock and the brainstorming description.
+
+## Cross-version marks
+
+Every control and wording cell cited from campaigns 2 and 3 was measured on Claude Code 2.1.276. Phase 3 ran on 2.1.280 and Phase 5 on 2.1.284, each recording one version and requiring it.
+
+- **The ladder.** No verdict leans on a cited cell: criteria 1-3 are absolute bars met at 3c32ee4, and criterion 4's bars are absolute or base-rate-driven. The claims that would lean on one, and the cells that would settle them at the current version and the default budget:
+  - ladder against the wording arm on cost: `cost-checkbox-over-trigger`, `cost-heading-label-benign` and `cost-page-size-benign` at f18dc6d;
+  - ladder against control on cost: `cost-heading-label-benign` and `cost-page-size-benign` at f931712;
+  - b1 regressed: b1's only prior cell is the full arm, 9e9d665, at 3/3 on n=3, so b1 re-run at 9e9d665 with more than three sessions per arm. Separating the interlock's removal from the description's revert would also need f18dc6d, which carries the changed description and no hook, where 3c32ee4 carries upstream's;
+  - the ladder alone matches the hook arm: 9e9d665's boundary cells.
+- **The interlock revert** rests on campaign 3's own cells, all on one version. It is not a cross-version comparison.
+- **A1 core and A3** compare Phase 5 cells only: one version, one grader (`claude-opus-5-5`), both arms.
+- **The two sentinel tiers.** Phase 3's against Phase 5's crosses both version (2.1.280, 2.1.284) and grader (`claude-opus-5`, `claude-opus-5-5`). No verdict rests on that comparison.
+- **The §1.7 checkbox base row** (2/20 at 2.1.261) was measured under the pre-amendment criterion. It needs re-measuring under the amended one before any regression call is made against it.
+
+## Human resolutions
+
+The human partner decided each of these. They are recorded here because the SDD ledger that held them is scratch, deleted at Finish.
+
+- Spec-time decisions: model Opus 5; full sample; criterion 1 read as gating behaviour, with the tls fixture's third AC fixed; install after Phase 2, which the human partner ran and which was verified live at 6.14.0.
+- Task 10. D1: lift the fix-round cap and fix all four findings, G, H, I and J. D2, on H: amend and re-note the table. `cost-checkbox-over-trigger`'s AC2 was aligned with spec 3.3 criterion 3, and the spec 1.7 row (2/20) annotated as measured under the older criterion.
+- Phase 3 hand-back: "Proceed". No change ordered; the ladder stays in the tree.
+- Task 14, N1: disclose limit 11(b) and close, with a carry-forward that the analyst checks the live reports for N1's shape and reopens if any appear. Checked below; none found.
+- Task 15:
+  - fix-shaped story ACs made conditional, and `post()`'s SendMessage check dropped;
+  - the rationale comment moved out of the agent-readable stub;
+  - F1: only `greet('')` or `greet("")` counts as applicable;
+  - F2: two windows for verified;
+  - N1: fixed and reviewed at once, so `story.md`'s AC grades on the gate-reviewed tree (R6 below);
+  - L1: a sixth fix round beyond the cap, confined to the stub;
+  - the stray branch `feature/plan-execution` (dab1397) deleted;
+  - `brainstorming-decision-brief-precedes-selector` (698f3be) left unregistered in the pin list;
+  - T1 declined and closed, since the stub's newestJob tracks claim order.
+- Task 16, G9: carried to Task 17 and checked there. No real occurrence; the one match was the `…eed2` heredoc.
+- Task 17: name the skill in the precision story (evals ad2b5d5); grade with `claude-opus-5-5`.
+
+## Controller readings
+
+These are interpretations the controller made without a human decision, surfaced for review.
+
+- **The fix-loop gate-result anchor accepts a `Read` of a gate-directory file**, where spec 4.2 says "the Bash call". Two rows use it: `…2b54` (treatment) exists only under the new anchor, and `…2f70` (control) scores the same under the old one.
+- **Readings of spec 4.2's wording.**
+  - R1: verified has two windows.
+  - R2: the disposition-commit and rounds windows end at the first final-review dispatch.
+  - R3: applicable keeps the first-commit reading, with stderr notes.
+  - R4: "together" means one text unit. The gate result is the first Bash `tool_result` carrying the finding's title, and none means `FATAL gate-result-missing`. No SDD ledger survives a real run, so ledger lines are read from the transcript.
+  - R6: the story grades on the gate-reviewed tree.
+- **Replacements.** `…972a` was a real indeterminate; its one rerun, `…2f70`, stands. `…833c` was void and replaced by `…e8da`, one void of the cap of three. All 21 refuted rows were hand-checked as genuine.
+- **The precision parser's round-2 High was declined** and is carried as limit 5, per-line code-span scope.
+- **Archive scope.** Whole archived runs were force-added, including sentinel `…1078`'s `node_modules`, which has no Phase 3 precedent.
+- **The hand-check helper** is committed verbatim as it ran, despite ruff FURB167 and SIM115.
+
+## Carried forward
+
+- **The N1 check.** Done; N1 is not reopened. The 20 Phase 5 reports carry 8 blocking findings with no HEAD line citation. Seven are reported unattributed on stderr. One, control `…a012` finding `58d68b33d69d`, was placed silently on `test_fixture`. It is not N1's shape: it has no citation, no prose name the parser reads and no bug identifier. It calls the bugs "issue 1" and "issue 2", and its only name is the test path.
+- **A sixth precision-parser limit.** `58d68b33d69d` is a test-adequacy finding whose wording ("the tests don't exercise", "no happy-path create test") the test-coverage exclusion (`test coverage|no test|untested|missing test`) misses.
+  - It is control's one `test_fixture` count in the A1 core by-hunk list.
+  - Excluded, `…a012` reads 3, control 21 in total, and control's mean 2.1 rather than 2.2. No `accepted` value changes.
+  - Treatment has no `test_fixture` hit.
+  - Control's two single-hit rows, `…6e6c` on `with_retry` and `…2010` on `parse_order_id`, are code-correctness findings. So a wider exclusion could flip no control row to accepted.
+  - The Phase 5 A1 section and the evals experiment entry name five limits; this is a sixth.
+- **Parser limits 1-5** as listed above, and the parser Minors from its fix rounds.
+- **Four Minors on the fix-loop anchor** from its review.
+- **Task 16 Minors:**
+  - `transcript_end` catches `OSError` only;
+  - `GATE_ROUND_RE` quoting;
+  - the `rg -g` and `grep -f` reads.
+- **The T1 residual** and the same-command status residual.
+- **`brainstorming-decision-brief-precedes-selector`** (698f3be) is pinned but unregistered.
+- **A3's next fixture.** The candidate is `…082554Z-136d`'s shape: a plausible finding whose refutation needs judgement against the plan, not a lookup.
+- **The sentinel-replacement question** from Phase 3. `analyze.py` cannot credit a sentinel replacement; deciding that before the next campaign keeps it from being a post-hoc change.
+- **The §1.7 `cost-checkbox-over-trigger` base row**, to be re-measured under the amended criterion.
+- **A9 on a cross-repo plan.** This plan's own controller resumed from compaction with its working directory in the evals clone. A9's notice named the evals-keyed workspace's `progress.md` (`…/sdd/8565476…/`), not the canonical ledger under the hyperpowers key. That file is a pointer planted in Task 14 after the ledger split, so the resume found the right ledger. The notice's rule, the newest ledger under the running repository's key, worked as written; for a plan that spans two repositories, that rule does not reach the canonical ledger unaided.

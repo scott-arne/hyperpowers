@@ -579,11 +579,14 @@ esac
 # guards, through a byte that case cannot see. Both slugs are built with
 # ANSI-C quoting so the real bytes reach mkdir and the file system. Windows
 # forbids both in a path component, so skip there as the case above does.
+# The Unicode separator case is the exception: NTFS allows U+0085, U+2028
+# and U+2029, but the case has never run under Git Bash, so its skip says
+# untested rather than claiming a path rule.
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*)
         echo "  [SKIP] SessionStart names a ledger path carrying a control byte on one line, as valid JSON (Windows path rules)"
         echo "  [SKIP] SessionStart names a ledger path carrying newlines on one line and lets no injected line through (Windows path rules)"
-        echo "  [SKIP] SessionStart names a ledger path carrying Unicode line separators on one line, escapes visible (Windows path rules)"
+        echo "  [SKIP] SessionStart names a ledger path carrying Unicode line separators on one line, escapes visible (untested under Git Bash)"
         echo "  [SKIP] SessionStart spells a control-character path with non-ASCII letters as valid UTF-8 under a UTF-8 locale (Windows path rules)"
         echo "  [SKIP] SessionStart skips a ledger path that is not valid UTF-8 (Windows path rules)"
         ;;

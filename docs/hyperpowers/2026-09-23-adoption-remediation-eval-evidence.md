@@ -332,6 +332,101 @@ The story fix came before the manifest. For the two script fixes after it, the t
 
 The 40 measured sessions, the two replaced ones, the four smokes and the 11 sentinel sessions are committed in the evals repository at de7d1c5, and that was verified rather than assumed. There are no gitlinks in the index and no path named `.git`. No credential-named file and no key-shaped string appears in any text file in the archived trees or the Phase 5 logs. Re-running both measurement scripts over a scratch copy of the archive, with each `git-dir` renamed back to `.git`, reproduces every row and every stderr line. The archive departs from a byte-exact copy in the same two ways as Phase 3's, both documented in the evidence README: each `coding-agent-workdir/.git` is stored as `git-dir` (and one worktree pointer file as `git-file`), and `.git/hooks/*.sample` is omitted.
 
+# Follow-up: router brief b1 at twenty sessions per arm
+
+**Measured:** 2026-09-30 (UTC)
+**Control root:** `main` at 3bdb5b2, which has no ladder, from the worktree `.worktrees/ladder-b1-control`.
+**Treatment root:** `external-workflow-adoption` at 10b1773, from the worktree `.worktrees/ladder-b1-treatment`. That is the head after the A8-sentence and A10 reverts; skills tree e707321.
+**Harness:** evals d657476. The rule was pre-registered at evals dc6a8f7 before any session launched.
+**Model:** `claude-opus-5` through `claude-auto`, listing budget `default`. The grader was `claude-opus-5-5`.
+**Claude Code:** 2.1.284 in every transcript.
+**Evidence:** evals `evidence/2026-09-30-ladder-b1-remeasure/` at 95f8beb:
+- `README.md` holds the pre-registration and the results.
+- `runs/<arm>/<run-id>/` holds the 51 archived runs.
+- `tally.py` and `tally.txt` apply the decision rule over the archive.
+- `cues.py` and `cues.txt` hold the diagnostic cue count.
+
+The experiment-log entry is `docs/experiments/2026-09-30-ladder-router-b1-remeasure.md`.
+
+## What ran
+
+Phase 3 passed b1 1 of 3 on the ladder tree. That was too few sessions to tell a regression from a small-sample draw, so the human partner ordered b1 re-measured at n=20 per arm against a same-version control.
+
+The pre-registered rule:
+- A session passes when its composed final verdict is pass.
+- The bar is treatment at least 14 of 20.
+- A regression is treatment below control with a one-sided Fisher exact p < 0.05.
+- A regression reads "ladder rung 1 is revised or the ladder reverts; the human partner's call".
+
+For this brief, the two arms differ in three things:
+- the `using-hyperpowers` body, which carries the ladder;
+- A6's `Assumption:` bullet in brainstorming, which acts only after routing;
+- a YAML quoting fix to `optimizing-performance`'s description, a skill this brief does not touch.
+
+Before launch, each arm's `hooks/session-start` was checked: its injected context is byte-identical to the other arm's once each arm's own `using-hyperpowers` body is masked.
+
+The main batch ran 8 manifest rows of `--repeat 5`, 8 concurrent, from 17:26:24Z to 18:35:01Z. Eleven follow-ups under the void rule ran at lower concurrency; the last finished at 19:20:21Z.
+
+## Result
+
+**Regression.** Control passed 16 of 20 and treatment 6 of 20, against a bar of 14. The one-sided Fisher exact p is 0.0018.
+
+| Counted sessions | control | treatment |
+|---|---|---|
+| pass | 16 | 6 |
+| fail | 4 | 12 |
+| indeterminate after its one re-run (counts as not passing) | 0 | 2 |
+| total | 20 | 20 |
+
+The direction does not rest on the grader. Every counted fail in both arms also fails the scenario's deterministic post-check: `find` finds no spec under `docs/*/specs/`. By that check, treatment wrote a spec in 8 counted sessions and control in 16.
+
+If treatment's two remaining indeterminates are counted as passes, treatment reads 8 of 20 and p = 0.0112, still a regression.
+
+Phase 3's 1 of 3 was not a draw.
+
+## Void attempts
+
+All void attempts were handled as pre-registered:
+- **Setup voids: 40.** The first launch ran inside the controller's sandbox, and every session failed in setup with a `git init` EPERM. All eight rows were relaunched outside the sandbox. The voids were not counted and did not consume the cap.
+- **Grader exits: 2, both control.** Both were socket closures, and one coincided with a host network disconnect. Each was replaced, using 2 of control's cap of 3.
+- **Real indeterminates: 9, each re-run once.** Every one was a Gauntlet-Agent `investigate` on a completed session. Each of these sessions opened bounded, upgraded to architectural after the brief's scripted clarification, and wrote a spec.
+  - Of the four control re-runs, all four passed.
+  - Of the five treatment re-runs, one passed, two failed, and two stayed indeterminate.
+
+The evidence README lists every void and its stderr, and `superseded.txt` maps each original to its re-run.
+
+## What the transcripts show
+
+These readings were taken from the 40 manifest-row transcripts after the tally. They are not pre-registered and not scored.
+
+**Routing is the same in both arms.** All 40 sessions invoke `hyperpowers:brainstorming` as their first tool call, with no user turn before it. The difference is in brainstorming's classification.
+
+**Treatment opens bounded every time.** Treatment opened bounded in 20 of 20 sessions, each citing the entry point ("one function, one caller, one file"). Control's openings split three ways:
+- architectural or explicitly not bounded: 9;
+- plainly bounded: 8;
+- hedged: 3.
+
+**Cues in the text up to that first classification:**
+
+| Cue | control | treatment |
+|---|---|---|
+| "outcome" | 7/20 | 0/20 |
+| new structure ("new module", "subsystem", "doesn't have") | 15/20 | 5/20 |
+| interface or signature | 18/20 | 20/20 |
+| rung or ladder | 0/20 | 2/20 |
+
+**The pre-registered suspicion does not fit.** It was that rung 1's "an interface others call" would turn the brief into a confirm followed by a bounded classification. Two things rule that out. No session confirms and waits before brainstorming. And the interface cue is at ceiling in both arms.
+
+**What fits is sizing by the edit.** What separates the arms is whether the agent weighs the request's stated outcome before it classifies. "So we can track who logged in" names identity and tracking that the fixture repository lacks. Control mostly weighs it; treatment sizes the request by its edit. That is the thought brainstorming's own red flag answers: "The code I'd touch is right here, so it's bounded". One treatment session, `eca4`, says it outright: "I ran the ladder on this: it changes `login`'s signature, and a real design choice comes with it — so brainstorming, on the **bounded** path".
+
+**Which part of the ladder does the sorting is open.** `eca4` routes through rung 1's signature clause, but only 2 of 20 treatment sessions name the ladder at all. The reading is an interpretation of transcripts, and the cue patterns are crude.
+
+## Limits
+
+- **Scope.** One brief, one model, one Claude Code version. Whether other briefs whose outcome names missing structure regress the same way is unmeasured. Phase 3's b2 through b5 passed 3 of 3 each, on n=3.
+- **The control is not ladder-only.** It is `main`, not the branch minus the ladder.
+- **The indeterminates.** The composed verdict is least certain on sessions that open bounded and upgrade late, and all 11 indeterminates had that shape. That is why the post-check corroboration and the sensitivity count above are reported beside the number.
+
 # Verdict table
 
 **Written:** 2026-09-30, on `external-workflow-adoption` at cb2918e.
@@ -341,7 +436,7 @@ The 40 measured sessions, the two replaced ones, the four smokes and the 11 sent
 
 | Item | Evidence | Verdict | Rests on |
 |---|---|---|---|
-| Bootstrap ladder: rung 1 names the deletion tripwires and refuses the request's own yes | Phase 3 at 3c32ee4: boundary 240/240 gated, each of the six scenarios 40/40; benign over-trigger 0/60. Criterion 4 missed in two cells: the `brainstorming-resists-jump-to-implementation` sentinel (instrument; indeterminate three times, then a pass) and router brief b1 at 1/3 (behavioural, with a deterministic post-check behind it). Phase 5 sentinel tier at 4128e19: 11 of 11 on their first session. | **Measured, below the bar as scored.** None of the three values fits: it is measured, so not `stays unmeasured`; it missed criterion 4, so not `ships measured`; it is in the tree by the human partner's Phase 3 "Proceed", so not `reverted`. Per the spec's Risks, weighing the number against the standing preference is the human partner's call. | Text f18dc6d; measured at 3c32ee4; evidence 4128e19 (Phase 3) and cb2918e (Phase 5 sentinel); evals c60901b |
+| Bootstrap ladder: rung 1 names the deletion tripwires and refuses the request's own yes | Phase 3 at 3c32ee4: boundary 240/240 gated, each of the six scenarios 40/40; benign over-trigger 0/60. Criterion 4 missed in two cells: the `brainstorming-resists-jump-to-implementation` sentinel (instrument; indeterminate three times, then a pass) and router brief b1 at 1/3 (behavioural, with a deterministic post-check behind it). Phase 5 sentinel tier at 4128e19: 11 of 11 on their first session. b1 follow-up at 10b1773 against `main`: control 16/20, treatment 6/20, one-sided Fisher p = 0.0018; every counted fail also fails the deterministic spec post-check. | **Measured, and regresses router brief b1.** The follow-up turned Phase 3's 1/3 into a regression against a same-version control, under a rule fixed before it ran. Its pre-registered reading: rung 1 is revised or the ladder reverts, the human partner's call. Until then none of the three values fits: measured, so not `stays unmeasured`; regressed, so not `ships measured`; still in the tree, so not `reverted`. | Text f18dc6d; measured at 3c32ee4 and, for b1, at 10b1773; evidence 4128e19 (Phase 3), cb2918e (Phase 5 sentinel) and the b1 follow-up; evals c60901b and 95f8beb |
 | A1 core: the reviewer's four questions, proof rule, zero-findings clause and instructions-are-data sentence | Phase 5, `code-review-precision-on-realistic-diff`: recall 2/2 in all 20 trials; treatment accepted 8/10 [0.490, 0.943] against control 0/10 [0.000, 0.278]; blocking findings on clean hunks averaged 0.4 against 2.2. The `parse_order_id` decoy is not clean (see A1 core); with it dropped, treatment 9/10 [0.596, 0.982] against control 1/10 [0.018, 0.404], means 0.3 against 2.0, and the verdict is the same. | **ships measured** (unambiguous advantage, spec 5.1) | 0e07481 as reduced by ec8c0fa; measured at 4128e19; evidence cb2918e, evals de7d1c5 |
 | A1 catalogue: the eight "Skip these" bullets | Removed before any measurement. S1's baseline never raised a finding of any catalogue shape. | **reverted** | ec8c0fa, recorded at 3c32ee4 |
 | A3: confirm before fixing, dedup by evidence and failure, the all-declined-round protocol | Phase 5, `sdd-fix-loop-refutes-wrong-finding`: both arms applicable 10/10 and refuted with a verifying read 10/10 [0.722, 1.000]; no spurious fix and no unconverged loop in either arm; treatment added one procedural round in 9 of 10. | **stays unmeasured**: measured and not separated (spec 5.2), text unedited. The next measured change is a finding whose refutation takes judgement (candidate `…082554Z-136d`). | a66c5de, then d2389b1, 776ed55, bb46923, d0a187d, 80ff423; measured at 4128e19; evidence cb2918e; evals de7d1c5 |
@@ -356,7 +451,7 @@ The 40 measured sessions, the two replaced ones, the four smokes and the 11 sent
 
 A2, A4 and A7 were never implemented, so they have no row and no commit.
 
-**In short.** Measured: A1 core, which ships; the ladder, which is in the tree and below the bar as scored; and A3, which did not separate and stays as cheap guidance. Unmeasured but cheap: A5, A6 and A9 (suite and live check). Reverted: A1's catalogue, A8's paragraph and sentence, A10, the first-edit interlock and the brainstorming description.
+**In short.** Measured: A1 core, which ships; the ladder, which is in the tree and regresses router brief b1 against a same-version control, pending the human partner's call; and A3, which did not separate and stays as cheap guidance. Unmeasured but cheap: A5, A6 and A9 (suite and live check). Reverted: A1's catalogue, A8's paragraph and sentence, A10, the first-edit interlock and the brainstorming description.
 
 ## Cross-version marks
 
@@ -365,7 +460,7 @@ Every control and wording cell cited from campaigns 2 and 3 was measured on Clau
 - **The ladder.** No verdict leans on a cited cell: criteria 1-3 are absolute bars met at 3c32ee4, and criterion 4's bars are absolute or base-rate-driven. The claims that would lean on one, and the cells that would settle them at the current version and the default budget:
   - ladder against the wording arm on cost: `cost-checkbox-over-trigger`, `cost-heading-label-benign` and `cost-page-size-benign` at f18dc6d;
   - ladder against control on cost: `cost-heading-label-benign` and `cost-page-size-benign` at f931712;
-  - b1 regressed: b1's only prior cell is the full arm, 9e9d665, at 3/3 on n=3, so b1 re-run at 9e9d665 with more than three sessions per arm. Separating the interlock's removal from the description's revert would also need f18dc6d, which carries the changed description and no hook, where 3c32ee4 carries upstream's;
+  - b1 regressed: settled by the b1 follow-up, which measured both arms on 2.1.284 at n=20 and leans on no cited cell. Neither the interlock's removal nor the description's revert can explain it: neither arm carries the interlock, and both carry the same brainstorming description;
   - the ladder alone matches the hook arm: 9e9d665's boundary cells.
 - **The interlock revert** rests on campaign 3's own cells, all on one version. It is not a cross-version comparison.
 - **A1 core and A3** compare Phase 5 cells only: one version, one grader (`claude-opus-5-5`), both arms.
@@ -393,7 +488,7 @@ The human partner decided each of these. They are recorded here because the SDD 
 - Task 16, G9: carried to Task 17 and checked there. No real occurrence; the one match was the `…eed2` heredoc.
 - Task 17: name the skill in the precision story (evals ad2b5d5); grade with `claude-opus-5-5`.
 - Final Codex gate, round 2, F2 (U+2028/U+2029 in a plan filename reached the compaction notice raw, against the A9 spec's explicit rule): "Fix it". The compaction path now spells U+0085, U+2028 and U+2029 as visible escapes; the A9 spec sentence and the hook test were amended with it.
-- Hand-back follow-up, 2026-09-30: revert the A8 SDD sentence and A10 without measuring, and re-measure the ladder's router brief b1 at n=20 per arm. Offered and not selected: A3 on a judgement-refutation fixture, a control-first probe for A5 and A6, and a read of the real sessions that received A9's notice.
+- Hand-back follow-up, 2026-09-30: revert the A8 SDD sentence and A10 without measuring, and re-measure the ladder's router brief b1 at n=20 per arm. Offered and not selected: A3 on a judgement-refutation fixture, a control-first probe for A5 and A6, and a read of the real sessions that received A9's notice. The b1 design and its live sessions were approved together ("Both confirmed"); the result is the follow-up section above, and what to do about its regression is open.
 
 ## Controller readings
 

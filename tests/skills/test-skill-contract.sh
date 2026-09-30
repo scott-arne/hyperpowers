@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Prose contracts for skills whose behavior-shaping wording has no other
-# test: writing-skills'
-# pruning rules.
+# test: writing-skills' pruning rules.
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"

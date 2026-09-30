@@ -335,7 +335,7 @@ The 40 measured sessions, the two replaced ones, the four smokes and the 11 sent
 # Verdict table
 
 **Written:** 2026-09-30, on `external-workflow-adoption` at cb2918e.
-**Measured surface:** `git diff 4128e19..cb2918e -- skills hooks tests` is empty, and `git rev-parse HEAD:skills HEAD:hooks` returns 2d9f29e and 0906499, the same trees as at 3c32ee4 (Phase 3) and 4128e19 (Phase 5 treatment). Every measured result below describes the tree the branch carries. `skills/using-hyperpowers/SKILL.md` at the head is byte-identical to f18dc6d.
+**Measured surface:** `git diff 4128e19..cb2918e -- skills hooks tests` is empty, and `git rev-parse HEAD:skills HEAD:hooks` returns 2d9f29e and 0906499, the same trees as at 3c32ee4 (Phase 3) and 4128e19 (Phase 5 treatment). Every measured result below describes the tree the branch carries. `skills/using-hyperpowers/SKILL.md` at the head is byte-identical to f18dc6d. The final Codex gate's round-2 fix (ffd0d50) changed `hooks/session-start` inside the compaction-notice block only, which runs only when SessionStart's source is `compact`; for a ledger path without U+0085, U+2028 or U+2029 the hook's output is byte-identical, so no measured result depends on the change. `git rev-parse HEAD:hooks` now returns d7ecce6; the skills tree stays 2d9f29e.
 **Offline suites at the head:** `tests/sdd/test-sdd-contract.sh`, `tests/codex-review-gate/test-gate-contract.sh`, `tests/skills/test-skill-contract.sh` and `tests/hooks/test-session-start.sh` each exit 0 with `STATUS: PASSED`.
 
 | Item | Evidence | Verdict | Rests on |
@@ -348,7 +348,7 @@ The 40 measured sessions, the two replaced ones, the four smokes and the 11 sent
 | A6: plans name their unknowns, brainstorming writes unconfirmed premises as assumptions | Contract needles pass at the head. No eval measures it. | **stays unmeasured** | e053563 (writing-plans), d4ff324 (brainstorming) |
 | A8 paragraph in `dispatching-parallel-agents` | Shipped on contract tests alone; its "Observed failure" was ECC's, not hyperpowers'. | **reverted** | 7a0f354, recorded at 3c32ee4 |
 | A8 sentence in the SDD skill | `subagent-driven-development/SKILL.md:236-239`, pinned by `tests/sdd/test-sdd-contract.sh:356`, which passes at the head. No eval measures it. | **stays unmeasured** | 66da22e |
-| A9: the compaction notice names the plan's SDD ledger | `tests/hooks/test-session-start.sh` passes at the head, and the Task 8 live check passed. The one item grounded in an observed hyperpowers failure. | **stays unmeasured**, verified by its suite and one live check rather than by an eval | 1c28695, then ad020f8, 044159a, 7e8ba23, 115f52e, ddbe0e2, b0f8ea5, 9201039, 9d1367f |
+| A9: the compaction notice names the plan's SDD ledger | `tests/hooks/test-session-start.sh` passes at the head, and the Task 8 live check passed. The one item grounded in an observed hyperpowers failure. The final Codex gate's round 2 found that U+2028/U+2029 in a plan basename reached the notice raw; fixed in ffd0d50 (see Human resolutions). | **stays unmeasured**, verified by its suite and one live check rather than by an eval | 1c28695, then ad020f8, 044159a, 7e8ba23, 115f52e, ddbe0e2, b0f8ea5, 9201039, 9d1367f |
 | A10: no-op prose pruned, baselines expire with the model | Contract needles pass at the head. No eval measures it. | **stays unmeasured** | d6ebcf7 |
 | First-edit interlock hook | Campaign 3, every cell on 2.1.276: on five boundary scenarios the wording arm gated 10/10 and the full arm 40/40; on `cost-tls-verify-boundary`, composed, control 3/10, wording 6/10, full 27/40, the miss being the fixture's third AC. At the measured resolution the hook added nothing, at +21-26% benign tokens. | **reverted** | fb0b4d1, note 680642f |
 | Brainstorming description (spec 2.2; not in the plan's row list) | Returned to upstream's text; the ladder carries the trigger. | **reverted** | d6f3eb2 |
@@ -391,6 +391,7 @@ The human partner decided each of these. They are recorded here because the SDD 
   - T1 declined and closed, since the stub's newestJob tracks claim order.
 - Task 16, G9: carried to Task 17 and checked there. No real occurrence; the one match was the `…eed2` heredoc.
 - Task 17: name the skill in the precision story (evals ad2b5d5); grade with `claude-opus-5-5`.
+- Final Codex gate, round 2, F2 (U+2028/U+2029 in a plan filename reached the compaction notice raw, against the A9 spec's explicit rule): "Fix it". The compaction path now spells U+0085, U+2028 and U+2029 as visible escapes; the A9 spec sentence and the hook test were amended with it.
 
 ## Controller readings
 

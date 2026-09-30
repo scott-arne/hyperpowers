@@ -258,18 +258,6 @@ You: Searching...
 - Don't explain what's obvious from command
 - Don't include multiple examples of same pattern
 
-**The no-op test:** delete a sentence and ask whether the agent's
-behavior changes. If it does not, the sentence was paying load to say
-nothing. Delete the whole sentence, never trim words from it. The test
-is model-relative, and it is settled by running the document, not by
-debate.
-
-**Cache, do not restate:** the environment is a source of truth too:
-`--help` output, config files, `package.json` scripts, the directory
-layout. A skill line that restates one of those is a cache that goes
-stale. Write down what the agent cannot find by looking: the unwritten
-convention, the reason behind a choice, the gotcha no config confesses.
-
 **Verification:**
 ```bash
 wc -w skills/path/SKILL.md
@@ -403,11 +391,6 @@ Edit skill without testing? Same violation.
 - Delete means delete
 
 **REQUIRED BACKGROUND:** The hyperpowers:test-driven-development skill explains why this matters. Same principles apply to documentation.
-
-**Baselines expire with the model.** A RED baseline is evidence about the
-model that produced it. Record the model in the evidence note. When the
-default model changes, re-run the baseline: if the unassisted model now
-passes, the skill or section is a deletion candidate, not a keepsake.
 
 ## Testing All Skill Types
 

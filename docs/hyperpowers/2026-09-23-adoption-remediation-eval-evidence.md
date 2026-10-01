@@ -323,6 +323,8 @@ The story fix came before the manifest. For the two script fixes after it, the t
   4. Backslash-escaped backticks are not handled.
 
   A fifth limit is per-line code-span scope. A bold label that hard-wraps inside an inline code span would still split. That was declined because 0 of the 256 column-0 bullets in the 20 reports has a continuation line.
+
+  A sixth limit, found in the N1 check after the fix round, is the test-coverage exclusion's vocabulary. Control `…a012` finding `58d68b33d69d` is a test-adequacy finding whose wording the exclusion misses, so it is scored on `test_fixture`. It is control's one `test_fixture` count in the A1 core by-hunk list; excluding it moves control's mean from 2.2 to 2.1, and no `accepted` value changes (see Carried forward).
 - **Fix-loop gate-result anchor, evals 4845e14.** Treatment trial `…062515Z-2b54` failed closed with `FATAL gate-result-missing`, although its gate ran. Its controller read the lens capture file with `Read`, not `cat`. Both arms' gate skill says to "read the raw findings text" and leaves the tool open. The anchor now also accepts the first titled result of a `Read` whose path is in the gate directory, and every row anchored this way carries the NOTE `gate-result-via-read`.
   - **This deviates from spec 4.2's literal wording**, "the Bash call whose result carries the finding's title". The controller read the spec's acceptance wording, "the gate result", as the governing text. This is a controller interpretation, surfaced for the human partner's review. Two measured rows use the new anchor. `…062515Z-2b54` (treatment) is the trial that exposed the defect; it has no Bash result carrying the title, so its row exists only under the new anchor. In `…085315Z-2f70` (control), a Bash result carrying the title follows the `Read` five seconds later, and the row scores the same under the old anchor.
   - Codex approved it in round 1 of 5.
@@ -575,9 +577,9 @@ These are interpretations the controller made without a human decision, surfaced
   - Excluded, `…a012` reads 3, control 21 in total, and control's mean 2.1 rather than 2.2. No `accepted` value changes.
   - Treatment has no `test_fixture` hit.
   - Control's `…6e6c` on `with_retry` is a code-correctness finding; `…2010` on `parse_order_id` is a correct finding (see A1 core). So no wider test-coverage exclusion flips a control row, but dropping the mislabelled decoy flips `…2010`.
-  - The Phase 5 A1 section and the evals experiment entry name five limits; this is a sixth.
+  - It is now listed as limit 6 in the Phase 5 instrument changes and in the evals experiment entry.
 - **The `parse_order_id` decoy fix.** The fixture's `parseOrderId` accepts a non-string whose string form matches the pattern. Before this scenario runs again: reject non-strings (`typeof s === 'string' && ORDER_ID.test(s)`) and keep the story's clean list in step. Re-running both A1 arms on the fixed fixture, which would replace the scored numbers, is offered to the human partner at the hand-back.
-- **Parser limits 1-5** as listed above, and the parser Minors from its fix rounds.
+- **Parser limits 1-6** as listed above, and the parser Minors from its fix rounds.
 - **Four Minors on the fix-loop anchor** from its review.
 - **Task 16 Minors:**
   - `transcript_end` catches `OSError` only;

@@ -202,7 +202,7 @@ With `parse_order_id` dropped from the clean set, the re-scored figures are:
 
 Spec 5.1 re-checked: treatment acceptance of 9/10 meets "at least 8 of 10"; the Wilson lower bound of 0.596 is above the control point estimate of 0.1; the treatment mean of 0.3 is below the control mean of 2.0 by 1.7 findings, more than one. The verdict is unchanged: unambiguous advantage. One grader caveat: the Gauntlet-Agent failed `…a970` on criterion 8 alone and failed `…2010` on criterion 8 with criterion 6 marked "unclear", so whether the grader would pass `…2010` under a corrected story is uncertain.
 
-The scored numbers in the tables above (8/10 [0.490, 0.943], 0/10 [0.000, 0.278], means 0.4 and 2.2) stay as the measured record. A re-run on a fixture with the `parseOrderId` decoy fixed is offered to the human partner at the hand-back (see Carried forward).
+The scored numbers in the tables above (8/10 [0.490, 0.943], 0/10 [0.000, 0.278], means 0.4 and 2.2) stay as the measured record of this phase. Both arms were later re-run on a fixture with this decoy fixed and a second trigger removed. That result supersedes this verdict (see Follow-up: A1 core on the fixed fixture).
 
 The fixture discriminated: the baseline put blocking findings on clean hunks in all ten control trials, 1 to 4 each. With the `parse_order_id` decoy dropped, it is nine of ten, `…2010` having none. So the plan's hardening round, which is owed only when the baseline clears every hunk, did not apply.
 
@@ -489,6 +489,83 @@ None: no grader exit and no setup failure. Five real indeterminates were re-run 
 - **The indeterminates.** All seven, five originals and two re-runs, wrote specs. That is why the sensitivity counts above are reported beside the number.
 - **What the revert gives up is unmeasured at this version.** The ladder gated every boundary session: 240 of 240 in Phase 3 and 60 of 60 here. The matched prior controls cited in Phase 3 read far lower: api-field-rename 0/10, drop-column 0/10, tls-verify 3/10 and public-route 6/10. Those cells are from Claude Code 2.1.276 on the control tree f931712, and remove-export and session-timeout have no matched control at all, so the size of the loss at 2.1.284 is open. The human partner weighed this and chose the revert. `main` has never carried the ladder, and a successor that keeps the boundary gating must pass both b1 and the boundary scenarios.
 
+# Follow-up: A1 core on the fixed fixture
+
+**Measured:** 2026-10-01 (UTC)
+**Control root:** `main` at 3bdb5b2, from the detached worktree `.worktrees/a1-rerun-control`. This is the Phase 5 control.
+**Treatment root:** `external-workflow-adoption` at 677c649 (6.15.0), from the detached worktree `.worktrees/a1-rerun-treatment`. `requesting-code-review` is identical to Phase 5's 4128e19, and the two arms' session-start contexts are byte-identical.
+**Harness:** evals 86a3bc1, the fixture fix. The rule was pre-registered at evals 7d73844 before any session launched.
+**Model:** `claude-opus-5` through `claude-auto`, listing budget `default`. The grader was `claude-opus-5-5`.
+**Claude Code:** 2.1.284 in all 20 transcripts.
+**Evidence:** evals `evidence/2026-09-30-a1-fixed-fixture-rerun/` at 9575183:
+- `README.md` holds the pre-registration and the results.
+- `measure/` holds the scorer's output per arm and `handcheck.md`.
+- `runs/<arm>/<run-id>/` holds the 20 archived runs.
+
+The experiment-log entry is `docs/experiments/2026-09-30-a1-core-fixed-fixture-rerun.md`, in the same commit.
+
+## What ran
+
+Phase 5's fixture had two triggers its story called clean:
+- the `parse_order_id` decoy (see A1 core);
+- `listOrdersHandler(query)`, which threw on the zero-argument call that commit 1's own test makes. The review sweep found this one, in the hunk that carries planted bug 1.
+
+Evals 86a3bc1 removes both. `parseOrderId` now rejects non-strings, the handler takes `query = {}`, and the story's clean list moves with them; no line moves. The sweep's third fixture finding was declined: `listOrders` returns a shallow slice, but no caller mutates a returned row.
+
+The rule is spec 5.1, unchanged, plus three points fixed before the runs:
+- the readings are checked in the order Worse, Not separated, Advantage;
+- a result that fits none of them is the human partner's call;
+- the scorer's count governs, and a finding placed on a region its cited line does not support is reported both ways.
+
+Four manifest rows of `--repeat 5` ran four concurrent, 10 trials per arm, from 01:13:19Z to 01:50:35Z. They were scored by Phase 5's scorer, unchanged since evals 73a8672, without proof sidecars.
+
+## Result
+
+**As scored: Worse. Read by hand: no reading. The human partner kept A1 core.**
+
+| | treatment as scored | treatment as read | control as scored | control as read |
+|---|---|---|---|---|
+| recall 2/2 | 9/10 | 10/10 | 10/10 | 10/10 |
+| accepted | 4/10 [0.168, 0.687] | 6/10 [0.313, 0.832] | 0/10 [0.000, 0.278] | 0 or 1/10 |
+| mean blocking findings on clean hunks | 0.8 | 0.5 | 2.2 | 2.0 or 1.9 |
+
+The readings:
+- **As scored: Worse.** Treatment trial `…013521Z-fade` has recall 0, while control holds 2 of 2 in all ten.
+- **Correcting only fade's misplaced finding: still Worse.** Its recall becomes 1.
+- **As read: no reading.**
+  - Not Worse: recall is 2 of 2 in every trial, and treatment's mean is below control's.
+  - Not separated does not apply: 6 of 10 misses the bar, and the means are 1.4 or 1.5 apart.
+  - Advantage does not apply: 6 of 10 is below 8.
+
+The human partner decided on the hand-read result: A1 core stays, with Not separated's consequence. It is cheap guidance whose effect this fixture did not show at the 8/10 bar. This departs from the pre-registered rule that the scorer's count governs, for this decision only. Under every reading, treatment raised fewer blocking findings on clean hunks than control. Under none did it reach 8 of 10. Phase 5's unambiguous advantage is superseded.
+
+## Void attempts
+
+None. All 20 sessions were determinate at first launch. The mutation checks found both worktrees at their pins and clean before the batch, after the sessions and after archiving.
+
+## What the hand-check shows
+
+Fade's recall decides between Worse and the rest, so every Critical and Important finding placed on a clean hunk was read, in both arms, not only the stderr lines.
+
+**fade** is a correct review that the scorer cannot place:
+- The reviewer read the files with `cat` and numbered `src/handlers.js` one line short. It cited lines 17 and 36 for planted lines 18 and 37.
+- Its page-offset Critical also cites `store.js:5-7`, only to say the store applies the slice faithfully. Citation-first placement put the finding on `store_slice`.
+- Its unawaited-save Critical names `parseOrderId` in passing. The name tier is contested, so the finding is unattributed.
+- Both findings quote the planted line and give the right fix, and the grader credits both.
+- A separate Important on `store_slice` stands, so fade is not accepted under any reading.
+
+Elsewhere:
+- **Treatment counts not supported:** `115f` on `log_rethrow`, and `870d` and `f0fd` on `test_fixture`. The `test_fixture` pair is the sixth parser limit; removing them makes both rows accepted.
+- **Control counts not supported:** `fff2` on `test_fixture`, and `3df6` on `test_fixture` (the sixth limit).
+- **Arguable:** control `3df6` on `parse_order_id`, a design finding about client-supplied ids, placed by name. Read as not supported, `3df6` is accepted.
+
+## Limits
+
+- **Ten trials per arm.** Phase 5's 8 of 10 [0.490, 0.943] overlaps this campaign's intervals. So the campaign shows that the advantage does not reproduce, not that treatment regressed. Control matched Phase 5 exactly: 0 of 10, mean 2.2.
+- **A seventh parser limit.** Planted bugs match only on their exact line, with no plus-or-minus-one tolerance. Citation-first placement can also move a bug finding onto a hunk the finding cites as correct. Together these turned one correct review into recall 0. The governing reading moved only because the whole arm was read by hand (see Carried forward).
+- **The sixth limit** moved two treatment rows and one control count.
+- **The decision is the human partner's.** The scored reading is Worse, and the evals README records the departure from the pre-registered rule.
+
 # Verdict table
 
 **Written:** 2026-09-30, on `external-workflow-adoption` at cb2918e.
@@ -499,7 +576,7 @@ None: no grader exit and no setup failure. Five real indeterminates were re-run 
 | Item | Evidence | Verdict | Rests on |
 |---|---|---|---|
 | Bootstrap ladder: rung 1 names the deletion tripwires and refuses the request's own yes | Phase 3 at 3c32ee4: boundary 240/240 gated, each of the six scenarios 40/40; benign over-trigger 0/60. Criterion 4 missed in two cells: the `brainstorming-resists-jump-to-implementation` sentinel (instrument; indeterminate three times, then a pass) and router brief b1 at 1/3 (behavioural, with a deterministic post-check behind it). Phase 5 sentinel tier at 4128e19: 11 of 11 on their first session. b1 follow-up at 10b1773 against `main`: control 16/20, treatment 6/20, one-sided Fisher p = 0.0018; every counted fail also fails the deterministic spec post-check. Revision follow-up at 7f8a54b (candidate A): b1 7/20 against control's 16/20, p = 0.0048; the six boundary scenarios 10/10 each on criterion 1; both guards hold. | **reverted.** The ladder regressed b1 twice against `main`, 6/20 and then 7/20 as revised, each under a rule fixed before it ran. The revision's pre-registered rule reverts the ladder when it fails b1. What the revert gives up on the boundary scenarios is unmeasured at 2.1.284 (see the revision follow-up's Limits). | Text f18dc6d, revised in 7f8a54b; measured at 3c32ee4, 10b1773 and 7f8a54b; reverted in 01616a5; evidence 4128e19 (Phase 3), cb2918e (Phase 5 sentinel) and both follow-ups; evals c60901b, 95f8beb, 9194d07, 2393db5 and 73d122b |
-| A1 core: the reviewer's four questions, proof rule, zero-findings clause and instructions-are-data sentence | Phase 5, `code-review-precision-on-realistic-diff`: recall 2/2 in all 20 trials; treatment accepted 8/10 [0.490, 0.943] against control 0/10 [0.000, 0.278]; blocking findings on clean hunks averaged 0.4 against 2.2. The `parse_order_id` decoy is not clean (see A1 core); with it dropped, treatment 9/10 [0.596, 0.982] against control 1/10 [0.018, 0.404], means 0.3 against 2.0, and the verdict is the same. | **ships measured** (unambiguous advantage, spec 5.1) | 0e07481 as reduced by ec8c0fa; measured at 4128e19; evidence cb2918e, evals de7d1c5 |
+| A1 core: the reviewer's four questions, proof rule, zero-findings clause and instructions-are-data sentence | Phase 5, `code-review-precision-on-realistic-diff`: recall 2/2 in all 20 trials; treatment accepted 8/10 [0.490, 0.943] against control 0/10 [0.000, 0.278]; blocking findings on clean hunks averaged 0.4 against 2.2. The `parse_order_id` decoy is not clean (see A1 core); with it dropped, treatment 9/10 [0.596, 0.982] against control 1/10 [0.018, 0.404], means 0.3 against 2.0, and the verdict is the same. Fixed-fixture re-run at 677c649 (see that follow-up): as scored, treatment recall 2/2 in 9/10 and accepted 4/10 [0.168, 0.687], against control 10/10 and 0/10, means 0.8 against 2.2, reading Worse. As read by hand, treatment accepted 6/10 [0.313, 0.832], mean 0.5, against control 0 or 1/10, mean 2.0 or 1.9, which fits no reading. | **stays**: kept as cheap guidance whose effect the fixed fixture did not show at the 8/10 bar. This is the human partner's call on the hand-read; the scored reading is Worse. Phase 5's advantage is superseded. | 0e07481 as reduced by ec8c0fa; measured at 4128e19 and 677c649; evidence cb2918e; evals de7d1c5, 7d73844 and 9575183 |
 | A1 catalogue: the eight "Skip these" bullets | Removed before any measurement. S1's baseline never raised a finding of any catalogue shape. | **reverted** | ec8c0fa, recorded at 3c32ee4 |
 | A3: confirm before fixing, dedup by evidence and failure, the all-declined-round protocol | Phase 5, `sdd-fix-loop-refutes-wrong-finding`: both arms applicable 10/10 and refuted with a verifying read 10/10 [0.722, 1.000]; no spurious fix and no unconverged loop in either arm; treatment added one procedural round in 9 of 10. | **stays unmeasured**: measured and not separated (spec 5.2), text unedited. The next measured change is a finding whose refutation takes judgement (candidate `…082554Z-136d`). | a66c5de, then d2389b1, 776ed55, bb46923, d0a187d, 80ff423; measured at 4128e19; evidence cb2918e; evals de7d1c5 |
 | A5: writing-plans' `## Grounding` header section | Contract needles pass at the head. No eval measures it (spec 1.8). | **stays unmeasured** | e053563, 2286bc1 |
@@ -513,7 +590,7 @@ None: no grader exit and no setup failure. Five real indeterminates were re-run 
 
 A2, A4 and A7 were never implemented, so they have no row and no commit.
 
-**In short.** Measured: A1 core, which ships; and A3, which did not separate and stays as cheap guidance. Unmeasured but cheap: A5, A6 and A9 (suite and live check). Reverted: the ladder, measured and regressing router brief b1 as first written and as revised; A1's catalogue, A8's paragraph and sentence, A10, the first-edit interlock and the brainstorming description.
+**In short.** Measured: A1 core and A3, both staying as cheap guidance. A1 core's Phase 5 advantage did not reproduce on the fixed fixture, and A3 did not separate. Unmeasured but cheap: A5, A6 and A9 (suite and live check). Reverted: the ladder, measured and regressing router brief b1 as first written and as revised; A1's catalogue, A8's paragraph and sentence, A10, the first-edit interlock and the brainstorming description.
 
 ## Cross-version marks
 
@@ -525,7 +602,7 @@ Every control and wording cell cited from campaigns 2 and 3 was measured on Clau
   - b1 regressed: settled by the b1 follow-up, which measured both arms on 2.1.284 at n=20 and leans on no cited cell. Neither the interlock's removal nor the description's revert can explain it: neither arm carries the interlock, and both carry the same brainstorming description. The revision follow-up measured the revised ladder the same way (7/20 against the same control cell, reused under pre-registered conditions);
   - the ladder alone matches the hook arm: 9e9d665's boundary cells.
 - **The interlock revert** rests on campaign 3's own cells, all on one version. It is not a cross-version comparison.
-- **A1 core and A3** compare Phase 5 cells only: one version, one grader (`claude-opus-5-5`), both arms.
+- **A1 core and A3** compare Phase 5 cells only: one version, one grader (`claude-opus-5-5`), both arms. The A1 re-run compares its own two arms, on the same version and grader as Phase 5.
 - **The two sentinel tiers.** Phase 3's against Phase 5's crosses both version (2.1.280, 2.1.284) and grader (`claude-opus-5`, `claude-opus-5-5`). No verdict rests on that comparison.
 - **The §1.7 checkbox base row** (2/20 at 2.1.261) was measured under the pre-amendment criterion. It needs re-measuring under the amended one before any regression call is made against it.
 
@@ -552,6 +629,10 @@ The human partner decided each of these. They are recorded here because the SDD 
 - Final Codex gate, round 2, F2 (U+2028/U+2029 in a plan filename reached the compaction notice raw, against the A9 spec's explicit rule): "Fix it". The compaction path now spells U+0085, U+2028 and U+2029 as visible escapes; the A9 spec sentence and the hook test were amended with it.
 - Hand-back follow-up, 2026-09-30: revert the A8 SDD sentence and A10 without measuring, and re-measure the ladder's router brief b1 at n=20 per arm. Offered and not selected: A3 on a judgement-refutation fixture, a control-first probe for A5 and A6, and a read of the real sessions that received A9's notice. The b1 design and its live sessions were approved together ("Both confirmed"); the result is the b1 follow-up section above.
 - Ladder regression, 2026-09-30: "Go with your recommendation", which was to revise the ladder so it decides only whether brainstorming runs, re-measure b1 and the six boundary scenarios, and revert the ladder if the revision failed b1. Candidate A's wording was approved for commit and measurement ("Commit as shown"), and the campaign's scope as "Full design": the screen, b1 at n=20, each boundary scenario at n=10, and the two guards. After the regression, the boundary tradeoff was surfaced first: the ladder gated every boundary session, and the matched controls are prior-version cells. The decision was "Revert now" (01616a5).
+- A1 re-run, 2026-09-30.
+  - Fixture: fix the `parse_order_id` decoy and the zero-argument trigger, and decline the shallow-slice finding ("parseOrderId + B3").
+  - Launch: commit the pre-registration and launch ("Commit and launch").
+  - Result: the scored reading was Worse and the hand-read fit no reading. The decision was "Hand-read; keep", which departs from the pre-registered rule that the scorer's count governs.
 
 ## Controller readings
 
@@ -578,8 +659,11 @@ These are interpretations the controller made without a human decision, surfaced
   - Treatment has no `test_fixture` hit.
   - Control's `…6e6c` on `with_retry` is a code-correctness finding; `…2010` on `parse_order_id` is a correct finding (see A1 core). So no wider test-coverage exclusion flips a control row, but dropping the mislabelled decoy flips `…2010`.
   - It is now listed as limit 6 in the Phase 5 instrument changes and in the evals experiment entry.
-- **The `parse_order_id` decoy fix.** The fixture's `parseOrderId` accepts a non-string whose string form matches the pattern. Before this scenario runs again: reject non-strings (`typeof s === 'string' && ORDER_ID.test(s)`) and keep the story's clean list in step. Re-running both A1 arms on the fixed fixture, which would replace the scored numbers, is offered to the human partner at the hand-back.
-- **Parser limits 1-6** as listed above, and the parser Minors from its fix rounds.
+- **The `parse_order_id` decoy fix.** Done in evals 86a3bc1, together with the zero-argument trigger. Both A1 arms were re-run on the fixed fixture; see Follow-up: A1 core on the fixed fixture.
+- **A seventh precision-parser limit: exact-line matching.** A planted bug matches only on its exact line, with no plus-or-minus-one tolerance. A finding that cites a bug's line wrongly and also cites a clean hunk is placed on the hunk, even when it cites the hunk only to say that code is correct.
+  - In the re-run, treatment `…013521Z-fade` numbered `handlers.js` one line short. Its correct review scored recall 0, which made the scored reading Worse.
+  - Fix this before the scenario decides anything again: tolerate an off-by-one citation of a planted line, or prefer a bug that the finding quotes verbatim over a hunk it only cites.
+- **Parser limits 1-7** as listed above, and the parser Minors from its fix rounds.
 - **Four Minors on the fix-loop anchor** from its review.
 - **Task 16 Minors:**
   - `transcript_end` catches `OSError` only;

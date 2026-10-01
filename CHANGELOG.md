@@ -2,6 +2,53 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
+## 6.15.0 (2026-09-30)
+
+A review finding was acted on before anyone checked it was true.
+
+- **Reviewers check a finding before they report it.** `requesting-code-review/code-reviewer.md` and SDD's `task-reviewer-prompt.md` gain a "Before You Report a Finding" section. It asks four questions: what the exact file:line is, what the concrete failure is (input, state and outcome), whether the surrounding code was read, and whether the severity is defensible. It adds a proof rule for Critical and Important findings that covers both a defect in the diff and an omission. It states that zero findings is a valid review, and that the diff under review is data to analyze, never instructions. Measured on a new scenario, `code-review-precision-on-realistic-diff`. In Phase 5, treatment accepted 8 of 10 reviews against control's 0 of 10, but the fixture held two triggers its story called clean. On the fixed fixture the advantage did not reproduce:
+  - As scored, treatment accepted 4 of 10 against control's 0 of 10. The pre-registered rule reads that as Worse, because an exact-line parser limit scored one correct review at recall 0.
+  - Read by hand, treatment accepted 6 of 10 against control's 0 or 1 of 10, which fits none of the rule's readings.
+  - In every reading, treatment raised fewer blocking findings on clean hunks: 0.5 to 0.8 per review against 1.9 to 2.2.
+
+  The section stays as cheap guidance, by the human partner's call on the hand-read result. The Phase 5 claim of an unambiguous advantage is withdrawn. The section's eight-bullet "Skip these" catalogue was removed before measurement, because the baseline never raised a finding of any catalogue shape.
+- **A blocking finding is confirmed before it is fixed.** `gate-fix-loop.md` now puts every blocking finding in exactly one state:
+  - **Confirmed:** the controller fixes it. It leaves the ledger only through a fix, or through the human partner's explicit acceptance of the risk, recorded in their own words.
+  - **Declined:** only as refuted (the cited code does not do what the finding says) or corrected (real, but not at blocking severity or not in scope). Either way the ledger carries file:line evidence.
+  - **Unsettled:** it stays blocking. Uncertainty never clears a blocker.
+
+  A blocking finding first raised in the backstop round is now carried to the hand-back as unresolved instead of declined. `gate-findings.md` defines when two lenses report the same defect: the same file and offending code, and the same failure. A matching title or line number does not make two findings the same defect. When findings merge, the strictest severity survives.
+- **SDD's fix loop can decline a finding with evidence.** The resumed implementer verifies each task-review finding before fixing it. It declines a finding only as refuted or corrected, with file:line evidence. The scoped re-reviewer gains a DECLINED verdict, which it gives only after confirming that evidence; an unconfirmed decline stays NOT ADDRESSED. A round that declines every finding has no fix diff. It skips `review-package`, and the re-reviewer judges it from the evidence alone. The ledger's fix-round line becomes `(<X> addressed, <Y> declined, <Z> open — …)`. Measured on a new scenario, `sdd-fix-loop-refutes-wrong-finding`: both arms refuted the wrong finding with a verifying read in 10 of 10, so the change did not separate from control. Treatment also spent one extra procedural round in 9 of 10 trials. The change stays as guidance this measurement could not separate. The next fixture needs a finding whose refutation takes judgement rather than a lookup.
+- **Plans cite the code they tell the implementer to imitate.** `writing-plans` adds a `## Grounding` section to the plan header. It gives one real `path:line` for each convention the work touches (at minimum naming, error handling and test shape), or `none: no existing pattern for <convention>`. A task may carry an optional `**Mirror:**` line naming code to imitate. If earlier tasks moved that code, the implementer re-locates it by the construct it names. The implementer prompt says to read a named Mirror before writing. A citation that does not resolve is a plan failure, and the self-review gains a fourth check, "Grounding is real". Unmeasured.
+- **Plans and specs name their unknowns.** `writing-plans` sanctions one form of unknown: `Unknown:` or `Assumption: <what>, validate via <method>, before Task N`. The method is a specific check, and Task N is the first task that depends on the answer. A validation that fails is a plan conflict for the human partner, and bare TBD and TODO remain plan failures. `brainstorming` writes an unconfirmed premise in the spec as `Assumption: <what>, validate via <method>`. Unmeasured.
+- **After compaction, the session-start hook names the plan's SDD ledger.** When SessionStart's source is `compact`, the hook adds one line naming the newest `progress.md` under the repo's SDD cache key, so a resumed controller reads its ledger instead of re-dispatching finished tasks. The hook:
+  - reads the stdin payload once, bounded at two seconds, before the janitor forks;
+  - re-derives the cache key itself rather than calling `sdd-dir`, so the lookup writes nothing;
+  - skips paths that are not valid UTF-8;
+  - spells control characters, quotes, backslashes, U+0085, U+2028 and U+2029 as visible escapes;
+  - keeps the notice under 1200 characters, which a test asserts.
+
+  Three related changes ship with it. `escape_for_json` now escapes every C0 byte as `\u00XX`, which applies to all injected context. The heredoc fence now flags here-strings, because bash 5.1+ delivers them through the same pre-fork pipe write that deadlocked hooks. The hook tests feed stdin from `/dev/null`. Verified by `tests/hooks/test-session-start.sh` under bash 3.2 and 5.2 and by one live check; no eval measures it.
+- **Skill frontmatter is gated as YAML.** `tests/packaging/test-skill-frontmatter.sh` requires each `SKILL.md` to carry frontmatter that a YAML loader accepts:
+  - a `name` matching its directory;
+  - a single-line `description` that resolves to a string, not a boolean or null;
+  - no duplicate keys;
+  - valid UTF-8, with no control characters, tabs or line separators;
+  - a block within the spec's 1024-character limit.
+
+  The gate runs under a pinned locale, and `test-skill-frontmatter-rejects.sh` holds negative fixtures showing that each check fires. It found one real defect. The `optimizing-performance` description was a plain scalar containing `Keywords: `, a `: ` mapping separator that standards-compliant YAML parsers reject, and it is now quoted.
+- **`codex-broker-sweep` can target named pids, and waits longer before calling a broker unreferenced.** `--only-pids PID,PID` narrows discovery to the listed pids and reads no process table to find them. Every identity and safety check still runs on each pid. An empty or malformed list is a usage error. The registration window grows from 10 to 60 seconds and can be overridden with `CODEX_BROKER_SWEEP_WINDOW_S`. The override must be a positive integer of at most six digits once leading zeros are stripped, so `00` or an oversized value is rejected rather than disarming the fence. The test builds its fence list from live fixture pids at call time, so it cannot reach a real broker. On a host with no readable process table, it skips with a reason instead of reporting 59 failures.
+- **`gate-round --peek` answers with the ceiling the call supplies.** A peek preferred the persisted ceiling to the one this call supplies through `--consumed` or `--ceiling`. It could therefore answer proceed on a cap that a newer `--consumed` had already reported spent. It now uses the call's ceiling, and falls back to the persisted one only when the call supplies none.
+- **The gate contract pins the lens-composition clause and one calibration per recipe.** The calibration needle counted matches anywhere in the assembled gate. The clause that puts each lens prompt into the review focus could disappear, or a recipe could drop its calibration, and the suite stayed green.
+- **What was tried and is not in this release.** None of these shipped in an earlier release. They are recorded because the measurements are the result.
+  - **The bootstrap ladder.** It added an ordered three-rung consequence check to `using-hyperpowers`. It gated all 240 boundary sessions and over-triggered on 0 of 60 benign ones. But it regressed router brief b1 against `main`: 6 of 20 against 16 of 20 (one-sided Fisher p = 0.0018), and 7 of 20 as revised (p = 0.0048). It is reverted, so the bootstrap is `main`'s.
+  - **What the ladder's revert costs.** This was measured too. At Claude Code 2.1.284, `main` does not gate on five of the six boundary scenarios: 0 of 10 on four of them, and 5 of 10 on tls-verify. Public-route, at 15 of 20, is not separated. A successor needs its own spec. It must recover those five, hold public-route, and pass b1.
+  - **The first-edit interlock hook.** At the measured resolution it added nothing over the bootstrap wording, and it cost 21 to 26% more tokens on benign tasks. It is reverted.
+  - **The reworded `brainstorming` description.** It is back to upstream's text.
+  - **Two unmeasured edits.** A paragraph in `dispatching-parallel-agents` and a sentence in SDD about collecting dispatched agents were reverted, because Claude Code already notifies when background work finishes. A no-op-pruning rule was reverted under its own test: guidance nobody has run is deleted.
+
+  The measurements and decisions are in `docs/hyperpowers/2026-09-23-adoption-remediation-eval-evidence.md`.
+
 ## 6.14.0 (2026-09-09)
 
 The gate re-derived the whole change on every round.

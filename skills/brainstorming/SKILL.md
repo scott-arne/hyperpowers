@@ -125,7 +125,9 @@ Trivial/mechanical tasks skip it silently.
 
 **Visual companion (conditional, any path):** its trigger is path-independent
 too — the first time a question would genuinely be clearer shown than
-described, open it, whichever path you are on. Classification does not gate it:
+described, open it, whichever path you are on. Adding or moving something on a
+page or screen always raises one: where it goes. Show the placements in the
+companion before you present the design. Classification does not gate it:
 a bounded task that opens the companion is still bounded and still ends in a
 short in-chat design, and a spike that sketches one screen is still a spike.
 What fires it is the question being visual, not the path being heavy. If no

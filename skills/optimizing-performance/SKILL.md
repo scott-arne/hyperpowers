@@ -1,6 +1,6 @@
 ---
 name: optimizing-performance
-description: Use when you intend to actually make code faster and land the change — a confirmed hot path, a performance regression, or a concrete speed/memory/throughput target — not just diagnose it. Keywords: optimize, speed up, reduce latency, benchmark-driven, performance fix, make it faster.
+description: "Use when you intend to actually make code faster and land the change — a confirmed hot path, a performance regression, or a concrete speed/memory/throughput target — not just diagnose it. Keywords: optimize, speed up, reduce latency, benchmark-driven, performance fix, make it faster."
 ---
 
 # Optimizing Performance

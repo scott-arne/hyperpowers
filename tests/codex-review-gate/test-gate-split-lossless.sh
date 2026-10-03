@@ -33,7 +33,7 @@ POST_EDITS="$SCRIPT_DIR/gate-post-split-edits.tsv"
 # This suite is checkout-only by design: it needs a .git that contains the
 # pinned blob, so it cannot run from a packaged plugin install and fails
 # closed (rather than skipping) if the object is missing from a shallow clone.
-ORIGIN_SHA="9242d4f6bdcdbf373548a8197b515a2e309de03b"
+ORIGIN_SHA="cdd8719faf208b692538291b458ecda2f9b3a314"
 ORIGIN_PATH="skills/requesting-code-review/codex-review-gate.md"
 ORIGIN_LINES=766
 UNTRACKED_BLANKS=(273 356)
@@ -346,10 +346,10 @@ fi
 # never ran — a failed redirection, an emptied table — reports 0 here instead of
 # leaving the assertion above vacuously clean. Growth of this channel must be a
 # deliberate bump, not a silent one.
-if [ "$post_edit_count" -eq 18 ]; then
-    pass "exactly 18 declared post-split edits"
+if [ "$post_edit_count" -eq 21 ]; then
+    pass "exactly 21 declared post-split edits"
 else
-    fail "exactly 18 declared post-split edits (got $post_edit_count)"
+    fail "exactly 21 declared post-split edits (got $post_edit_count)"
 fi
 
 # --- 5. Reconstruct each destination from the original, rewrites and edits. ---

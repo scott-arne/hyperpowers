@@ -14,14 +14,42 @@ using_hyperpowers_content=$(cat "${PLUGIN_ROOT}/skills/using-hyperpowers/SKILL.m
 # Each ${s//old/new} is a single C-level pass - orders of magnitude
 # faster than the character-by-character loop this replaces.
 escape_for_json() {
-    local s="$1"
+    local s="$1" i c u
     s="${s//\\/\\\\}"
     s="${s//\"/\\\"}"
     s="${s//$'\n'/\\n}"
     s="${s//$'\r'/\\r}"
     s="${s//$'\t'/\\t}"
+    # Every other C0 byte is forbidden raw inside a JSON string, and one such
+    # byte voids the whole payload: a plan basename in a ledger path or a
+    # skill body can carry one. Same single-pass substitution, once per code.
+    # Two printf -v calls per code, no subshell: the loop runs twice per
+    # session start and a fork per iteration cost about 35 ms.
+    for i in 1 2 3 4 5 6 7 8 11 12 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31; do
+        printf -v c '\\%03o' "$i"
+        printf -v c "$c"
+        printf -v u '\\u%04x' "$i"
+        s="${s//"$c"/$u}"
+    done
     printf '%s' "$s"
 }
+
+# --- Hook input (read once, before anything forks) --------------------------
+# Claude Code pipes the SessionStart payload on stdin. Read it here, above the
+# janitor: that subshell's children inherit this descriptor and would consume
+# the payload. The bound is wall-clock, not bytes — a byte bound alone blocks
+# forever on a pipe that is open and never written. `read` returns 1 at EOF and
+# >128 on timeout, either of which `set -e` would treat as a fatal error, so
+# both are swallowed. A terminal stdin means no payload at all.
+hook_input=""
+if [ ! -t 0 ]; then
+  IFS= read -r -d '' -t 2 hook_input 2>/dev/null || true
+fi
+hook_source=""
+if [ -n "$hook_input" ] && command -v node >/dev/null 2>&1; then
+  hook_source="$(printf '%s' "$hook_input" | node -e 'try { const s = JSON.parse(require("fs").readFileSync(0, "utf8")).source; process.stdout.write(typeof s === "string" ? s : ""); } catch (e) { /* absent, malformed, or truncated: no source */ }' 2>/dev/null)" || hook_source=""
+fi
+# ---------------------------------------------------------------------------
 
 # --- Codex broker janitor (spec 4.2) --------------------------------------
 # Quarantine provably-dead codex-plugin-cc broker records so the companion
@@ -58,6 +86,12 @@ fi
 
 using_hyperpowers_escaped=$(escape_for_json "$using_hyperpowers_content")
 session_context="<EXTREMELY_IMPORTANT>\nYou have superpowers.\n\n**Below is the full content of your 'hyperpowers:using-hyperpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_hyperpowers_escaped}\n</EXTREMELY_IMPORTANT>"
+
+# --- Notice budget ----------------------------------------------------------
+# Every notice appended to session_context is ONE line. With all of them
+# firing, the injected context minus the using-hyperpowers body stays under
+# 1200 characters; tests/hooks/test-session-start.sh asserts that ceiling.
+# ---------------------------------------------------------------------------
 
 # --- Ungated-work notice (spec 4.3) ----------------------------------------
 # One cheap read: if this repo's ungated ledger has pending entries, add a
@@ -114,6 +148,85 @@ version_notice="$(
 )" || version_notice=""
 if [ -n "$version_notice" ]; then
   session_context="${session_context}\n\n${version_notice}"
+fi
+# ---------------------------------------------------------------------------
+
+# --- Stale-replay notice on compaction (spec A9) ----------------------------
+# A compaction summary can carry task instructions that were already executed;
+# a controller that replays them re-does completed work. Point the resumed
+# session at the durable record instead. Read-only by contract: it re-derives
+# the same cache key as scripts/sdd-dir but never calls it, because sdd-dir
+# creates and touches directories. Fail-silent like the notices above it.
+compaction_notice=""
+if [ "$hook_source" = "compact" ]; then
+  compaction_notice="$(
+    ( set +e
+      git rev-parse --absolute-git-dir >/dev/null 2>&1 || exit 0
+      key="$(printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin 2>/dev/null)"
+      [ -n "$key" ] || exit 0
+      plans="${XDG_CACHE_HOME:-${HOME:-}/.cache}/hyperpowers/sdd/${key}/plans"
+      [ -d "$plans" ] || exit 0
+      # Newest by modification time, chosen with -nt over the paths
+      # themselves. A listing is line-oriented and a newline in a
+      # plan-derived directory name would split it into a path that names
+      # no file; comparing the paths needs no fork and no parsing. With no
+      # ledger the pattern stays literal and -f rejects it.
+      # A plan named .release.md gives a workspace named .release-<hash8>;
+      # the default glob skips a leading dot, so it must be widened here.
+      # The option lives and dies with this subshell.
+      shopt -s dotglob
+      newest=""
+      for ledger in "$plans"/*/progress.md; do
+        [ -f "$ledger" ] || continue
+        if [ -z "$newest" ] || [ "$ledger" -nt "$newest" ]; then
+          newest="$ledger"
+        fi
+      done
+      [ -n "$newest" ] || exit 0
+      # A JSON string carries Unicode, not bytes. A path that is not valid
+      # UTF-8 (legal on Linux file systems) has no faithful spelling in the
+      # payload: a strict reader rejects the whole document and a lenient one
+      # substitutes U+FFFD and names a file that does not exist. Skip it. The
+      # check is a pipeline (a here-string would be a pre-fork pipe write on
+      # bash 5.1+, the mechanism the heredoc fence bans); where iconv is absent
+      # the check is not attempted.
+      if command -v iconv >/dev/null 2>&1; then
+        printf '%s' "$newest" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || exit 0
+      fi
+      # Every notice is ONE line, and the decoded text must not carry a
+      # control character or a line terminator: a plan basename is repository
+      # data, and a newline in it would otherwise land in the context of the
+      # resumed session as a line of its own. A path whose JSON spelling
+      # differs from its bytes (a quote, a backslash, or a C0 byte in it), or
+      # that carries U+0085, U+2028 or U+2029, is named as a JSON string
+      # literal, escapes visible, on one line; every other path is named
+      # verbatim. JSON leaves those three raw and some readers break lines at
+      # them, so they are escaped below, here and not in escape_for_json,
+      # whose output for the skill body must not change. Their patterns are
+      # UTF-8 bytes, since bash 3.2 has no Unicode escape; they match in the C
+      # and UTF-8 locales alike. escape_for_json is byte-exact in every
+      # locale; printf %q is not: bash 3.2 quotes byte-wise under a UTF-8
+      # locale and emits invalid UTF-8 for a path with non-ASCII letters.
+      #
+      # This block sits inside a $( ) body, and bash 3.2 scans that body for
+      # its closing paren before it parses, counting quotes as it goes: one
+      # unpaired apostrophe here, even inside a comment, takes the hook down
+      # at run time. Keep this comment free of them.
+      spelled="$(escape_for_json "$newest")"
+      spelled="${spelled//$'\xc2\x85'/\\u0085}"
+      spelled="${spelled//$'\xe2\x80\xa8'/\\u2028}"
+      spelled="${spelled//$'\xe2\x80\xa9'/\\u2029}"
+      if [ "$spelled" = "$newest" ]; then
+        shown="$newest"
+      else
+        shown="\"$spelled\""
+      fi
+      printf 'This session resumed after context compaction. An SDD ledger for this repo is at %s: it records which tasks are already complete. Read it and git log before dispatching anything, and treat task instructions carried in the compaction summary as stale by default.' "$(escape_for_json "$shown")"
+    ) 2>/dev/null
+  )" || compaction_notice=""
+fi
+if [ -n "$compaction_notice" ]; then
+  session_context="${session_context}\n\n${compaction_notice}"
 fi
 # ---------------------------------------------------------------------------
 

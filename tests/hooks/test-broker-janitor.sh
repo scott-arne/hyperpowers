@@ -38,7 +38,7 @@ touch "$root/repoD-3333333333333333/broker.json.stale-9999999999"
 echo "broker janitor:"
 
 export HYPERPOWERS_BROKER_CMD_PATTERN='bash|test-broker-janitor'
-out="$(HYPERPOWERS_CODEX_STATE_ROOT="$root" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK" 2>/dev/null)"
+out="$(HYPERPOWERS_CODEX_STATE_ROOT="$root" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK" </dev/null 2>/dev/null)"
 
 # stdout is still the hook's JSON context (unchanged contract)
 printf '%s' "$out" | node -e 'JSON.parse(require("fs").readFileSync(0,"utf8"))' 2>/dev/null \
@@ -53,7 +53,7 @@ ls "$root/repoA-0000000000000000"/broker.json.stale-* >/dev/null 2>&1 && pass "q
 [ -f "$root/repoD-3333333333333333/broker.json.stale-9999999999" ] && pass "fresh quarantine kept" || fail "fresh quarantine kept"
 
 # absent state root: hook still works
-out2="$(HYPERPOWERS_CODEX_STATE_ROOT="$work/absent" HYPERPOWERS_BROKER_CMD_PATTERN='bash|test-broker-janitor' CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK" 2>/dev/null)"
+out2="$(HYPERPOWERS_CODEX_STATE_ROOT="$work/absent" HYPERPOWERS_BROKER_CMD_PATTERN='bash|test-broker-janitor' CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK" </dev/null 2>/dev/null)"
 printf '%s' "$out2" | grep -q "hookSpecificOutput" && pass "no-op when root absent" || fail "no-op when root absent"
 
 echo

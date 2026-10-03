@@ -1,0 +1,394 @@
+#!/usr/bin/env bash
+# Every skills/<dir>/SKILL.md must carry parseable frontmatter: a name matching
+# its directory, a single-line description, and a block within the 1024-char
+# limit the skill spec sets. A "Use when" prefix is recommended by
+# writing-skills but deliberately NOT required here — several shipped skills
+# open differently, and a recommendation is not a gate.
+#
+# Usage: test-skill-frontmatter.sh [skills-root]   (default: <repo>/skills)
+set -uo pipefail
+# Every tool below works on bytes: the block is valid UTF-8 or rejected before
+# anything else reads it, YAML separation white space is ASCII, and under a
+# UTF-8 locale awk, grep, and sed would otherwise count U+00A0 and its kin as
+# white space and admit `key:<NBSP>value`, which no loader accepts. Pinning
+# the locale once makes every verdict the same on every host.
+export LC_ALL=C
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SKILLS_ROOT="${1:-$REPO_ROOT/skills}"
+
+FAILURES=0
+
+pass() { echo "  [PASS] $1"; }
+fail() {
+    echo "  [FAIL] $1"
+    FAILURES=$((FAILURES + 1))
+}
+
+# A plain scalar that begins with a letter is a string in every YAML schema
+# (1.1, 1.2 core, JSON) unless it is one of the boolean or null words below;
+# every other form a loader resolves to a non-string — integers in any base,
+# floats, .inf and .nan, dates and times, sexagesimals, `~`, `<<`, `=` —
+# begins with a digit, sign, dot, or indicator. Requiring a leading letter
+# therefore completes the classification without porting each loader's
+# number and date grammar, at the cost of rejecting a few digit- or
+# sign-initial strings a description never needs unquoted.
+begins_with_letter() {
+    # An ASCII letter, or the lead byte of any non-ASCII character (the block
+    # is valid UTF-8 by the time a value gets here, and every non-string form
+    # YAML resolves is ASCII), but never a byte-order mark. Byte-level under a
+    # pinned locale so the verdict is the same on every host.
+    V="$1" LC_ALL=C awk 'BEGIN { s = ENVIRON["V"]; exit !(s ~ /^[A-Za-z\302-\364]/ && s !~ /^\357\273\277/) }'
+}
+
+# The letter-initial plain scalars a loader still resolves to something other
+# than a string: the YAML 1.1 boolean words (y and n included, per the 1.1
+# specification, although PyYAML itself loads them as strings) and the null
+# words. Quoted values never reach this test: they are strings whatever
+# they spell. Any capitalisation counts: Psych resolves these words
+# case-insensitively.
+resolves_to_non_string() {
+    # Case-insensitive: Psych resolves tRuE and nUlL exactly as it does true
+    # and null, so any spelling of these words is a non-string somewhere.
+    V="$1" awk 'BEGIN { exit !(tolower(ENVIRON["V"]) ~ /^(y|yes|n|no|true|false|on|off|null)$/) }'
+}
+
+# A plain YAML scalar ends at an unquoted " #"; everything after is a comment.
+# Classifying the raw value instead lets `null # explanation` masquerade as a
+# string when a loader resolves it to None.
+strip_plain_comment() {
+    printf '%s' "$1" | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//'
+}
+
+# Why a frontmatter value is not a loadable single-line string, or nothing if
+# it is one. A quoted scalar must close and may carry only escapes YAML
+# defines; a plain scalar must not contain a `:` followed by white space (a
+# mapping separator), nor a tab anywhere (PyYAML refuses it). The value
+# arrives through the environment, not `awk -v`: `-v` performs its own
+# backslash processing and would eat the very escapes this is here to inspect.
+scalar_defect() {
+    SCALAR="$1" awk '
+    function walk_double(  n, i, c, e, rest, need, hex) {
+        n = length(s); i = 2
+        while (i <= n) {
+            c = substr(s, i, 1)
+            if (c == "\\") {
+                e = substr(s, i + 1, 1)
+                if (e == "") return "double-quoted value ends in a dangling escape"
+                if (index(LEGAL, e) == 0)
+                    return "double-quoted value carries an escape YAML does not define (\\" e ")"
+                # \x, \u and \U carry exactly 2, 4 and 8 hexadecimal digits;
+                # \U must also name a code point a loader can construct.
+                need = (e == "x") ? 2 : (e == "u") ? 4 : (e == "U") ? 8 : 0
+                if (need > 0) {
+                    hex = substr(s, i + 2, need)
+                    if (length(hex) != need || hex !~ /^[0-9a-fA-F]+$/)
+                        return "double-quoted value has a \\" e " escape without " need " hexadecimal digits"
+                    if (e == "U" && toupper(hex) > "0010FFFF")
+                        return "double-quoted value has a \\U escape above U+10FFFF"
+                    # A lone UTF-16 surrogate is not a scalar value; some
+                    # loaders construct it and others refuse the document.
+                    if ((e == "u" && toupper(hex) >= "D800" && toupper(hex) <= "DFFF") ||
+                        (e == "U" && toupper(hex) >= "0000D800" && toupper(hex) <= "0000DFFF"))
+                        return "double-quoted value has a \\" e " escape naming a UTF-16 surrogate (U+D800-U+DFFF)"
+                    i += 2 + need; continue
+                }
+                i += 2; continue
+            }
+            if (c == "\"") {
+                rest = substr(s, i + 1)
+                sub(/^[ \t]+/, "", rest)
+                if (rest != "" && substr(rest, 1, 1) != "#")
+                    return "double-quoted value has trailing content after its closing quote"
+                return ""
+            }
+            i++
+        }
+        return "double-quoted value is never closed"
+    }
+    function walk_single(  n, i, c, rest) {
+        n = length(s); i = 2
+        while (i <= n) {
+            c = substr(s, i, 1)
+            if (c == "'\''") {
+                if (substr(s, i + 1, 1) == "'\''") { i += 2; continue }
+                rest = substr(s, i + 1)
+                sub(/^[ \t]+/, "", rest)
+                if (rest != "" && substr(rest, 1, 1) != "#")
+                    return "single-quoted value has trailing content after its closing quote"
+                return ""
+            }
+            i++
+        }
+        return "single-quoted value is never closed"
+    }
+    BEGIN {
+        s = ENVIRON["SCALAR"]
+        LEGAL = "0abtnvfre\"/\\N_LP xuU\t"
+        first = substr(s, 1, 1)
+        if (first == "\"") { print walk_double(); exit }
+        if (first == "'\''") { print walk_single(); exit }
+        if (s ~ /:[ \t]/ || s ~ /:$/)
+            print "plain value contains a `:` followed by white space, a mapping separator YAML cannot scan"
+        else if (s ~ /\t/)
+            print "plain value contains a tab, which a YAML loader does not accept inside an unquoted scalar"
+    }'
+}
+
+# The first non-blank line after KEY's entry that is neither the next
+# top-level key nor the closing delimiter. A plain scalar continues across
+# blank lines and comment lines are not content, so both are skipped; anything
+# printed here is a second line a loader would fold into the value.
+continuation_after() {
+    awk -v key="$1" '
+        NR == 1 { next }
+        /^---$/ { exit }
+        seen && /^[A-Za-z_][A-Za-z0-9_.-]*:/ { exit }
+        seen && /^[[:space:]]*$/ { next }
+        seen && /^#/ { next }
+        seen { print; exit }
+        index($0, key ":") == 1 && substr($0, length(key) + 2, 1) ~ /[[:space:]]/ { seen = 1 }
+    ' "$2"
+}
+
+# Why KEY's single-line value would not load as a string, or nothing if it
+# would: the indicator, syntax, and type rules description has always had,
+# phrased for any key so that every top-level value gets them — a loader
+# cannot load a block holding a value it cannot scan, whichever key carries it.
+scalar_value_defect() {
+    key="$1"
+    value="$2"
+    case "$value" in
+        '|'* | '>'*)
+            printf '%s is a plain scalar, not a block scalar' "$key" ;;
+        '#'*)
+            # A value that opens a YAML comment leaves the key null.
+            printf '%s value is a comment, so the key is null' "$key" ;;
+        '['* | '{'* | '&'* | '*'* | '!'* | '%'* | '@'* | '`'*)
+            # A flow collection, anchor, alias, tag, or reserved
+            # indicator — none of which load as a string.
+            printf '%s is a plain or quoted scalar (got %s)' "$key" "'$value'" ;;
+        *)
+            syntax="$(scalar_defect "$value")"
+            if [ -n "$syntax" ]; then
+                printf '%s is loadable YAML (%s)' "$key" "$syntax"
+            else
+                case "$value" in
+                    '""' | "''")
+                        printf '%s is not the empty string' "$key" ;;
+                    '"'* | "'"*) ;;   # quoted values are strings whatever they spell
+                    *)
+                        body="$(strip_plain_comment "$value")"
+                        if ! begins_with_letter "$body"; then
+                            printf '%s begins with a letter or is quoted (got %s)' "$key" "'$value'"
+                        elif resolves_to_non_string "$body"; then
+                            printf '%s resolves to a non-string YAML scalar (got %s)' "$key" "'$value'"
+                        fi ;;
+                esac
+            fi ;;
+    esac
+}
+
+echo "=== skill frontmatter ==="
+echo ""
+
+checked=0
+for skill in "$SKILLS_ROOT"/*/SKILL.md; do
+    [ -f "$skill" ] || continue
+    checked=$((checked + 1))
+    dir="$(basename "$(dirname "$skill")")"
+
+    if [ "$(sed -n '1p' "$skill")" != "---" ]; then
+        fail "$dir: SKILL.md opens with a frontmatter delimiter"
+        continue
+    fi
+
+    # A loader refuses the whole file for malformed UTF-8, for any control
+    # character other than the line break, or for a TAB anywhere: YAML forbids
+    # TAB as indentation and PyYAML refuses it as separation, so rather than
+    # track the positions where a TAB would be legal the gate admits none.
+    # This runs before any other text tool reads the file, under a pinned
+    # locale, so a malformed file is judged here and nowhere else. Count the
+    # block's bytes rather than inspect a shell string (the shell drops NUL),
+    # and match the UTF-8 grammar of RFC 3629 byte by byte, which
+    # also excludes overlong forms, surrogates, and code points above
+    # U+10FFFF; C1 controls, the U+2028 and U+2029 line separators, and
+    # U+FFFE/U+FFFF are well-formed but forbidden.
+    block_end="$(LC_ALL=C awk 'NR > 1 && /^---$/ { print NR; exit }' "$skill")"
+    [ -n "$block_end" ] || block_end="$(LC_ALL=C awk 'END { print NR }' "$skill")"
+    raw_bytes="$(head -n "$block_end" "$skill" | wc -c | tr -d ' ')"
+    kept_bytes="$(head -n "$block_end" "$skill" | LC_ALL=C tr -d '\000-\011\013-\037\177' | wc -c | tr -d ' ')"
+    bad_lines="$(head -n "$block_end" "$skill" | LC_ALL=C awk '
+        !/^([\001-\177]|[\302-\337][\200-\277]|\340[\240-\277][\200-\277]|[\341-\354][\200-\277][\200-\277]|\355[\200-\237][\200-\277]|[\356-\357][\200-\277][\200-\277]|\360[\220-\277][\200-\277][\200-\277]|[\361-\363][\200-\277][\200-\277][\200-\277]|\364[\200-\217][\200-\277][\200-\277])*$/ { c++; next }
+        /\302[\200-\237]|\357\277[\276\277]|\342\200[\250\251]/ { c++ }
+        END { print c + 0 }')"
+    if [ "$raw_bytes" -ne "$kept_bytes" ] || [ "$bad_lines" -ne 0 ]; then
+        fail "$dir: frontmatter is valid UTF-8 with no control characters or tabs ($((raw_bytes - kept_bytes)) C0, TAB, or DEL byte(s); $bad_lines line(s) malformed or carrying a C1 control, a U+2028/U+2029 separator, or U+FFFE/U+FFFF)"
+        # Text tools cannot be trusted on malformed input (macOS awk aborts on
+        # it under a UTF-8 locale), so every later check would misreport;
+        # nothing more can be said about this file.
+        if [ "$bad_lines" -ne 0 ]; then
+            continue
+        fi
+    else
+        pass "$dir: frontmatter is valid UTF-8 with no control characters or tabs"
+    fi
+
+    # Body of the frontmatter block: everything after line 1 up to, but not
+    # including, the next bare "---".
+    block="$(awk 'NR==1 {next} /^---$/ {exit} {print}' "$skill")"
+    # Check for closing delimiter (avoids sed|grep pipeline SIGPIPE issue).
+    if ! awk 'NR >= 2 && /^---$/ {found=1; exit} END {exit !found}' "$skill"; then
+        fail "$dir: frontmatter block is closed"
+        continue
+    fi
+    pass "$dir: frontmatter block is delimited"
+
+    # The block must be a flat YAML mapping: one `key: value` per line. A colon
+    # with no separator whitespace is not a mapping separator, so `name:x`
+    # makes the whole block parse as one plain scalar and no key is reachable
+    # at all. An indented line continues or nests the entry above, which this
+    # frontmatter — single-line scalars only — does not support. Full-line
+    # comments and blank lines are legal YAML.
+    bad_line="$(awk '
+        NR == 1 { next }
+        /^---$/ { exit }
+        /^[[:space:]]*$/ { next }
+        /^#/ { next }
+        /^[A-Za-z_][A-Za-z0-9_.-]*:[[:space:]]/ { next }
+        /^[A-Za-z_][A-Za-z0-9_.-]*:$/ { next }
+        { print; exit }
+    ' "$skill")"
+    if [ -n "$bad_line" ]; then
+        fail "$dir: frontmatter is a key: value mapping (got '$bad_line')"
+    else
+        pass "$dir: frontmatter is a key: value mapping"
+    fi
+
+    # A YAML loader resolves a duplicate key to its LAST occurrence (or
+    # rejects the document); every check below reads the FIRST. A block with
+    # two `name:` lines therefore certifies a name no loader will return.
+    dup_key="$(awk '
+        NR == 1 { next }
+        /^---$/ { exit }
+        /^[[:space:]]/ { next }
+        /^#/ { next }
+        match($0, /^[A-Za-z_][A-Za-z0-9_.-]*:/) {
+            k = substr($0, 1, RLENGTH - 1)
+            if (k in seen) { print k; exit }
+            seen[k] = 1
+        }
+    ' "$skill")"
+    if [ -n "$dup_key" ]; then
+        fail "$dir: frontmatter has no duplicate keys (got '$dup_key' twice)"
+    else
+        pass "$dir: frontmatter has no duplicate keys"
+    fi
+
+    # Last match, not first: a YAML loader resolves a duplicate key to its
+    # last occurrence, so reading the first would print a true-looking PASS
+    # for a name no loader returns. The duplicate-key check above already
+    # fails the run; this keeps every line it prints honest as well.
+    name_line="$(printf '%s\n' "$block" | grep -E '^name:([[:space:]]|$)' | tail -1)"
+    name_value="${name_line#name:}"
+    # Trim leading spaces without a bashism that macOS bash 3.2 lacks.
+    name_value="$(printf '%s' "$name_value" | sed 's/^ *//; s/ *$//')"
+    name_body="$(strip_plain_comment "$name_value")"
+    name_syntax="$(scalar_defect "$name_body")"
+    if [ -z "$name_line" ]; then
+        fail "$dir: frontmatter declares a name"
+    elif [ "${name_value#[\"\']}" != "$name_value" ]; then
+        # A quoted name would need unquoting before the directory comparison;
+        # the gate keeps names bare by a recorded decision rather than admit
+        # a second form, and says so instead of blaming the letter rule.
+        fail "$dir: name is an unquoted scalar matching the directory (got '$name_value')"
+    elif ! begins_with_letter "$name_body"; then
+        # A directory named `123` or `2026-09-14` would otherwise compare
+        # equal as raw text while a loader returns an int or a date.
+        fail "$dir: name begins with a letter (got '$name_value')"
+    elif [ -n "$name_syntax" ]; then
+        # A name a loader cannot scan never reaches the directory comparison.
+        fail "$dir: name is loadable YAML ($name_syntax)"
+    elif resolves_to_non_string "$name_body"; then
+        # A directory named `null` or `on` would otherwise compare equal as
+        # raw text while a loader returns None or True.
+        fail "$dir: name resolves to a non-string YAML scalar (got '$name_value')"
+    elif [ -n "$(continuation_after name "$skill")" ]; then
+        # The loader folds an indented next line into the value, so the
+        # first line matching the directory proves nothing.
+        fail "$dir: name is on a single line (continuation follows)"
+    elif [ "$name_body" != "$dir" ]; then
+        fail "$dir: name matches the directory (got '$name_value')"
+    else
+        pass "$dir: name matches the directory"
+    fi
+
+    desc_line="$(printf '%s\n' "$block" | grep -E '^description:([[:space:]]|$)' | tail -1)"
+    desc_value="$(printf '%s' "${desc_line#description:}" | sed 's/^ *//')"
+    if [ -z "$desc_line" ]; then
+        fail "$dir: frontmatter declares a description"
+    elif [ -z "$desc_value" ]; then
+        fail "$dir: description has a value on the same line"
+    else
+        desc_defect="$(scalar_value_defect description "$desc_value")"
+        if [ -n "$desc_defect" ]; then
+            fail "$dir: $desc_defect"
+        else
+            # A plain scalar continues across blank lines, so scan past
+            # them to the next top-level key or the closing delimiter.
+            continuation="$(continuation_after description "$skill")"
+            if [ -n "$continuation" ]; then
+                fail "$dir: description is on a single line (continuation follows)"
+            else
+                pass "$dir: description is a single-line plain scalar"
+            fi
+        fi
+    fi
+
+    # Every other key's value gets the same rules. The skills here carry only
+    # name and description; another key is checked, not forbidden.
+    others="$(printf '%s\n' "$block" | LC_ALL=C awk '
+        /^#/ || /^[[:space:]]*$/ { next }
+        match($0, /^[A-Za-z_][A-Za-z0-9_.-]*:/) {
+            k = substr($0, 1, RLENGTH - 1)
+            if (k != "name" && k != "description") print
+        }')"
+    if [ -n "$others" ]; then
+        while IFS= read -r line; do
+            key="${line%%:*}"
+            if resolves_to_non_string "$key"; then
+                # A loader reads this key as a boolean or null, not a string.
+                fail "$dir: $key is a string key"
+                continue
+            fi
+            value="$(printf '%s' "${line#*:}" | sed 's/^ *//')"
+            if [ -z "$value" ]; then
+                fail "$dir: $key has a value on its line"
+                continue
+            fi
+            defect="$(scalar_value_defect "$key" "$value")"
+            if [ -n "$defect" ]; then
+                fail "$dir: $defect"
+            else
+                pass "$dir: $key is a single-line plain or quoted scalar"
+            fi
+        done <<< "$others"
+    fi
+
+    # Count characters, not bytes, whatever the locale: in valid UTF-8 every
+    # character has exactly one byte outside the continuation range 80-BF.
+    chars="$(awk 'NR==1 {next} /^---$/ {exit} {print}' "$skill" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')"
+    if [ "$chars" -le 1024 ]; then
+        pass "$dir: frontmatter is within 1024 characters ($chars)"
+    else
+        fail "$dir: frontmatter is within 1024 characters (got $chars)"
+    fi
+done
+
+if [ "$checked" -eq 0 ]; then
+    fail "found at least one SKILL.md under $SKILLS_ROOT"
+fi
+
+echo ""
+[ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

@@ -60,7 +60,7 @@ digraph process {
         "Ask your human partner which governs" [shape=box];
         "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [shape=box];
         "Dispatch scoped re-review (./re-review-prompt.md)" [shape=box];
-        "All findings addressed?" [shape=diamond];
+        "All findings addressed or declined?" [shape=diamond];
         "R = 5?" [shape=diamond];
         "Surface open findings to your human partner (BLOCKED)" [shape=box];
         "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" [shape=diamond];
@@ -91,9 +91,9 @@ digraph process {
     "Ask your human partner which governs" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model";
     "Finding conflicts with plan text?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="no"];
     "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" -> "Dispatch scoped re-review (./re-review-prompt.md)";
-    "Dispatch scoped re-review (./re-review-prompt.md)" -> "All findings addressed?";
-    "All findings addressed?" -> "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" [label="yes"];
-    "All findings addressed?" -> "R = 5?" [label="no"];
+    "Dispatch scoped re-review (./re-review-prompt.md)" -> "All findings addressed or declined?";
+    "All findings addressed or declined?" -> "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" [label="yes"];
+    "All findings addressed or declined?" -> "R = 5?" [label="no"];
     "R = 5?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="no - next round"];
     "R = 5?" -> "Surface open findings to your human partner (BLOCKED)" [label="yes - breaker trips"];
     "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Record tier-skip (ungated-ledger), skip Codex task gate" [label="yes"];
@@ -384,6 +384,13 @@ The loop triggers when the review reports spec ❌, any Critical or Important
 finding, a ⚠️ item you confirmed as a real gap, or a blocking finding from
 the per-task Codex gate below.
 
+Task-reviewer findings are claims too. The resumed implementer verifies
+each finding against the code before fixing it
+(hyperpowers:receiving-code-review); a finding is declined only as
+refuted or corrected with file:line evidence, which the controller
+records in the ledger; a confirmed finding is fixed or carried open; a
+finding nobody can settle stays open and counts against the round cap.
+
 Before the loop starts, two routes leave it immediately:
 
 - Record Minor findings in the progress ledger as you go
@@ -420,25 +427,40 @@ its own problem — fresh eyes and a capability bump in one move.
 covering the amended code, appends its fix report to the same report file,
 and returns the short contract. Before re-dispatching the reviewer, confirm
 the fix report contains the covering tests, the command run, and the
-output; dispatch the re-review once all three are present. Name the
-covering test files in the fix message — a one-line fix does not need the
-whole suite. The per-task loop resumes an implementer rather than dispatching
-a fixer, so it never uses [fix-subagent-prompt.md](fix-subagent-prompt.md) —
-that template belongs to the final review's one fix wave.
+output; dispatch the re-review once all three are present. That
+precondition covers the findings the round fixed; a round that declines
+every finding is defined below. Name the covering test files in the fix
+message — a one-line fix does not need the whole suite. The per-task loop
+resumes an implementer rather than dispatching a fixer, so it never uses
+[fix-subagent-prompt.md](fix-subagent-prompt.md) — that template belongs to
+the final review's one fix wave.
 
 **The re-review is scoped.** Run `scripts/review-package PLAN_FILE FIX_BASE HEAD`
 where FIX_BASE is the head the previous review saw, and dispatch
 [re-review-prompt.md](re-review-prompt.md) with the findings list, the
 brief, the report file, and the printed diff path. The re-reviewer verdicts
-each finding ADDRESSED or NOT ADDRESSED and flags new breakage in the fix
-diff only. New Critical/Important breakage in the fix diff joins the open
-findings list. Out-of-scope observations go to the ledger as deferred
-minors — they never extend the loop. Every round in this loop ends with the
-scoped re-review — never a full task-reviewer re-run, whatever the finding's
-origin.
+each finding ADDRESSED, NOT ADDRESSED, or DECLINED — a refuted or corrected
+finding whose file:line evidence the re-reviewer has confirmed; an unconfirmed
+decline stays NOT ADDRESSED — and flags new breakage in the fix diff only. The
+controller records each DECLINED finding in the ledger with its evidence. New
+Critical/Important breakage in the fix diff joins the open findings list.
+Out-of-scope observations go to the ledger as deferred minors — they never
+extend the loop. Every round in this loop ends with the scoped re-review —
+never a full task-reviewer re-run, whatever the finding's origin.
+
+**A round that declines every finding changes no code.** There is no fix
+diff and no covering test to confirm; the implementer's report is the
+artifact, carrying for each finding the refuted or corrected evidence at
+file:line. Skip `scripts/review-package` for that round — its range is
+empty — and dispatch the scoped re-review with the findings list, the brief,
+the report, and the previous review's package path, so the re-reviewer
+verdicts each finding DECLINED or NOT ADDRESSED from the evidence alone. The
+covering-tests precondition applies only to findings that were fixed. Record
+the round as `(0 addressed, <Y> declined, <Z> open)`; a NOT ADDRESSED verdict
+keeps that finding open and the round counts toward the cap as usual.
 
 **After each round,** append to the ledger:
-`Task <N>: fix round <R>/5 (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`
+`Task <N>: fix round <R>/5 (<X> addressed, <Y> declined, <Z> open — <finding one-liners>; commits <a7>..<b7>)`
 
 Never fix findings yourself in the controller session — your context stays
 clean for coordination, and controller fixes skip review. One narrow
@@ -455,7 +477,7 @@ uncommitted fix hands it nothing) and appends the fix report — the
 command, its output, and a diff summary — to the task's report file
 itself, exactly as an implementer would. Its ledger line keeps the
 fix-round schema with the marker inside it:
-`Task <N>: fix round <R>/5 controller-applied (de minimis) (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`.
+`Task <N>: fix round <R>/5 controller-applied (de minimis) (<X> addressed, <Y> declined, <Z> open — <finding one-liners>; commits <a7>..<b7>)`.
 Reaching for it twice in the same task means the findings are not de
 minimis — go back to the round's own rule: resume the implementer at
 rounds 1-3, dispatch the takeover at rounds 4-5.
@@ -516,7 +538,7 @@ no-Codex notice once and run both gates as no-ops.
   gate runs against the task's shared budget — each gate round consumes one
   of the five, exactly like a reviewer round. After a Codex-triggered fix,
   the scoped re-review verifies it; the gate re-runs only once that
-  re-review verdicts every finding ADDRESSED.
+  re-review verdicts every finding ADDRESSED or DECLINED.
 
 **The breaker.** When round 5's re-review — or a per-task Codex gate at the
 spent cap — still leaves blocking findings open, stop dispatching. The task
@@ -529,9 +551,9 @@ next.
 ### 5. Complete the task
 
 When the review comes back clean — the task reviewer approved, every
-fix-loop finding is addressed, and the per-task Codex gate approved or was
-skipped by tier — append the completion line to the ledger in the same
-message as your other bookkeeping:
+fix-loop finding is addressed or declined, and the per-task Codex gate
+approved or was skipped by tier — append the completion line to the ledger
+in the same message as your other bookkeeping:
 
 - `Task <N>: complete (commits <base7>..<head7>, review clean)`
 

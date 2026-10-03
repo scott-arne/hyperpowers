@@ -2,7 +2,7 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
-## 6.15.0 (2026-09-30)
+## 6.15.0 (2026-10-03)
 
 A review finding was acted on before anyone checked it was true.
 

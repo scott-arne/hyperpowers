@@ -33,7 +33,7 @@ POST_EDITS="$SCRIPT_DIR/gate-post-split-edits.tsv"
 # This suite is checkout-only by design: it needs a .git that contains the
 # pinned blob, so it cannot run from a packaged plugin install and fails
 # closed (rather than skipping) if the object is missing from a shallow clone.
-ORIGIN_SHA="9242d4f6bdcdbf373548a8197b515a2e309de03b"
+ORIGIN_SHA="cdd8719faf208b692538291b458ecda2f9b3a314"
 ORIGIN_PATH="skills/requesting-code-review/codex-review-gate.md"
 ORIGIN_LINES=766
 UNTRACKED_BLANKS=(273 356)

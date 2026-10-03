@@ -61,6 +61,8 @@ Apply the gates in order. A candidate must pass every gate to be kept.
 
 ## Final Report
 
+**REQUIRED SUB-SKILL:** Use hyperpowers:communication to write this report.
+
 Built from the attempts ledger, presented at the end. Exactly these six parts, in order:
 
 1. **Headline result** — overall improvement on the *named* workload with the *named* metric (e.g. "3.1× faster on the 10k-row batch, wall 8.4s → 2.7s; correct within tolerance").

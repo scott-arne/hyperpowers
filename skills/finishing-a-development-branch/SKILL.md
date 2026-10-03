@@ -11,6 +11,8 @@ description: Use when implementation is complete, all tests pass, and you need t
 
 **Announce at start:** "I'm using the finishing-a-development-branch skill to complete this work."
 
+**REQUIRED SUB-SKILL:** Use hyperpowers:communication for the test-failure report and the PR description. The option menus below are presented exactly as written.
+
 ## Step 1: Verify Tests
 
 Run the project's full test suite (`npm test` / `cargo test` / `pytest` / `go test ./...`).

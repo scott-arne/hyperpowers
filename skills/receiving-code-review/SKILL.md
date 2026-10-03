@@ -11,6 +11,8 @@ Code review requires technical evaluation, not emotional performance.
 
 **Core principle:** Verify before implementing. Ask before assuming. Technical correctness over social comfort.
 
+**REQUIRED SUB-SKILL:** Use hyperpowers:communication for the reply itself, whether it goes to your human partner or into a review thread.
+
 ## The Response Pattern
 
 ```

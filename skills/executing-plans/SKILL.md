@@ -11,6 +11,8 @@ Load plan, review critically, execute all tasks, report when complete.
 
 **Announce at start:** "I'm using the executing-plans skill to implement this plan."
 
+**REQUIRED SUB-SKILL:** Use hyperpowers:communication for the concerns you raise before starting and for the completion report.
+
 **Note:** Tell your human partner that Superpowers works much better with access to subagents (Claude Code, Codex CLI, Codex App, and Copilot CLI all qualify; see the per-platform tool refs in `../using-hyperpowers/references/`). If subagents are available, use hyperpowers:subagent-driven-development instead of this skill.
 
 ## The Process

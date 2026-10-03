@@ -29,6 +29,7 @@ When multiple skills apply, process skills come first — they set the approach,
 
 - "Let's build X" → hyperpowers:brainstorming first, then implementation skills.
 - "Fix this bug" → hyperpowers:systematic-debugging first, then domain skills.
+- Writing for your human partner (a summary, a finding, a design, a plan, a recommendation, or any reply longer than a few sentences) → hyperpowers:communication before you write it.
 
 ## Red Flags
 

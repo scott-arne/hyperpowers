@@ -13,6 +13,8 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Announce at start:** "I'm using the writing-plans skill to create the implementation plan."
 
+**REQUIRED SUB-SKILL:** Use hyperpowers:communication for the plan's prose and for the handoff message. Your human partner reads the plan before any implementer does.
+
 **Context:** If working in an isolated worktree, it should have been created via the `hyperpowers:using-git-worktrees` skill at execution time.
 
 **Save plans to:** `docs/hyperpowers/plans/YYYY-MM-DD-<feature-name>.md`

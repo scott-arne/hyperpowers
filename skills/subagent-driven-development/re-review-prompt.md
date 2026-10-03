@@ -1,11 +1,12 @@
 # Scoped Re-Review Prompt Template
 
 Use this template when dispatching a re-review after a fix round. The
-re-reviewer verifies the findings were addressed and checks the fix diff for
-new breakage. It is not a fresh review — the full review already happened.
+re-reviewer verifies the findings were addressed or declined with
+confirmed evidence and checks the fix diff for new breakage. It is not a
+fresh review — the full review already happened.
 
-**Purpose:** Verify each finding from the previous review was addressed, and
-that the fix itself broke nothing.
+**Purpose:** Verify each finding from the previous review was addressed or
+declined with confirmed evidence, and that the fix itself broke nothing.
 
 ```
 Subagent (general-purpose):
@@ -40,6 +41,11 @@ Subagent (general-purpose):
     `git diff --stat [FIX_BASE_SHA]..[HEAD_SHA]` and
     `git diff [FIX_BASE_SHA]..[HEAD_SHA]`.
 
+    An all-declined round has no fix diff: the diff file above is then the
+    previous review's package, and every finding's evidence lives in code that
+    diff did not change. Read the cited file:line for each declined finding
+    directly; nothing in this round is "outside the fix diff".
+
     Your review is read-only on this checkout. Do not mutate the working
     tree, the index, HEAD, or branch state in any way. Use tools like
     `git show`, `git diff`, and `git log` to inspect history. If you need a
@@ -63,17 +69,21 @@ Subagent (general-purpose):
     re-review code the fix did not touch: if you notice an issue entirely
     outside the fix diff, report it under Out-of-Scope Observations — it
     does not block this task and does not extend the loop. A broad
-    whole-branch review happens after all tasks are complete.
+    whole-branch review happens after all tasks are complete. When the round
+    declined a finding, the cited code is in scope whether or not the diff
+    touched it.
 
     ## Tests
 
     The implementer re-ran the tests covering the amended code and appended
     the results to the report file. Treat the report as unverified claims:
     confirm the fix report names the covering tests and shows their output,
-    and verify the claims against the diff. Do not re-run the suite to
-    confirm their report. Run a test only when reading the code raises a
-    specific doubt that no existing run answers — and then a focused test,
-    never a package-wide suite.
+    and verify the claims against the diff. That requirement covers the
+    findings the round fixed; a declined finding is confirmed from its
+    file:line evidence, not from tests. Do not re-run the suite to confirm
+    their report. Run a test only when reading the code raises a specific
+    doubt that no existing run answers — and then a focused test, never a
+    package-wide suite.
 
     ## Output Format
 
@@ -84,9 +94,14 @@ Subagent (general-purpose):
     ### Finding Verdicts
 
     For each finding in The Findings Under Verification, in order:
-    - **[finding one-liner]** — ADDRESSED | NOT ADDRESSED, with file:line
+    - **[finding one-liner]** — ADDRESSED | NOT ADDRESSED | DECLINED, with file:line
       evidence. "Attempted" is not addressed: the specific defect must no
       longer exist.
+    - DECLINED means the implementer refuted the finding (the cited code
+      does not do what it says) or corrected it (real, but not blocking
+      severity or not this change's scope) with file:line evidence you have
+      read and confirmed. A decline whose evidence you cannot confirm is
+      NOT ADDRESSED and stays open.
 
     ### New Breakage in the Fix Diff
 
@@ -100,8 +115,9 @@ Subagent (general-purpose):
 
     ### Verdict
 
-    **Fix round:** [All findings addressed, no new Critical/Important
-    breakage | Findings remain open] — list the open ones.
+    **Fix round:** [All findings addressed or declined, no new
+    Critical/Important breakage | Findings remain open] — list the open
+    ones.
 ```
 
 **Placeholders:**
@@ -135,5 +151,5 @@ round was controller-applied under SKILL.md's de-minimis exception, read
 covering-command output land in the same task report file, and your job
 is unchanged — verify the named findings against the diff.
 
-**Re-reviewer returns:** per-finding verdicts (ADDRESSED / NOT ADDRESSED),
+**Re-reviewer returns:** per-finding verdicts (ADDRESSED / NOT ADDRESSED / DECLINED),
 new breakage in the fix diff, out-of-scope observations, and a round verdict.

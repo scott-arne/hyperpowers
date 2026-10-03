@@ -61,7 +61,7 @@ Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
   Magic number — ADDRESSED (src/recovery.js:7). New breakage: none.
   Verdict: all findings addressed.
 
-[Ledger: Task 2: fix round 1/5 (2 addressed, 0 open; commits d4e5f6a..b7c8d9e)]
+[Ledger: Task 2: fix round 1/5 (2 addressed, 0 declined, 0 open; commits d4e5f6a..b7c8d9e)]
 [Codex per-task gate over d4e5f6a..b7c8d9e — approved; that would have been round 2 of the same five]
 [Ledger: Task 2: complete (commits d4e5f6a..b7c8d9e, review clean)]
 

@@ -16,6 +16,20 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SWEEP="$REPO_ROOT/skills/requesting-code-review/scripts/codex-broker-sweep"
 FAKE="$SCRIPT_DIR/fixtures/app-server-broker.mjs"
+# Both sides of this suite read the process table, so a host that denies it can
+# answer neither. The sweep confirms a signalling target with `ps -o command=`
+# and refuses to act on a pid it cannot read, so every record comes back
+# unverifiable; `fixture_alive` below identifies this file's own fixtures the
+# same way, so the --only-pids fence comes back empty and each fenced call is a
+# usage error. Both are the tool and the suite behaving correctly on a host
+# neither can inspect, and the resulting failures describe the host rather than
+# the sweep. The probe asks about this shell, which is certainly alive: an
+# empty answer means the table is unreadable, not that the process is gone.
+if [ -z "$(ps -o command= -p $$ 2>/dev/null)" ]; then
+    echo "  [SKIP] this host denies process-table access -- ps cannot report on this shell"
+    echo "         codex-broker-sweep is process-table-driven; the suite cannot exercise it here"
+    exit 0
+fi
 FAILURES=0
 pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }

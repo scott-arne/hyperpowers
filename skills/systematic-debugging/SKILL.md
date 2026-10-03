@@ -11,6 +11,8 @@ Random fixes waste time and create new bugs. Quick patches mask underlying issue
 
 **Core principle:** ALWAYS find root cause before attempting fixes. Symptom fixes are failure.
 
+**REQUIRED SUB-SKILL:** Use hyperpowers:communication when you report a root cause, state a hypothesis, or bring a question to your human partner.
+
 **Violating the letter of this process is violating the spirit of debugging.**
 
 ## The Iron Law

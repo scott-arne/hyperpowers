@@ -19,6 +19,8 @@ to EVERY task on EVERY path below — the ceremony scales with the task;
 the approval gate never does.
 </HARD-GATE>
 
+**REQUIRED SUB-SKILL:** Use hyperpowers:communication for everything your human partner reads on every path: the questions, the approach comparison, the design presentation, and the spec.
+
 ## Three Paths
 
 Before your first question, classify the request and say the

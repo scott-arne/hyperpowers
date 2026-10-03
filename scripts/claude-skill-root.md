@@ -12,6 +12,7 @@ Hyperpowers is a complete software development methodology for coding agents. It
 The skills bundled in this package:
 
 - **brainstorming** — Use before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation. → `skills/brainstorming/INSTRUCTIONS.md`
+- **communication** — Use when writing prose a person will read - a report, summary, or reply to your human partner, a PR description, commit message, or document - and when asked to make text read less like AI. → `skills/communication/INSTRUCTIONS.md`
 - **dispatching-parallel-agents** — Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies. → `skills/dispatching-parallel-agents/INSTRUCTIONS.md`
 - **executing-plans** — Use when you have a written implementation plan to execute in a separate session with review checkpoints. → `skills/executing-plans/INSTRUCTIONS.md`
 - **finishing-a-development-branch** — Use when implementation is complete, all tests pass, and you need to decide how to integrate the work. Guides completion of development work by presenting structured options for merge, PR, or cleanup. → `skills/finishing-a-development-branch/INSTRUCTIONS.md`
@@ -58,6 +59,7 @@ When multiple skills could apply, use this order:
 
 "Let's build X" → brainstorming first, then implementation skills.
 "Fix this bug" → systematic-debugging first, then domain-specific skills.
+Writing for your human partner (a summary, a finding, a design, a plan, a recommendation, or any reply longer than a few sentences) → communication before you write it.
 
 ## Environment Adaptations
 

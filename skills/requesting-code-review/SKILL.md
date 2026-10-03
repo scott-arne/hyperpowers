@@ -9,6 +9,8 @@ Dispatch a code reviewer subagent to catch issues before they cascade. The revie
 
 **Core principle:** Review early, review often.
 
+**REQUIRED SUB-SKILL:** Use hyperpowers:communication when you report findings or a gate hand-back to your human partner. The fixed notices in gate-preflight.md are quoted as written.
+
 ## When to Request Review
 
 **Mandatory:**

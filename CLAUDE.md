@@ -54,6 +54,7 @@ Skills are not prose — they are code that shapes agent behavior. If you modify
 - Run adversarial pressure testing across multiple sessions.
 - Compare before/after outcomes; keep the evidence with the change.
 - Do not modify carefully-tuned content (Red Flags tables, rationalization lists, "human partner" language) without evidence the change is an improvement.
+- A single sentinel failure is a sample. A re-measure is owed only for a change a sentinel session reaches; follow `evals/docs/scenario-authoring.md` §5 before holding a release on one.
 
 ## Eval harness
 

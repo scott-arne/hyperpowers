@@ -1785,3 +1785,11 @@ git status --short
 ```
 
 On a win, also stage `CHANGELOG.md`. Show the human partner the diff, ask, and commit with `docs: eval evidence for the review calibration and sentinel scope fixes`. Nothing is pushed.
+
+**Correction (2026-10-04).** Task 1's per-task Codex gate (round 1) found four defects in the evals `docs/scenario-authoring.md` text that Task 1 Step 2 mandates, and the human partner ruled on them. Evals `93777fbbf` departs from Step 2's text in three places, and Task 1's checks are read against the corrected text:
+
+- The hermeticity recipe under "Harness labels" runs inside `if git diff --quiet <commit> HEAD -- package.json bun.lock; then … else … fi`, removes its scratch directory and prints `# Result: exit <rc>`. As Step 2 wrote it, a dependency mismatch did not stop the test run, so a pass could certify `clean` from another commit's dependencies.
+- Comparability matches "the models" where Step 2 said "the model": the Gauntlet-Agent model (`economics.gauntlet.model` in each run's `verdict.json`) and every model the Coding-Agent ran, subagents included (`economics.coding_agent.models`). The grader judges part of the amended criterion, and provisioning writes the host's alias pins (`ANTHROPIC_DEFAULT_*`) into each run's `.claude-env` after the launcher drops inherited `ANTHROPIC*` variables, so a `clean` label does not fix a subagent's model. The table's model cells name the grader, step 2 records "the models" and an evals commit "clean at launch", and the paragraph after the table lists the models among what every row records.
+- The evals-harness bullet requires the failing run's evals commit, and a clean `git status` for the compared paths when it launched, to be on record. `quorum run` records neither, so a failing run without that record has no comparable row. Row 3's record is the mutation check in its evidence README.
+
+The models were read from each row's `verdict.json` files: rows 1 and 2 are `claude-opus-5` for both in 20 of 20 runs, row 3 is `claude-opus-5-5` for both in 10 of 10. Step 4's table check is unchanged and still passes, because the header still starts `| scenario | model |`.

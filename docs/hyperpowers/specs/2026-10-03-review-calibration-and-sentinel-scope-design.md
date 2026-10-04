@@ -406,3 +406,5 @@ green, including `test-gate-contract.sh` with its new pin.
 - **Fix 2 is judgment.** The rule asks for recorded evidence, but whether a
   session "reads" a body before its reading settles is still argued from
   transcripts. Without evidence, the rule defaults to re-measuring.
+
+**Correction (2026-10-04).** Fix 3's comparability list and its hermeticity recipe changed when Task 1 shipped, after the per-task Codex gate and the human partner's ruling. Comparability matches the models (the Gauntlet-Agent's and every model the Coding-Agent ran, subagents included, from each run's `verdict.json`) where this spec says "the model", and it requires the failing run's evals commit and a clean `git status` for the compared paths at launch to be on record. The recipe stops before extracting anything when `package.json` or `bun.lock` differ. The plan's correction of the same date gives the reasons and the evals commit.

@@ -2,6 +2,19 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
+## Unreleased
+
+Messages to the human partner reached for metaphors and contrasts that carried no fact.
+
+- **A `communication` skill for prose a person will read.** `skills/communication/SKILL.md` states what a message to a person is (the answer first, only what the reader lacks, the specific thing in plain words, no contrast framing, ends on the last fact, shaped for a terminal). It gives a substitution table for the jargon metaphors that stand in for facts (blast radius, footgun, yak shaving, spine, seams, gate, belt-and-suspenders, long pole, load-bearing), removes every form of "not X but Y", and carries a check table of the strongest AI tells. `patterns.md` holds the full catalogue with before-and-after pairs, condensed from the humanizer skill (MIT) and Wikipedia's "Signs of AI writing". Measured with fresh single-shot subagents on three scenarios (an investigation report, a chat reply to a ship-or-fix question, a design-review critique), five reps per arm:
+  - Figurative jargon from the list fell from 5 of 15 runs to 0 of 15; "load-bearing" from 2 to 0.
+  - "Not X but Y" fell from 9 of 15 to 0 of 15.
+  - Bold labels fell from 5 of 15 to 0 of 15; one-line restating closers from 6 of 15 to 0 of 15.
+  - Dashes and headings were 0 of 15 in both arms under this harness, so those rules are unmeasured.
+  - Every process skill that writes to the human partner carries a `REQUIRED SUB-SKILL: Use hyperpowers:communication` line at that point (brainstorming, writing-plans, subagent-driven-development, executing-plans, finishing-a-development-branch, requesting-code-review, receiving-code-review, systematic-debugging, dispatching-parallel-agents, profiling-performance, optimizing-performance), and `using-hyperpowers` routes "writing for your human partner" to it. Measured in live headless sessions with the worktree loaded as the plugin, five per scenario: the skill was invoked in 0 of 20 control sessions; with the lines, 5 of 5 brainstorming, 5 of 5 plan-writing, and 4 of 5 debugging sessions invoked it before the human-facing output, and 0 of 10 one-line or standalone-question sessions did. Where it was invoked right before a report, the bold labels disappeared; in brainstorming it fires a turn before the design presentation and the effect there is partial (2 of 5 presentations clean against 0 of 5). The bootstrap line did not make a standalone answer invoke the skill in either placement tried; it stays as a routing hint.
+
+  Evidence: `docs/hyperpowers/2026-10-03-communication-skill-eval-evidence.md`; run artifacts in hyperpowers-evals under `evidence/2026-10-03-communication-skill/`.
+
 ## 6.15.0 (2026-10-03)
 
 A review finding was acted on before anyone checked it was true.

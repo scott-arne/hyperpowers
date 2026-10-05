@@ -83,6 +83,7 @@ When agents return:
 - Verify fixes don't conflict
 - Run full test suite
 - Integrate all changes
+- Report the synthesis to your human partner. **REQUIRED SUB-SKILL:** Use hyperpowers:communication for that report.
 
 ## Agent Prompt Structure
 

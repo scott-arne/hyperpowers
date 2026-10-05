@@ -195,6 +195,7 @@ The bundle includes all skills with a router `SKILL.md` that guides skill select
 - **using-git-worktrees** - Parallel development branches
 - **finishing-a-development-branch** - Merge/PR decision workflow
 - **subagent-driven-development** - Fresh subagent per task, task review after each, final whole-branch review
+- **communication** - Plain, specific prose for your human partner: lead with the answer, name the thing instead of the metaphor, no AI tells (includes the pattern catalogue)
 
 **Performance**
 - **profiling-performance** - Measure, find the bound, and rank bottlenecks before optimizing (language packs: C++, Python, JS)

@@ -154,9 +154,13 @@ cd "$SCRIPT_DIR" || exit 1
 # $PPID is the ephemeral shell the harness spawned to run us — it dies
 # when this script exits. The harness itself is $PPID's parent.
 OWNER_PID="$(ps -o ppid= -p "$PPID" 2>/dev/null | tr -d ' ')"
-if [[ -z "$OWNER_PID" || "$OWNER_PID" == "1" ]]; then
+if [[ "$OWNER_PID" == "1" ]]; then
   OWNER_PID="$PPID"
 fi
+# No answer means ps could not run (a sandbox refuses to exec it). Falling back
+# to $PPID would watch the shell that exits with this script and stop the
+# server at its first lifecycle check, so OWNER_PID stays empty: the watchdog
+# is disabled and the idle timeout becomes the only shutdown trigger.
 
 # Windows/MSYS2: Node.js cannot see POSIX PIDs from the MSYS2 namespace.
 # Passing a PID node cannot verify causes server to log owner-pid-invalid

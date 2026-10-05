@@ -109,6 +109,66 @@ else
 fi
 
 echo ""
+echo "--- start-server.sh owner PID resolution ---"
+
+# Owner resolution asks ps for the parent of $PPID. These runs leave uname
+# alone (a non-Windows host) and replace ps, so the result does not depend on
+# whether the host lets this shell run ps.
+mkdir -p "$TEST_DIR/owner-bin"
+cat > "$TEST_DIR/owner-bin/node" <<'EOF'
+#!/usr/bin/env bash
+echo "CAPTURED_OWNER_PID=${BRAINSTORM_OWNER_PID:-__UNSET__}"
+exit 0
+EOF
+chmod +x "$TEST_DIR/owner-bin/node"
+
+rm -rf "$TEST_DIR/project"/*
+cat > "$TEST_DIR/owner-bin/ps" <<'EOF'
+#!/bin/sh
+echo " 4242"
+EOF
+chmod +x "$TEST_DIR/owner-bin/ps"
+
+captured=$(
+  PATH="$TEST_DIR/owner-bin:$PATH" \
+    MSYSTEM="" \
+    bash "$START_SCRIPT" --project-dir "$TEST_DIR/project" --foreground 2>/dev/null || true
+)
+owner_pid_value=$(echo "$captured" | grep "CAPTURED_OWNER_PID=" | head -1 | sed 's/CAPTURED_OWNER_PID=//')
+
+if [[ "$owner_pid_value" == "4242" ]]; then
+  pass "passes the grandparent PID that ps reports as BRAINSTORM_OWNER_PID"
+else
+  fail "passes the grandparent PID that ps reports as BRAINSTORM_OWNER_PID" \
+       "expected 4242, got '$owner_pid_value'"
+fi
+
+# A sandbox can refuse to exec ps. The only PID left is then $PPID, the shell
+# running start-server.sh, which exits with it: watching that PID stops the
+# server at its first lifecycle check.
+rm -rf "$TEST_DIR/project"/*
+cat > "$TEST_DIR/owner-bin/ps" <<'EOF'
+#!/bin/sh
+echo "ps: operation not permitted" >&2
+exit 126
+EOF
+chmod +x "$TEST_DIR/owner-bin/ps"
+
+captured=$(
+  PATH="$TEST_DIR/owner-bin:$PATH" \
+    MSYSTEM="" \
+    bash "$START_SCRIPT" --project-dir "$TEST_DIR/project" --foreground 2>/dev/null || true
+)
+owner_pid_value=$(echo "$captured" | grep "CAPTURED_OWNER_PID=" | head -1 | sed 's/CAPTURED_OWNER_PID=//')
+
+if [[ "$owner_pid_value" == "" || "$owner_pid_value" == "__UNSET__" ]]; then
+  pass "clears BRAINSTORM_OWNER_PID when ps cannot be run"
+else
+  fail "clears BRAINSTORM_OWNER_PID when ps cannot be run" \
+       "expected empty or unset, got '$owner_pid_value'"
+fi
+
+echo ""
 echo "--- Results: $passed passed, $failed failed ---"
 if [[ $failed -gt 0 ]]; then
   exit 1

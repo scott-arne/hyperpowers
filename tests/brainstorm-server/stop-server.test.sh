@@ -228,5 +228,33 @@ else
   fi
 fi
 
+# --- Test 8: a live PID this shell may not signal is not taken for a dead one ---
+# kill -0 fails with EPERM for a process the caller may not signal, as a sandbox
+# does for a server started from another sandboxed command. PID 1 belongs to
+# root, so an unprivileged shell gets the same EPERM from it. With ps denied as
+# well, as in that sandbox, the session files are the only handle on the server.
+if [[ -r "/proc/$$/cmdline" ]]; then
+  skip "unsignalable live PID reports unverified" "/proc supplies the command line, so ps is never run"
+elif kill -0 1 2>/dev/null; then
+  skip "unsignalable live PID reports unverified" "this shell may signal PID 1, so PID 1 cannot stand in for an unsignalable server"
+else
+  SESS="$(mktemp -d)"; track_dir "$SESS"; mkdir -p "$SESS/state"
+  printf '%s\n' "$(new_server_id)" > "$SESS/state/server-instance-id"
+  printf '%s\n' '{"type":"server-started"}' > "$SESS/state/server-info"
+  echo 1 > "$SESS/state/server.pid"
+  NO_PS="$(mktemp -d)"; track_dir "$NO_PS"
+  printf '#!/bin/sh\necho "ps: operation not permitted" >&2\nexit 126\n' > "$NO_PS/ps"
+  chmod +x "$NO_PS/ps"
+  OUT="$(PATH="$NO_PS:$PATH" "$STOP" "$SESS")"; RC=$?
+  if [[ "$OUT" != *unverified* || "$RC" -eq 0 ]]; then
+    bad "unsignalable live PID: expected unverified and a non-zero exit" "rc=$RC $OUT"
+  elif [[ ! -f "$SESS/state/server.pid" || ! -f "$SESS/state/server-instance-id" \
+          || ! -f "$SESS/state/server-info" || -f "$SESS/state/server-stopped" ]]; then
+    bad "unverified stop must leave the session files as they were" "$(ls "$SESS/state")"
+  else
+    ok "unsignalable live PID reports unverified and keeps the session files"
+  fi
+fi
+
 echo "--- Results: $PASS passed, $FAIL failed, $SKIP skipped ---"
 [ "$FAIL" -eq 0 ] || exit 1

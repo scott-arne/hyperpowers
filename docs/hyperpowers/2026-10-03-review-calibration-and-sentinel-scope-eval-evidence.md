@@ -10,11 +10,13 @@ Spec: `docs/hyperpowers/specs/2026-10-03-review-calibration-and-sentinel-scope-d
 Plan: `docs/hyperpowers/plans/2026-10-03-review-calibration-and-sentinel-scope.md`,
 pre-registered in `c7f4063`.
 
-**Where the run artifacts live.** Every `task-4-runs/` path in this note
-resolves under the evals repository's committed evidence tree,
+**Where the run artifacts live.** Every `task-4-runs/` and `task-7-runs/`
+path in this note, and every file it names beside them, resolves under the
+evals repository's committed evidence tree,
 `evals/evidence/2026-10-03-review-calibration-and-sentinel-scope/`
-(hyperpowers-evals commit `403435c69`). The runner wrote there
-directly; nothing in this note cites the SDD workspace.
+(hyperpowers-evals commit `403435c69`; Task 7's suite records and the
+provenance check in `da58801a5`). The Task 4 runner wrote there directly;
+nothing in this note cites the SDD workspace.
 
 ## Fix 1 — the pathological-input cap (stopped at RED)
 
@@ -81,7 +83,11 @@ in at least 2 of 3. It was never applied: the treatment did not run.
 Treatment did not run. All six verdicts are `approve` with no findings; no
 review reported the defect at any severity. P2 control 2's summary says the
 functions produce the required results "under the stated workspace-name
-invariant". `tally.txt` reproduces from the captures. No voids, no re-runs.
+invariant". `tally.txt` reproduces from the captures. A capture names the
+base commit it reviewed, not the head, the diff or the prompt;
+`base-provenance.py` rebuilds both runs' bases from the fixture files
+committed in `fd1b5c701` and reproduces each captured base, and the head, the
+diff and the prompt are not on record. No voids, no re-runs.
 
 **Decision.** Stop: no over-rating reproduced on P or P2 under control, so
 no sentence ships. `recipe-code.md` and `test-gate-contract.sh` are
@@ -157,15 +163,27 @@ From execution:
   plan's entry follows the plan's labels.
 - Global Constraints lists `task-5-runs/` in the evidence directory; on the
   Stop path it does not exist.
-- Task 7's offline suites were not all green on the first run, and the
-  branch changes no code. Fresh pipes on the host held 512 bytes while 128
-  Codex brokers, 245 app-servers and 122 code-mode hosts were running, so
-  seven shell suites failed through SIGPIPE in `printf | grep -q` under
-  `pipefail` and through truncated Node output. After `codex-broker-sweep
-  --kill --include-unreferenced` retired 92 orphan brokers, pipes held 65536
-  bytes and all seven passed. The brainstorm `server.test.js` still fails 7
-  of 33 checks, each one waiting on a file-change reload: the host's FSEvents
-  delivered one write's event after 3.1 s and another's not at all, against
-  the test's 500 ms waits. `stop-server.test.sh` and
-  `windows-lifecycle.test.sh` pass only outside the Bash sandbox, which
-  blocks `ps`.
+- Task 7's offline suites are not all green, and the branch changes no code.
+  The first pass ran inside the Bash sandbox, where `test-codex-broker-sweep`
+  skips itself because it reads the process table. Six suites failed there,
+  five with printf "Broken pipe" lines in their logs: fresh pipes on the host
+  held 512 bytes while 128 Codex brokers, 245 app-servers and 122 code-mode
+  hosts were running, so `printf` was still writing when `grep -q` exited on
+  its match, and under `pipefail` the write error failed the pipeline. The
+  sixth, `test-package-skill`, failed with "package-claude-skill.sh exited
+  non-zero", and failed the same way outside the sandbox. Outside the
+  sandbox `test-codex-broker-sweep` failed twice, with the same Broken pipe
+  lines. After `codex-broker-sweep --kill --include-unreferenced` retired 92
+  orphan brokers, pipes held 65536 bytes and all seven passed. In one
+  complete pass at `5ee2ee0`, each suite its own command outside the
+  sandbox, 46 of 48 suites exit 0. The two that fail, `server.test.js` (5 of
+  33) and `lifecycle.test.js` (1 of 13), assert on the brainstorm server's
+  file watcher after a fixed wait. A probe of `fs.watch` on this host named
+  the written file within 500 ms for 0 of 8 writes, reported nothing for 4,
+  and reported the rest 1.1 to 1.6 s late or under another file's name;
+  across this task's passes `server.test.js` failed 6, 6, 7, 3 and 5 of 33.
+  `stop-server.test.sh` and `windows-lifecycle.test.sh` pass only outside
+  the Bash sandbox, which blocks `ps`. The human partner waived "all green"
+  for this plan on 2026-10-04 in favor of a recorded result for every suite;
+  the watcher-dependent tests stay a follow-up. Every suite's row, the logs
+  and the probe: `task-7-offline-suites.txt` and `task-7-runs/`.

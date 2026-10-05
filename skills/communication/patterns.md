@@ -8,7 +8,7 @@ Adapted from the humanizer skill (MIT) and from Wikipedia's "Signs of AI writing
 
 ### 1. Jargon metaphors
 
-Watch for: blast radius, footgun, yak shaving, spine, backbone, seams, gate (figurative), belt-and-suspenders, bites, time bomb, papers over, the kicker, surface (verb).
+Watch for: blast radius, footgun, yak shaving, spine, backbone, seams, gate (figurative), belt-and-suspenders, long pole, bites, time bomb, papers over, the kicker, surface (verb).
 
 Do: write the fact the metaphor stands for (the table in SKILL.md). Keep a word that is part of a name the reader can grep for.
 

@@ -81,7 +81,7 @@ No rationalizations appeared, because the failure is one of output shape rather 
 - **Triggering inside a process skill** is measured below. **Triggering on a standalone reply** (a question answered outside any process skill) is measured below and did not happen in either bootstrap placement tried.
 - **`patterns.md`.** No treatment agent read the companion file (two tool calls per run: the Write and the hand-back). The catalogue is unmeasured as a reference; SKILL.md alone produced the result above.
 - **Dashes, headings, chatbot wrappers.** Zero in both arms under this harness; the rules stay in the skill at the partner's request and because other harnesses lack the suppression.
-- **footgun, yak shaving, spine, seams, belt-and-suspenders.** Never produced by the control arm in these scenarios, so the substitution rows for them are unmeasured. They stay because the partner has seen them in practice.
+- **footgun, yak shaving, spine, seams, belt-and-suspenders, long pole.** Never produced by the control arm in these scenarios, so the substitution rows for them are unmeasured. They stay because the partner has seen them in practice; "long pole" was added on 2026-10-04 at the partner's request.
 - **Editing mode.** No scenario asked the agent to rewrite pasted text.
 - **Live sessions.** This was a single-shot micro-test, not a quorum campaign. A long session after compaction may behave differently (see `claude-code-compaction-mechanics` in the project memory).
 

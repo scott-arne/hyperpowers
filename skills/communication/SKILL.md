@@ -45,6 +45,7 @@ Each word below stands in for a specific fact. Write the fact.
 | seams | the boundary: "where the loader hands the batch to the writer" |
 | gate, gated, gating | the check and what it blocks: "the CI step that blocks deploy on a schema diff" |
 | belt-and-suspenders | "two checks for the same thing", and whether both are needed |
+| long pole | the step that sets the finish date: "the staging soak is the longest step, 1.5 days, and nothing ships before it ends" |
 | load-bearing | what depends on it and what breaks if it is false: "six of the nine formats move on this assumption; if one keeps state, the move is not mechanical" |
 
 Any other metaphor doing a noun's or verb's job gets the same treatment: "bites", "time bomb", "papers over", "the kicker", "surface" as a verb. Keep a word that is part of a name the reader can grep for (a script called `codex-review-gate`, a CI job named `schema-gate`).

@@ -753,3 +753,12 @@ These are interpretations the controller made without a human decision, surfaced
 - **The §1.7 `cost-checkbox-over-trigger` base row**, to be re-measured under the amended criterion.
 - **A9 on a cross-repo plan.** This plan's own controller resumed from compaction with its working directory in the evals clone. A9's notice named the evals-keyed workspace's `progress.md` (`…/sdd/8565476…/`), not the canonical ledger under the hyperpowers key. That file is a pointer planted in Task 14 after the ledger split, so the resume found the right ledger. The notice's rule, the newest ledger under the running repository's key, worked as written; for a plan that spans two repositories, that rule does not reach the canonical ledger unaided.
   - A second shape, seen in a real session after the 6.14.0 install: oeviz session `0d60d899`, compacting on 2026-09-27 with its shell's working directory inside this repository's SDD skill directory, received a notice naming this plan's ledger (`…/plans/2026-09-23-adoption-remediation-33a2c2ea/progress.md`). That controller was starting a new oeviz plan, ignored the notice and wrote its own ledger, so nothing was re-dispatched. Mid-plan, the same drift would point a controller at another repository's ledger. Found while sizing the transcript read; the other ten real sessions that received the notice were not read.
+
+**Note (2026-10-05).** The sentinel-replacement question above is settled as
+a rule rather than a patch: evals `docs/scenario-authoring.md` §5,
+"Replacing a voided sentinel session", states how a replacement is credited
+(a `sentinel-reruns.tsv` validated like `reruns.tsv`, the replacement held
+to the batch's per-run checks, the original shown as replaced). The next
+campaign's analyzer implements it; this campaign's `analyze.py` and
+`analysis-table.txt` are not re-run, so `analysis-table.txt` line 47 keeps
+its "not met", with the replacement recorded in the table above.

@@ -31,6 +31,15 @@ read_expected_server_id() {
   printf '%s\n' "$id"
 }
 
+# kill -0 also fails for a live process this shell may not signal (a sandbox
+# refuses signals to processes it did not start), so EPERM still means the
+# process exists. Only the message tells the two failures apart.
+process_exists() {
+  local err
+  err="$(LC_ALL=C; kill -0 "$1" 2>&1)" && return 0
+  [[ "$err" == *"not permitted"* ]]
+}
+
 command_line_for_pid() {
   local pid="$1"
   if [[ -r "/proc/$pid/cmdline" ]]; then
@@ -56,7 +65,7 @@ command_has_server_id() {
   if [[ -z "$command_line" ]]; then
     # A live process always has a command line, so an empty one means ps could
     # not be run (a sandbox refuses it) -- unless the process has just exited.
-    kill -0 "$pid" 2>/dev/null && return 2
+    process_exists "$pid" && return 2
     return 1
   fi
   case " $command_line " in
@@ -70,7 +79,7 @@ command_has_server_id() {
 # Returns 0 for our server, 1 for anything else, and 2 for a live process
 # whose command line cannot be read.
 is_brainstorm_server() {
-  kill -0 "$1" 2>/dev/null || return 1
+  process_exists "$1" || return 1
   local expected_id
   expected_id="$(read_expected_server_id)" || return 1
   command_has_server_id "$1" "$expected_id"

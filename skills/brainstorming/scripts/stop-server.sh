@@ -53,7 +53,12 @@ command_has_server_id() {
   fi
   local command_line
   command_line="$(command_line_for_pid "$pid")"
-  [[ -n "$command_line" ]] || return 1
+  if [[ -z "$command_line" ]]; then
+    # A live process always has a command line, so an empty one means ps could
+    # not be run (a sandbox refuses it) -- unless the process has just exited.
+    kill -0 "$pid" 2>/dev/null && return 2
+    return 1
+  fi
   case " $command_line " in
     *" $expected_arg "*) return 0 ;;
     *) return 1 ;;
@@ -62,20 +67,31 @@ command_has_server_id() {
 
 # Confirm a PID has this session's per-start instance id, not just a familiar
 # process name. Ambiguous or legacy metadata fails closed as stale_pid.
+# Returns 0 for our server, 1 for anything else, and 2 for a live process
+# whose command line cannot be read.
 is_brainstorm_server() {
   kill -0 "$1" 2>/dev/null || return 1
   local expected_id
   expected_id="$(read_expected_server_id)" || return 1
-  command_has_server_id "$1" "$expected_id" || return 1
-  return 0
+  command_has_server_id "$1" "$expected_id"
 }
 
 if [[ -f "$PID_FILE" ]]; then
   pid=$(cat "$PID_FILE")
 
+  is_brainstorm_server "$pid"
+  identity=$?
+
+  # Leave the session files alone: if this is our server, they are the only
+  # handle on it, and stale_pid would discard them while it keeps running.
+  if [[ "$identity" -eq 2 ]]; then
+    echo '{"status": "unverified", "error": "cannot read the process command line to confirm the server identity"}'
+    exit 1
+  fi
+
   # Refuse to signal a PID we can't prove is our server. A stale pid file may
   # point at an unrelated process after a reboot/PID wraparound.
-  if ! is_brainstorm_server "$pid"; then
+  if [[ "$identity" -ne 0 ]]; then
     rm -f "$PID_FILE" "$SERVER_ID_FILE"
     mark_stopped "stale_pid"
     echo '{"status": "stale_pid"}'

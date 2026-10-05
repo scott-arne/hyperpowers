@@ -361,6 +361,12 @@ if ! wait_for_server_info "$TEST_DIR/stop-test"; then
   kill "$STOP_TEST_PID" 2>/dev/null || true
   wait "$STOP_TEST_PID" 2>/dev/null || true
   STOP_TEST_PID=""
+elif [[ ! -r "/proc/$$/cmdline" && -z "$(ps -ww -p $$ -o command= 2>/dev/null)" ]]; then
+  # stop-server.sh must read the server's command line to prove its identity;
+  # without /proc or ps it reports unverified and correctly leaves it running.
+  skip "stop-server.sh cleanly stops the server" \
+       "this host denies process-table access -- ps cannot report on this shell"
+  kill "$STOP_TEST_PID" 2>/dev/null || true
 else
   bash "$STOP_SCRIPT" "$TEST_DIR/stop-test" >/dev/null 2>&1 || true
   for _ in $(seq 1 10); do

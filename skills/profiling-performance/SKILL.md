@@ -154,6 +154,8 @@ Each candidate records five fields:
 
 **Output this ranked list** as the primary deliverable. The `hyperpowers:optimizing-performance` skill consumes this list.
 
+**REQUIRED SUB-SKILL:** Use hyperpowers:communication to write the deliverable your human partner reads.
+
 ## Reconcile Against the Bound & Report Honestly
 
 **After measurement (or if no measurement possible):**

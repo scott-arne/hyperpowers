@@ -1096,7 +1096,7 @@ if [ "$watchdog_stall" -lt "$WATCHDOG_STALL_BOUND_MS" ]; then
 else
     fail "a stalled stdin pipe adds under three seconds ($(fmt_s "$watchdog_stall") over the $(fmt_s "$eoftime_best") baseline, $watchdog_attempt attempts)"
 fi
-if printf '%s' "$watchdog_out" | grep -Fq 'This session resumed after context compaction'; then
+if grep -Fq 'This session resumed after context compaction' <<< "$watchdog_out"; then
     fail "SessionStart is silent when the source never arrives"
 else
     pass "SessionStart is silent when the source never arrives"

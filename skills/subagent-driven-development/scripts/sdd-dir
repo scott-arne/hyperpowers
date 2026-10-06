@@ -20,12 +20,32 @@
 # hard dependency here.
 set -euo pipefail
 
-git rev-parse --git-dir >/dev/null 2>&1 || {
-  echo "sdd-dir: not inside a git repository" >&2
-  exit 2
+# The repository that owns the plan keys the workspace when a plan is given,
+# so a plan invoked from another repository's checkout (a cross-repo plan)
+# still maps to one workspace. Without a plan argument the cwd's repository
+# keys, as before.
+plan_dir=""
+if [ $# -ge 1 ] && [ -n "${1:-}" ]; then
+  plan=$1
+  plan_dir=$(cd "$(dirname "$plan")" 2>/dev/null && pwd -P) || {
+    echo "sdd-dir: plan file directory does not exist: $plan" >&2
+    exit 2
+  }
+  git -C "$plan_dir" rev-parse --git-dir >/dev/null 2>&1 || {
+    echo "sdd-dir: plan file directory is not inside a git repository: $plan" >&2
+    exit 2
+  }
+else
+  git rev-parse --git-dir >/dev/null 2>&1 || {
+    echo "sdd-dir: not inside a git repository" >&2
+    exit 2
+  }
+fi
+repo_git() {
+  if [ -n "$plan_dir" ]; then git -C "$plan_dir" "$@"; else git "$@"; fi
 }
 
-key=$(printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin)
+key=$(printf '%s' "$(repo_git rev-parse --absolute-git-dir)" | git hash-object --stdin)
 base="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/sdd"
 dir="${base}/${key}"
 
@@ -35,14 +55,9 @@ dir="${base}/${key}"
 # directories must not share a ledger). No-arg mode is unchanged — it is
 # the repo-instance dir other skills use as a generic cache root.
 repo_dir="$dir"
-if [ $# -ge 1 ] && [ -n "${1:-}" ]; then
-  plan=$1
-  plan_dir=$(cd "$(dirname "$plan")" 2>/dev/null && pwd -P) || {
-    echo "sdd-dir: plan file directory does not exist: $plan" >&2
-    exit 2
-  }
+if [ -n "$plan_dir" ]; then
   abs="${plan_dir}/$(basename "$plan")"
-  toplevel=$(git rev-parse --show-toplevel)
+  toplevel=$(repo_git rev-parse --show-toplevel)
   rel=${abs#"$toplevel"/}
   slug=$(basename "$plan")
   slug=${slug%.*}

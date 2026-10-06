@@ -49,7 +49,7 @@ assert_contains() {
     local pattern="$2"
     local test_name="${3:-test}"
 
-    if echo "$output" | grep -qi "$pattern"; then
+    if grep -qi "$pattern" <<< "$output"; then
         echo "  [PASS] $test_name"
         return 0
     else
@@ -68,7 +68,7 @@ assert_not_contains() {
     local pattern="$2"
     local test_name="${3:-test}"
 
-    if echo "$output" | grep -qi "$pattern"; then
+    if grep -qi "$pattern" <<< "$output"; then
         echo "  [FAIL] $test_name"
         echo "  Did not expect to find: $pattern"
         echo "  In output:"

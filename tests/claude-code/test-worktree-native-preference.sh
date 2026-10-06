@@ -87,18 +87,18 @@ run_and_check() {
         # (A literal `$` alternative used to sit in this group. ERE reads `$` as
         # an end-of-line anchor wherever it appears, so it could never match a
         # prompt character; the sed above handles that form instead.)
-        used_git_worktree_add=$(echo "$scan" | grep -qiE "(^|running:?|executing:?|command:)[[:space:]]*(bash.*)?git worktree add" && echo "yes" || echo "no")
+        used_git_worktree_add=$(grep -qiE "(^|running:?|executing:?|command:)[[:space:]]*(bash.*)?git worktree add" <<< "$scan" && echo "yes" || echo "no")
         # If no execution pattern found, check for affirmative usage statements
         if [ "$used_git_worktree_add" = "no" ]; then
-            used_git_worktree_add=$(echo "$scan" | grep -qiE "(used|invoked|ran|called)[[:space:]]+(the[[:space:]]+)?git worktree add" && echo "yes" || echo "no")
+            used_git_worktree_add=$(grep -qiE "(used|invoked|ran|called)[[:space:]]+(the[[:space:]]+)?git worktree add" <<< "$scan" && echo "yes" || echo "no")
         fi
         # Exclude explicit negations
         if [ "$used_git_worktree_add" = "yes" ]; then
-            if echo "$scan" | grep -qiE "(not|without|didn't|instead of).*git worktree add"; then
+            if grep -qiE "(not|without|didn't|instead of).*git worktree add" <<< "$scan"; then
                 used_git_worktree_add="no"
             fi
         fi
-        mentioned_enter=$(echo "$output" | grep -qi "EnterWorktree" && echo "yes" || echo "no")
+        mentioned_enter=$(grep -qi "EnterWorktree" <<< "$output" && echo "yes" || echo "no")
 
         if [ "$expect_native" = "true" ]; then
             # GREEN/PRESSURE: expect native tool, no git worktree add
@@ -115,7 +115,7 @@ run_and_check() {
             if [ "$mentioned_enter" = "yes" ]; then
                 fail=$((fail + 1))
                 echo "  Run $i: [UNEXPECTED] Agent used EnterWorktree WITHOUT Step 1a"
-            elif [ "$used_git_worktree_add" = "yes" ] || echo "$output" | grep -qi "git worktree"; then
+            elif [ "$used_git_worktree_add" = "yes" ] || grep -qi "git worktree" <<< "$output"; then
                 pass=$((pass + 1))
                 [ "$RUNS" -gt 1 ] && echo "  Run $i: PASS (used git worktree)"
             else

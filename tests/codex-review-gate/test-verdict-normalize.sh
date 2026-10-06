@@ -122,6 +122,29 @@ cat > "$work/novderdict.json" <<'EOF'
 EOF
 check "$work/novderdict.json" '"result":"incomplete"' "null result payload -> incomplete"
 
+# --- job lifecycle: anything but a completed job is incomplete ---
+# The companion's status/result JSON carries .job.status; a failed or
+# cancelled job can still hold an earlier approve verdict in its stored text.
+job_case() { # <name> <job-json-fragment> <fragment> <desc>
+  cat > "$work/job-$1.json" <<EOF
+{ "job": $2,
+  "storedJob": { "result": { "parseError": null,
+  "result": { "verdict": "approve", "findings": [] },
+  "rawOutput": "Verdict: approve" } } }
+EOF
+  check "$work/job-$1.json" "$3" "$4"
+}
+job_case failed    '{"id":"x","jobClass":"review","status":"failed"}'    '"result":"incomplete"'            "job status failed -> incomplete"
+job_case failed    '{"id":"x","jobClass":"review","status":"failed"}'    '"reason":"job status failed"'     "job status failed names the status"
+job_case cancelled '{"id":"x","jobClass":"review","status":"cancelled"}' '"result":"incomplete"'            "job status cancelled -> incomplete"
+job_case running   '{"id":"x","jobClass":"review","status":"running"}'   '"result":"incomplete"'            "job status running -> incomplete"
+job_case queued    '{"id":"x","jobClass":"review","status":"queued"}'    '"result":"incomplete"'            "job status queued -> incomplete"
+job_case nullstat  '{"id":"x","jobClass":"review","status":null}'        '"reason":"job status missing"'    "null job status -> incomplete, missing"
+job_case nostat    '{"id":"x","jobClass":"review"}'                      '"reason":"job status missing"'    "absent job status -> incomplete, missing"
+job_case numstat   '{"id":"x","jobClass":"review","status":7}'           '"reason":"job status missing"'    "non-string job status -> incomplete, missing"
+job_case malformed '"x"'                                                  '"reason":"job status malformed"'  "job that is not an object -> incomplete, malformed"
+job_case completed '{"id":"x","jobClass":"review","status":"completed"}' '"result":"approved"'              "job status completed -> approved as before"
+
 # verdict text quoted inside a finding body must not shadow the terminal verdict
 cat > "$work/quoted.txt" <<'EOF'
 Blocking Findings:

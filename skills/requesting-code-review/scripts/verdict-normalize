@@ -99,6 +99,16 @@ node -e '
   // 1) JSON payload path (code gates, --json).
   try {
     const d = JSON.parse(text);
+    // A payload that names its job carries the job'"'"'s lifecycle: anything but
+    // a completed job is incomplete, whatever text the record holds. A payload
+    // without a job property (a bare verdict object, a result root) is read
+    // exactly as before.
+    if (d && typeof d === "object" && Object.prototype.hasOwnProperty.call(d, "job")) {
+      const job = d.job;
+      if (!job || typeof job !== "object") out("incomplete", "none", 0, "job status malformed");
+      if (typeof job.status !== "string") out("incomplete", "none", 0, "job status missing");
+      if (job.status !== "completed") out("incomplete", "none", 0, "job status " + job.status);
+    }
     // Known roots across companion 1.0.5/1.0.6: storedJob.result.result,
     // result.result, or a bare verdict object.
     const raw = (d && d.storedJob && d.storedJob.result && d.storedJob.result.rawOutput) || (d && d.storedJob && d.storedJob.result && d.storedJob.result.codex && d.storedJob.result.codex.stdout) || "";

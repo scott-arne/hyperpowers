@@ -686,9 +686,10 @@ function startServer() {
       url_host: URL_HOST, url: companionUrl(),
       screen_dir: CONTENT_DIR, state_dir: STATE_DIR, idle_timeout_ms: IDLE_TIMEOUT_MS
     });
-    console.log(info);
-    // server-info embeds the key — keep it owner-only.
+    // server-info embeds the key — keep it owner-only. It is written before the
+    // announcement so a reader that acts on server-started finds it in place.
     fs.writeFileSync(path.join(STATE_DIR, 'server-info'), info + '\n', { mode: 0o600 });
+    console.log(info);
   }
 
   server.on('error', (err) => {

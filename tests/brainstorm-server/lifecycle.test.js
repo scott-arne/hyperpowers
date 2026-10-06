@@ -141,6 +141,24 @@ async function runTests() {
     }
   });
 
+  await test('server-info exists by the time server-started is printed', async () => {
+    const dir = fs.mkdtempSync('/tmp/bs-life-');
+    // 3409 is unused by the other cases in this file (grep BRAINSTORM_PORT).
+    const srv = spawn('node', [SERVER], { env: { ...process.env, BRAINSTORM_PORT: 3409, BRAINSTORM_DIR: dir } });
+    let out = ''; srv.stdout.on('data', d => out += d.toString());
+    for (let i = 0; i < 60 && !out.includes('server-started'); i++) await sleep(50);
+    try {
+      assert(out.includes('server-started'), 'server did not start');
+      // The announcement is the readiness signal: no polling here on purpose,
+      // the file must be there on the very next statement.
+      assert(fs.existsSync(path.join(dir, 'state', 'server-info')),
+        'state/server-info must exist when server-started is printed');
+    } finally {
+      await killAndWait(srv);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   await test('idle shutdown closes an open WebSocket and the process exits', async () => {
     const dir = fs.mkdtempSync('/tmp/bs-life-');
     const srv = spawn('node', [SERVER], { env: { ...process.env, BRAINSTORM_PORT: 3402, BRAINSTORM_DIR: dir, BRAINSTORM_TOKEN: 'lifetoken', BRAINSTORM_IDLE_TIMEOUT_MS: 200, BRAINSTORM_LIFECYCLE_CHECK_MS: 100 } });

@@ -141,12 +141,9 @@ fi
 printf '%s\n' "$SERVER_ID" > "$SERVER_ID_FILE"
 chmod 600 "$SERVER_ID_FILE" 2>/dev/null || true
 
-# Kill any existing server
-if [[ -f "$PID_FILE" ]]; then
-  old_pid=$(cat "$PID_FILE")
-  kill "$old_pid" 2>/dev/null
-  rm -f "$PID_FILE"
-fi
+# No previous server to stop here: SESSION_DIR is created fresh for this
+# start, so its pid file cannot name an earlier server. Stopping a server is
+# stop-server.sh's job, with the identity check that script carries.
 
 cd "$SCRIPT_DIR" || exit 1
 

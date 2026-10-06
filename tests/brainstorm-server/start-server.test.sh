@@ -198,6 +198,7 @@ else
        "the process named by the stale pid file is gone"
 fi
 kill "$STALE_PID" 2>/dev/null || true
+wait "$STALE_PID" 2>/dev/null || true
 if grep -q 'Kill any existing server' "$START_SCRIPT"; then
   fail "start-server.sh carries no kill of a recorded pid" "the removed block is still present"
 else

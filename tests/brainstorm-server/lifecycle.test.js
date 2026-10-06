@@ -16,6 +16,7 @@ const path = require('path');
 const assert = require('assert');
 
 const SERVER = path.join(__dirname, '../../skills/brainstorming/scripts/server.cjs');
+const ANNOUNCE_PROBE = path.join(__dirname, 'announce-probe.cjs');
 const START = path.join(__dirname, '../../skills/brainstorming/scripts/start-server.sh');
 const STOP = path.join(__dirname, '../../skills/brainstorming/scripts/stop-server.sh');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -153,6 +154,28 @@ async function runTests() {
       // the file must be there on the very next statement.
       assert(fs.existsSync(path.join(dir, 'state', 'server-info')),
         'state/server-info must exist when server-started is printed');
+    } finally {
+      await killAndWait(srv);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test('server-info is already written at the instant server-started is printed', async () => {
+    const dir = fs.mkdtempSync('/tmp/bs-life-');
+    // The probe runs inside the server process and reports, on stderr, whether
+    // state/server-info exists when the announcement is printed. Unlike the
+    // previous case this cannot pass by scheduling: the check is synchronous
+    // with the console.log call.
+    const srv = spawn('node', ['--require', ANNOUNCE_PROBE, SERVER], { env: { ...process.env, BRAINSTORM_PORT: 3410, BRAINSTORM_DIR: dir } });
+    let out = '', err = ''; srv.stdout.on('data', d => out += d.toString()); srv.stderr.on('data', d => err += d.toString());
+    for (let i = 0; i < 60 && !out.includes('server-started'); i++) await sleep(50);
+    // stdout and stderr are separate pipes; give the marker a moment to arrive.
+    for (let i = 0; i < 20 && !err.includes('announce-probe:'); i++) await sleep(50);
+    try {
+      assert(out.includes('server-started'), 'server did not start');
+      const m = err.match(/announce-probe: server-info (\w+)/);
+      assert(m, 'probe marker missing from stderr: ' + err);
+      assert.strictEqual(m[1], 'present', 'server-info must exist when server-started is printed');
     } finally {
       await killAndWait(srv);
       fs.rmSync(dir, { recursive: true, force: true });

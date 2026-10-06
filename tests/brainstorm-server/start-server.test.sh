@@ -169,6 +169,42 @@ else
 fi
 
 echo ""
+echo "--- start-server.sh leaves other sessions' pid files alone ---"
+
+# Every start creates a fresh session directory, so a server.pid in an older
+# session of the same project is never this start's business. The script used
+# to carry a kill of "the existing server" that could only ever find a pid
+# file on a same-second restart in one shell; the kill is gone, and a pid file
+# elsewhere must never be signalled.
+mkdir -p "$TEST_DIR/stale-bin"
+cat > "$TEST_DIR/stale-bin/node" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$TEST_DIR/stale-bin/node"
+rm -rf "$TEST_DIR/project"/*
+mkdir -p "$TEST_DIR/project/.hyperpowers/brainstorm/1-1/state"
+sleep 600 &
+STALE_PID=$!
+echo "$STALE_PID" > "$TEST_DIR/project/.hyperpowers/brainstorm/1-1/state/server.pid"
+
+PATH="$TEST_DIR/stale-bin:$PATH" MSYSTEM="" \
+  bash "$START_SCRIPT" --project-dir "$TEST_DIR/project" --foreground >/dev/null 2>&1 || true
+
+if kill -0 "$STALE_PID" 2>/dev/null; then
+  pass "a server.pid in another session directory is never signalled"
+else
+  fail "a server.pid in another session directory is never signalled" \
+       "the process named by the stale pid file is gone"
+fi
+kill "$STALE_PID" 2>/dev/null || true
+if grep -q 'Kill any existing server' "$START_SCRIPT"; then
+  fail "start-server.sh carries no kill of a recorded pid" "the removed block is still present"
+else
+  pass "start-server.sh carries no kill of a recorded pid"
+fi
+
+echo ""
 echo "--- Results: $passed passed, $failed failed ---"
 if [[ $failed -gt 0 ]]; then
   exit 1

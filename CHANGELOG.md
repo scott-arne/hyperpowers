@@ -2,7 +2,7 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
-## Unreleased
+## 6.16.0 (2026-10-05)
 
 Messages to the human partner reached for metaphors and contrasts that carried no fact.
 
@@ -14,6 +14,8 @@ Messages to the human partner reached for metaphors and contrasts that carried n
   - Every process skill that writes to the human partner carries a `REQUIRED SUB-SKILL: Use hyperpowers:communication` line at that point (brainstorming, writing-plans, subagent-driven-development, executing-plans, finishing-a-development-branch, requesting-code-review, receiving-code-review, systematic-debugging, dispatching-parallel-agents, profiling-performance, optimizing-performance), and `using-hyperpowers` routes "writing for your human partner" to it. Measured in live headless sessions with the worktree loaded as the plugin, five per scenario: the skill was invoked in 0 of 20 control sessions; with the lines, 5 of 5 brainstorming, 5 of 5 plan-writing, and 4 of 5 debugging sessions invoked it before the human-facing output, and 0 of 10 one-line or standalone-question sessions did. Where it was invoked right before a report, the bold labels disappeared; in brainstorming it fires a turn before the design presentation and the effect there is partial (2 of 5 presentations clean against 0 of 5). The bootstrap line did not make a standalone answer invoke the skill in either placement tried; it stays as a routing hint.
 
   Evidence: `docs/hyperpowers/2026-10-03-communication-skill-eval-evidence.md`; run artifacts in hyperpowers-evals under `evidence/2026-10-03-communication-skill/`.
+- **The brainstorming companion server survives a sandboxed shell.** Under Claude Code's macOS sandbox a shell cannot run `ps` and cannot signal a process that another command started, so `stop-server.sh` read a live server as dead, reported `stale_pid`, and deleted its `server.pid` and `server-instance-id` while the server kept running. It now treats a process it may not signal as alive, and when it cannot read the process table it reports `unverified` (exit 1) and keeps the session files. `start-server.sh` leaves the owner watch off when `ps` cannot resolve the starting shell, so the idle timeout governs instead of a watch on the wrong process. `server.test.js` tears its server down when a test fails instead of leaving it running.
+- **A single sentinel failure no longer holds a release by itself.** `CLAUDE.md` says so and points at the evals authoring guide's §5 rule: a sentinel failure is one sample of the scenario's base rate, a re-measure is owed only for a change a sentinel session reaches, and a regression needs a twenty-run rate whose Wilson lower bound clears the recorded base rate's upper bound. The planned severity cap for pathological review inputs was not shipped: the pre-registered control found no over-rating to cap (0 of 3 on fixtures P and P2). Evidence: `docs/hyperpowers/2026-10-03-review-calibration-and-sentinel-scope-eval-evidence.md`.
 
 ## 6.15.0 (2026-10-03)
 

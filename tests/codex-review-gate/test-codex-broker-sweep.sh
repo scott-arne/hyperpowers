@@ -188,23 +188,23 @@ printf '{"endpoint":"unix:%s/peer.sock","pid":%s,"sessionDir":"%s"}\n' "$T" "$pe
 echo "Dry run"
 out="$(bash "$SWEEP" --only-pids "$(only)" --state-root "$state" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && pass "dry run exits 0" || fail "dry run exits 0 (rc=$rc): $out"
-printf '%s\n' "$out" | grep -q "stale-record .*stale-1111111111111111" && pass "a record whose endpoint is dead is reported as stale" || fail "stale record reported: $out"
-printf '%s\n' "$out" | grep -q "unknown-record .*malformed-4444444444444444" && pass "a record that does not parse is reported as unknown, not stale" || fail "malformed record reported as unknown: $out"
-printf '%s\n' "$out" | grep -q "orphan-broker pid=$orphan_pid .*reason=cwd-missing" && pass "a live broker whose cwd is gone is reported as an orphan" || fail "orphan reported: $out"
-printf '%s\n' "$out" | grep -q "pid=$peer_pid" && fail "a peer broker with a living cwd must not be reported" || pass "a peer broker with a living cwd is not reported"
-printf '%s\n' "$out" | grep -q "orphan-broker pid=$unref_pid" && fail "an unreferenced but healthy broker must not be an orphan by default" || pass "an unreferenced but healthy broker is not an orphan by default"
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$spacey_pid" && pass "an endpoint that cannot be recovered from ps is unverifiable" || fail "spacey endpoint unverifiable: $out"
-printf '%s\n' "$out" | grep -q "orphan-broker pid=$spacey_pid" && fail "an unrecoverable endpoint must never be an orphan" || pass "an unrecoverable endpoint is never treated as an orphan"
-printf '%s\n' "$out" | grep -q "stale-record .*stale-6666666666666666" && pass "a stale record naming a reused pid is still reported as stale" || fail "stale record on a reused pid reported: $out"
-printf '%s\n' "$out" | grep -qE "(orphan|unverifiable)-broker pid=$reused_pid" && fail "a healthy broker must not inherit the dead endpoint of a stale record naming its pid" || pass "a healthy broker does not inherit the dead endpoint of a stale record naming its pid"
-printf '%s\n' "$out" | grep -q "orphan-broker pid=$starting_pid" && fail "a broker that no record names yet must not be an orphan for having no socket" || pass "a broker that no record names yet is not an orphan for having no socket"
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$starting_pid .*reason=unregistered-endpoint-dead" && pass "a broker with no socket and no record is reported as unverifiable" || fail "starting broker unverifiable: $out"
-printf '%s\n' "$out" | grep -q "orphan-broker pid=$recdead_pid .*reason=endpoint-dead" && pass "a recorded broker whose socket is gone is an orphan" || fail "recorded dead-endpoint broker reported: $out"
-printf '%s\n' "$out" | grep -q "orphan-broker pid=$lockedcwd_pid" && fail "a working directory that cannot be statted must not read as deleted" || pass "a working directory that cannot be statted does not read as deleted"
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$lockedcwd_pid .*reason=cwd-unverifiable" && pass "a working directory that cannot be statted is reported as unverifiable" || fail "unstattable cwd unverifiable: $out"
-printf '%s\n' "$out" | grep -q "pid=$lookalike_pid" && fail "a process whose script only resembles the broker must not be classified as one" || pass "a process whose script only resembles the broker is not classified as one"
-printf '%s\n' "$out" | grep -q "orphan-broker pid=$pfxb_pid endpoint=unix:$T/pfx.sock-b reason=cwd-missing" && pass "a broker's endpoint is read from its own command line, not from a record that merely prefixes it" || fail "suffixed endpoint classification: $out"
-printf '%s\n' "$out" | grep -q "orphan-broker pid=$pfxb_pid endpoint=unix:$T/pfx.sock reason=" && fail "a record whose endpoint is a prefix of the running broker's must not be treated as confirming it" || pass "a record whose endpoint is a prefix of the running broker's does not confirm it"
+grep -q "stale-record .*stale-1111111111111111" <<< "$out" && pass "a record whose endpoint is dead is reported as stale" || fail "stale record reported: $out"
+grep -q "unknown-record .*malformed-4444444444444444" <<< "$out" && pass "a record that does not parse is reported as unknown, not stale" || fail "malformed record reported as unknown: $out"
+grep -q "orphan-broker pid=$orphan_pid .*reason=cwd-missing" <<< "$out" && pass "a live broker whose cwd is gone is reported as an orphan" || fail "orphan reported: $out"
+grep -q "pid=$peer_pid" <<< "$out" && fail "a peer broker with a living cwd must not be reported" || pass "a peer broker with a living cwd is not reported"
+grep -q "orphan-broker pid=$unref_pid" <<< "$out" && fail "an unreferenced but healthy broker must not be an orphan by default" || pass "an unreferenced but healthy broker is not an orphan by default"
+grep -q "unverifiable-broker pid=$spacey_pid" <<< "$out" && pass "an endpoint that cannot be recovered from ps is unverifiable" || fail "spacey endpoint unverifiable: $out"
+grep -q "orphan-broker pid=$spacey_pid" <<< "$out" && fail "an unrecoverable endpoint must never be an orphan" || pass "an unrecoverable endpoint is never treated as an orphan"
+grep -q "stale-record .*stale-6666666666666666" <<< "$out" && pass "a stale record naming a reused pid is still reported as stale" || fail "stale record on a reused pid reported: $out"
+grep -qE "(orphan|unverifiable)-broker pid=$reused_pid" <<< "$out" && fail "a healthy broker must not inherit the dead endpoint of a stale record naming its pid" || pass "a healthy broker does not inherit the dead endpoint of a stale record naming its pid"
+grep -q "orphan-broker pid=$starting_pid" <<< "$out" && fail "a broker that no record names yet must not be an orphan for having no socket" || pass "a broker that no record names yet is not an orphan for having no socket"
+grep -q "unverifiable-broker pid=$starting_pid .*reason=unregistered-endpoint-dead" <<< "$out" && pass "a broker with no socket and no record is reported as unverifiable" || fail "starting broker unverifiable: $out"
+grep -q "orphan-broker pid=$recdead_pid .*reason=endpoint-dead" <<< "$out" && pass "a recorded broker whose socket is gone is an orphan" || fail "recorded dead-endpoint broker reported: $out"
+grep -q "orphan-broker pid=$lockedcwd_pid" <<< "$out" && fail "a working directory that cannot be statted must not read as deleted" || pass "a working directory that cannot be statted does not read as deleted"
+grep -q "unverifiable-broker pid=$lockedcwd_pid .*reason=cwd-unverifiable" <<< "$out" && pass "a working directory that cannot be statted is reported as unverifiable" || fail "unstattable cwd unverifiable: $out"
+grep -q "pid=$lookalike_pid" <<< "$out" && fail "a process whose script only resembles the broker must not be classified as one" || pass "a process whose script only resembles the broker is not classified as one"
+grep -q "orphan-broker pid=$pfxb_pid endpoint=unix:$T/pfx.sock-b reason=cwd-missing" <<< "$out" && pass "a broker's endpoint is read from its own command line, not from a record that merely prefixes it" || fail "suffixed endpoint classification: $out"
+grep -q "orphan-broker pid=$pfxb_pid endpoint=unix:$T/pfx.sock reason=" <<< "$out" && fail "a record whose endpoint is a prefix of the running broker's must not be treated as confirming it" || pass "a record whose endpoint is a prefix of the running broker's does not confirm it"
 [ -f "$state/stale-1111111111111111/broker.json" ] && pass "dry run removes nothing" || fail "dry run must not remove records"
 kill -0 "$orphan_pid" 2>/dev/null && pass "dry run kills nothing" || fail "dry run must not stop brokers"
 [ ! -f "$T/orphan.shutdown" ] && pass "dry run sends no shutdown" || fail "dry run must not send broker/shutdown"
@@ -218,14 +218,14 @@ rm -rf "$state_clean/malformed-4444444444444444"
 for _ in $(seq 1 30); do [ $(( $(date +%s) - spawn_epoch )) -ge 11 ] && break; sleep 1; done
 out="$(bash "$SWEEP" --only-pids "$(only)" --include-unreferenced --state-root "$state_clean" 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && pass "--include-unreferenced exits 0" || fail "--include-unreferenced exits 0 (rc=$rc): $out"
-printf '%s\n' "$out" | grep -q "orphan-broker pid=$unref_pid .*reason=unreferenced" && pass "--include-unreferenced reports the unreferenced broker" || fail "--include-unreferenced must report the unreferenced broker: $out"
-printf '%s\n' "$out" | grep -q "orphan-broker pid=$peer_pid" && fail "--include-unreferenced must still leave the referenced peer alone" || pass "--include-unreferenced still leaves the referenced peer alone"
+grep -q "orphan-broker pid=$unref_pid .*reason=unreferenced" <<< "$out" && pass "--include-unreferenced reports the unreferenced broker" || fail "--include-unreferenced must report the unreferenced broker: $out"
+grep -q "orphan-broker pid=$peer_pid" <<< "$out" && fail "--include-unreferenced must still leave the referenced peer alone" || pass "--include-unreferenced still leaves the referenced peer alone"
 
 echo "Incomplete process inspection"
 mkdir -p "$T/bin"; printf '#!/bin/sh\nexit 1\n' > "$T/bin/ps"; chmod +x "$T/bin/ps"
 out="$(PATH="$T/bin:$PATH" bash "$SWEEP" --only-pids "$(only)" --state-root "$state" 2>&1)"; rc=$?
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$orphan_pid .*reason=inspect-failed" && pass "a broker that cannot be inspected is reported, not dropped" || fail "inspect failure reported: $out"
-printf '%s\n' "$out" | grep -qi "incomplete" && pass "an incomplete sweep says so" || fail "an incomplete sweep must say so: $out"
+grep -q "unverifiable-broker pid=$orphan_pid .*reason=inspect-failed" <<< "$out" && pass "a broker that cannot be inspected is reported, not dropped" || fail "inspect failure reported: $out"
+grep -qi "incomplete" <<< "$out" && pass "an incomplete sweep says so" || fail "an incomplete sweep must say so: $out"
 
 echo "Retirement"
 out="$(bash "$SWEEP" --only-pids "$(only)" --kill --state-root "$state" 2>&1)"; rc=$?
@@ -253,7 +253,7 @@ kill -0 "$pfx_pid" 2>/dev/null && pass "--kill leaves the peer that owns the pre
 [ ! -f "$T/pfx.shutdown" ] && pass "--kill sends no shutdown to the peer that owns the prefixed endpoint" || fail "--kill sent broker/shutdown to the peer that owns the prefixed endpoint"
 kill -0 "$pfxb_pid" 2>/dev/null && fail "--kill must retire the orphan whose endpoint carries the suffix" || pass "--kill retires the orphan whose endpoint carries the suffix"
 [ -f "$state/peer-2222222222222222/broker.json" ] && pass "--kill keeps the peer's record" || fail "--kill must keep the peer's record"
-printf '%s\n' "$out" | grep -q "0 failure(s)" && pass "a clean retirement reports no failures" || fail "a clean retirement must report 0 failures: $out"
+grep -q "0 failure(s)" <<< "$out" && pass "a clean retirement reports no failures" || fail "a clean retirement must report 0 failures: $out"
 
 echo "The fence authorizes only the fixtures that are still alive"
 # The block above retired several fixtures. Their numbers stay in $pids, and
@@ -288,8 +288,8 @@ echo "Unreferenced retirement requires a complete inventory"
 # for the very broker it is about to call unreferenced.
 out="$(bash "$SWEEP" --only-pids "$(only)" --include-unreferenced --kill --state-root "$state" 2>&1)"; rc=$?
 sleep 1
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$unref_pid .*reason=unreferenced-inventory-incomplete" && pass "an unreadable record fences unreferenced retirement" || fail "unreferenced fence reported: $out"
-printf '%s\n' "$out" | grep -q "orphan-broker pid=$unref_pid" && fail "a broker must not be called unreferenced while a record is unreadable" || pass "a broker is not called unreferenced while a record is unreadable"
+grep -q "unverifiable-broker pid=$unref_pid .*reason=unreferenced-inventory-incomplete" <<< "$out" && pass "an unreadable record fences unreferenced retirement" || fail "unreferenced fence reported: $out"
+grep -q "orphan-broker pid=$unref_pid" <<< "$out" && fail "a broker must not be called unreferenced while a record is unreadable" || pass "a broker is not called unreferenced while a record is unreadable"
 kill -0 "$unref_pid" 2>/dev/null && pass "--include-unreferenced retires nothing as unreferenced on an incomplete inventory" || fail "--include-unreferenced retired a broker on an incomplete inventory"
 
 echo "Identity revalidation before signalling"
@@ -311,7 +311,7 @@ PSEOF
 chmod +x "$T/bin2/ps"
 out="$(PATH="$T/bin2:$PATH" bash "$SWEEP" --only-pids "$(only)" --kill --state-root "$state" 2>&1)"; rc=$?
 sleep 1
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapped_pid .*reason=identity-changed" && pass "a pid whose command no longer looks like a broker is not signalled" || fail "identity change reported: $out"
+grep -q "unverifiable-broker pid=$swapped_pid .*reason=identity-changed" <<< "$out" && pass "a pid whose command no longer looks like a broker is not signalled" || fail "identity change reported: $out"
 kill -0 "$swapped_pid" 2>/dev/null && pass "--kill leaves a pid that stopped looking like a broker" || fail "--kill signalled a pid that no longer looked like a broker"
 [ "$rc" -eq 0 ] && pass "declining to signal an ambiguous pid is not a failure" || fail "declining to signal must not be an error (rc=$rc)"
 
@@ -336,7 +336,7 @@ chmod +x "$T/bin3/ps"
 out="$(PATH="$T/bin3:$PATH" bash "$SWEEP" --only-pids "$(only)" --kill --state-root "$state" 2>&1)"; rc=$?
 sleep 1
 kill -0 "$swapkill_pid" 2>/dev/null && pass "the fallback signal is withheld from a pid that stopped looking like a broker" || fail "--kill sent the fallback signal to a pid that no longer looked like a broker"
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapkill_pid .*reason=identity-changed" && pass "an identity change between signals is reported" || fail "identity change between signals reported: $out"
+grep -q "unverifiable-broker pid=$swapkill_pid .*reason=identity-changed" <<< "$out" && pass "an identity change between signals is reported" || fail "identity change between signals reported: $out"
 [ "$rc" -eq 0 ] && pass "withholding the fallback signal is not a failure" || fail "withholding the fallback signal must not be an error (rc=$rc)"
 
 echo "Identity revalidation rejects a lookalike command"
@@ -360,7 +360,7 @@ chmod +x "$T/bin4/ps"
 out="$(PATH="$T/bin4:$PATH" bash "$SWEEP" --only-pids "$(only)" --kill --state-root "$state" 2>&1)"; rc=$?
 sleep 1
 kill -0 "$swapname_pid" 2>/dev/null && pass "a pid running a lookalike script name is not signalled" || fail "--kill signalled a pid whose script name only resembles the broker"
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapname_pid .*reason=identity-changed" && pass "a lookalike script name at signal time is an identity change" || fail "lookalike identity change reported: $out"
+grep -q "unverifiable-broker pid=$swapname_pid .*reason=identity-changed" <<< "$out" && pass "a lookalike script name at signal time is an identity change" || fail "lookalike identity change reported: $out"
 [ "$rc" -eq 0 ] && pass "declining to signal a lookalike is not a failure" || fail "declining to signal a lookalike must not be an error (rc=$rc)"
 
 echo "Identity revalidation rejects an endpoint prefix"
@@ -384,7 +384,7 @@ chmod +x "$T/bin5/ps"
 out="$(PATH="$T/bin5:$PATH" bash "$SWEEP" --only-pids "$(only)" --kill --state-root "$state" 2>&1)"; rc=$?
 sleep 1
 kill -0 "$swapep_pid" 2>/dev/null && pass "the fallback signal is withheld when only an endpoint prefix matches" || fail "--kill signalled a pid whose endpoint merely shares a prefix with the classified one"
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$swapep_pid .*reason=identity-changed" && pass "an endpoint-prefix-only match between signals is an identity change" || fail "endpoint prefix identity change reported: $out"
+grep -q "unverifiable-broker pid=$swapep_pid .*reason=identity-changed" <<< "$out" && pass "an endpoint-prefix-only match between signals is an identity change" || fail "endpoint prefix identity change reported: $out"
 [ "$rc" -eq 0 ] && pass "declining to signal an endpoint-prefix match is not a failure" || fail "declining an endpoint-prefix match must not be an error (rc=$rc)"
 
 echo "Unreferenced retirement re-checks the inventory at the moment of decision"
@@ -421,13 +421,13 @@ PSEOF
 chmod +x "$T/bin6/ps"
 out="$(PATH="$T/bin6:$PATH" bash "$SWEEP" --only-pids "$(only)" --include-unreferenced --kill --state-root "$state_race" 2>&1)"; rc=$?
 sleep 1
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$late_pid .*reason=unreferenced-record-appeared" && pass "a record written after the inventory snapshot fences unreferenced retirement" || fail "late record fence reported: $out"
+grep -q "unverifiable-broker pid=$late_pid .*reason=unreferenced-record-appeared" <<< "$out" && pass "a record written after the inventory snapshot fences unreferenced retirement" || fail "late record fence reported: $out"
 kill -0 "$late_pid" 2>/dev/null && pass "--kill leaves a broker whose record appeared during the sweep" || fail "--kill retired a broker whose record appeared during the sweep"
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$young_pid .*reason=unreferenced-too-young" && pass "a broker inside its registration window is too young to call unreferenced" || fail "young broker fence reported: $out"
+grep -q "unverifiable-broker pid=$young_pid .*reason=unreferenced-too-young" <<< "$out" && pass "a broker inside its registration window is too young to call unreferenced" || fail "young broker fence reported: $out"
 kill -0 "$young_pid" 2>/dev/null && pass "--kill leaves a broker still inside its registration window" || fail "--kill retired a broker still inside its registration window"
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$unref_pid .*reason=unreferenced-age-unknown" && pass "a broker whose age cannot be read is not called unreferenced" || fail "unreadable age fence reported: $out"
+grep -q "unverifiable-broker pid=$unref_pid .*reason=unreferenced-age-unknown" <<< "$out" && pass "a broker whose age cannot be read is not called unreferenced" || fail "unreadable age fence reported: $out"
 kill -0 "$unref_pid" 2>/dev/null && pass "--kill leaves a broker whose age it could not read" || fail "--kill retired a broker whose age it could not read"
-printf '%s\n' "$out" | grep -q "orphan-broker pid=$starting_pid .*reason=unreferenced" && pass "the re-check still reports a genuinely unreferenced broker" || fail "genuine unreferenced broker reported: $out"
+grep -q "orphan-broker pid=$starting_pid .*reason=unreferenced" <<< "$out" && pass "the re-check still reports a genuinely unreferenced broker" || fail "genuine unreferenced broker reported: $out"
 kill -0 "$starting_pid" 2>/dev/null && fail "--include-unreferenced must still retire a genuinely unreferenced broker" || pass "--include-unreferenced still retires a genuinely unreferenced broker"
 [ "$rc" -eq 0 ] && pass "fencing an ambiguous unreferenced broker is not a failure" || fail "fencing an unreferenced broker must not be an error (rc=$rc)"
 
@@ -443,15 +443,15 @@ inside_pid=$(cat "$T/inside.pid"); outside_pid=$(cat "$T/outside.pid")
 rmdir "$T/inside-cwd" "$T/outside-cwd" || { echo "cannot remove the fence fixtures' cwds on this host"; exit 1; }
 out="$(bash "$SWEEP" --kill --only-pids "$(only "$outside_pid")" --state-root "$state" 2>&1)"; rc=$?
 sleep 1
-printf '%s\n' "$out" | grep -qE "orphan-broker pid=$inside_pid .*reason=cwd-missing" && pass "a listed broker whose cwd is gone is still classified" || fail "a fenced sweep must still classify the pids it was given: $out"
+grep -qE "orphan-broker pid=$inside_pid .*reason=cwd-missing" <<< "$out" && pass "a listed broker whose cwd is gone is still classified" || fail "a fenced sweep must still classify the pids it was given: $out"
 kill -0 "$inside_pid" 2>/dev/null && fail "--kill must retire a listed broker whose cwd is gone" || pass "--kill retires a listed broker whose cwd is gone"
-printf '%s\n' "$out" | grep -qE "pid=$outside_pid( |$)" && fail "a pid outside --only-pids must not be classified at all" || pass "a pid outside --only-pids is not classified at all"
+grep -qE "pid=$outside_pid( |$)" <<< "$out" && fail "a pid outside --only-pids must not be classified at all" || pass "a pid outside --only-pids is not classified at all"
 kill -0 "$outside_pid" 2>/dev/null && pass "--kill leaves a broker outside --only-pids running" || fail "--kill retired a broker outside --only-pids"
 [ "$rc" -eq 0 ] && pass "a fenced retirement exits 0" || fail "a fenced retirement must exit 0 (rc=$rc): $out"
 
 echo "Degenerate inputs"
 out="$(bash "$SWEEP" --only-pids "$(only)" --state-root "$T/does-not-exist" 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qi 'no state root' && pass "a missing state root is reported, not an error" || fail "missing state root handling (rc=$rc): $out"
+[ "$rc" -eq 0 ] && grep -qi 'no state root' <<< "$out" && pass "a missing state root is reported, not an error" || fail "missing state root handling (rc=$rc): $out"
 out="$(bash "$SWEEP" --only-pids "$(only)" --nonsense 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && pass "an unknown flag is a usage error" || fail "an unknown flag must exit 2 (rc=$rc)"
 out="$(CODEX_BROKER_SWEEP_WINDOW_S=nope bash "$SWEEP" --only-pids "$(only)" --state-root "$T/does-not-exist" 2>&1)"; rc=$?
@@ -475,7 +475,7 @@ padded_pid=$(cat "$T/padded.pid")
 out="$(CODEX_BROKER_SWEEP_WINDOW_S=060 bash "$SWEEP" --only-pids "$padded_pid" --include-unreferenced --kill --state-root "$state_clean" 2>&1)"; rc=$?
 sleep 1
 [ "$rc" -eq 0 ] && pass "a zero-padded registration window is accepted" || fail "CODEX_BROKER_SWEEP_WINDOW_S=060 must be accepted (rc=$rc): $out"
-printf '%s\n' "$out" | grep -q "unverifiable-broker pid=$padded_pid .*reason=unreferenced-too-young" && pass "a padded window of 060 reads as sixty seconds" || fail "060 must fence a broker younger than sixty seconds: $out"
+grep -q "unverifiable-broker pid=$padded_pid .*reason=unreferenced-too-young" <<< "$out" && pass "a padded window of 060 reads as sixty seconds" || fail "060 must fence a broker younger than sixty seconds: $out"
 kill -0 "$padded_pid" 2>/dev/null && pass "--kill leaves a broker inside the padded window" || fail "--kill retired a broker inside the padded sixty-second window"
 out="$(bash "$SWEEP" --only-pids 'not,pids' --state-root "$T/does-not-exist" 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && pass "a --only-pids list that is not pids is a usage error" || fail "a malformed --only-pids must exit 2 (rc=$rc): $out"

@@ -28,7 +28,7 @@ assert_contains() {
   local haystack
 
   haystack="$(tr '\n\t' '  ' <"$file" | sed 's/  */ /g')"
-  if printf '%s' "$haystack" | grep -Fq -- "$needle"; then
+  if grep -Fq -- "$needle" <<< "$haystack"; then
     pass "$description"
   else
     fail "$description"
@@ -44,7 +44,7 @@ assert_not_contains() {
   local haystack
 
   haystack="$(tr '\n\t' '  ' <"$file" | sed 's/  */ /g')"
-  if printf '%s' "$haystack" | grep -Fq -- "$needle"; then
+  if grep -Fq -- "$needle" <<< "$haystack"; then
     fail "$description"
     echo "    did not expect to find: $needle"
     echo "    in: $file"

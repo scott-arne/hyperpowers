@@ -77,7 +77,7 @@ if [ "$dangling_status" -ne 0 ]; then
 else
     fail "assembler fails on a dangling sibling link"
 fi
-if printf '%s' "$dangling_err" | grep -Fq 'index links a missing sibling: missing.md'; then
+if grep -Fq 'index links a missing sibling: missing.md' <<< "$dangling_err"; then
     pass "dangling-link failure names the missing sibling"
 else
     fail "dangling-link failure names the missing sibling (got: $dangling_err)"

@@ -10,7 +10,7 @@ pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
 check() { # <file> <fragment> <desc>
   local out; out="$(bash "$VN" "$1")"
-  printf '%s' "$out" | grep -Fq "$2" && pass "$3" || fail "$3 (got: $out)"
+  grep -Fq "$2" <<< "$out" && pass "$3" || fail "$3 (got: $out)"
 }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/vn-test.XXXXXX")"
@@ -217,7 +217,7 @@ check "$work/empty-summary.txt" '"result":"incomplete"' "approve with empty Summ
 # --- coverage floor (--require-coverage) ---
 checkc() { # with --require-coverage: <file> <fragment> <desc>
   local out; out="$(bash "$VN" --require-coverage "$1")"
-  printf '%s' "$out" | grep -Fq "$2" && pass "$3" || fail "$3 (got: $out)"
+  grep -Fq "$2" <<< "$out" && pass "$3" || fail "$3 (got: $out)"
 }
 
 cat > "$work/cov-ok.txt" <<'EOF'

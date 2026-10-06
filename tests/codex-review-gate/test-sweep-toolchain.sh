@@ -38,12 +38,12 @@ SWEEP_REPO="$repo"
 # Path A (invalid base): head resolves, base-ref-ok fails -> unsweepable.
 git -C "$SWEEP_REPO" rev-parse --verify "$h^{commit}" >/dev/null 2>&1 || fail "precondition: head resolves"
 out="$(bash "$S/base-ref-ok" deadbeefdeadbeefdeadbeefdeadbeefdeadbeef "$SWEEP_REPO")"
-printf '%s' "$out" | grep -Fq '"ok":false' && pass "invalid base rejected by base-ref-ok" || fail "invalid base rejected"
+grep -Fq '"ok":false' <<< "$out" && pass "invalid base rejected by base-ref-ok" || fail "invalid base rejected"
 bash "$S/ungated-ledger" mark-swept --ref "$id_bad" --verdict unsweepable --note "base unresolvable" "$SWEEP_REPO" >/dev/null
 
 # Path B (valid at current HEAD): fast path, stub verdict -> approved.
 out="$(bash "$S/base-ref-ok" "$b" "$SWEEP_REPO")"
-printf '%s' "$out" | grep -Fq '"ok":true' && pass "fast-path base validates in place" || fail "fast-path base validates"
+grep -Fq '"ok":true' <<< "$out" && pass "fast-path base validates in place" || fail "fast-path base validates"
 cat > "$work/stub-verdict.txt" <<'EOF'
 Verdict: approve
 
@@ -59,21 +59,21 @@ None
 Summary: sweep stub.
 EOF
 out="$(bash "$S/verdict-normalize" "$work/stub-verdict.txt")"
-printf '%s' "$out" | grep -Fq '"result":"approved"' && pass "stub verdict normalizes approved" || fail "stub verdict normalizes"
+grep -Fq '"result":"approved"' <<< "$out" && pass "stub verdict normalizes approved" || fail "stub verdict normalizes"
 bash "$S/ungated-ledger" mark-swept --ref "$id_ok" --verdict approved --note "sweep clean" "$SWEEP_REPO" >/dev/null
 
 # Path C (head behind HEAD): detached worktree, validate inside, close from
 # worktree cwd with explicit SWEEP_REPO.
 wt="$work/wt"; git -C "$SWEEP_REPO" worktree add --detach "$wt" "$h" >/dev/null 2>&1
 out="$(bash "$S/base-ref-ok" "$b" "$wt")"
-printf '%s' "$out" | grep -Fq '"ok":true' && pass "base validates against recorded head in worktree" || fail "base validates in worktree (got $out)"
+grep -Fq '"ok":true' <<< "$out" && pass "base validates against recorded head in worktree" || fail "base validates in worktree (got $out)"
 ( cd "$wt" && bash "$S/ungated-ledger" mark-swept --ref "$id_wt" --verdict approved --note "swept via worktree" "$SWEEP_REPO" >/dev/null )
 git -C "$SWEEP_REPO" worktree remove --force "$wt" >/dev/null 2>&1; git -C "$SWEEP_REPO" worktree prune >/dev/null 2>&1
 [ ! -d "$wt" ] && pass "worktree cleaned up" || fail "worktree cleaned up"
 
 # All three closed under the SOURCE key; nothing under any other key.
 out="$(bash "$S/ungated-ledger" pending --count "$SWEEP_REPO")"
-printf '%s' "$out" | grep -Fq '"count":0' && pass "all pending closed under source key" || fail "all pending closed (got $out)"
+grep -Fq '"count":0' <<< "$out" && pass "all pending closed under source key" || fail "all pending closed (got $out)"
 [ "$(ls "$XDG_CACHE_HOME/hyperpowers/ungated")" = "$key" ] && pass "the only ledger key is the source repo's" || fail "the only ledger key is the source repo's (found: $(ls "$XDG_CACHE_HOME/hyperpowers/ungated" | tr '\n' ' '))"
 
 echo

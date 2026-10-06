@@ -167,6 +167,36 @@ else
     fi
 fi
 
+# 10c. A plan is keyed by its own repository, whatever the cwd. A cross-repo
+# plan used to get one workspace per repository it was invoked from.
+from_a=$(cd "$repo_a" && bash "$SDD_DIR_SCRIPT" plan.md)
+from_b=$(cd "$repo_b" && bash "$SDD_DIR_SCRIPT" "$repo_a/plan.md")
+if [ "$from_a" = "$from_b" ]; then
+    pass "sdd-dir keys a plan by the plan's repository, not the cwd"
+else
+    fail "sdd-dir keys a plan by the plan's repository, not the cwd (from A: $from_a, from B: $from_b)"
+fi
+
+# 10d. Without a plan argument the cwd still keys, and the two repos differ.
+bare_a=$(cd "$repo_a" && bash "$SDD_DIR_SCRIPT")
+bare_b=$(cd "$repo_b" && bash "$SDD_DIR_SCRIPT")
+if [ "$bare_a" != "$bare_b" ]; then
+    pass "sdd-dir without a plan keys by the cwd's repository"
+else
+    fail "sdd-dir without a plan keys by the cwd's repository (both: $bare_a)"
+fi
+
+# 10e. A plan outside any repository is refused. TEST_ROOT is a mktemp -d
+# directory, outside any repository, so nowhere/ has no enclosing repo.
+plan_nowhere="$TEST_ROOT/nowhere/plan.md"
+mkdir -p "$(dirname "$plan_nowhere")"
+: > "$plan_nowhere"
+if (cd "$repo_b" && bash "$SDD_DIR_SCRIPT" "$plan_nowhere" >/dev/null 2>&1); then
+    fail "sdd-dir refuses a plan whose directory is not inside a git repository"
+else
+    pass "sdd-dir refuses a plan whose directory is not inside a git repository"
+fi
+
 # 11. Stale sibling scratch dirs (idle past the 14-day threshold) are
 # reclaimed on invocation; fresh siblings survive.
 sdd_base="$XDG_CACHE_HOME/hyperpowers/sdd"

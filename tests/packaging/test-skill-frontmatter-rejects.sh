@@ -95,7 +95,7 @@ expect_reject_raw() {
     if [ "$status" -eq 0 ]; then
         fail "$dirname: validator rejects it (exited 0)"
         printf '%s\n' "$output" | sed 's/^/      /'
-    elif printf '%s\n' "$output" | grep -Fq -- "$needle"; then
+    elif grep -Fq -- "$needle" <<< "$output"; then
         pass "$dirname: rejected, and the reason names '$needle'"
     else
         fail "$dirname: rejected, but no '$needle' in the reason"
@@ -119,7 +119,7 @@ expect_reject() {
     if [ "$status" -eq 0 ]; then
         fail "$dirname: validator rejects it (exited 0)"
         printf '%s\n' "$output" | sed 's/^/      /'
-    elif printf '%s\n' "$output" | grep -Fq -- "$needle"; then
+    elif grep -Fq -- "$needle" <<< "$output"; then
         pass "$dirname: rejected, and the reason names '$needle'"
     else
         fail "$dirname: rejected, but no '$needle' in the reason"

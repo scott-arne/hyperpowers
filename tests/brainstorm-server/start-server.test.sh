@@ -67,7 +67,7 @@ else
        "expected empty or unset, got '$owner_pid_value'"
 fi
 
-if echo "$captured" | grep -Eq '^CAPTURED_ARGV=--brainstorm-server-id=[A-Za-z0-9_-]{32,64}$'; then
+if grep -Eq '^CAPTURED_ARGV=--brainstorm-server-id=[A-Za-z0-9_-]{32,64}$' <<< "$captured"; then
   pass "passes shell-safe server instance id argv"
 else
   fail "passes shell-safe server instance id argv" \
@@ -101,7 +101,7 @@ captured=$(
     bash "$START_SCRIPT" --project-dir "$TEST_DIR/project" 2>/dev/null || true
 )
 
-if echo "$captured" | grep -q "FOREGROUND_MODE=true"; then
+if grep -q "FOREGROUND_MODE=true" <<< "$captured"; then
   pass "auto-foregrounds when uname reports a Windows-like shell"
 else
   fail "auto-foregrounds when uname reports a Windows-like shell" \

@@ -40,7 +40,7 @@ fi
 # Test 2: unzip -l layout (folder at root, SKILL.md present)
 # Capture listing to avoid SIGPIPE from grep -q with set -o pipefail
 zip_listing=$(unzip -l "$EXPECTED_ZIP")
-if echo "$zip_listing" | grep -q "hyperpowers/SKILL.md"; then
+if grep -q "hyperpowers/SKILL.md" <<< "$zip_listing"; then
   pass "hyperpowers/SKILL.md present in zip"
 else
   fail "hyperpowers/SKILL.md not found in zip"

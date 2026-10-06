@@ -169,41 +169,45 @@ else
 fi
 
 echo ""
-echo "--- start-server.sh leaves other sessions' pid files alone ---"
+echo "--- start-server.sh leaves a pid recorded in its own session directory alone ---"
 
-# Every start creates a fresh session directory, so a server.pid in an older
-# session of the same project is never this start's business. The script used
-# to carry a kill of "the existing server" that could only ever find a pid
-# file on a same-second restart in one shell; the kill is gone, and a pid file
-# elsewhere must never be signalled.
-mkdir -p "$TEST_DIR/stale-bin"
-cat > "$TEST_DIR/stale-bin/node" <<'EOF'
+# The script used to kill whatever pid server.pid named in its session
+# directory, with no check that the pid was a brainstorm server. The directory
+# is named "$$-$(date +%s)", so this case pins date and runs the script through
+# exec (which keeps the pid) to put a live helper's pid exactly where the old
+# block looked. The old block killed the helper; the start must leave it alone.
+mkdir -p "$TEST_DIR/collide-bin"
+cat > "$TEST_DIR/collide-bin/node" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
-chmod +x "$TEST_DIR/stale-bin/node"
+cat > "$TEST_DIR/collide-bin/date" <<'EOF'
+#!/bin/sh
+if [ "$1" = "+%s" ]; then echo 1700000000; else exec /bin/date "$@"; fi
+EOF
+chmod +x "$TEST_DIR/collide-bin/node" "$TEST_DIR/collide-bin/date"
 rm -rf "$TEST_DIR/project"/*
-mkdir -p "$TEST_DIR/project/.hyperpowers/brainstorm/1-1/state"
 sleep 600 &
 STALE_PID=$!
-echo "$STALE_PID" > "$TEST_DIR/project/.hyperpowers/brainstorm/1-1/state/server.pid"
 
-PATH="$TEST_DIR/stale-bin:$PATH" MSYSTEM="" \
-  bash "$START_SCRIPT" --project-dir "$TEST_DIR/project" --foreground >/dev/null 2>&1 || true
+PATH="$TEST_DIR/collide-bin:$PATH" MSYSTEM="" bash -c '
+  state="$1/.hyperpowers/brainstorm/$$-1700000000/state"
+  mkdir -p "$state"
+  echo "$2" > "$state/server.pid"
+  exec bash "$3" --project-dir "$1" --foreground' _ "$TEST_DIR/project" "$STALE_PID" "$START_SCRIPT" >/dev/null 2>&1
+start_rc=$?
 
-if kill -0 "$STALE_PID" 2>/dev/null; then
-  pass "a server.pid in another session directory is never signalled"
+if [[ "$start_rc" -ne 0 ]]; then
+  fail "a pid recorded in this start's own session directory is never signalled" \
+       "start-server.sh exited $start_rc, so the collision was never exercised"
+elif kill -0 "$STALE_PID" 2>/dev/null; then
+  pass "a pid recorded in this start's own session directory is never signalled"
 else
-  fail "a server.pid in another session directory is never signalled" \
-       "the process named by the stale pid file is gone"
+  fail "a pid recorded in this start's own session directory is never signalled" \
+       "the process named by server.pid is gone"
 fi
 kill "$STALE_PID" 2>/dev/null || true
 wait "$STALE_PID" 2>/dev/null || true
-if grep -q 'Kill any existing server' "$START_SCRIPT"; then
-  fail "start-server.sh carries no kill of a recorded pid" "the removed block is still present"
-else
-  pass "start-server.sh carries no kill of a recorded pid"
-fi
 
 echo ""
 echo "--- Results: $passed passed, $failed failed ---"

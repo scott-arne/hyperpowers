@@ -256,5 +256,32 @@ else
   fi
 fi
 
+# --- Test 9: a live server this shell may not signal is reported unverified, not stopped ---
+# With the identity confirmed (the fake ps names our server with the recorded
+# id), the stop loop runs. Its signals are refused with EPERM, which the old
+# loop read as "already dead" and reported stopped while the server lived.
+if [[ -r "/proc/$$/cmdline" ]]; then
+  skip "unsignalable server reports unverified from the stop loop" "/proc supplies the command line, so ps is never run"
+elif kill -0 1 2>/dev/null; then
+  skip "unsignalable server reports unverified from the stop loop" "this shell may signal PID 1, so PID 1 cannot stand in for an unsignalable server"
+else
+  SESS="$(mktemp -d)"; track_dir "$SESS"; mkdir -p "$SESS/state"
+  SID="$(new_server_id)"
+  printf '%s\n' "$SID" > "$SESS/state/server-instance-id"
+  printf '%s\n' '{"type":"server-started"}' > "$SESS/state/server-info"
+  echo 1 > "$SESS/state/server.pid"
+  OURS_PS="$(mktemp -d)"; track_dir "$OURS_PS"
+  printf '#!/bin/sh\necho "node server.cjs --brainstorm-server-id=%s"\n' "$SID" > "$OURS_PS/ps"
+  chmod +x "$OURS_PS/ps"
+  OUT="$(PATH="$OURS_PS:$PATH" "$STOP" "$SESS")"; RC=$?
+  if [[ "$OUT" != *unverified* || "$RC" -eq 0 ]]; then
+    bad "unsignalable server: expected unverified and a non-zero exit" "rc=$RC $OUT"
+  elif [[ ! -f "$SESS/state/server.pid" || ! -f "$SESS/state/server-instance-id" || -f "$SESS/state/server-stopped" ]]; then
+    bad "unverified stop must keep server.pid and server-instance-id" "$(ls "$SESS/state")"
+  else
+    ok "unsignalable server reports unverified from the stop loop and keeps the session files"
+  fi
+fi
+
 echo "--- Results: $PASS passed, $FAIL failed, $SKIP skipped ---"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -107,26 +107,39 @@ if [[ -f "$PID_FILE" ]]; then
     exit 0
   fi
 
-  # Try to stop gracefully, fallback to force if still alive
-  kill "$pid" 2>/dev/null || true
+  # Try to stop gracefully, then force. A kill refused with "not permitted" is
+  # a live process this shell may not signal (a sandbox refuses signals to
+  # processes it did not start), not a dead one: when every attempt is refused
+  # and the process is still there, the stop is unverified and the session
+  # files stay, exactly as the identity path reports it.
+  unsignalable="true"
+  if err="$(LC_ALL=C; kill "$pid" 2>&1)"; then
+    unsignalable="false"
+  elif [[ "$err" != *"not permitted"* ]]; then
+    unsignalable="false"
+  fi
 
   # Wait for graceful shutdown (up to ~2s)
   for _ in {1..20}; do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      break
-    fi
+    process_exists "$pid" || break
     sleep 0.1
   done
 
   # If still running, escalate to SIGKILL
-  if kill -0 "$pid" 2>/dev/null; then
-    kill -9 "$pid" 2>/dev/null || true
-
-    # Give SIGKILL a moment to take effect
+  if process_exists "$pid"; then
+    if err="$(LC_ALL=C; kill -9 "$pid" 2>&1)"; then
+      unsignalable="false"
+    elif [[ "$err" != *"not permitted"* ]]; then
+      unsignalable="false"
+    fi
     sleep 0.1
   fi
 
-  if kill -0 "$pid" 2>/dev/null; then
+  if process_exists "$pid"; then
+    if [[ "$unsignalable" == "true" ]]; then
+      echo '{"status": "unverified", "error": "this shell may not signal the server; session files kept"}'
+      exit 1
+    fi
     echo '{"status": "failed", "error": "process still running"}'
     exit 1
   fi

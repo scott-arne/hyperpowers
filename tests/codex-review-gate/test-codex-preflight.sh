@@ -9,7 +9,7 @@ FAILURES=0
 pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
 expect() { # <out> <fragment> <desc>
-  printf '%s' "$1" | grep -Fq "$2" && pass "$3" || { fail "$3 (got: $1)"; }
+  grep -Fq "$2" <<< "$1" && pass "$3" || { fail "$3 (got: $1)"; }
 }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/pf-test.XXXXXX")"

@@ -30,9 +30,9 @@ echo "review-dossier:"
 
 # spec gate: documents + adjudications expected; test evidence NOT APPLICABLE
 out="$(bash "$RD" --gate spec --out "$gd" --spec "$specdoc" --adjudications "$adj" "$repo")"
-printf '%s' "$out" | grep -Fq '"ok":true' && pass "spec dossier ok" || fail "spec dossier ok (got $out)"
-printf '%s' "$out" | grep -Fq '"sections":5' && pass "always five sections" || fail "always five sections"
-printf '%s' "$out" | grep -Fq '"missing":0' && pass "no missing when expected supplied" || fail "no missing (got $out)"
+grep -Fq '"ok":true' <<< "$out" && pass "spec dossier ok" || fail "spec dossier ok (got $out)"
+grep -Fq '"sections":5' <<< "$out" && pass "always five sections" || fail "always five sections"
+grep -Fq '"missing":0' <<< "$out" && pass "no missing when expected supplied" || fail "no missing (got $out)"
 d="$gd/dossier.md"
 for hdr in '## Documents under review' '## Adjudicated decisions' '## Test evidence' '## Changed surfaces' '## Review package'; do
   dossier_has "$d" "$hdr" "section present: $hdr"
@@ -47,7 +47,7 @@ grep -Eq 'NOT APPLICABLE.*test evidence|Test evidence' "$d" >/dev/null 2>&1 || t
 # omit evidence -> NOT PROVIDED counted in missing
 gd2="$work/gate2"; mkdir -p "$gd2"
 out="$(bash "$RD" --gate task --out "$gd2" --adjudications "$adj" --base "$b" --head "$h" "$repo")"
-printf '%s' "$out" | grep -Fq '"missing":1' && pass "missing expected input counted" || fail "missing counted (got $out)"
+grep -Fq '"missing":1' <<< "$out" && pass "missing expected input counted" || fail "missing counted (got $out)"
 d2="$gd2/dossier.md"
 dossier_has "$d2" 'NOT PROVIDED' "expected-but-absent renders NOT PROVIDED"
 dossier_has "$d2" 'NOT APPLICABLE' "unexpected input renders NOT APPLICABLE"
@@ -69,7 +69,7 @@ grep -Fq $'\t4001\t' "$gd4/dossier.md" && fail "no lines beyond the cap" || pass
 # expected range that git cannot compute -> NOT PROVIDED, missing counted
 gd5="$work/gate5"; mkdir -p "$gd5"
 out="$(bash "$RD" --gate task --out "$gd5" --adjudications "$adj" --test-evidence "$ev" --base deadbeef --head "$h" "$repo")"
-printf '%s' "$out" | grep -Fq '"missing":1' && pass "failed git range counted as missing" || fail "failed git range counted as missing (got $out)"
+grep -Fq '"missing":1' <<< "$out" && pass "failed git range counted as missing" || fail "failed git range counted as missing (got $out)"
 grep -Fq 'NOT PROVIDED: GIT ERROR' "$gd5/dossier.md" && pass "failed range renders NOT PROVIDED" || fail "failed range renders NOT PROVIDED"
 
 # valid range with zero changes -> content, not missing
@@ -79,7 +79,7 @@ git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m e2
 e2="$(git -C "$repo" rev-parse HEAD)"
 gd6="$work/gate6"; mkdir -p "$gd6"
 out="$(bash "$RD" --gate task --out "$gd6" --adjudications "$adj" --test-evidence "$ev" --base "$e1" --head "$e2" "$repo")"
-printf '%s' "$out" | grep -Fq '"missing":0' && pass "empty valid range is not missing" || fail "empty valid range is not missing (got $out)"
+grep -Fq '"missing":0' <<< "$out" && pass "empty valid range is not missing" || fail "empty valid range is not missing (got $out)"
 grep -Fq 'no textual changes in' "$gd6/dossier.md" && pass "empty range renders as determinate content" || fail "empty range renders as determinate content"
 
 # usage errors -> exit 2

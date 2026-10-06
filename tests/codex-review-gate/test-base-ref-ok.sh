@@ -9,7 +9,7 @@ EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 FAILURES=0
 pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
-expect() { printf '%s' "$1" | grep -Fq "$2" && pass "$3" || fail "$3 (got: $1)"; }
+expect() { grep -Fq "$2" <<< "$1" && pass "$3" || fail "$3 (got: $1)"; }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/bro-test.XXXXXX")"
 trap 'rm -rf "$work"' EXIT

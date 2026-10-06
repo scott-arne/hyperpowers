@@ -15,7 +15,7 @@ export HYPERPOWERS_BROKER_CMD_PATTERN='bash|test-broker-health'
 # status <json> <expected> <description>
 expect_status() {
   local out="$1" want="$2" desc="$3"
-  if printf '%s' "$out" | grep -Fq "\"status\":\"$want\""; then
+  if grep -Fq "\"status\":\"$want\"" <<< "$out"; then
     pass "$desc"
   else
     fail "$desc (got: $out)"

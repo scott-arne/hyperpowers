@@ -175,13 +175,13 @@ for f in $SIBLINGS; do
             [ -z "$line" ] && continue
 
             # Skip if this mention is inside a markdown link: ](<target>)
-            if printf '%s' "$rest" | grep -Fq "]($target)"; then
+            if grep -Fq "]($target)" <<< "$rest"; then
                 continue
             fi
 
             # Check if this is an allowed exception.
             exception_key="$f:$line:$target"
-            if printf '%s\n' "$EXCEPTIONS" | grep -Fqx "$exception_key"; then
+            if grep -Fqx "$exception_key" <<< "$EXCEPTIONS"; then
                 continue
             fi
 
@@ -194,12 +194,12 @@ for f in $SIBLINGS; do
             route_violation=""
             while IFS='=' read -r caller route_files; do
                 # Check if this route includes the mentioning file.
-                if ! printf '%s\n' "$route_files" | grep -qw "$mentioning_base"; then
+                if ! grep -qw "$mentioning_base" <<< "$route_files"; then
                     continue
                 fi
 
                 # This route includes the mentioning file. Does it include the mentioned?
-                if ! printf '%s\n' "$route_files" | grep -qw "$mentioned_base"; then
+                if ! grep -qw "$mentioned_base" <<< "$route_files"; then
                     route_violation="$caller"
                     break
                 fi

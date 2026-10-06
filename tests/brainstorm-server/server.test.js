@@ -14,6 +14,7 @@ const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
+const { makeTestRunner } = require('./test-runner');
 
 const SERVER_PATH = path.join(__dirname, '../../skills/brainstorming/scripts/server.cjs');
 const TEST_PORT = 3334;
@@ -118,26 +119,7 @@ async function runTests() {
   server.stdout.on('data', (data) => { stdoutAccum += data.toString(); });
 
   let initialStdout = '';
-  let passed = 0;
-  let failed = 0;
-  let skipped = 0;
-
-  function test(name, fn) {
-    return fn().then(() => {
-      console.log(`  PASS: ${name}`);
-      passed++;
-    }).catch(e => {
-      if (e.skip) {
-        console.log(`  SKIP: ${name}`);
-        console.log(`    ${e.message}`);
-        skipped++;
-        return;
-      }
-      console.log(`  FAIL: ${name}`);
-      console.log(`    ${e.message}`);
-      failed++;
-    });
-  }
+  const { test, counts } = makeTestRunner();
 
   try {
     const { stdout } = await waitForServer(server);
@@ -576,9 +558,9 @@ async function runTests() {
     });
 
     // ========== Summary ==========
-    console.log(`\n--- Results: ${passed} passed, ${failed} failed, ${skipped} skipped ---`);
+    console.log(`\n--- Results: ${counts.passed} passed, ${counts.failed} failed, ${counts.skipped} skipped ---`);
     // process.exit() here would skip the finally block and orphan the server.
-    if (failed > 0) process.exitCode = 1;
+    if (counts.failed > 0) process.exitCode = 1;
 
   } finally {
     server.kill();

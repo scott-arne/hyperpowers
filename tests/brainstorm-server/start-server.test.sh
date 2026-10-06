@@ -197,9 +197,21 @@ PATH="$TEST_DIR/collide-bin:$PATH" MSYSTEM="" bash -c '
   exec bash "$3" --project-dir "$1" --foreground' _ "$TEST_DIR/project" "$STALE_PID" "$START_SCRIPT" >/dev/null 2>&1
 start_rc=$?
 
+# The start overwrites server.pid with its own server's pid, so a pinned pid
+# still in the file (or no file at all) means the start never used this
+# directory and the case would be passing without the collision it exists
+# to test.
+collided_pid_file=""
+for f in "$TEST_DIR/project/.hyperpowers/brainstorm/"*-1700000000/state/server.pid; do
+  if [[ -f "$f" ]]; then collided_pid_file="$f"; fi
+done
+
 if [[ "$start_rc" -ne 0 ]]; then
   fail "a pid recorded in this start's own session directory is never signalled" \
        "start-server.sh exited $start_rc, so the collision was never exercised"
+elif [[ -z "$collided_pid_file" || "$(cat "$collided_pid_file")" == "$STALE_PID" ]]; then
+  fail "a pid recorded in this start's own session directory is never signalled" \
+       "the start never overwrote the pinned server.pid, so the collision was never exercised"
 elif kill -0 "$STALE_PID" 2>/dev/null; then
   pass "a pid recorded in this start's own session directory is never signalled"
 else

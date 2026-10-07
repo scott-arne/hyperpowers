@@ -871,7 +871,7 @@ Append to the plan file:
 
 ```markdown
 
-**Correction (2026-10-05).** The leak grep in Global Constraints and in Task 1 Step 6, Task 2 Step 5 and Task 3 Step 5 builds its needles from the shell's own `HTTPS_PROXY`, `NO_PROXY` and `ANTHROPIC_VERTEX_PROJECT_ID`. Inside the Bash sandbox those variables hold the sandbox proxy's values, not the host's, so a grep run there scanned for the wrong strings. The evidence note records that every staged diff was also scanned for the host's values by a counts-only scanner, which found nothing. The scanner now lives at `~/.claude/scripts/realval-scan.py` and reads its needles from the settings env block; plans written after this date name it instead of the shell variables.
+**Correction (2026-10-05).** The leak grep in Global Constraints, in the pre-Task-1 Step 4, and in Task 1 Step 6, Task 3 Step 11 and Task 7 Step 6 builds its needles from the shell's own `HTTPS_PROXY`, `NO_PROXY` and `ANTHROPIC_VERTEX_PROJECT_ID`. Inside the Bash sandbox those variables hold the sandbox proxy's values, not the host's, so a grep run there scanned for the wrong strings. The evidence note records that every staged diff was also scanned for the host's values by a counts-only scanner, which found nothing. The scanner now lives at `~/.claude/scripts/realval-scan.py` and reads its needles from the settings env block; plans written after this date name it instead of the shell variables.
 ```
 
 - [ ] **Step 2: Check**

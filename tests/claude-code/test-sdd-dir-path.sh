@@ -197,6 +197,41 @@ else
     pass "sdd-dir refuses a plan whose directory is not inside a git repository"
 fi
 
+# 10f. The key does not depend on the caller's git object format: a plan in a
+# SHA-256 repository hashes the same from a SHA-1 cwd as from its own, and a
+# SHA-1 plan the same from a SHA-256 cwd.
+repo_c="$TEST_ROOT/repo-c"
+if git init -q --object-format=sha256 "$repo_c" 2>/dev/null; then
+    : > "$repo_c/plan.md"
+    from_c=$(cd "$repo_c" && bash "$SDD_DIR_SCRIPT" plan.md)
+    from_a_for_c=$(cd "$repo_a" && bash "$SDD_DIR_SCRIPT" "$repo_c/plan.md")
+    from_c_for_a=$(cd "$repo_c" && bash "$SDD_DIR_SCRIPT" "$repo_a/plan.md")
+    if [ "$from_c" = "$from_a_for_c" ] && [ "$from_c_for_a" = "$from_a" ]; then
+        pass "sdd-dir hashes with the plan repository's object format, not the cwd's"
+    else
+        fail "sdd-dir hashes with the plan repository's object format, not the cwd's (sha256 plan from C: $from_c, from A: $from_a_for_c; sha1 plan from C: $from_c_for_a, from A: $from_a)"
+    fi
+else
+    pass "sdd-dir hashes with the plan repository's object format, not the cwd's (not exercised: this git cannot create a SHA-256 repository)"
+fi
+
+# 10g. A cross-repository invocation leaves a pointer under the cwd key, named
+# like the workspace, so a reader that only knows the cwd (the compaction
+# notice) still finds the ledger. The plan repository's own entry stays a real
+# directory.
+pointer_b="$bare_b/plans/$(basename "$from_a")"
+own_a="$bare_a/plans/$(basename "$from_a")"
+if [ -L "$pointer_b" ] && [ "$(cd "$pointer_b" 2>/dev/null && pwd -P)" = "$(cd "$from_a" && pwd -P)" ]; then
+    pass "sdd-dir leaves a pointer to a cross-repository plan's workspace under the cwd key"
+else
+    fail "sdd-dir leaves a pointer to a cross-repository plan's workspace under the cwd key (expected symlink $pointer_b -> $from_a)"
+fi
+if [ -d "$own_a" ] && [ ! -L "$own_a" ]; then
+    pass "sdd-dir keeps the plan repository's own workspace entry a real directory"
+else
+    fail "sdd-dir keeps the plan repository's own workspace entry a real directory ($own_a)"
+fi
+
 # 11. Stale sibling scratch dirs (idle past the 14-day threshold) are
 # reclaimed on invocation; fresh siblings survive.
 sdd_base="$XDG_CACHE_HOME/hyperpowers/sdd"

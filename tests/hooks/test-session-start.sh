@@ -537,6 +537,31 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$fires_repo" "$HOOK_UNDER_TEST"
 
+# A plan in one repository executed from another keeps its ledger under the
+# plan repository's key; the cwd key carries a pointer to it (scripts/sdd-dir),
+# and the notice names the ledger through that pointer.
+xr_plan_repo="$(make_repo compact-xrepo-plan)"
+xr_cwd_repo="$(make_repo compact-xrepo-cwd)"
+xr_home="$(make_home compact-xrepo)"
+xr_cache="$TEST_ROOT/compact-xrepo/cache"
+mkdir -p "$xr_plan_repo/docs"
+: > "$xr_plan_repo/docs/plan.md"
+xr_ws="$(cd "$xr_cwd_repo" && XDG_CACHE_HOME="$xr_cache" bash "$REPO_ROOT/skills/subagent-driven-development/scripts/sdd-dir" "$xr_plan_repo/docs/plan.md")"
+printf '# SDD ledger — plan: %s\n' "$xr_plan_repo/docs/plan.md" > "$xr_ws/progress.md"
+xr_ledger="$xr_cache/hyperpowers/sdd/$(sdd_key "$xr_cwd_repo")/plans/$(basename "$xr_ws")/progress.md"
+xr_stdin="$TEST_ROOT/compact-xrepo/stdin.json"
+write_hook_input "$xr_stdin" compact
+HOOK_STDIN="$xr_stdin"
+assert_command_output \
+    "SessionStart names a cross-repository plan's ledger through the cwd key's pointer" \
+    "nested" \
+    "${NOTICE_HEAD}${xr_ledger}${NOTICE_TAIL}" \
+    "" \
+    "$xr_home" \
+    XDG_CACHE_HOME="$xr_cache" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$xr_cwd_repo" "$HOOK_UNDER_TEST"
+
 # The same assertion over a ledger path carrying a double quote and a
 # backslash. This is what pins escape_for_json on the compaction path: without
 # it the hook emits invalid JSON, Claude Code injects nothing, and the session

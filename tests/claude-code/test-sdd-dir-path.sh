@@ -219,7 +219,7 @@ fi
 # like the workspace, so a reader that only knows the cwd (the compaction
 # notice) still finds the ledger. The plan repository's own entry stays a real
 # directory.
-pointer_b="$bare_b/plans/$(basename "$from_a")"
+pointer_b="$bare_b/plans/$(basename "$from_a")+$(basename "$bare_a" | cut -c1-8)"
 own_a="$bare_a/plans/$(basename "$from_a")"
 if [ -L "$pointer_b" ] && [ "$(cd "$pointer_b" 2>/dev/null && pwd -P)" = "$(cd "$from_a" && pwd -P)" ]; then
     pass "sdd-dir leaves a pointer to a cross-repository plan's workspace under the cwd key"
@@ -241,6 +241,17 @@ if [ "$from_b_again" = "$from_a" ] && [ -L "$pointer_b" ] && [ "$(find "$bare_b"
     pass "a cross-repository invocation refreshes the cwd key so its pointer survives the reclaim"
 else
     fail "a cross-repository invocation refreshes the cwd key so its pointer survives the reclaim (dir present: $([ -d "$bare_b" ] && echo yes || echo no), pointer present: $([ -L "$pointer_b" ] && echo yes || echo no))"
+fi
+
+# 10i. The cwd repository's own plan at the same repo-relative path keeps its
+# own real workspace beside the pointer: the two names differ by the plan
+# repository's key prefix, so neither shadows the other.
+: > "$repo_b/plan.md"
+own_b=$(cd "$repo_b" && bash "$SDD_DIR_SCRIPT" plan.md)
+if [ "$(basename "$own_b")" = "$(basename "$from_a")" ] && [ "$own_b" != "$from_a" ] && [ -d "$own_b" ] && [ ! -L "$own_b" ] && [ -L "$pointer_b" ]; then
+    pass "a same-named plan in the cwd repository gets its own workspace beside the pointer"
+else
+    fail "a same-named plan in the cwd repository gets its own workspace beside the pointer (own: $own_b, link: $([ -L "$own_b" ] && echo yes || echo no), pointer kept: $([ -L "$pointer_b" ] && echo yes || echo no))"
 fi
 
 # 11. Stale sibling scratch dirs (idle past the 14-day threshold) are

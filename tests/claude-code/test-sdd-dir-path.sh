@@ -232,6 +232,17 @@ else
     fail "sdd-dir keeps the plan repository's own workspace entry a real directory ($own_a)"
 fi
 
+# 10h. A cwd key that holds only pointers is refreshed on every cross-
+# repository invocation, so the repo-level reclaim (14 idle days, which
+# excludes only the plan repository's key) does not take the pointer with it.
+touch -t 202601010000 "$bare_b"
+from_b_again=$(cd "$repo_b" && bash "$SDD_DIR_SCRIPT" "$repo_a/plan.md")
+if [ "$from_b_again" = "$from_a" ] && [ -L "$pointer_b" ] && [ "$(find "$bare_b" -maxdepth 0 -mtime +14 | wc -l | tr -d ' ')" -eq 0 ]; then
+    pass "a cross-repository invocation refreshes the cwd key so its pointer survives the reclaim"
+else
+    fail "a cross-repository invocation refreshes the cwd key so its pointer survives the reclaim (dir present: $([ -d "$bare_b" ] && echo yes || echo no), pointer present: $([ -L "$pointer_b" ] && echo yes || echo no))"
+fi
+
 # 11. Stale sibling scratch dirs (idle past the 14-day threshold) are
 # reclaimed on invocation; fresh siblings survive.
 sdd_base="$XDG_CACHE_HOME/hyperpowers/sdd"

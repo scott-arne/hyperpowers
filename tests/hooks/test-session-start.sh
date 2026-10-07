@@ -548,7 +548,7 @@ mkdir -p "$xr_plan_repo/docs"
 : > "$xr_plan_repo/docs/plan.md"
 xr_ws="$(cd "$xr_cwd_repo" && XDG_CACHE_HOME="$xr_cache" bash "$REPO_ROOT/skills/subagent-driven-development/scripts/sdd-dir" "$xr_plan_repo/docs/plan.md")"
 printf '# SDD ledger — plan: %s\n' "$xr_plan_repo/docs/plan.md" > "$xr_ws/progress.md"
-xr_ledger="$xr_cache/hyperpowers/sdd/$(sdd_key "$xr_cwd_repo")/plans/$(basename "$xr_ws")/progress.md"
+xr_ledger="$xr_cache/hyperpowers/sdd/$(sdd_key "$xr_cwd_repo")/plans/$(basename "$xr_ws")+$(sdd_key "$xr_plan_repo" | cut -c1-8)/progress.md"
 xr_stdin="$TEST_ROOT/compact-xrepo/stdin.json"
 write_hook_input "$xr_stdin" compact
 HOOK_STDIN="$xr_stdin"

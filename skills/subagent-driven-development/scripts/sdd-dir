@@ -83,14 +83,17 @@ fi
 # workspace's own name. The cwd key is hashed with plain git on purpose, so it
 # matches what the hook derives for the same cwd. Only a path that is free or
 # already a symlink is taken; a real directory of that name belongs to the cwd
-# repository's own plan and is never replaced. Dangling pointers left by
-# reclaimed workspaces are pruned alongside. Best effort, like the reclaim
-# below: stdout stays exactly the dir path.
+# repository's own plan and is never replaced. The cwd key directory is
+# touched as well, so the repo-level reclaim below never takes a pointer-only
+# key with it. Dangling pointers left by reclaimed workspaces are pruned
+# alongside. Best effort, like the reclaim below: stdout stays exactly the
+# dir path.
 if [ -n "$plan_dir" ] && git rev-parse --git-dir >/dev/null 2>&1; then
   cwd_key=$(printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin)
   if [ "$cwd_key" != "$key" ]; then
     cwd_plans="${base}/${cwd_key}/plans"
     mkdir -p "$cwd_plans" 2>/dev/null || true
+    touch "${base}/${cwd_key}" 2>/dev/null || true
     pointer="${cwd_plans}/$(basename "$dir")"
     if [ ! -e "$pointer" ] || [ -L "$pointer" ]; then
       ln -sfn "$dir" "$pointer" 2>/dev/null || true

@@ -216,9 +216,9 @@ else
 fi
 
 # 10g. A cross-repository invocation leaves a pointer under the cwd key, named
-# like the workspace, so a reader that only knows the cwd (the compaction
-# notice) still finds the ledger. The plan repository's own entry stays a real
-# directory.
+# after the workspace with the plan repository's key prefix appended, so a
+# reader that only knows the cwd (the compaction notice) still finds the
+# ledger. The plan repository's own entry stays a real directory.
 pointer_b="$bare_b/plans/$(basename "$from_a")+$(basename "$bare_a" | cut -c1-8)"
 own_a="$bare_a/plans/$(basename "$from_a")"
 if [ -L "$pointer_b" ] && [ "$(cd "$pointer_b" 2>/dev/null && pwd -P)" = "$(cd "$from_a" && pwd -P)" ]; then

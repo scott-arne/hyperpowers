@@ -84,12 +84,11 @@ fi
 # coincide with the cwd repository's own workspace for a plan at the same
 # repo-relative path. The cwd key is hashed with plain git on purpose, so it
 # matches what the hook derives for the same cwd. Only a path that is free or
-# already a symlink is taken; a real directory of that name belongs to the cwd
-# repository's own plan and is never replaced. The cwd key directory is
-# touched as well, so the repo-level reclaim below never takes a pointer-only
-# key with it. Dangling pointers left by reclaimed workspaces are pruned
-# alongside. Best effort, like the reclaim below: stdout stays exactly the
-# dir path.
+# already a symlink is taken; a real directory at that path is never replaced.
+# The cwd key directory is touched as well, so the repo-level reclaim below
+# never takes a pointer-only key with it. Dangling pointers left by reclaimed
+# workspaces are pruned alongside. Best effort, like the reclaim below: stdout
+# stays exactly the dir path.
 if [ -n "$plan_dir" ] && git rev-parse --git-dir >/dev/null 2>&1; then
   cwd_key=$(printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin)
   if [ "$cwd_key" != "$key" ]; then

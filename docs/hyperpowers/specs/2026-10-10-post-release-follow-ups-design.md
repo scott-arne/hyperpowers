@@ -255,6 +255,22 @@ absolute token and so keeps today's probe of its own directory.
 
 Must not change: the result for any shim form the existing tests cover.
 
+Amended during the task's review gates (the human partner's decisions of
+2026-10-11 and 2026-10-12), because the whitespace split and the quote
+stripping above still guessed. A word is read with its quotes only when
+that is certain: a bare word, or one whole single- or double-quoted word
+with no escape or expansion inside. Uncertain quoting is unresolved, never
+stripped into a fragment. A script holding any cd-like word (`cd`, `pushd`
+or `popd` in any quoting, or glued to `(`, `{`, a redirection or a
+separator) resolves only through its single unconditional leading `cd`:
+every line and segment before it is prelude (`set`, `export`, `unset`,
+`readonly`, `umask`, `shopt`, or nothing but assignments), only prelude,
+`exec` or `exit` follow it, it is not piped, and its operand is the
+segment's last word and an existing directory. The last of `-L` and `-P`
+decides how a `..` is read: logical normalizes it, physical leaves the path
+for the operating system to resolve. Anything else is unresolved. A script
+with no cd-like word keeps the older rule.
+
 #### 3. The dashboard trusts a verdict only after its writer exits
 
 `readDashboardVerdict` in `src/dashboard/scan.ts` is the one reader for
@@ -684,6 +700,18 @@ Correction); this spec and its plan.
 - Item 2 still probes the shim's own directory for a script with no `cd`
   and no absolute token, as today; a script in a shared bin directory
   written that way resolves to whatever repository holds that directory.
+- Item 2 reads a subset of shell, so a shim outside it can still record a
+  wrong checkout instead of unknown. The task's follow-on review
+  (2026-10-12) named five such shapes: `set -P` or `set -o physical` before
+  the `cd`; a backslash-newline that splits the word `cd`; a `PATH` change
+  before a `$(dirname "$0")` operand, or the unquoted form when the shim's
+  path holds whitespace; a quoted absolute path containing whitespace under
+  the older rule, which then falls to an absolute interpreter; and an
+  `exec env -C`, an absolute entrypoint in another checkout, or a branch
+  after a failed `cd`. The rule that a `cd` operand is the Gauntlet
+  checkout is itself a heuristic: nothing in the shim's text says which of
+  two absolute paths is the checkout. The human partner accepted these on
+  2026-10-12 rather than extend the parser further.
 - Item 3 cannot tell a reused pid from the run's own process. A run whose
   phase file cannot be read is shown as abandoned until a scan reads it.
 - Item 7's rows can add up to more than the fleet total when workspaces are

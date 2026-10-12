@@ -345,6 +345,20 @@ Not addressed here: a fake verdict followed by a run that crashes before
 quorum writes its own. That needs the agent out of the run directory, the
 second sub-project.
 
+Amended during the task's review gate (the human partner's decision of
+2026-10-12). Two changes. First, the reader checks the phase again after
+it parses a verdict and caches the verdict only if the phase still allows
+it, so a run that starts between the two reads cannot leave a forged
+verdict cached. Second, `writePhase` records the writer's host
+(`os.hostname()`, which inside a container is the container's), and the
+live-pid rule applies only to a phase written on the dashboard's own host,
+or to one with no `host` (written before this change). Container runs
+write the results directory the host dashboard scans, and their pid
+belongs to the container's namespace, so probing it on the host proves
+nothing: a finished container run would show as running whenever its pid
+matched a live host process. A phase from another host keeps the old rule:
+its verdict is the record.
+
 #### 4. One shared Codex approve-stub for the eight brainstorming scenarios
 
 The stub moves to `fixtures/codex-stubs/approve-companion.mjs`. Its body is
@@ -714,6 +728,15 @@ Correction); this spec and its plan.
   2026-10-12 rather than extend the parser further.
 - Item 3 cannot tell a reused pid from the run's own process. A run whose
   phase file cannot be read is shown as abandoned until a scan reads it.
+- Item 3 protects host runs only. A container run's verdict is trusted as
+  soon as it appears, so a forged verdict there is caught only by the
+  second sub-project; and a container run still in flight is probed
+  against the host's pid table for the running display, as before. A host
+  whose name changes during a run (macOS can rename itself on a network
+  change) reads that run's phase as foreign, so its verdict is trusted as
+  before this item. The `host` field is as forgeable as the pid: an agent
+  that rewrites `phase.json` can name another host just as it could
+  already name a dead pid; both wait for the second sub-project.
 - Item 7's rows can add up to more than the fleet total when workspaces are
   shared; the shared-workspace line says so.
 - Item 9 cannot demonstrate the deadlock on this host.

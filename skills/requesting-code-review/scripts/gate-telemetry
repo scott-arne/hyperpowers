@@ -101,6 +101,9 @@ node -e '
       firstRound: nums.filter((r) => r === 1).length,
     };
   };
+  // The task identities of each row, kept beside the report (never in it), for
+  // the fleet aggregate to de-duplicate on.
+  const sddSets = new Map();
   const repos = [];
   for (const key of keys) {
     const r = { key, tasks: 0, fixBriefs: 0, runs: 0, backstops: 0,
@@ -116,13 +119,23 @@ node -e '
     // the task briefs (subagent-driven-development/scripts/sdd-dir). Reading
     // only the key root reported the legacy half of a cache and none of the
     // tasks a current run writes.
+    //
+    // A plan run from the checkout of another repository keeps its one workspace
+    // under the key of the plan repository and leaves a symlink under the key of
+    // the executing repository (subagent-driven-development/scripts/sdd-dir).
+    // statSync follows the link, so this row counts the tasks its runs touched; a
+    // dangling pointer throws and is skipped. A workspace is identified by its
+    // real path, which the fleet aggregate de-duplicates on.
     const sdd = path.join(base, "sdd", key);
     const workspaces = [];
     if (fs.existsSync(sdd)) {
       workspaces.push(sdd);
       let plans = [];
-      try { plans = fs.readdirSync(path.join(sdd, "plans"), { withFileTypes: true }); } catch (e) { plans = []; }
-      for (const p of plans) if (p.isDirectory()) workspaces.push(path.join(sdd, "plans", p.name));
+      try { plans = fs.readdirSync(path.join(sdd, "plans")); } catch (e) { plans = []; }
+      for (const name of plans) {
+        const p = path.join(sdd, "plans", name);
+        try { if (fs.statSync(p).isDirectory()) workspaces.push(p); } catch (e) { /* dangling pointer */ }
+      }
     }
     // SDD artifacts carry no timestamp of their own, so the window cuts them
     // by file mtime — the same basis the run walk uses, so both cohorts are
@@ -133,10 +146,16 @@ node -e '
     // --since raise the numerator with nothing under it — "Fix-cycle rate:
     // 1/0 tasks". A task is keyed by (workspace, number) because two plans
     // each have a Task 3 and those are two tasks, not one.
-    const cohort = new Set(), fixed = new Set();
+    //
+    // reached holds every workspace this row resolved, empty or not, so the
+    // shared-workspace count of the fleet is about reach, not about task briefs.
+    const cohort = new Set(), fixed = new Set(), reached = new Set();
     for (const ws of workspaces) {
+      let real;
+      try { real = fs.realpathSync(ws); } catch (e) { continue; }
       let files = [];
       try { files = fs.readdirSync(ws); } catch (e) { continue; }
+      reached.add(real);
       for (const f of files) {
         const brief = f.match(/^task-(\d+)-brief\.md$/);
         const m = f.match(/^task-(\d+)-.*codex-fix-brief/);
@@ -145,12 +164,13 @@ node -e '
           let st; try { st = fs.statSync(path.join(ws, f)); } catch (e) { continue; }
           if (!inWindow(st.mtimeMs)) continue;
         }
-        if (brief) { r.tasks++; cohort.add(ws + "\u0000" + brief[1]); }
-        if (m) fixed.add(ws + "\u0000" + m[1]);
+        if (brief) { r.tasks++; cohort.add(real + "\u0000" + brief[1]); }
+        if (m) fixed.add(real + "\u0000" + m[1]);
         observed++;
       }
     }
     for (const id of fixed) if (cohort.has(id)) r.fixBriefs++;
+    sddSets.set(r, { cohort, fixed, reached });
     // Gate runs: rounds + backstops from gate-round.json, bucketed by gate
     // type; run dirs WITHOUT round data are counted, never silently ignored.
     const cr = path.join(base, "codex-review", key);
@@ -228,9 +248,9 @@ node -e '
   // Fleet aggregate (spec 4.5: every per-repo metric class, aggregated).
   const agg = { repos: repos.length, tasks: 0, fixBriefs: 0, runs: 0,
     backstops: 0, oldFormatRuns: 0, pending: 0, oldestPendingDays: null,
-    sweptTotal: 0, swept: {}, tierSkips: 0, skipped: 0, unwindowable: 0, degrades: {}, byGate: {}, dossiers: 0 };
+    sweptTotal: 0, swept: {}, tierSkips: 0, skipped: 0, unwindowable: 0, degrades: {}, byGate: {}, dossiers: 0, sharedWorkspaces: 0 };
   for (const r of repos) {
-    agg.tasks += r.tasks; agg.fixBriefs += r.fixBriefs; agg.runs += r.runs;
+    agg.runs += r.runs;
     agg.backstops += r.backstops; agg.oldFormatRuns += r.oldFormatRuns;
     agg.pending += r.pending; agg.tierSkips += r.tierSkips; agg.skipped += r.skipped;
     agg.unwindowable += r.unwindowable; agg.dossiers += r.dossiers;
@@ -247,6 +267,21 @@ node -e '
       agg.byGate[g].backstops += v.backstops; agg.byGate[g].runs += v.runs;
     }
   }
+  // Tasks and fix briefs are counted over the union of the task sets of the
+  // rows, so a workspace two rows reach (its own key, and a pointer from another)
+  // counts once; a workspace reached from more than one row is shared,
+  // whether or not it holds a task brief yet. The other aggregate fields come
+  // from codex-review and ungated, which pointers do not touch.
+  const allCohort = new Set(), allFixed = new Set(), rowsPerWs = new Map();
+  for (const r of repos) {
+    const s = sddSets.get(r);
+    for (const id of s.cohort) allCohort.add(id);
+    for (const id of s.fixed) allFixed.add(id);
+    for (const ws of s.reached) rowsPerWs.set(ws, (rowsPerWs.get(ws) || 0) + 1);
+  }
+  agg.tasks = allCohort.size;
+  for (const id of allFixed) if (allCohort.has(id)) agg.fixBriefs++;
+  for (const n of rowsPerWs.values()) if (n > 1) agg.sharedWorkspaces++;
   // Attach the derived metrics to every byGate entry, per-repo and fleet.
   for (const r of repos)
     for (const v of Object.values(r.byGate)) Object.assign(v, churn(v.rounds));
@@ -280,6 +315,7 @@ node -e '
     const abyg = Object.entries(agg.byGate).map(([g, v]) => `${g}: mean ${v.meanRounds === null ? "-" : v.meanRounds}, first-round ${v.firstRound}/${v.runs}, backstops ${v.backstops}/${v.runs} [${v.rounds.join(", ")}]`).join("; ") || "none";
     console.log(`- Rounds by gate — ${abyg}`);
     console.log(`- Fix-cycle rate: ${agg.fixBriefs}/${agg.tasks} tasks`);
+    if (agg.sharedWorkspaces) console.log(`- Shared workspaces: ${agg.sharedWorkspaces} (counted once in the aggregate)`);
     console.log(`- Tier skips: ${agg.tierSkips}`);
     console.log(`- Degrades by status — ` + (Object.entries(agg.degrades).map(([k, v]) => `${k}: ${v}`).join("; ") || "none"));
     console.log(`- Total pending: ${agg.pending}${agg.oldestPendingDays === null ? "" : `; Oldest pending: ${agg.oldestPendingDays} day(s)`}; Total swept: ${agg.sweptTotal} (${Object.entries(agg.swept).map(([k,v])=>`${k}:${v}`).join(", ") || "-"}); Artifacts skipped: ${agg.skipped}` +

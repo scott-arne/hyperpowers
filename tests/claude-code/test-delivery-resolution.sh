@@ -41,6 +41,15 @@ if [ ! -s "$BLOCK" ]; then
     echo "         (its anchors changed -- update this test with them)"
     exit 1
 fi
+# A sed range whose end pattern never matches prints through end of file, which
+# is non-empty -- so the check above proves only the start anchor. Pin the end
+# too: the block must stop at the loop that closes it, not run on into the rest
+# of the suite.
+if ! tail -n 1 "$BLOCK" | grep -q '^done < <(printf .*"\$worktree_list")$'; then
+    echo "  [FAIL] the resolution block ran past its end anchor in $(basename "$SUBJECT")"
+    echo "         (ends: $(tail -n 1 "$BLOCK"))"
+    exit 1
+fi
 
 # Resolve the block against a fixture. Prints the physical delivery path and
 # the match flag, tab-separated. Physical, because `git worktree list` reports

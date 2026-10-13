@@ -8,7 +8,7 @@ UL="$REPO_ROOT/skills/requesting-code-review/scripts/ungated-ledger"
 FAILURES=0
 pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
-expect() { grep -Fq "$2" <<< "$1" && pass "$3" || fail "$3 (got: $1)"; }
+expect() { grep -Fq "$2" < <(printf '%s\n' "$1") && pass "$3" || fail "$3 (got: $1)"; }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/ul-test.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
@@ -78,7 +78,7 @@ mkdir -p "$lockpath"
 holder=$!
 out="$(bash "$UL" append --class degraded-gate --gate task --base "$base_sha" --head "$head_sha" --status not-ready --note contended "$repo")"
 wait "$holder" 2>/dev/null
-grep -Fq '"ok":true' <<< "$out" && pass "contended append succeeds" || fail "contended append succeeds (got $out)"
+grep -Fq '"ok":true' < <(printf '%s\n' "$out") && pass "contended append succeeds" || fail "contended append succeeds (got $out)"
 [ ! -d "$lockpath" ] && pass "lock released after contended acquire" || fail "lock released after contended acquire"
 
 # stale lock takeover: pre-create an old lockdir with a foreign owner, append must still succeed

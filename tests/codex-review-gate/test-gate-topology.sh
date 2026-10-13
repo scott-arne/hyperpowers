@@ -111,7 +111,7 @@ while IFS='=' read -r caller expected; do
     else
         fail "route exact for: $caller (want [${want% }], got [${actual% }])"
     fi
-done <<<"$ROUTES"
+done < <(printf '%s\n' "$ROUTES")
 
 # The loop above is fed by a redirection, and bash backs a here-string with a
 # temp file. If that redirection fails the body never runs, `failures` never
@@ -175,13 +175,13 @@ for f in $SIBLINGS; do
             [ -z "$line" ] && continue
 
             # Skip if this mention is inside a markdown link: ](<target>)
-            if grep -Fq "]($target)" <<< "$rest"; then
+            if grep -Fq "]($target)" < <(printf '%s\n' "$rest"); then
                 continue
             fi
 
             # Check if this is an allowed exception.
             exception_key="$f:$line:$target"
-            if grep -Fqx "$exception_key" <<< "$EXCEPTIONS"; then
+            if grep -Fqx "$exception_key" < <(printf '%s\n' "$EXCEPTIONS"); then
                 continue
             fi
 
@@ -194,22 +194,22 @@ for f in $SIBLINGS; do
             route_violation=""
             while IFS='=' read -r caller route_files; do
                 # Check if this route includes the mentioning file.
-                if ! grep -qw "$mentioning_base" <<< "$route_files"; then
+                if ! grep -qw "$mentioning_base" < <(printf '%s\n' "$route_files"); then
                     continue
                 fi
 
                 # This route includes the mentioning file. Does it include the mentioned?
-                if ! grep -qw "$mentioned_base" <<< "$route_files"; then
+                if ! grep -qw "$mentioned_base" < <(printf '%s\n' "$route_files"); then
                     route_violation="$caller"
                     break
                 fi
-            done <<<"$ROUTES"
+            done < <(printf '%s\n' "$ROUTES")
 
             if [ -n "$route_violation" ]; then
                 violations="${violations}${f}:${line} mentions ${target} (route '$route_violation' excludes it)
 "
             fi
-        done <<<"$mentions"
+        done < <(printf '%s\n' "$mentions")
     done
 done
 
@@ -242,7 +242,7 @@ while IFS= read -r exception; do
 "
         fi
     fi
-done <<<"$EXCEPTIONS"
+done < <(printf '%s\n' "$EXCEPTIONS")
 
 if [ -n "$stale" ]; then
     fail "exception list current (no stale entries)"

@@ -201,8 +201,10 @@ so nothing the environment sets can overwrite what the build baked in.
 Accepted risk (the human partner, 2026-10-11): the post-build re-read
 compares endpoints, so a source that moves A to B and back to A during the
 build-context snapshot is not detected. Declined with evidence
-(2026-10-11): a forged credentials file cannot overwrite the saved snapshot,
-because the restore runs after the sourcing. Known limit: after a failed
+(2026-10-11): setting `QUORUM_IMAGE_*` in the credentials file cannot change
+the identity the run reports, because the restore runs after the sourcing. A
+sourced file that instead names the shim's own save variable does reach it,
+which is not a narrower hole than sourcing arbitrary shell already is. Known limit: after a failed
 post-build re-read the image tag already points at the new image rather
 than being untagged. `container/bin/quorum` belongs to this item's file set.
 

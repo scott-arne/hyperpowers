@@ -2534,6 +2534,6 @@ against the intended 12, and an emptiness test cannot tell them apart; Task 12
 added a guard requiring the extracted block's last line to match the end
 anchor, and a mutant with the stale pattern fails it. Task 9's implementation
 block puts apostrophes inside comment text in a single-quoted `node -e`
-program (plan lines 1895 and 1903-1905 and 1926); pasted verbatim that ends
+program (plan lines 1895, 1903-1905, 1926 and 1954); pasted verbatim that ends
 the quoting and is a bash syntax error, so the implementer reworded those
 comments and kept the code as written. Neither error reached the shipped code.

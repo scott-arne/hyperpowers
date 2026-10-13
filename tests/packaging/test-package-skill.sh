@@ -38,15 +38,29 @@ else
 fi
 
 # Test 2: unzip -l layout (folder at root, SKILL.md present)
-# Capture listing to avoid SIGPIPE from grep -q with set -o pipefail
-zip_listing=$(unzip -l "$EXPECTED_ZIP")
-if grep -q "hyperpowers/SKILL.md" <<< "$zip_listing"; then
+# Every listing is written to a file before it is searched. A producer piped
+# into `grep -q` dies of SIGPIPE when grep exits on its first match, and under
+# pipefail the `if` then reads the match as no match. A producer that fails is
+# a FAIL of its own, never an empty file a negative check would pass on.
+ZIP_LISTING="$TEST_DIST/zip-listing.txt"
+ZIP_LISTED=0
+if unzip -l "$EXPECTED_ZIP" > "$ZIP_LISTING" 2>&1; then
+  ZIP_LISTED=1
+fi
+if [[ "$ZIP_LISTED" -ne 1 ]]; then
+  fail "unzip -l failed on the built zip $EXPECTED_ZIP: $(head -n 1 "$ZIP_LISTING")"
+elif grep -q "hyperpowers/SKILL.md" "$ZIP_LISTING"; then
   pass "hyperpowers/SKILL.md present in zip"
 else
   fail "hyperpowers/SKILL.md not found in zip"
 fi
 
-if echo "$zip_listing" | grep -vE '(Archive:|Length|----| files$)' | grep -vE '^ *[0-9]+ .* hyperpowers/' | grep -qE '^ *[0-9]+'; then
+OUTSIDE_ENTRIES="$TEST_DIST/outside-entries.txt"
+if [[ "$ZIP_LISTED" -ne 1 ]]; then
+  fail "no listing of $EXPECTED_ZIP to check for entries outside hyperpowers/"
+elif ! awk '!/(Archive:|Length|----| files$)/ && !/^ *[0-9]+ .* hyperpowers\// && /^ *[0-9]+/' "$ZIP_LISTING" > "$OUTSIDE_ENTRIES"; then
+  fail "could not filter the listing of $EXPECTED_ZIP"
+elif [[ -s "$OUTSIDE_ENTRIES" ]]; then
   fail "zip contains entries outside hyperpowers/ folder"
 else
   pass "all zip entries under hyperpowers/ folder"
@@ -110,7 +124,9 @@ else
 fi
 
 # Test 8: NO hooks/, tests/, docs/, .claude-plugin/ paths inside zip
-if unzip -l "$EXPECTED_ZIP" | grep -qE 'hyperpowers/(hooks|tests|docs|\.claude-plugin)/'; then
+if [[ "$ZIP_LISTED" -ne 1 ]]; then
+  fail "no listing of $EXPECTED_ZIP to check for unwanted paths"
+elif grep -qE 'hyperpowers/(hooks|tests|docs|\.claude-plugin)/' "$ZIP_LISTING"; then
   fail "zip contains unwanted paths (hooks/, tests/, docs/, .claude-plugin/)"
 else
   pass "no hooks/, tests/, docs/, or .claude-plugin/ in zip"
@@ -140,7 +156,10 @@ STALE_ZIP="$TEST_DIST_STALE/hyperpowers-$VERSION.zip"
 (cd "$TEST_DIST_STALE" && mkdir -p hyperpowers && echo "stale" > hyperpowers/STALE.md && zip -qr "hyperpowers-$VERSION.zip" hyperpowers)
 export DIST_DIR="$TEST_DIST_STALE"
 bash "$PACKAGE_SCRIPT" > /dev/null 2>&1 || true
-if unzip -l "$STALE_ZIP" | grep -q "hyperpowers/STALE.md"; then
+STALE_LISTING="$TEST_DIST_STALE/listing.txt"
+if ! unzip -l "$STALE_ZIP" > "$STALE_LISTING" 2>&1; then
+  fail "unzip -l failed on the rebuilt stale zip $STALE_ZIP: $(head -n 1 "$STALE_LISTING")"
+elif grep -q "hyperpowers/STALE.md" "$STALE_LISTING"; then
   fail "rebuild did not remove stale zip entry (hyperpowers/STALE.md still present)"
 else
   pass "rebuild removes stale zip entries"
@@ -192,7 +211,9 @@ if ! bash "$PACKAGE_SCRIPT" > /dev/null 2>&1; then
   fail "canary packaging run failed (untracked-file staging unproven)"
 elif [ ! -f "$CANARY_ZIP" ]; then
   fail "canary packaging produced no archive at $CANARY_ZIP"
-elif unzip -l "$CANARY_ZIP" | grep -q ".tmp-untracked-canary"; then
+elif ! unzip -l "$CANARY_ZIP" > "$TEST_DIST_CANARY/listing.txt" 2>&1; then
+  fail "unzip -l failed on the canary zip $CANARY_ZIP: $(head -n 1 "$TEST_DIST_CANARY/listing.txt")"
+elif grep -q ".tmp-untracked-canary" "$TEST_DIST_CANARY/listing.txt"; then
   fail "untracked canary file was included in zip"
 else
   pass "untracked files NOT staged (canary absent)"
@@ -200,7 +221,9 @@ fi
 rm -f "$CANARY"
 
 # Test 15: using-hyperpowers/SKILL.md excluded but references/ kept
-if unzip -l "$EXPECTED_ZIP" | grep -q "hyperpowers/skills/using-hyperpowers/SKILL.md"; then
+if [[ "$ZIP_LISTED" -ne 1 ]]; then
+  fail "no listing of $EXPECTED_ZIP to check the using-hyperpowers exclusion"
+elif grep -q "hyperpowers/skills/using-hyperpowers/SKILL.md" "$ZIP_LISTING"; then
   fail "using-hyperpowers/SKILL.md present (should be excluded, router supersedes it)"
 else
   pass "using-hyperpowers/SKILL.md excluded (router supersedes)"

@@ -186,8 +186,14 @@ fi
 # `cut -f4-` (not -f4) matches the consuming loop's `read` remainder
 # semantics: a replacement containing a literal tab spills into fields 5+,
 # which the loop would still hand to awk but a single-field cut would not see.
+# The replacements are written to a file before they are searched: a producer
+# piped into `grep -q` dies of SIGPIPE on an early match, and under pipefail
+# the `if` read the match as no match. A failed read is a FAIL of its own.
+ref_replacements="$TEST_ROOT/reference-replacements.txt"
 # shellcheck disable=SC1003  # the literal backslash is the pattern, not an escape
-if grep -v '^#' "$REFERENCES" | cut -f4- | grep -qF '\'; then
+if ! grep -v '^#' "$REFERENCES" | cut -f4- > "$ref_replacements"; then
+    fail "the reference replacements could not be read out of $REFERENCES"
+elif grep -qF '\' "$ref_replacements"; then
     fail "no replacement text contains a backslash (awk -v would reinterpret it)"
 else
     pass "no replacement text contains a backslash"
@@ -334,8 +340,11 @@ done
 # unnoticed.
 # `cut -f3-` (not -f3) for the same reason as the references guard above:
 # the consuming loop reads the replacement with remainder semantics.
+post_replacements="$TEST_ROOT/post-split-replacements.txt"
 # shellcheck disable=SC1003  # the literal backslash is the pattern, not an escape
-if grep -v '^#' "$POST_EDITS" | cut -f3- | grep -qF '\'; then
+if ! grep -v '^#' "$POST_EDITS" | cut -f3- > "$post_replacements"; then
+    fail "the post-split replacements could not be read out of $POST_EDITS"
+elif grep -qF '\' "$post_replacements"; then
     fail "no post-split replacement contains a backslash (awk -v would reinterpret it)"
 else
     pass "no post-split replacement contains a backslash"

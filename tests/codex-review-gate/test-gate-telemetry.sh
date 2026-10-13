@@ -404,5 +404,16 @@ if grep -Fq 'Shared workspaces: 2 (counted once in the aggregate)' < <(printf '%
 else
   fail "the fleet section names the shared workspaces"
 fi
+
+# A row counts distinct task identities, not brief files. sdd-dir names one
+# pointer per plan and key, so it never writes this second alias; the case pins
+# the invariant for whatever puts two links to one workspace under one key.
+ln -s "$wsA" "$xplans/2026-09-05-alpha-a1b2c3d4+dupalias"
+xjs2="$(bash "$GT" "$xrepo" --json)"
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===4&&r.fixBriefs===3?0:1)' "$xjs2" \
+  && pass "two links to one workspace under one key count its tasks once (3/4)" || fail "two links to one workspace under one key count its tasks once (3/4)"
+xall2="$(bash "$GT" --all --json)"
+node -e 'const a=JSON.parse(process.argv[1]).aggregate,b=JSON.parse(process.argv[2]).aggregate;process.exit(a.tasks===b.tasks&&a.fixBriefs===b.fixBriefs&&a.sharedWorkspaces===b.sharedWorkspaces?0:1)' "$xall" "$xall2" \
+  && pass "a duplicate alias leaves the fleet tasks, fix briefs, and shared workspaces unchanged" || fail "a duplicate alias leaves the fleet tasks, fix briefs, and shared workspaces unchanged"
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

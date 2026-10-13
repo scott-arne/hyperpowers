@@ -145,7 +145,9 @@ node -e '
     // Filtering the two kinds apart let a fix brief whose task brief predated
     // --since raise the numerator with nothing under it — "Fix-cycle rate:
     // 1/0 tasks". A task is keyed by (workspace, number) because two plans
-    // each have a Task 3 and those are two tasks, not one.
+    // each have a Task 3 and those are two tasks, not one. The row counts those
+    // distinct identities, not brief files, so two links to one workspace add
+    // nothing.
     //
     // reached holds every workspace this row resolved, empty or not, so the
     // shared-workspace count of the fleet is about reach, not about task briefs.
@@ -164,11 +166,12 @@ node -e '
           let st; try { st = fs.statSync(path.join(ws, f)); } catch (e) { continue; }
           if (!inWindow(st.mtimeMs)) continue;
         }
-        if (brief) { r.tasks++; cohort.add(real + "\u0000" + brief[1]); }
+        if (brief) cohort.add(real + "\u0000" + brief[1]);
         if (m) fixed.add(real + "\u0000" + m[1]);
         observed++;
       }
     }
+    r.tasks = cohort.size;
     for (const id of fixed) if (cohort.has(id)) r.fixBriefs++;
     sddSets.set(r, { cohort, fixed, reached });
     // Gate runs: rounds + backstops from gate-round.json, bucketed by gate

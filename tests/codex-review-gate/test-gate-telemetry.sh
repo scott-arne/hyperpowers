@@ -396,6 +396,8 @@ node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===4&&
 xall="$(bash "$GT" --all --json)"
 node -e 'const j=JSON.parse(process.argv[1]);const t=(k)=>(j.repos.find((r)=>r.key===k)||{tasks:-1}).tasks;const sum=j.repos.reduce((a,r)=>a+r.tasks,0);process.exit(t(process.argv[2])===6&&t(process.argv[3])===4&&j.aggregate.tasks===sum-4&&j.aggregate.sharedWorkspaces===2?0:1)' "$xall" "$key5" "$key9" \
   && pass "--all lists the shared workspaces in both rows, counts their tasks once, and counts the empty one as shared" || fail "--all lists the shared workspaces in both rows, counts their tasks once, and counts the empty one as shared"
+node -e 'const j=JSON.parse(process.argv[1]);const fsum=j.repos.reduce((a,r)=>a+r.fixBriefs,0);process.exit(j.aggregate.fixBriefs===fsum-3?0:1)' "$xall" \
+  && pass "--all counts a shared workspace fix briefs once" || fail "--all counts a shared workspace fix briefs once"
 xmd="$(bash "$GT" --all)"
 if grep -Fq 'Shared workspaces: 2 (counted once in the aggregate)' < <(printf '%s\n' "$xmd"); then
   pass "the fleet section names the shared workspaces"

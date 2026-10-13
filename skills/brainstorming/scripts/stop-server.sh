@@ -31,13 +31,19 @@ read_expected_server_id() {
   printf '%s\n' "$id"
 }
 
-# kill -0 also fails for a live process this shell may not signal (a sandbox
-# refuses signals to processes it did not start), so EPERM still means the
-# process exists. Only the message tells the two failures apart.
+# A pid file holds a positive decimal pid; anything else is not a process.
+# bash rejects garbage, an empty string or an out-of-range number with a usage
+# error rather than ESRCH, and `kill -0 0` succeeds by signalling the caller's
+# own process group. Of kill -0's failures only "No such process" means gone:
+# EPERM is a live process this shell may not signal (a sandbox refuses signals
+# to processes it did not start), and a failure nobody listed is taken as
+# alive too, so the session files are never discarded on a guess.
 process_exists() {
-  local err
+  local err pid_re='^[1-9][0-9]{0,9}$'
+  [[ "$1" =~ $pid_re ]] || return 1
+  (( 10#$1 <= 2147483647 )) || return 1
   err="$(LC_ALL=C; kill -0 "$1" 2>&1)" && return 0
-  [[ "$err" == *"not permitted"* ]]
+  [[ "$err" != *"No such process"* ]]
 }
 
 command_line_for_pid() {

@@ -283,5 +283,60 @@ else
   fi
 fi
 
+# --- Test 10: a kill -0 failure nobody listed means alive, not gone ---
+# Only "No such process" means the server is gone. Reading any other failure
+# as gone discarded the session files, the only handle on a server that may
+# still run. A fake ps confirms the identity so the stop loop runs; kill is an
+# exported function, which bash runs in place of the builtin.
+if [[ -r "/proc/$$/cmdline" ]]; then
+  skip "an unrecognized kill -0 failure keeps the session files" "/proc supplies the command line, so the fake ps is never run"
+else
+  SESS="$(mktemp -d)"; track_dir "$SESS"; mkdir -p "$SESS/state"
+  SID="$(new_server_id)"
+  printf '%s\n' "$SID" > "$SESS/state/server-instance-id"
+  printf '%s\n' '{"type":"server-started"}' > "$SESS/state/server-info"
+  ( exec -a "node server.cjs --brainstorm-server-id=$SID" sleep 600 ) &
+  ODD=$!
+  track_pid "$ODD"
+  disown "$ODD" 2>/dev/null || true
+  echo "$ODD" > "$SESS/state/server.pid"
+  OURS_PS="$(mktemp -d)"; track_dir "$OURS_PS"
+  printf '#!/bin/sh\necho "node server.cjs --brainstorm-server-id=%s"\n' "$SID" > "$OURS_PS/ps"
+  chmod +x "$OURS_PS/ps"
+  OUT="$(
+    kill() { echo "kill: ($*) - Unknown error: 999" >&2; return 1; }
+    export -f kill
+    PATH="$OURS_PS:$PATH" "$STOP" "$SESS"
+  )"; RC=$?
+  if [[ "$OUT" == *stale_pid* || "$OUT" == *'"stopped"'* || "$RC" -eq 0 ]]; then
+    bad "an unrecognized kill -0 failure must not read as gone" "rc=$RC $OUT"
+  elif [[ ! -f "$SESS/state/server.pid" || ! -f "$SESS/state/server-instance-id" \
+          || ! -f "$SESS/state/server-info" || -f "$SESS/state/server-stopped" ]]; then
+    bad "an unrecognized kill -0 failure must keep the session files" "$(ls "$SESS/state")"
+  else
+    ok "an unrecognized kill -0 failure keeps the session files"
+  fi
+fi
+
+# --- Test 11: a pid file that does not hold a pid is stale ---
+# kill -0 rejects garbage, an empty string and the out-of-range numbers with a
+# usage error, not ESRCH, and `kill -0 0` succeeds by signalling this shell's
+# own process group; none names a server. 2147483647 is a well-formed pid no
+# process holds, so it reaches kill -0 and fails with "No such process".
+for BAD_PID in garbage "" -5 0 2147483648 99999999999 2147483647; do
+  SESS="$(mktemp -d)"; track_dir "$SESS"; mkdir -p "$SESS/state"
+  printf '%s\n' "$(new_server_id)" > "$SESS/state/server-instance-id"
+  printf '%s\n' "$BAD_PID" > "$SESS/state/server.pid"
+  OUT="$("$STOP" "$SESS")"; RC=$?
+  if [[ "$OUT" != *stale_pid* || "$RC" -ne 0 ]]; then
+    bad "pid file holding '$BAD_PID' ends stale_pid" "rc=$RC $OUT"
+  elif [[ -f "$SESS/state/server.pid" || -f "$SESS/state/server-instance-id" ]] \
+       || ! grep -q '"reason":"stale_pid"' "$SESS/state/server-stopped"; then
+    bad "pid file holding '$BAD_PID' removes the pid files and records stale_pid" "$(ls "$SESS/state")"
+  else
+    ok "pid file holding '$BAD_PID' ends stale_pid"
+  fi
+done
+
 echo "--- Results: $PASS passed, $FAIL failed, $SKIP skipped ---"
 [ "$FAIL" -eq 0 ] || exit 1

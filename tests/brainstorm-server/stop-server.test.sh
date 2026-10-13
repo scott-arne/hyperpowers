@@ -320,9 +320,10 @@ fi
 
 # --- Test 11: a pid file that does not hold a pid is stale ---
 # kill -0 rejects garbage, an empty string and the out-of-range numbers with a
-# usage error, not ESRCH, and `kill -0 0` succeeds by signalling this shell's
-# own process group; none names a server. 2147483647 is a well-formed pid no
-# process holds, so it reaches kill -0 and fails with "No such process".
+# usage error, not ESRCH; `kill -0 0` succeeds by signalling this shell's own
+# process group, and a negative number names a process group. None of them
+# names a server. 2147483647 is a well-formed pid no process holds, so it
+# reaches kill -0 and fails with "No such process".
 for BAD_PID in garbage "" -5 0 2147483648 99999999999 2147483647; do
   SESS="$(mktemp -d)"; track_dir "$SESS"; mkdir -p "$SESS/state"
   printf '%s\n' "$(new_server_id)" > "$SESS/state/server-instance-id"

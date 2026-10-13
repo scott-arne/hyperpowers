@@ -33,8 +33,9 @@ read_expected_server_id() {
 
 # A pid file holds a positive decimal pid; anything else is not a process.
 # bash rejects garbage, an empty string or an out-of-range number with a usage
-# error rather than ESRCH, and `kill -0 0` succeeds by signalling the caller's
-# own process group. Of kill -0's failures only "No such process" means gone:
+# error rather than ESRCH; `kill -0 0` succeeds by signalling the caller's own
+# process group, and a negative number names a process group rather than a
+# process. Of kill -0's failures only "No such process" means gone:
 # EPERM is a live process this shell may not signal (a sandbox refuses signals
 # to processes it did not start), and a failure nobody listed is taken as
 # alive too, so the session files are never discarded on a guess.

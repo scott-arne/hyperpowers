@@ -79,7 +79,11 @@ tests_shell_files() { # every tracked shell file under tests/: a .sh name or a s
             *)
                 first=""
                 if ! IFS= read -r first < "$REPO_ROOT/$f" 2>/dev/null; then
-                    [ -s "$REPO_ROOT/$f" ] && { fail "cannot read tracked file $f"; continue; }
+                    # This function runs in a subshell (the caller reads it
+                    # through a redirection), so fail() here would print onto
+                    # the path list and lose its count. Emit a sentinel the
+                    # caller turns into the failure.
+                    [ -s "$REPO_ROOT/$f" ] && { printf 'UNREADABLE\t%s\n' "$f"; continue; }
                 fi
                 if [[ "$first" =~ $shebang_re ]]; then
                     printf '%s\n' "$REPO_ROOT/$f"
@@ -90,7 +94,12 @@ tests_shell_files() { # every tracked shell file under tests/: a .sh name or a s
 }
 
 test_files=()
-while IFS= read -r f; do test_files+=("$f"); done < <(tests_shell_files)
+while IFS= read -r f; do
+    case "$f" in
+        UNREADABLE$'\t'*) fail "cannot read tracked file ${f#UNREADABLE$'\t'}" ;;
+        *) test_files+=("$f") ;;
+    esac
+done < <(tests_shell_files)
 tests_offenders=""
 if [ "${#test_files[@]}" -gt 0 ]; then
     tests_offenders="$(herestring_offenders "${test_files[@]}")"

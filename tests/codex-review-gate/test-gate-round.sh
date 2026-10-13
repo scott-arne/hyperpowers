@@ -8,7 +8,7 @@ GR="$REPO_ROOT/skills/requesting-code-review/scripts/gate-round"
 FAILURES=0
 pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
-expect() { grep -Fq -- "$2" <<< "$1" && pass "$3" || fail "$3 (got: $1)"; }
+expect() { grep -Fq -- "$2" < <(printf '%s\n' "$1") && pass "$3" || fail "$3 (got: $1)"; }
 # A usage error must exit exactly 2, never merely nonzero. Branching on a bare
 # command status also accepts 1, 126, 127 and death by signal, so it cannot
 # tell the usage contract from a script that died on a typo before it ever

@@ -10,7 +10,7 @@ UL="$REPO_ROOT/skills/requesting-code-review/scripts/ungated-ledger"
 FAILURES=0
 pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
-expect() { grep -Fq "$2" <<< "$1" && pass "$3" || fail "$3 (missing: $2)"; }
+expect() { grep -Fq "$2" < <(printf '%s\n' "$1") && pass "$3" || fail "$3 (missing: $2)"; }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/gt-test.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
@@ -90,21 +90,21 @@ printf '{"round":1,"ceiling":4,"gate":"spec"}\n' > "$XDG_CACHE_HOME/hyperpowers/
 
 # Degrade metric purity: the class-3 event carries status "incomplete" but
 # must NOT appear under Degrades (preflight tokens only).
-grep -q 'incomplete: 1' <<< "$md" && fail "class-3 status stays out of Degrades" || pass "class-3 status stays out of Degrades"
+grep -q 'incomplete: 1' < <(printf '%s\n' "$md") && fail "class-3 status stays out of Degrades" || pass "class-3 status stays out of Degrades"
 
 alljs="$(bash "$GT" --json --all)"
-grep -Fq "$key" <<< "$alljs" && pass "--all covers the fixture key" || fail "--all covers the fixture key"
+grep -Fq "$key" < <(printf '%s\n' "$alljs") && pass "--all covers the fixture key" || fail "--all covers the fixture key"
 printf '%s' "$alljs" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));const a=d.aggregate;if(d.repos.length!==2||a.runs!==3||a.backstops!==1||a.pending!==1||a.oldestPendingDays!==0||a.swept.approved!==1||a.byGate.spec.runs!==1||a.byGate.final.backstops!==1)process.exit(1)' \
   && pass "--all aggregate sums incl. byGate/age/swept-by-verdict" || fail "--all aggregate sums incl. byGate/age/swept-by-verdict"
 printf '%s' "$alljs" | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"));if(d.aggregate.dossiers!==1)process.exit(1)' \
   && pass "--all aggregate sums dossiers" || fail "--all aggregate sums dossiers"
 allmd="$(bash "$GT" --all)"
-grep -Fq 'Fleet aggregate (2 repos)' <<< "$allmd" && pass "--all markdown has fleet section" || fail "--all markdown has fleet section"
-grep -Fq 'Backstop rate: 1/3' <<< "$allmd" && pass "fleet backstop rate combined" || fail "fleet backstop rate combined"
-grep -Fq 'spec: mean 1, first-round 1/1, backstops 0/1 [1]' <<< "$allmd" && pass "fleet rounds-by-gate present" || fail "fleet rounds-by-gate present"
-grep -Fq 'Oldest pending: 0 day(s)' <<< "$allmd" && pass "fleet oldest-pending present" || fail "fleet oldest-pending present"
-grep -Fq '(approved:1)' <<< "$allmd" && pass "fleet swept-by-verdict present" || fail "fleet swept-by-verdict present"
-grep -Fq 'Dossiers: 1/2' <<< "$allmd" && pass "fleet dossier count present" || fail "fleet dossier count present"
+grep -Fq 'Fleet aggregate (2 repos)' < <(printf '%s\n' "$allmd") && pass "--all markdown has fleet section" || fail "--all markdown has fleet section"
+grep -Fq 'Backstop rate: 1/3' < <(printf '%s\n' "$allmd") && pass "fleet backstop rate combined" || fail "fleet backstop rate combined"
+grep -Fq 'spec: mean 1, first-round 1/1, backstops 0/1 [1]' < <(printf '%s\n' "$allmd") && pass "fleet rounds-by-gate present" || fail "fleet rounds-by-gate present"
+grep -Fq 'Oldest pending: 0 day(s)' < <(printf '%s\n' "$allmd") && pass "fleet oldest-pending present" || fail "fleet oldest-pending present"
+grep -Fq '(approved:1)' < <(printf '%s\n' "$allmd") && pass "fleet swept-by-verdict present" || fail "fleet swept-by-verdict present"
+grep -Fq 'Dossiers: 1/2' < <(printf '%s\n' "$allmd") && pass "fleet dossier count present" || fail "fleet dossier count present"
 
 bash "$GT" "$work" >/dev/null 2>&1 && fail "non-repo without --all exits 2" || pass "non-repo without --all exits 2"
 
@@ -159,7 +159,7 @@ node -e 'const d=JSON.parse(process.argv[1]);process.exit(d.repos[0].byGate.task
 for bad in not-a-date 09/05/2026 2026 "2025-01-01 00:00" 2025-02-30 2025-02-29 2025-04-31 2025-13-01 2025-01-01T25:00; do
   stderr="$(bash "$GT" --since "$bad" "$churnrepo" 2>&1 >/dev/null)"
   rc=$?
-  if [ "$rc" -eq 2 ] && grep -q '\--since' <<< "$stderr"; then
+  if [ "$rc" -eq 2 ] && grep -q '\--since' < <(printf '%s\n' "$stderr"); then
     pass "--since rejects '$bad' (exit 2, diagnostic)"
   else
     fail "--since rejects '$bad' (exit 2, diagnostic)"
@@ -167,7 +167,7 @@ for bad in not-a-date 09/05/2026 2026 "2025-01-01 00:00" 2025-02-30 2025-02-29 2
 done
 stderr="$(bash "$GT" "$churnrepo" --since 2>&1 >/dev/null)"
 rc=$?
-[ "$rc" -eq 2 ] && grep -q '\--since' <<< "$stderr" && pass "--since without an operand exits 2 with diagnostic" || fail "--since without an operand exits 2 with diagnostic"
+[ "$rc" -eq 2 ] && grep -q '\--since' < <(printf '%s\n' "$stderr") && pass "--since without an operand exits 2 with diagnostic" || fail "--since without an operand exits 2 with diagnostic"
 
 # --until bounds a cohort from above: [since, until) creates disjoint windows.
 untiljs="$(bash "$GT" --until 2025-01-01T00:00:00Z "$churnrepo" --json)"
@@ -178,7 +178,7 @@ allcount="$(bash "$GT" "$churnrepo" --json | node -e 'const d=JSON.parse(require
 [ "$((untilcount + sincecount))" -eq "$allcount" ] && pass "unbounded count equals --until count plus --since count (disjoint split)" || fail "unbounded count equals --until count plus --since count (disjoint split)"
 stderr="$(bash "$GT" --until 09/05/2026 "$churnrepo" 2>&1 >/dev/null)"
 rc=$?
-[ "$rc" -eq 2 ] && grep -q '\--until' <<< "$stderr" && pass "--until rejects non-ISO format (exit 2, diagnostic)" || fail "--until rejects non-ISO format (exit 2, diagnostic)"
+[ "$rc" -eq 2 ] && grep -q '\--until' < <(printf '%s\n' "$stderr") && pass "--until rejects non-ISO format (exit 2, diagnostic)" || fail "--until rejects non-ISO format (exit 2, diagnostic)"
 stderr="$(bash "$GT" "$churnrepo" --until 2>&1 >/dev/null)"
 rc=$?
 [ "$rc" -eq 2 ] && pass "--until without an operand exits 2" || fail "--until without an operand exits 2"
@@ -262,7 +262,7 @@ winmd="$(bash "$GT" --since 2025-01-01 --until "$edge" "$wrepo")"
 expect "$winmd" "Unwindowable events" "the unwindowable counter is visible in the markdown report"
 expect "$winmd" "Fix-cycle rate: 1/1" "windowed markdown reports the windowed fix-cycle rate"
 wholemd="$(bash "$GT" "$wrepo")"
-grep -q 'Unwindowable' <<< "$wholemd" && fail "an unwindowed report adds no unwindowable line" || pass "an unwindowed report adds no unwindowable line"
+grep -q 'Unwindowable' < <(printf '%s\n' "$wholemd") && fail "an unwindowed report adds no unwindowable line" || pass "an unwindowed report adds no unwindowable line"
 
 
 # --- The SDD walk enters plan workspaces, and the window cuts a task cohort ---
@@ -343,7 +343,7 @@ ojs="$(bash "$GT" --since 2025-01-01 --until 2026-01-01 "$orepo" --json)"
 node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===0&&r.fixBriefs===0?0:1)' "$ojs" \
   && pass "a fix brief whose task brief predates --since counts for neither side" || fail "a fix brief whose task brief predates --since counts for neither side"
 omd="$(bash "$GT" --since 2025-01-01 --until 2026-01-01 "$orepo")"
-grep -q 'Fix-cycle rate: 1/0' <<< "$omd" && fail "no fix-cycle rate is reported over an empty cohort" || pass "no fix-cycle rate is reported over an empty cohort"
+grep -q 'Fix-cycle rate: 1/0' < <(printf '%s\n' "$omd") && fail "no fix-cycle rate is reported over an empty cohort" || pass "no fix-cycle rate is reported over an empty cohort"
 onj="$(bash "$GT" "$orepo" --json)"
 node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===1&&r.fixBriefs===1?0:1)' "$onj" \
   && pass "the same cache is unchanged without --since/--until (1/1)" || fail "the same cache is unchanged without --since/--until (1/1)"

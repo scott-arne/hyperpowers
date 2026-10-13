@@ -43,7 +43,7 @@ out="$(HYPERPOWERS_CODEX_STATE_ROOT="$root" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash
 # stdout is still the hook's JSON context (unchanged contract)
 printf '%s' "$out" | node -e 'JSON.parse(require("fs").readFileSync(0,"utf8"))' 2>/dev/null \
   && pass "hook stdout is still valid JSON" || fail "hook stdout is still valid JSON"
-grep -q "hookSpecificOutput" <<< "$out" && pass "bootstrap context still emitted" || fail "bootstrap context still emitted"
+grep -q "hookSpecificOutput" < <(printf '%s\n' "$out") && pass "bootstrap context still emitted" || fail "bootstrap context still emitted"
 
 [ ! -f "$root/repoA-0000000000000000/broker.json" ] && pass "dead broker quarantined" || fail "dead broker quarantined"
 ls "$root/repoA-0000000000000000"/broker.json.stale-* >/dev/null 2>&1 && pass "quarantine file created" || fail "quarantine file created"
@@ -54,7 +54,7 @@ ls "$root/repoA-0000000000000000"/broker.json.stale-* >/dev/null 2>&1 && pass "q
 
 # absent state root: hook still works
 out2="$(HYPERPOWERS_CODEX_STATE_ROOT="$work/absent" HYPERPOWERS_BROKER_CMD_PATTERN='bash|test-broker-janitor' CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK" </dev/null 2>/dev/null)"
-grep -q "hookSpecificOutput" <<< "$out2" && pass "no-op when root absent" || fail "no-op when root absent"
+grep -q "hookSpecificOutput" < <(printf '%s\n' "$out2") && pass "no-op when root absent" || fail "no-op when root absent"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

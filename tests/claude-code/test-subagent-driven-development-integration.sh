@@ -280,7 +280,7 @@ while IFS= read -r candidate; do
         delivery_found=true
         break
     fi
-done <<<"$worktree_list"
+done < <(printf '%s\n' "$worktree_list")
 
 echo "Verifying delivery in: $DELIVERY_DIR"
 if [ "$delivery_found" = false ]; then

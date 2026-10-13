@@ -373,7 +373,7 @@ for skill in "$SKILLS_ROOT"/*/SKILL.md; do
             else
                 pass "$dir: $key is a single-line plain or quoted scalar"
             fi
-        done <<< "$others"
+        done < <(printf '%s\n' "$others")
     fi
 
     # Count characters, not bytes, whatever the locale: in valid UTF-8 every

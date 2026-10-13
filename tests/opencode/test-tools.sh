@@ -43,7 +43,7 @@ run_opencode() {
     if [ $exit_code -ne 0 ]; then
         echo "  [FAIL] OpenCode returned non-zero exit code: $exit_code"
         echo "  Output was:"
-        awk 'NR <= 80 { print }' <<<"$command_output"
+        awk 'NR <= 80 { print }' < <(printf '%s\n' "$command_output")
         exit 1
     fi
 
@@ -61,7 +61,7 @@ assert_contains() {
         echo "  [FAIL] $message"
         echo "  Expected to find: $needle"
         echo "  Output was:"
-        awk 'NR <= 80 { print }' <<<"$output"
+        awk 'NR <= 80 { print }' < <(printf '%s\n' "$output")
         exit 1
     fi
 }

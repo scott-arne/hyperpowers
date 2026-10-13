@@ -27,7 +27,7 @@ assert_contains() {
   local needle="$2"
   local description="$3"
 
-  if grep -Fq -- "$needle" <<< "$haystack"; then
+  if grep -Fq -- "$needle" < <(printf '%s\n' "$haystack"); then
     pass "$description"
   else
     fail "$description"
@@ -42,7 +42,7 @@ assert_not_contains() {
   local needle="$2"
   local description="$3"
 
-  if grep -Fq -- "$needle" <<< "$haystack"; then
+  if grep -Fq -- "$needle" < <(printf '%s\n' "$haystack"); then
     fail "$description"
     echo "    did not expect to find: $needle"
     echo "    in:"

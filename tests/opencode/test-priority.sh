@@ -119,7 +119,7 @@ run_opencode() {
     if [ $exit_code -ne 0 ]; then
         echo "  [FAIL] OpenCode returned non-zero exit code: $exit_code"
         echo "  Output was:"
-        awk 'NR <= 80 { print }' <<<"$command_output"
+        awk 'NR <= 80 { print }' < <(printf '%s\n' "$command_output")
         exit 1
     fi
 
@@ -137,13 +137,13 @@ assert_contains() {
         echo "  [FAIL] $message"
         echo "  Expected to find: $needle"
         echo "  Output was:"
-        awk 'NR <= 80 { print }' <<<"$output"
+        awk 'NR <= 80 { print }' < <(printf '%s\n' "$output")
         exit 1
     fi
 }
 
 first_skill_tool_event() {
-    awk '/"type":"tool_use"/ && /"tool":"skill"/ { print; exit }' <<<"$1"
+    awk '/"type":"tool_use"/ && /"tool":"skill"/ { print; exit }' < <(printf '%s\n' "$1")
 }
 
 describe_priority_result() {
@@ -164,7 +164,7 @@ describe_priority_result() {
     else
         echo "  [FAIL] Could not verify priority marker in native skill tool output"
         echo "  Output was:"
-        awk 'NR <= 80 { print }' <<<"$output"
+        awk 'NR <= 80 { print }' < <(printf '%s\n' "$output")
         exit 1
     fi
 }

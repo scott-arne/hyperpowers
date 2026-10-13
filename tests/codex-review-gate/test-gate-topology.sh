@@ -81,7 +81,7 @@ done
 BT='`'
 
 # 4. Every caller's route names exactly the files that caller needs — no name
-#    missing, no name extra. Fed by here-string, not a pipe: a piped `while`
+#    missing, no name extra. Fed by a redirection, not a pipe: a piped `while`
 #    runs in a subshell, so every failure it counted would be discarded.
 #
 #    Neither a row's existence nor a non-empty cell is the property. Check 5
@@ -113,11 +113,13 @@ while IFS='=' read -r caller expected; do
     fi
 done < <(printf '%s\n' "$ROUTES")
 
-# The loop above is fed by a redirection, and bash backs a here-string with a
-# temp file. If that redirection fails the body never runs, `failures` never
-# moves, and the suite prints PASSED having checked nothing — Codex hit exactly
-# that in a sandbox whose temp dir was unwritable. Check 5 carries this guard
-# already; check 4 was missing it.
+# The loop above is fed by a redirection. If that redirection fails the body
+# never runs, `failures` never moves, and the suite prints PASSED having
+# checked nothing — Codex hit exactly that when the loop was a here-string,
+# which bash backs with a temp file, in a sandbox whose temp dir was
+# unwritable. Process substitution removes that particular failure, but an
+# unopenable redirection still leaves the loop at zero iterations, so the
+# guard stays. Check 5 carries it already; check 4 was missing it.
 if [ "$callers_checked" -eq 7 ]; then
     pass "all 7 caller routes checked"
 else

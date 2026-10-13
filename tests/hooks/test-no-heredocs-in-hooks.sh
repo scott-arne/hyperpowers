@@ -67,19 +67,26 @@ herestring_offenders() { # <file>... -> "<file>:<line>" for each offending line
     awk -v hs="$hs" 'index($0, hs) > 0 && $0 !~ /^[[:space:]]*#/ { print FILENAME ":" FNR }' "$@"
 }
 tests_shell_files() { # every tracked shell file under tests/: a .sh name or a sh/bash shebang
+    # -z, because git C-quotes a path with non-ASCII or control characters
+    # (core.quotePath defaults to true): "tests/caf\303\251.sh" matches no *.sh
+    # pattern and opens as no file, so a quoted name would be dropped silently
+    # -- the one thing a fence must never do. A path that cannot be read is a
+    # failure of its own, not a skip.
     local f first shebang_re='^#!.*(/|[[:space:]])(ba)?sh([[:space:]]|$)'
-    while IFS= read -r f; do
+    while IFS= read -r -d '' f; do
         case "$f" in
             *.sh) printf '%s\n' "$REPO_ROOT/$f" ;;
             *)
                 first=""
-                IFS= read -r first < "$REPO_ROOT/$f" 2>/dev/null || true
+                if ! IFS= read -r first < "$REPO_ROOT/$f" 2>/dev/null; then
+                    [ -s "$REPO_ROOT/$f" ] && { fail "cannot read tracked file $f"; continue; }
+                fi
                 if [[ "$first" =~ $shebang_re ]]; then
                     printf '%s\n' "$REPO_ROOT/$f"
                 fi
                 ;;
         esac
-    done < <(git -C "$REPO_ROOT" ls-files -- tests)
+    done < <(git -C "$REPO_ROOT" ls-files -z -- tests)
 }
 
 test_files=()

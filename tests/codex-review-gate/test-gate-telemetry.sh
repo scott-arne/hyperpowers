@@ -361,5 +361,46 @@ touch -t 202701010000 "$sddg/task-2-codex-fix-brief.md"
 gjs="$(bash "$GT" --since 2025-01-01 --until 2026-01-01 "$lagrepo" --json)"
 node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===1&&r.fixBriefs===0?0:1)' "$gjs" \
   && pass "a fix brief after --until leaves its in-cohort task counted alone (0/1)" || fail "a fix brief after --until leaves its in-cohort task counted alone (0/1)"
+
+# --- A cross-repo plan's pointer: rows follow it, the fleet total counts once ---
+# sdd-dir keeps a cross-repo plan's one workspace under the plan repository's
+# key and leaves a symlink under the executing repository's key. That row
+# counts the tasks behind the pointer; under --all the workspace sits in both
+# rows and once in the fleet total.
+pre_all="$(bash "$GT" --all --json)"
+node -e 'const a=JSON.parse(process.argv[1]).aggregate;process.exit(a.sharedWorkspaces===0?0:1)' "$pre_all" \
+  && pass "a cache with no pointers reports sharedWorkspaces 0" || fail "a cache with no pointers reports sharedWorkspaces 0"
+pre_md="$(bash "$GT" --all)"
+if grep -Fq 'Shared workspaces' < <(printf '%s\n' "$pre_md"); then
+  fail "no shared-workspace line without pointers"
+else
+  pass "no shared-workspace line without pointers"
+fi
+xrepo="$work/xrepo"; mkdir -p "$xrepo"; git -C "$xrepo" init -q
+git -C "$xrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+key9="$(printf '%s' "$(git -C "$xrepo" rev-parse --absolute-git-dir)" | git -C "$xrepo" hash-object --stdin)"
+xplans="$XDG_CACHE_HOME/hyperpowers/sdd/$key9/plans"; mkdir -p "$xplans"
+# A shared workspace with no task brief yet still counts as shared: the spec
+# counts workspaces reached from more than one key.
+wsE="$sddp/plans/2026-09-05-empty-f6a7b8c9"; mkdir -p "$wsE"
+ln -s "$wsA" "$xplans/2026-09-05-alpha-a1b2c3d4+${key5:0:8}"
+ln -s "$wsE" "$xplans/2026-09-05-empty-f6a7b8c9+${key5:0:8}"
+ln -s "$work/no-such-workspace" "$xplans/2026-09-05-gone-e5f6a7b8+${key5:0:8}"
+if xjs="$(bash "$GT" "$xrepo" --json)"; then
+  pass "a dangling pointer does not fail the report"
+else
+  fail "a dangling pointer does not fail the report"
+fi
+node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===4&&r.fixBriefs===3?0:1)' "$xjs" \
+  && pass "a pointer-only key reports the tasks of the workspace it points to (3/4)" || fail "a pointer-only key reports the tasks of the workspace it points to (3/4)"
+xall="$(bash "$GT" --all --json)"
+node -e 'const j=JSON.parse(process.argv[1]);const t=(k)=>(j.repos.find((r)=>r.key===k)||{tasks:-1}).tasks;const sum=j.repos.reduce((a,r)=>a+r.tasks,0);process.exit(t(process.argv[2])===6&&t(process.argv[3])===4&&j.aggregate.tasks===sum-4&&j.aggregate.sharedWorkspaces===2?0:1)' "$xall" "$key5" "$key9" \
+  && pass "--all lists the shared workspaces in both rows, counts their tasks once, and counts the empty one as shared" || fail "--all lists the shared workspaces in both rows, counts their tasks once, and counts the empty one as shared"
+xmd="$(bash "$GT" --all)"
+if grep -Fq 'Shared workspaces: 2 (counted once in the aggregate)' < <(printf '%s\n' "$xmd"); then
+  pass "the fleet section names the shared workspaces"
+else
+  fail "the fleet section names the shared workspaces"
+fi
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

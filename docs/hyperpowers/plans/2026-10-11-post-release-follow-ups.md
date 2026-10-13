@@ -2523,3 +2523,17 @@ git commit -m "docs(hyperpowers): correct the release-hygiene plan's checks that
 4. Finishing, hyperpowers: the offline set (`docs/testing.md`) on the branch, each suite as its own command through `run-suites.sh`, with the brainstorm-server chain (`cd tests/brainstorm-server && npm test`) run three times; then the finishing skill.
 5. Memory: update `release-hygiene-6-16-0.md` with the merged commits, and record that sub-project 2 (agent write isolation) and the `tests/` heredocs remain.
 6. Ask the human partner whether hyperpowers ships 6.16.1 for Tasks 8 and 9.
+
+**Correction (2026-10-13).** Two of this plan's own claims were wrong, and
+execution caught both. Task 12 Step 2 says the test's existing empty-block
+failure (lines 39-43 of `test-delivery-resolution.sh`) proves the new `sed`
+end pattern matches. It does not: a range whose end pattern never matches
+prints through end of file, which is non-empty, so that check proves only the
+start anchor. On the converted subject the stale pattern yields 201 lines
+against the intended 12, and an emptiness test cannot tell them apart; Task 12
+added a guard requiring the extracted block's last line to match the end
+anchor, and a mutant with the stale pattern fails it. Task 9's implementation
+block puts apostrophes inside comment text in a single-quoted `node -e`
+program (plan lines 1895 and 1903-1905 and 1926); pasted verbatim that ends
+the quoting and is a bash syntax error, so the implementer reworded those
+comments and kept the code as written. Neither error reached the shipped code.

@@ -189,6 +189,23 @@ reported either way.
 
 Must not change: host-run provenance values and the host `show` line.
 
+Amended during the task's review gate (the human partner's decisions of
+2026-10-11). The build records the source state, so a source that changes
+while the build runs would bake a commit the image does not hold: `build`
+re-reads the commit and the clean flag after the build and dies naming what
+changed, and `up` refuses an env file that mentions `QUORUM_IMAGE_*` rather
+than let a caller forge the identity the image reports. Inside the
+container, `container/bin/quorum` saves those four variables with
+`declare -p` before sourcing the environment and restores them afterwards,
+so nothing the environment sets can overwrite what the build baked in.
+Accepted risk (the human partner, 2026-10-11): the post-build re-read
+compares endpoints, so a source that moves A to B and back to A during the
+build-context snapshot is not detected. Declined with evidence
+(2026-10-11): a forged credentials file cannot overwrite the saved snapshot,
+because the restore runs after the sourcing. Known limit: after a failed
+post-build re-read the image tag already points at the new image rather
+than being untagged. `container/bin/quorum` belongs to this item's file set.
+
 #### 2. The shim parser covers `cd -P`, `cd --`, `pushd` and `cd X;exec`
 
 `shimTarget` in `src/runner/provenance.ts` splits each line after the
@@ -566,9 +583,15 @@ The `sed` pattern is half of a coupled pair.
 `tests/claude-code/test-delivery-resolution.sh` extracts its test block
 from `tests/claude-code/test-subagent-driven-development-integration.sh`
 with a `sed` range that ends at the literal line
-`done <<<"$worktree_list"` (line 283 there). The two change together, and
-the extraction's existing empty-block failure proves the new end pattern
-matches.
+`done <<<"$worktree_list"` (line 283 there). The two change together.
+
+**Note (2026-10-13).** The sentence that followed claimed the extraction's
+existing empty-block failure proves the new end pattern matches. It does
+not: a `sed` range whose end pattern never matches prints through end of
+file, which is non-empty, so that check proves only the start anchor. On
+the converted subject the stale pattern yields 201 lines against the
+intended 12, and both pass an emptiness test. Task 12 added the real guard,
+which requires the extracted block's last line to match the end anchor.
 
 `tests/hooks/test-no-heredocs-in-hooks.sh` gains a second check: no line in
 a tracked shell file under `tests/` (a `.sh` name or a `sh`/`bash`
@@ -740,3 +763,20 @@ Correction); this spec and its plan.
 - Item 7's rows can add up to more than the fleet total when workspaces are
   shared; the shared-workspace line says so.
 - Item 9 cannot demonstrate the deadlock on this host.
+- Item 3's live-pid rule broke one display the item promised not to change:
+  `quorum run --repeat N` runs every trial in one process, so each finished
+  trial's verdict was refused until the whole invocation exited, not for the
+  one scan the accepted costs describe. Fixed on the human partner's
+  decision of 2026-10-13 rather than accepted: a trial writes the phase
+  `done` after its verdict, and a `done` phase is trusted whatever its pid
+  or host, because it is the runner's own statement that it has finished
+  that run directory. A `done` phase with no readable verdict reads as
+  abandoned. The SIGINT path writes no `done`: its caller exits immediately,
+  so the pid is dead and the existing rule already trusts that verdict.
+- Item 3 cannot tell which host wrote a `phase.json` from before the `host`
+  field, so such a file is probed against this host's pid table. On this
+  machine 33 of 2501 such files name a live pid, two of them in a displayed
+  window, so a finished run of that age can read as running.
+- Item 1's `container_image` is null for a container run started from an
+  image built before this work, which is what a host run also records. The
+  field appears only once `scripts/evals-container build` has been re-run.

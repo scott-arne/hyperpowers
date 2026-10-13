@@ -142,7 +142,7 @@ expected_sdd_dir=$(cd "$repo_a" && bash "$SDD_DIR_SCRIPT" plan.md)
 base_short=$(git -C "$repo_a" rev-parse --short HEAD~1)
 head_short=$(git -C "$repo_a" rev-parse --short HEAD)
 expected_path="$expected_sdd_dir/review-${base_short}..${head_short}.diff"
-if grep -q "$expected_path" <<< "$default_review_output" && [ -f "$expected_path" ]; then
+if grep -q "$expected_path" < <(printf '%s\n' "$default_review_output") && [ -f "$expected_path" ]; then
     pass "review-package uses default path through sdd-dir when OUTFILE omitted"
 else
     fail "review-package uses default path through sdd-dir (expected: $expected_path)"

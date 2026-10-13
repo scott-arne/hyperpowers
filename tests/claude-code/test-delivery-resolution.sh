@@ -34,7 +34,7 @@ fail() {
 }
 
 BLOCK="$WORK/resolution.sh"
-sed -n '/^DELIVERY_DIR="\$TEST_PROJECT"$/,/^done <<<"\$worktree_list"$/p' \
+sed -n '/^DELIVERY_DIR="\$TEST_PROJECT"$/,/^done < <(printf .*"\$worktree_list")$/p' \
     "$SUBJECT" >"$BLOCK"
 if [ ! -s "$BLOCK" ]; then
     echo "  [FAIL] could not extract the resolution block from $(basename "$SUBJECT")"
@@ -164,8 +164,8 @@ test('adds', () => { assert.strictEqual(1 + 1, 2); });
 test('multiplies', () => { assert.strictEqual(2 * 3, 6); });
 JS
     out="$(run_npm_block "$E")"
-    if grep -q '\[PASS\] Tests pass (2 test(s) ran)' <<< "$out" &&
-        grep -q 'FAILED=0' <<< "$out"; then
+    if grep -q '\[PASS\] Tests pass (2 test(s) ran)' < <(printf '%s\n' "$out") &&
+        grep -q 'FAILED=0' < <(printf '%s\n' "$out"); then
         pass "reports the executed test count when tests really ran"
     else
         fail "real tests: unexpected output"
@@ -176,8 +176,8 @@ JS
     F="$WORK/f"
     make_repo "$F"
     out="$(run_npm_block "$F")"
-    if grep -q 'exited 0 but ran no tests' <<< "$out" &&
-        grep -q 'FAILED=1' <<< "$out"; then
+    if grep -q 'exited 0 but ran no tests' < <(printf '%s\n' "$out") &&
+        grep -q 'FAILED=1' < <(printf '%s\n' "$out"); then
         pass "fails a zero-exit run that executed no tests"
     else
         fail "empty suite: should have failed as vacuous"
@@ -193,8 +193,8 @@ import assert from 'node:assert';
 test('broken', () => { assert.strictEqual(1, 2); });
 JS
     out="$(run_npm_block "$G")"
-    if grep -q '\[FAIL\] Tests failed' <<< "$out" &&
-        grep -q 'FAILED=1' <<< "$out"; then
+    if grep -q '\[FAIL\] Tests failed' < <(printf '%s\n' "$out") &&
+        grep -q 'FAILED=1' < <(printf '%s\n' "$out"); then
         pass "fails a suite whose tests ran and failed"
     else
         fail "failing suite: unexpected output"
@@ -268,7 +268,7 @@ else
     mkdir -p "$H/.claude/projects/$(mangle "$PROJ")/memory"
     mk_session "$H" "/tmp/other-project" "" >/dev/null
     got=$(resolve_session "$H" "$PROJ") || true
-    if grep -q 'Could not find session transcript' <<< "$got"; then
+    if grep -q 'Could not find session transcript' < <(printf '%s\n' "$got"); then
         pass "ignores a foreign project's transcript"
     else
         fail "foreign transcript: should not have resolved, got '$got'"
@@ -278,8 +278,8 @@ else
     H="$WORK/h-empty"
     mkdir -p "$H/.claude/projects"
     got=$(resolve_session "$H" "$PROJ") || true
-    if grep -q 'Could not find session transcript' <<< "$got" &&
-        grep -q 'siblings' <<< "$got"; then
+    if grep -q 'Could not find session transcript' < <(printf '%s\n' "$got") &&
+        grep -q 'siblings' < <(printf '%s\n' "$got"); then
         pass "reports both search locations when nothing is found"
     else
         fail "empty case: unexpected output '$got'"

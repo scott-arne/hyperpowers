@@ -2,7 +2,12 @@
 
 **Date:** 2026-10-13 (mechanism revised 2026-10-14; container-scoped; rewritten
 2026-10-14 after six gate rounds)
-**Status:** design, paused with open items — see Open items
+**Status:** shelved 2026-10-14. The threat model this design serves — an
+adversarial Coding-Agent — was re-examined against the run corpus and the
+field's practice and set aside; see
+`2026-10-14-agent-write-isolation-relocation-design.md`. This document is the
+design to revive if a scenario ever gives the agent an objective that only
+the grade can satisfy. Its open items are listed below.
 **Scope:** `hyperpowers-evals` (quorum) container runs, the `scott-arne/gauntlet`
 fork, and this repository's plan and spec documents.
 

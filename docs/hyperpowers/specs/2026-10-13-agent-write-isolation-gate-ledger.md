@@ -658,3 +658,450 @@ one or two new consistency defects of my own. The round-7 critical, the
 round-6 script-count drift and the stale `0027` reference are all that species,
 not design faults. That is the limiting factor now, and it argues for a fresh
 context rather than more iteration in this one.
+
+
+---
+
+## Relocation spec (2026-10-14) — two gates, eight rounds
+
+Spec: `2026-10-14-agent-write-isolation-relocation-design.md`. Gate directories `run-GGDfJ0oZ` (rounds 1-4, ceiling) and `run-DxA6AYdK` (rounds 5-8, a continuation authorized by the human partner). Criticals: 0 throughout. Approves: feasibility at round 7, completeness at round 8. Finding counts by round: 11, 7, 6, 6, 5, 4, 2, 1.
+
+### Adjudications
+
+This spec supersedes `2026-10-13-agent-write-isolation-design.md`, which is
+shelved. The threat model changed; that change is adjudicated and is the
+premise of this review, not a finding to raise.
+
+## Decisions
+
+1. **Threat model: careless, not adversarial.** Taken 2026-10-14 after two
+   measurements. (a) Across all 2,438 normalised trajectories in the run
+   corpus, no Coding-Agent action referenced `verdict.json`,
+   `trajectory.json` or the token-usage file; one run listed its parent
+   directory and did nothing further. In ~1,624 of those runs the agent had
+   been told, via the leaked repository `AGENTS.md`, that it was the graded
+   subject and where the verdict lived. (b) A survey of the field (SWE-bench,
+   Terminal-Bench, METR, Harbor, Inspect) found grading isolated by location,
+   not privilege, and documented tampering only under pressure conditions this
+   harness does not apply. Under the careless model the design removes
+   adjacency and withholds credentials; it does not build a boundary.
+   Declined: continuing the adversarial design (shelved, four mechanisms and
+   seven gate rounds deep, nine open items).
+2. **Move the workspace, keep the record where it is.** Declined, with costs
+   stated to the human partner: moving the record (about twelve reader files,
+   a new citation convention, and Gauntlet's pane scratch dragged into the
+   record tree unless the fork changes first); no relocation at all (leaves
+   the record in the agent's parent listing, the one interaction the corpus
+   shows).
+3. **No digest seal.** Declined because under this model nothing writes the
+   record after composition, and same-uid storage gives detection nothing to
+   stand on. A reviewer may raise a concrete post-composition writer if one
+   exists; "an adversary could" is not one under decision 1.
+4. **Verification:** offline tests plus three live smokes (Claude, Codex,
+   Antigravity) and one paired control arm at n=10 per arm on the baseline
+   cell nearest 50%. The limited power of n=10 is accepted and stated.
+5. **One repository.** evals only; the Gauntlet fork is untouched.
+
+## Facts established by inspection or measurement
+
+- `runPhase` builds the checks environment from `envSnapshot()` — the entire
+  quorum process environment — and `verbCommandSucceeds` spawns `bash -c`
+  with no `env` argument, so post-check inner commands inherit provider keys
+  and the record sink today.
+- The only external variables shipped `checks.sh` files reference are
+  `QUORUM_AGENT_CONFIG_DIR` (73 occurrences across 23 scenarios),
+  `QUORUM_RUN_DIR` (4, all reaching `home/`) and `HOME` (3, all in comments).
+- The check tooling reads `PATH`, `QUORUM_RECORD_SINK` and
+  `QUORUM_TRANSCRIPT_PATH` from the environment.
+- The Gauntlet launch environment is composed separately in `spawnGauntlet`.
+- Antigravity rejects `--add-dir` paths with a hidden component.
+- The dashboard scan skips any directory whose name does not parse as a run
+  id.
+- Zero evaluation runs have ever executed in the container: 2,442 generated
+  launchers all name a host path, none names `/workspace/evals`.
+
+### Round ledger
+
+Spec: docs/hyperpowers/specs/2026-10-14-agent-write-isolation-relocation-design.md
+
+## Round 1 (completeness-and-consistency, feasibility-and-scope)
+
+Both `needs-attention`. Eleven blocking findings across the two lenses, seven
+distinct after merging overlaps. Each was read against the cited code before
+acting. The spec was regenerated once rather than patched per finding.
+
+### Resolved
+
+- **`QUORUM_RUN_DIR` in the inner projection** (both lenses). Removed from the
+  inner layer; outer-only, with the double-quote expansion rule for a scenario
+  that genuinely needs a record path inside an inner command, and a new
+  `quorum check` lint that fails a single-quoted `$QUORUM_RUN_DIR` in
+  `command-succeeds`, mirroring the existing `$QUORUM_WORKDIR` rule.
+- **Inner commands retained the operator's `HOME`/`TMPDIR`** (both lenses).
+  The inner layer now overlays `HOME`, `XDG_*` and `TMPDIR` from
+  `xdgHomeEnv(runHomeDir)` (`src/agents/home-env.ts:12-21`), the launcher's
+  own single source of truth, so `npm test` runs under the agent's throwaway
+  home. The outer (trusted) layer keeps the operator's `HOME`; the three
+  `$HOME` occurrences in shipped checks are comments.
+- **Kimi's artifact-root derivation** (both lenses). Confirmed at
+  `src/agents/kimi.ts:191-198,829-850`: `dirname(dirname(workdir))` becomes
+  `<outRoot>/workspaces`, so a `TMPDIR` inside `<outRoot>` but outside
+  `workspaces/` would pass the guard. Fixed by threading the record directory
+  through `RunHome.runDir` and taking the artifact root as its parent; test
+  and counterexample added to the gate (offline item 4).
+- **`strip-runs` liveness** (completeness). Confirmed: nested writes do not
+  refresh the workspace mtime while the record directory is written at every
+  phase boundary. New rule: strippable only when `verdict.json` exists and the
+  newer of record-dir and verdict mtimes is older than the threshold; applies
+  to both layouts; a test case pins the old-workspace/no-verdict skip.
+- **Evidence step 2 (`.git` rename)** (completeness). All four archival steps
+  now name the tree each path lives in; the gitlink check walks both trees.
+- **Paired-control metric ambiguity** (both lenses). Observable fixed as
+  criterion 1 (`criteria[0]` and `criteria[1]` of `result.json`), extracted by
+  the re-baseline's `tally.py`; the composed final (1/10 on this cell) is
+  explicitly not the observable; the two automatic stops have stated timing.
+- **All-scenario post-phase replay was an assumption, not a gate item** (both
+  lenses). Promoted to numbered offline item 6 with a concrete mechanism
+  (`scripts/replay-post-checks`), eligibility (newest run with a verdict per
+  scenario), comparison (recorded `checks` array by name and arguments) and a
+  retained artifact.
+- **TDD regression test omitted** (both). `test/scenario-tdd-project-suite.test.ts:203-213`
+  confirmed to inject `QUORUM_RUN_DIR`; added to the change set, with
+  `test/agent-kimi.test.ts` and the unchanged-by-design `test/checks.test.ts:277`.
+- **Docs inventory** (both, medium). Enumerated as nine with the `rg` command
+  that produced the list; the scenario-authoring env table gets the layer
+  column and `QUORUM_AGENT_HOME`.
+- **"Exactly the allowlist" not executable in bash** (both, medium/low).
+  Exactness defined over the constructed env objects; the bash-level dumper
+  ignores `PWD`, `OLDPWD`, `SHLVL`, `_` and asserts planted secrets absent.
+- **Layout invariants overstated** (completeness, low). Pairing qualified to
+  runs that reach workspace setup; the parent listing now includes
+  scenario-created siblings.
+
+### Declined — corrected, with evidence
+
+- **"Inner commands retain credential-bearing homes" — the
+  `QUORUM_AGENT_HOME` / `QUORUM_AGENT_CONFIG_DIR` half** (feasibility, high).
+  The operator-`HOME` half of this finding is real and is resolved above. The
+  agent-home half is declined as not a disclosure: those paths hold the
+  subject's own tokens, which the subject held as the same uid for the entire
+  agent phase; a post-check learning the path adds no capability the agent did
+  not already have. Removing them would also require rewriting the 73 shipped
+  `QUORUM_AGENT_CONFIG_DIR` bootstrap checks as typed verbs, recorded as a
+  separate, reasonable piece of work. The spec states this reasoning in
+  "Post-check environment".
+
+### Still open
+
+None.
+
+## Round 2 (completeness-and-consistency, feasibility-and-scope)
+
+Both `needs-attention`; both confirmed every round-1 resolution is present and
+the one decline's reasoning intact. Seven findings, four distinct.
+
+### Resolved
+
+- **Replay covered post only** (both). Offline item 7 now runs `pre` and
+  `post` in both arms. 80 `command-succeeds` calls live in `pre()` across the
+  scenario set, so the phase mattered.
+- **Replay oracle could not reproduce the corpus** (both). The recorded
+  verdict is dropped as the oracle — current checks have drifted from the
+  newest runs and this design rewrites four more. Replaced by a counterfactual
+  A/B: the *current* `checks.sh` runs twice on cloned artifacts, once under the
+  legacy environment construction (reproduced in the script) and once under
+  the new allowlist; ordered `(phase, check, args, negated, passed)` sequences
+  must be identical. Eligibility is defined (a recorded post phase and a
+  surviving workspace; 61 of 98 scenarios have a run), non-eligible scenarios
+  are listed with a reason, and the pre-phase caveat is stated.
+- **`RunHome.runDir` broke typed fixtures outside the inventory** (both).
+  All construction sites enumerated — the runner literal, `makeTempHome`, and
+  seven test files with direct literals found by a `configDir`+`workdir[,:]`
+  search — and bound to one task so `tsc --noEmit` is green at every commit.
+  The Kimi test description that implied "runDir = config dir's parent" is
+  replaced by an explicit fixture with separate record and workspace trees
+  under one temp out-root and an assertion that the secret stays outside the
+  whole out-root.
+- **Agent-owned `bunfig.toml` executes in the trusted outer layer**
+  (completeness, out-of-lane). Measured rather than argued: on Bun 1.4.2 a
+  plain `bun run <abs script>` from a workdir with a preload executed the
+  preload and loaded the workdir `.env`; `--config=<trusted>` stops the
+  preload, `--env-file=/dev/null` stops the `.env`, both together stop both;
+  `--cwd` also works but would move the verbs' `process.cwd()`. All four
+  prelude dispatchers gain the two flags, pointed at the repository's own
+  `bunfig.toml`; the probe is kept as offline item 3.
+
+### Declined
+
+None this round.
+
+### Still open
+
+None.
+
+## Round 3 (completeness-and-consistency, feasibility-and-scope)
+
+Both `needs-attention`; both confirmed every round-2 resolution present. Six
+findings, five distinct; one shared. No criticals, no declines.
+
+### Resolved
+
+- **Replay did not isolate workspace siblings** (completeness). Confirmed on
+  a recorded `worktree-no-drift-to-main` run: linked-worktree pointers are
+  absolute in both directions. The clone now takes the whole workspace,
+  runs `git worktree repair` (git 2.56.0 here), validates that every `.git`,
+  `gitdir` and absolute symlink resolves inside the clone, rewrites intra-run
+  absolute symlinks, lists external ones, and hashes the source before and
+  after. That run becomes the script's isolation regression test.
+- **No seam for two environments through `runPhase`** (both). `runPhase` is
+  split into `runPhaseWithEnv(args, env)` — the single executor, which also
+  owns sink creation — and the production wrapper over `outerEnv`. The
+  replay calls the primitive twice. No duplicate executor.
+- **`RunHome` inventory included unrelated types** (completeness). Confirmed:
+  the `agent-codex-app-server` literals are `ReadHookArgs`; every other
+  `provision()` call in `test/` passes a `makeTempHome` home. Inventory
+  corrected to the three typed construction sites, with `tsc --noEmit` as
+  the completeness check.
+- **Relocation disabled Copilot's secret-leak scan** (feasibility). Confirmed
+  at `src/runner/index.ts:727` / `src/agents/copilot.ts:445-475`; it is the
+  only content walk rooted at a run directory in `src/`. The cascade gains
+  `workspaceDir`, scans both roots, and its test gains counterfactuals under
+  the relocated workdir and home.
+- **Arm L lacked `QUORUM_AGENT_HOME`** (feasibility). Correct and a plain
+  error in the replay definition: the four migrated checks would have failed
+  in the legacy arm for a reason unrelated to hygiene. Arm L now carries that
+  one contract variable; the spec enumerates the exact per-arm difference and
+  adds a migrated-scenario replay as a script test.
+
+### Declined
+
+None.
+
+### Still open
+
+None.
+
+## Round 4 — ceiling reached (backstop)
+
+Both `needs-attention`; both confirmed every round-3 resolution present. Eight
+findings, six distinct. `gate-round` ceiling 4 is spent: no further Codex
+invocation for this gate directory. Every finding was verified before this
+entry was written; none re-opens an adjudicated decision.
+
+### Confirmed, disposition pending the human partner
+
+1. **Replay inner-command seam** (both). `runPhaseWithEnv` varies only the
+   outer env; `verbCommandSucceeds` builds the inner projection
+   unconditionally, so both arms get the new inner behaviour. Needs an explicit
+   mode the dispatcher reads and withholds from the nested command, exit-code
+   comparison, and a mutation test. The proposed TDD sentinel is vacuous:
+   every recorded `.test-history.log` is in the old text format while the
+   current check expects JSON, so it fails in both arms — the fixture must be
+   synthetic.
+2. **Control-arm analyzer** (completeness). `tally.py:180` globs
+   `home/.claude/projects/*/*.jsonl` under the run path; relocated runs keep
+   transcripts under `workspaces/<run>/home`. Needs a campaign analyzer taking
+   record and workspace roots, tested on one fixture per layout.
+3. **Git content filters** (both). **Measured:** `git status --porcelain` with
+   both hygiene flags invoked a repository-configured clean filter on a
+   same-size change and on a stat-dirty unmodified file, and the filter
+   received `HOME=/Users/johnss51` and the record sink. Harness git spawns
+   must run under the inner projection as well as the flags; the probe becomes
+   the test.
+4. **Clone-pointer rule contradiction** (completeness). The worktree fixture
+   carries an external absolute symlink
+   (`home/Applications/Claude Code URL Handler.app/Contents/MacOS/claude` →
+   `~/.local/share/claude/versions/2.1.287`). Git pointers and intra-source
+   symlinks must resolve inside the arm; external references are classified
+   and permitted; the assertion is "no pointer reaches the source or the
+   opposite arm".
+5. **Bun source-time invocation** (feasibility). `prelude.sh:20` runs
+   `list-check-verbs.ts` through a fifth `bun run`, unflagged, with its stdout
+   fed to `eval`. Needs the same two flags; the regression test must fail on
+   merely sourcing the prelude.
+6. **Codex wrong-cwd detector** (feasibility). Confirmed at
+   `src/capture/index.ts:396`: containment is tested against `runDir`, so
+   after relocation it never fires. Threads `workspaceDir` as the containment
+   root with a relocated-layout counterfactual. A sweep of every `runDir`
+   comparison in `src/` finds exactly Kimi, Copilot and this site: the
+   relocation-breaks-a-derivation class is fully enumerated.
+
+### Declined
+
+None.
+
+### Note
+
+Finding counts by round: 11, 7, 6, 6 distinct. Criticals: 0 throughout. The
+derivation class (Kimi, Copilot, wrong-cwd) is closed by sweep; the hygiene
+class produced two measured trusted-layer defects (Bun preload/.env, git
+filters) that only review surfaced.
+
+### Round 4 fixes — applied with the human partner's authorization for one continuation gate
+
+1. Inner seam: `QUORUM_INNER_ENV=projected|legacy` carried in the outer env,
+   read by the dispatcher, never passed to the nested command; also governs
+   the git spawns. Replay compares exit codes too; script tests gain a
+   planted-dumper seam test, a synthetic TDD fixture in the current JSON
+   format, and the Arm-L-without-`QUORUM_AGENT_HOME` mutation.
+2. Analyzer: a campaign copy of `tally.py` taking `--records`/`--workspaces`,
+   unit-tested on one fixture per layout.
+3. Git: spawns run under the inner projection plus the flags; the measured
+   clean-filter probe is offline item 4.
+4. Pointer rule: three classes (git pointers, intra-source symlinks, external
+   references); invariant "no pointer resolves into the source or the opposite
+   arm".
+5. Bun: all five `bun run` invocations in `prelude.sh`, including the
+   source-time `list-check-verbs.ts` call; the dispatcher test now covers
+   sourcing alone.
+6. Detector: `DetectMisplacedCodexRolloutsArgs.runDir` → `workspaceDir`;
+   counterfactual test; the derivation-class sweep recorded in the spec.
+
+## Round 5 — continuation gate, round 1 (completeness-and-consistency, feasibility-and-scope)
+
+Both `needs-attention`; both confirmed the six round-4 fixes present. Seven
+findings, five distinct; no criticals; no declines.
+
+### Resolved
+
+- **Detector repair was directionally wrong** (both). Confirmed: the pane's
+  scratch cwd is in the record tree, so a launcher-skipping Codex lands outside
+  `workspaceDir`. The detector now tests containment against both roots; three
+  counterfactuals (record-tree scratch, wrong workspace subdir, launch cwd).
+- **Pre-phase `agentHome` wiring** (both). `RunPhaseArgs.agentHome` is
+  required; both production calls (`:1159`, `:1524`) pass `runHomeDir`; the
+  fifteen inline constructions in `test/checks.test.ts` are the only test
+  sites; the allowlist test now runs through `pre` and `post`.
+- **`makeTempHome` record dir must exist** (completeness). Confirmed via
+  `kimi.ts:838` `realpathSync`; the helper creates it and asserts it.
+- **`cli-run-sigint.test.ts:263`** (completeness). Confirmed; it enumerates by
+  `parseRunDirName`. A sweep of every `readdirSync` over an out-root found
+  exactly this one affected site; `strip-runs` now excludes `workspaces` by
+  name; `resolve-target` is safe because it filters on `verdict.json`.
+- **Novel-failure stop undefined** (feasibility). Defined as a normalized
+  signature `(final, error.stage|none, sorted failed check names)` computed
+  from `verdict.json`; analyzer compares per-arm sets; fixtures for both
+  outcomes.
+- **Provisioning failures leave both trees** (completeness, low). Corrected:
+  workspace creation precedes `agent.provision()`; only exclusion or an early
+  guard leaves a record alone.
+
+### Declined
+
+None.
+
+### Still open
+
+None.
+
+## Round 6 — continuation gate, round 2 (completeness-and-consistency, feasibility-and-scope)
+
+Both `needs-attention`; both confirmed the round-5 fixes present. Four
+distinct findings; no criticals; no declines.
+
+### Resolved
+
+- **Replay accepts identical vacuous failures** (feasibility). Confirmed on
+  the cited run: `installed_plugins.json` names a stub under a cache that
+  `strip-runs` deleted, and the current pre-check executes it. Added an
+  anti-vacuity prerequisite — checks the recorded verdict passed, with
+  unchanged text, must pass in Arm L — demoting failures to "non-replayable:
+  degraded archive"; coverage is reported against eligibility; migrated
+  scenarios with degraded archives get synthetic fixtures. Regular-file
+  absolute paths are declared not rewritten, with the consequence stated.
+- **`git worktree repair` without arguments can rewrite the source**
+  (completeness). Correct per the man page and the copied pointer shape; the
+  spec now requires every cloned linked worktree as an argument, a pre-check
+  that the copied pointers name out-of-arm paths, and a disposable fixture
+  for the test rather than the retained corpus run.
+- **`QUORUM_INNER_ENV` contradiction** (completeness). Legacy is now the
+  dispatcher environment minus the selector; projected strips it too; absence
+  asserted in both modes in the dumper and git-filter tests.
+- **Live gate underspecified** (completeness). Smokes named:
+  `00-quorum-smoke-hello-world` on `claude-auto`, `codex`, `antigravity`.
+  Paired control predeclared: `claude-auto`, `claude-opus-5-5`, Gauntlet-Agent
+  `claude-opus-5-5`, same plugin root, CLI version recorded and required equal
+  across arms. The analyzer parameterizes `--plugin-root`, `--model`,
+  `--cc-version` and recognises both layouts for own-run containment.
+
+### Declined
+
+None.
+
+### Still open
+
+None.
+
+## Round 7 — continuation gate, round 3
+
+Feasibility: **approve** (normalized `approved`, 0 blocking) — the first
+approve across both gates. Completeness: `needs-attention`, two Highs, both
+confirmed, no declines.
+
+### Resolved
+
+- **Anti-vacuity contradicted pre-on-post-state** (completeness). A logic
+  error in round 6's fix: `pre()` replays against the post-agent state, so a
+  historically passing `git-clean` must fail once the agent created a file.
+  The prerequisite is now phase-correct (post-phase records only); pre
+  divergences from history are listed and classified once as state-dependent
+  or degraded, with a synthetic counterfactual per degraded command shape. A
+  predeclared coverage floor was added: at least two-thirds of eligible
+  scenarios replayable, every inner-command tool (12 named) exercised, and
+  all four migrated scenarios covered.
+- **Manipulation-check failures had no disposition** (completeness).
+  Confirmed in `tally.py:353-363,380-403`, which silently excludes them. Now
+  an automatic stop in either arm; exactly ten qualifying sessions per arm
+  required; replacements only under the project's existing void rule
+  (`docs/scenario-authoring.md:863-868`, cap three per arm for grader-exit
+  voids); analyzer fails closed below ten; fixtures for both cases.
+
+### Declined
+
+None.
+
+### Still open
+
+None. Round 8 is the continuation gate's final round.
+
+## Round 8 — continuation gate, round 4: ceiling reached
+
+Completeness: **approve** (normalized `approved`, 0 blocking). Feasibility:
+`needs-attention`, one High, first raised in this round. `gate-round` ceiling
+4 is spent: no further Codex invocation for this gate directory.
+
+### Confirmed, disposition pending the human partner
+
+- **Replay equality cannot hold for two migrated scenarios as written**
+  (feasibility). `codex-approach-gate-fires-on-architecture/checks.sh:20` and
+  `codex-plan-gate-algorithm-locked-after-round1/checks.sh:23` use outer
+  double quotes, so the outer shell expands the home path before dispatch and
+  the dispatcher records the expanded command in `args`; Arm L and Arm N have
+  different clone roots, so their raw records differ even when both pass.
+  The other two migrated checks and the synthetic TDD fixture are
+  single-quoted, which is why the gap was not exposed. Fix shape: migrate the
+  two checks to the single-quoted form (expansion in the nested shell), and
+  canonicalize each arm's clone root to a placeholder in `args` before
+  comparison so any other outer-expanded absolute path is tolerated; add a
+  replay regression using one of these exact command shapes.
+
+### Declined
+
+None.
+
+### Totals across both gates
+
+Rounds: 8 (4 + 4). Criticals: 0. Approves: feasibility r7, completeness r8.
+One finding declined with evidence (round 1, agent-home paths). Every other
+finding confirmed against code or by measurement and resolved.
+
+### Round 8 disposition — human partner: "fix and defer to the plan gate"
+
+Fixed in the spec: the two double-quoted migrations become single-quoted
+(exactly two such sites exist; the other six outer-double-quoted inner commands
+are `awk` over relative paths); the replay canonicalizes arm roots to `<ARM>`
+in `args` before comparing and reports rewrites (expected zero); a synthetic
+fixture in the exact migrated shape asserts byte-identical records in the
+single-quoted form and divergence in the old form. **Unreviewed by Codex**;
+the plan gate is the confirming review. Recorded in the spec itself under
+Verification item 7.

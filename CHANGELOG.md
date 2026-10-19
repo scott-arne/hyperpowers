@@ -2,6 +2,13 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
+## 6.16.1 (2026-10-19)
+
+Two bundled scripts misread the state they report on.
+
+- **`stop-server.sh` treats only "No such process" as gone.** `process_exists` used to read every `kill -0` failure except "not permitted" as a dead process, so a failure nobody had listed discarded the session files of a live server. Now only ESRCH means gone, and any other failure is taken as alive. A pid file must hold a positive decimal pid no larger than 2147483647. An empty file, garbage, `0` or a negative number counts as no process: bash answers those with a usage error, `kill -0 0` signals the caller's own process group, and a negative number names a process group.
+- **`gate-telemetry` counts the tasks of a plan run from another repository's checkout.** Since 6.16.0, `sdd-dir` keeps such a plan's workspace under the plan repository's key and leaves a symlink under the executing repository's key. The telemetry read only real directories, so the executing repository's row skipped those tasks. It now follows the link, skips a dangling one, and identifies a workspace by its real path. A row counts distinct task identities rather than brief files, the fleet totals count a workspace two rows reach once, and the fleet section reports the number of shared workspaces.
+
 ## 6.16.0 (2026-10-10)
 
 Messages to the human partner reached for metaphors and contrasts that carried no fact.

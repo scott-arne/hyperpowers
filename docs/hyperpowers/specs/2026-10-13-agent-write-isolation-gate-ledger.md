@@ -1105,3 +1105,322 @@ fixture in the exact migrated shape asserts byte-identical records in the
 single-quoted form and divergence in the old form. **Unreviewed by Codex**;
 the plan gate is the confirming review. Recorded in the spec itself under
 Verification item 7.
+
+## Relocation plan (2026-10-14) — plan gate, four rounds
+
+The implementation plan `docs/hyperpowers/plans/2026-10-14-agent-write-isolation-relocation.md`
+was gated against the relocation spec (hp `bab5914`) before execution. The round
+ledger below is copied verbatim from the gate's working directory, with its headings
+demoted one level; the raw lens outputs it cites (`round1/` … `round4/`) stayed in
+that scratch directory and are not committed.
+
+Outcome: the plan executed with subagent-driven development on hyperpowers-evals
+branch `agent-write-isolation-relocation` (16 tasks, 2026-10-14 to 2026-10-19) and
+was merged into evals `main` at `882844154`. The paired control's predeclared rule
+decided `proceed threshold (p_b=4 p_n=6)`. The evidence note is
+`evidence/2026-10-14-agent-write-isolation-relocation/README.md` in hyperpowers-evals.
+
+### Round 1 (coverage-and-consistency, feasibility-and-ordering)
+
+Both `needs-attention`: 14 and 13 blocking findings, nineteen distinct after
+merging overlaps. Each was read against the cited evals code at `b6a923a31`
+before acting. Raw outputs: `round1/`.
+
+#### Resolved
+
+- **`tee` masks exit statuses** (coverage, critical; feasibility). Tasks 11,
+  14 and 15 run their pipelines under `set -o pipefail` and record
+  `${PIPESTATUS[0]}` beside the log; Task 15's launcher records each row's
+  exit status beside its log.
+- **Task 2's projected tests could not pass** (both). `ctxFor(cwd, env)` takes
+  an explicit map (`test/check-tool.test.ts:35-48`), so the tests now pass
+  `{QUORUM_INNER_ENV, QUORUM_AGENT_HOME}` through `ctxFor` and plant the base
+  with `withEnv`; `innerEnv` allowlists its own base (`OUTER_PASSTHROUGH`,
+  `LC_*`, `QUORUM_*`) so a planted provider key never reaches the inner map.
+- **Missing offline witnesses** (both). Task 1 gained outer-bash exact-dump
+  tests for pre and post (ignoring `PWD`, `OLDPWD`, `SHLVL`, `_`); Task 2 a
+  `core.fsmonitor` marker test and two `runPhase`-level inner tests; Task 4 a
+  production-path witness `test/cli-run-layout.test.ts` through `runCli` under
+  the mock Gauntlet (`test/cli-run.test.ts:20-70`), and `buildRunHome` so the
+  runner's `RunHome` literal is built by the function the tests exercise.
+- **Task 9's eligibility API** (coverage). `eligibleRuns(resultsRoot,
+  scenariosRoot, knownAgents)`; demotion reasons in a declared order
+  (`setup-stage-verdict`, `no-post-records`, `stripped-workspace`, `no-run`);
+  the test's expectations match that order; fixtures come from a schema-valid
+  `verdictFixture()` factory (`schema`, `final`, `final_reason`, `gauntlet`,
+  `checks[].detail/phase`, `error`, `economics`); imports trimmed to what each
+  file uses.
+- **Source and cross-arm isolation not enforced** (both). `replayRun` hashes
+  the source record and workspace before cloning, after each clone and after
+  both arms run, asserting equality each time, and walks each arm's pointers
+  asserting none resolves into the source or the other arm; a corpus
+  integration test over `worktree-no-drift-to-main-claude-auto-20261003T112456Z-f670`
+  (skip-with-reason when absent) pins it.
+- **Anti-vacuity accepted an absent record** (both; feasibility critical). An
+  unchanged historical post check with no current Arm L record is
+  `degraded-archive`; a fabricated corpus run whose `post()` does `exit 127`
+  between two checks is the regression. Note: `runPhase` runs the phase
+  without `set -e` (`src/checks/index.ts:94`), so a command-not-found would
+  not abort; the fixture uses an explicit `exit 127` (crash band, `:136`).
+- **Synthetics inflated the floor** (both; feasibility critical). `coverage()`
+  counts only results with `runId !== null` toward `replayable`; synthetics
+  still count toward tool and migrated-scenario coverage; the unit test has a
+  synthetic and a corpus result and asserts `replayable === 1`.
+- **Task 10 did not implement the deferred Authority item** (both).
+  `ArmResult { raw, canonical, rewrites, exitCodes, home, root }`;
+  `compareArms` compares canonical; the double-quoted regression asserts raw
+  inequality, rewrites > 0 and canonical equality; the single-quoted form
+  asserts byte-identical raw records and zero rewrites.
+- **Task 10 imports and async signatures** (both). `agentConfigDir` and
+  `loadAgentConfig` from `src/contracts/agent-config.ts:50-67`; `replayRun`
+  and `replayFixture` return Promises and every test awaits them; timeouts
+  per the repo convention (`60_000`; `300_000` for the corpus test).
+- **Analyzer stops** (both; feasibility critical). `decide` adds the
+  grader-exit void cap (three per arm, `void-cap`), the new-arm immediate
+  stops (`indeterminate` + `error.stage == 'setup'`, or
+  `qa-agent-misconfigured`), computes signatures over `verdict.final != 'pass'`,
+  and tests all six manipulation checks in both layouts (twelve cases).
+- **Criterion fixture shape** (coverage). `result.json` fixtures carry three
+  `criteria` entries with `verdict` fields, the shape `criterion_one` reads.
+- **Paired arms did not share a results root** (both). One absolute
+  `CAMPAIGN_ROOT` passed as `--out-root` to every launch in both arms and to
+  the analyzer; `git worktree add .worktrees/baseline-b6a923a31 b6a923a31`
+  from the evals checkout.
+- **Task 12's inventory** (coverage). `README.md:203` (actor table) added;
+  `docs/manual-testing.md` gets the one clarifying sentence rather than being
+  left out of the nine.
+- **Task 11 mis-tiered** (both). Now high; allowlist edits removed from its
+  scope — a divergence that needs a new variable stops for the human partner
+  and, if approved, becomes its own high task appended to the plan.
+- **Artifact directories not created** (coverage). `mkdir -p` precedes every
+  live run in Tasks 11, 14 and 15.
+- **Legacy strip-runs fixture stays recent** (feasibility). The fixture's
+  `touch -t 202001010000` now covers `verdict.json` too.
+- **Commits without the full gate** (feasibility). Global Constraint:
+  `bun run check` before every commit, named in each task's final step.
+- **Task 4 sweep expectation** (coverage, medium). The recorded output now
+  includes the `kimi.ts:196` comment match.
+
+#### Declined — with evidence
+
+- **"[out-of-lane] The plan commits without the required human diff
+  approval"** (feasibility, high; evidence `AGENTS.md:7-14`). The cited file
+  is the hyperpowers repository's (`CLAUDE.md:13`, reached through its
+  `AGENTS.md`), where the gate runs. Every commit this plan prescribes lands
+  in hyperpowers-evals, whose `AGENTS.md -> CLAUDE.md` carries no such rule
+  (grep for "approv", "complete diff", "before committing": no match). The
+  human partner's standing instruction executes plans through SDD, which
+  commits per task on a feature branch in an isolated worktree; their
+  approval point is Finish, where the whole branch is reviewed before any
+  merge. The Global Constraints now say exactly this; a per-commit stop would
+  contradict the standing instruction.
+
+#### Algorithm Assessment — adjudicated and locked
+
+- **Algorithm locked:** ordered canonical comparison with separate raw
+  records (was canonicalize-in-place). Both lenses suggested it; adopted.
+- **Algorithm locked:** anti-vacuity by expected-set membership — an expected
+  historical post check with no current record demotes (was found-and-failed).
+  Both lenses suggested it; adopted.
+- **Algorithm locked:** two-thirds floor over corpus runs only; synthetics
+  count toward tool and scenario coverage, never the numerator. Adopted.
+- **Algorithm locked:** failure signature `(final, error.stage|none, sorted
+  failed checks)` over verdict-level non-passes, with the setup and
+  `qa-agent-misconfigured` stops as independent, unconditional rules. Adopted.
+
+### Round 2 (coverage-and-consistency, feasibility-and-ordering)
+
+Both `needs-attention`: 10 and 7 blocking findings, fifteen distinct after
+merging the five both lenses raised. Three were round-1 repairs that did not
+hold (`compareArms`, the Task 14 status capture, the Task 4 sweep); the rest
+were new or exposed by the round-1 changes. Raw outputs: `round2/`.
+
+#### Resolved
+
+- **The corpus replay pointed at the worktree's empty `results/`**
+  (feasibility, critical). `results/` is gitignored (`evals/.gitignore:1`).
+  Task 10's corpus test resolves `CORPUS_ROOT` through `git rev-parse
+  --git-common-dir` (or `QUORUM_CORPUS_ROOT`), skips only when no corpus root
+  exists at all, fails when the root lacks the named run, and the task's
+  acceptance requires zero skips on this host; Task 11 derives the same root
+  in bash, asserts the named run is under it, and passes it as `--results`;
+  `scripts/replay-post-checks` exits 2 on an empty root (adjudication 7).
+- **`compareArms` read `.records`** (both). Compares `canonical`; the unit
+  test now constructs two arms whose raw args differ only by arm root and
+  asserts canonical equality, plus a named divergence when a canonical
+  record differs.
+- **Anti-vacuity lacked the spec's "current text unchanged" condition**
+  (coverage). `expectedPostChecks(text, roots)` builds the expected set by a
+  static scan of the current `post()` body (shell-words tokenizer; `not` and
+  `check-transcript` prefixes; the four `QUORUM_*` expansions; `<ARM>`
+  canonicalization), independent of either arm's records; unmatched history
+  is listed and never demotes; unparsable lines are listed. A second
+  fabricated run (`moved`) pins that a changed check stays replayable
+  (adjudication 8). The lock's wording stands: an expected check with no
+  current record demotes.
+- **Pre/post environment contracts disagreed** (coverage). Production passes
+  `runDir` to both phases and `transcriptPath` only to post; Task 1 states
+  that this is the contract, its dump tests now use the two production
+  argument shapes and assert `QUORUM_TRANSCRIPT_PATH` only in post, Task 10's
+  `runArm` takes `{pre, post}` args and builds each phase's env separately,
+  and Task 12's table row says "pre and post" (adjudication 6).
+- **Projected git verbs returned `false`/`''` on a missing agent home**
+  (coverage). Every git verb (`:300,311,326,349,352,377,380,394,398`) starts
+  with the `nestedEnv` check and returns `broken`; `gitOk`/`gitOut` take the
+  resolved env; a regression asserts `git-clean` and `git-branch detached`
+  are broken, not passing, under projected mode without a home.
+- **fsmonitor witness contaminated by fixture setup** (coverage).
+  `gitRepoWith` configures after the commit; the test asserts the marker is
+  absent before invoking the verb.
+- **Snippets that cannot pass the gate** (both). Task 2's spurious import
+  note removed (`verbGitClean` is already imported); Task 4 imports
+  `buildRunHome` and calls `runCli('pass')` with the exact copy ranges and
+  the fixture names; Task 5 extends the `src/agents/index.ts` import with
+  `type RunHome`; Task 6 adds `basename` to the `node:path` import.
+- **Task 9's clone contract contradicted the external-reference rule**
+  (coverage). The interface now states the three pointer classes: git
+  pointers and rewritten intra-source links resolve inside the arm (throw
+  otherwise); external references stay and are listed; nothing resolves into
+  the source.
+- **Task 11 could validate an uncommitted scenario repair** (both). Task 11
+  never edits `scenarios/`; an operator-home-dependent check stops the task
+  and becomes its own standard-tier task with a regression, gate, review and
+  commit before the `--only` re-run.
+- **Task 14 lost the producer statuses** (both). `${PIPESTATUS[0]}` is
+  captured on the line after each pipeline into the smoke's log; acceptance
+  names the permitted `run exit` values (0 pass, 1 fail; 2 indeterminate is a
+  failed smoke — `src/cli/trials.ts:35-40`) and requires `show exit` 0.
+- **The analyzer could not separate the arms** (feasibility). `--baseline-logs`
+  and `--new-logs` are separate directories using the re-baseline's file
+  naming so `LOG_NAME` (`tally.py:40`) and `collect()`'s glob (`:314`) apply
+  unchanged; `collect` runs once per directory; Task 15's launcher writes
+  `control/logs/<arm>/control-<scenario>-p<n>.log`; tests for the collector
+  and for arm separation added.
+- **Task 4's sweep inventory** (both). The expected output is the ten actual
+  lines at `b6a923a31`, each classified.
+- **Eligibility tests omitted `no-post-records`** (coverage, medium). A test
+  with a newest-no-post/older-eligible pair and an all-no-post scenario.
+- **Grounding line for runner error handling** (coverage, medium). Cites the
+  throw, the catch (`:907-917`) and `errorStage` (`:950-963`).
+
+#### Declined
+
+- none this round.
+
+#### Locks
+
+- Unchanged. The anti-vacuity lock's expected set is now constructed from
+  the current scenario text, which is what "expected" meant in the spec; the
+  rule "expected with no current record demotes" is as locked.
+
+### Round 3 (coverage-and-consistency, feasibility-and-ordering)
+
+Both `needs-attention`: 6 and 6 blocking, ten distinct (two shared). Three
+were round-2 repairs that did not survive contact with the real scenarios and
+toolchain: the static scanner, the `noProcessEnv` claim, the Task 14 capture.
+Raw outputs: `round3/`.
+
+#### Resolved
+
+- **The scanner excluded a quoted `$(`** (both, critical). The tokenizer is
+  quote-aware; quoted text is opaque; only unquoted or double-quoted
+  expansion, unquoted control operators, an unexpandable variable or a bash
+  keyword makes a line unparsable; an unparsable line whose verb matches an
+  unmatched historical pass makes the run `degraded-archive`. New unit test
+  over `worktree-no-drift-to-main/checks.sh:10-14` verbatim plus a
+  double-quoted `$(` and a `for` line; the corpus test asserts `equal`, no
+  unparsed lines, no unmatched history, and that aborting just before the
+  `command-succeeds 'test "$(git …)"'` line degrades the run (adjudication 9).
+- **`bun run check` could not pass** (both). The plan's claim that tests are
+  exempt from `noProcessEnv` was wrong: the override is an exact list. Tasks 1,
+  4 and 10 add their files to it and stage `biome.json`; every `process.env`
+  access is bracketed; Task 3 reads through `getEnv`; the `innerMode` fixture
+  is a typed `Record<string, string>` lookup. Global Constraint added.
+- **Offline replay depended on live credentials** (feasibility). The replay
+  parses the agent YAML through `AgentConfigSchema` (`offlineAgentConfig`);
+  `loadAgentConfig` is named as the thing not to call (adjudication 13).
+- **`PIPESTATUS` under zsh** (feasibility). Tasks 11, 14 and 16 run committed
+  bash scripts (`run-replay.sh`, `run-smoke.sh`, `tally.sh`, and Task 15's
+  `launch-all.sh`), each anchored on its own location; Global Constraint
+  added (adjudication 10).
+- **Task 16 wrote outside its evidence directory** (feasibility). Every
+  `control/…` path is `$EVIDENCE_DIR/control/…`; the scripts anchor on
+  `dirname "$0"`.
+- **Task 7 mis-tiered** (feasibility). High (adjudication 12).
+- **`collect` could not receive its inputs** (coverage). `Config` dataclass
+  threaded through `run_dir`, `readouts`, `own_roots`,
+  `manipulation_failures` and `collect(logs, cfg)`; `main()` builds it once;
+  test 8 points `cfg` at each fixture tree.
+- **Void kinds inconsistent** (coverage). One `classify(verdict, result)`
+  with the renamed kinds and the exact verdict shapes (`error.stage`,
+  `gauntlet.status`/`summary`, `criterion_one`); six fixture verdicts; a
+  `classify` CLI subcommand; `decide` stops on new-arm `void-harness-setup`
+  or `qa-agent-misconfigured` by kind (adjudication 11).
+- **The launcher was unspecified** (coverage). New high-tier Task 15 with the
+  complete sequential alternating launcher (bash 3.2 — the host's only
+  bash — no associative arrays), a fake `quorum run` that copies the fixture
+  verdicts, and seven asserted cases (order, exit retention, log names,
+  replacement, cap, setup relaunch, new-arm stops, no-run-id). The old Task
+  15 is Task 16 and consumes it.
+- **Archive procedure covered one layout** (coverage). Steps 2–3 branch on
+  layout; Task 16 applies the legacy branch to the baseline arm.
+- **README record block** (feasibility, medium). Both `coding-agent-workdir/`
+  and `home/` removed, with a mechanical check.
+- **`makeTempHome` invariants** (feasibility, medium). The helper asserts the
+  record directory exists and is not a workspace path; a regression in
+  `test/runner-layout.test.ts`.
+- **mypy on both Python files** (feasibility, medium). Done.
+- **Docs inventory without `results/<`** (coverage, medium). The spec's full
+  query is run; remaining `results/<` lines are classified mechanically
+  (no `home`, `coding-agent-workdir` or `.claude` under `results/<run>/`).
+
+#### Declined
+
+- none this round.
+
+#### Locks
+
+- Unchanged.
+
+### Round 4 (coverage-and-consistency, feasibility-and-ordering) — the ceiling
+
+Both `needs-attention`: 4 and 3 blocking, six distinct (the `getEnv` import
+shared). Both lenses state that spec coverage, Grounding and Mirror
+citations, interfaces, risk tiers and the locked algorithms hold, and that
+Tasks 7 and 10 correctly implement the deferred Authority item. Every
+residual is a snippet-level execution defect. Raw outputs: `round4/`.
+
+#### Resolved in the plan after the ceiling (unreviewed by Codex)
+
+- **Dotted access on `Record<string, string>` values** (coverage). Bracket
+  notation at every site (18 `expect(env.X)`/`expect(inner.X)`, 10 `out.X`,
+  `env['KIMI_ENV_FILE']`, `base['PATH']`).
+- **`getEnv` not imported in Task 3's test** (both). Imported.
+- **`makeTempHome` regression** (coverage). `makeTempHome` returns
+  `{ home, cleanup }`; the regression now passes `workdir` and `runDir` in
+  one invocation, checks the happy path, and cleans up; the helper removes
+  its temp root before refusing.
+- **Launcher output could poison the campaign logs** (coverage). `OUT_DIR`
+  (default beside the script); the test uses a temp `OUT_DIR` and asserts
+  nothing lands under `control/`; Task 16 requires an empty `logs/` and no
+  `manifest.tsv` before launch and passes `OUT_DIR="$EVIDENCE_DIR/control"`.
+- **Continuation folding** (feasibility). `expectedPostChecks` folds
+  unquoted backslash-newline continuations before tokenizing; the unit test
+  carries `codex-gate-backstop-finding-forces-choice/checks.sh:31-33`
+  verbatim and expects the five-argument `tool-arg-match` key the corpus
+  recorded (`…-f903/verdict.json:81-92`).
+- **Result glob for void runs** (feasibility). The launcher resolves
+  `result.json` first and omits the optional argument when absent; the test
+  asserts each void row's kind.
+
+#### Disposition
+
+The document-gate ceiling (4) is reached. These six fixes were applied
+after the last Codex round and are therefore Codex-unreviewed; the next
+instrument that checks them is `bun run check` at every commit and the
+per-task Codex code gate during SDD. The human partner decides whether to
+proceed on that basis or to spend a further round in a new gate directory.
+
+#### Locks
+
+- Unchanged.

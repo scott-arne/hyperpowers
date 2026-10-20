@@ -3188,6 +3188,29 @@ class Evaluate(unittest.TestCase):
         self.c.arm("treatment", 10, treatment_records)
         self.assertEqual(self.c.evaluate()[1]["decision"], "INCOMPLETE")
 
+    def test_interrupted_or_killed_launches_count_toward_the_cap(self) -> None:
+        # Quorum prints run-id only when a run finishes: an interrupted run exits 2
+        # without one (the launcher writes DONE 2), and a killed one leaves FAILED 137.
+        for n in range(4):
+            self.c.launch("treatment", f"r{n + 1}", [], last="DONE 2" if n % 2 == 0 else "FAILED 137")
+        self.c.arm("control", 10, control_records, STOPS)
+        self.c.arm("treatment", 10, treatment_records)
+        rows, d = self.c.evaluate()
+        self.assertEqual([r["status"] for r in rows if r["proc"] == "r1"], ["no-run"])
+        self.assertEqual(d["decision"], "INCOMPLETE")
+
+    def test_a_missing_claude_code_version_is_a_provenance_void(self) -> None:
+        self.c.arm("control", 10, control_records, STOPS)
+        self.c.arm("treatment", 10, treatment_records)
+        # No transcript record carries a version: the Coding-Agent never started.
+        make_run(self.c.results, "treatment-nv", [], plugin_dir=ROOTS["treatment"], final="fail")
+        self.c.launch("treatment", "p0", ["treatment-nv"])
+        rows, d = self.c.evaluate()
+        row = next(r for r in rows if r["run_id"] == "treatment-nv")
+        self.assertEqual(row["status"], "void-provenance")
+        self.assertIn("cc missing", row["problems"])
+        self.assertEqual(d["decision"], "PASS")
+
     def test_a_refused_launch_is_a_replaceable_row(self) -> None:
         self.c.arm("control", 10, control_records, STOPS)
         self.c.arm("treatment", 10, treatment_records)
@@ -3438,8 +3461,13 @@ def _problems(m: Mapping[str, Any], arm: str, launch: Launch, pins: Mapping[str,
         problems.append("root commit")
     if m["model"] != pins["model"]:
         problems.append("model")
-    if not (m["cc"] == f.get("cc_before") == f.get("cc_after") == pins["cc"]):
+    # Only a recorded version that differs from the pin restarts the campaign;
+    # a version nobody recorded is a missing provenance field, which voids the run.
+    versions = [m["cc"], f.get("cc_before"), f.get("cc_after")]
+    if any(v is not None and v != pins["cc"] for v in versions):
         problems.append("cc")
+    elif None in versions:
+        problems.append("cc missing")
     if f.get("cc_path") != pins["cc_path"]:
         problems.append("cc path")
     if f.get("provider") != pins["provider"]:
@@ -3515,11 +3543,16 @@ def evaluate(
     for launch in launches:
         done = launch.last.startswith("DONE ")
         if not launch.run_ids:
-            # No agent started, so nothing is discarded: uncapped, like a setup
-            # void, and replaced by a new r<n> row once the cause is fixed. A
-            # preflight=cc refusal is the restart signal handled above.
+            # A preflight refusal started no agent, so nothing is discarded:
+            # uncapped, like a setup void, and replaced by a new r<n> row once
+            # the cause is fixed. A preflight=cc refusal is the restart signal
+            # handled above. Quorum prints a run id only when a run finishes,
+            # so any other launch without one was interrupted or killed after
+            # its agent may have run, and it counts toward the cap.
             preflight = launch.fields.get("preflight")
             status = "restart" if preflight == "cc" else "preflight-refused" if preflight else "no-run"
+            if status == "no-run":
+                voids[launch.arm] += 1
             no_run = {"arm": launch.arm, "proc": launch.proc, **analyze.empty_measure(f"({launch.proc}: no run)")}
             no_run["status"] = status
             rows.append(no_run)
@@ -4440,7 +4473,7 @@ Watch with `wait-done.sh … logs/campaign-control.out 9` in foreground calls of
 
 - [ ] **Step 2: Replace voids under the rules**
 
-Run `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` (it prints every row; the decision reads INCOMPLETE until the treatment arm exists). For each control row with status `void-setup`, `void-grader`, `void-other`, `no-verdict`, `launch-failed`, `void-provenance`, `preflight-refused` or `no-run` (fix the refusal's cause first; the log names it), append one replacement row `control sdd-turn-liveness 1 r<n> default` to `manifest.tsv`, write a launch view of the pins plus only the new rows (`manifest-control-r<k>.tsv`), and launch it the same detached way into `logs/campaign-control-r<k>.out`, watched with `wait-done.sh`. Stop at the cap of three capped voids. A `restart` row, or a log with `preflight=cc`, stops the campaign: report to the human partner.
+Run `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` (it prints every row; the decision reads INCOMPLETE until the treatment arm exists). For each control row with status `void-setup`, `void-grader`, `void-other`, `no-verdict`, `launch-failed`, `void-provenance`, `preflight-refused` or `no-run` (fix the refusal's cause first; the log names it), append one replacement row `control sdd-turn-liveness 1 r<n> default` to `manifest.tsv`, write a launch view of the pins plus only the new rows (`manifest-control-r<k>.tsv`), and launch it the same detached way into `logs/campaign-control-r<k>.out`, watched with `wait-done.sh`. Stop at the cap of three capped voids: every status above counts toward it except `void-setup` and `preflight-refused`. A `restart` row, or a log with `preflight=cc`, stops the campaign: report to the human partner.
 
 - [ ] **Step 3: Adjudicate and archive**
 

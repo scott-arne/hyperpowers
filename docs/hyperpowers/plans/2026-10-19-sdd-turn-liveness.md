@@ -591,7 +591,7 @@ git commit -m "feat(scenarios): sdd-turn-liveness, a six-task elicited plan with
   def is_resume(text: str | None) -> bool
   LAUNCH_AGENT = "Async agent launched"; LAUNCH_BASH = "Command running in background with ID"
   ```
-  `synth.py` produces: `at(seconds) -> str`, `assistant(t, text="", tools=(), version="2.1.300")`, `result(t, tool_id, text, is_error=False)`, `human(t, text, **extra)`, `notification(t, tool_id)`, `enqueue(t, tool_id)`, `attachment(t, payload)`, `sidechain(rec)`, `write(path, records)`, constants `AGENT_BG`, `BASH_BG`, `RELOAD_RESULT`.
+  `synth.py` produces: `at(seconds) -> str`, `assistant(t, text="", tools=(), version="2.1.300")`, `result(t, tool_id, text, is_error=False)`, `human(t, text, **extra)`, `notification(t, tool_id)`, `enqueue(t, tool_id)`, `attachment(t, payload)`, `compact_summary(t)`, `sidechain(rec)`, `write(path, records)`, constants `AGENT_BG`, `BASH_BG`, `RELOAD_RESULT`.
 
 **Mirror:** `evals/evidence/2026-10-03-release-6150-paired-control/tally.py:1-40` (docstring and constants), `evals/evidence/2026-10-14-agent-write-isolation-relocation/test_tally.py:1-30` (test module header).
 
@@ -694,6 +694,18 @@ def attachment(t: float, payload: dict[str, Any]) -> Record:
     return {"type": "attachment", "timestamp": at(t), "isSidechain": False, "attachment": payload}
 
 
+def compact_summary(t: float) -> Record:
+    """A compaction summary record, shaped like the ones Claude Code writes mid-session."""
+    return {
+        "type": "user",
+        "timestamp": at(t),
+        "isSidechain": False,
+        "isCompactSummary": True,
+        "isVisibleInTranscriptOnly": True,
+        "message": {"role": "user", "content": "This session is being continued from a previous conversation."},
+    }
+
+
 def sidechain(rec: Record) -> Record:
     out = dict(rec)
     out["isSidechain"] = True
@@ -731,6 +743,7 @@ from synth import (
     RELOAD_RESULT,
     assistant,
     at,
+    compact_summary,
     enqueue,
     human,
     notification,
@@ -828,6 +841,20 @@ class TurnEnds(unittest.TestCase):
         ends = liveness.turn_ends(recs)
         self.assertEqual(len(ends), 1)
         self.assertEqual(ends[0].next_human, "Resume")
+
+    def test_compaction_summary_is_not_a_turn_end(self) -> None:
+        recs = [
+            human(0, "go"),
+            assistant(5, tools=[("t1", "Bash", {"command": "ls"})]),
+            result(6, "t1", "ok"),
+            compact_summary(7),
+            assistant(8, "Tasks 1 and 2 are done. Moving to Task 3."),
+            human(100, "continue"),
+        ]
+        ends = liveness.turn_ends(recs)
+        self.assertEqual(len(ends), 1)
+        self.assertEqual((ends[0].at, ends[0].ended_by, ends[0].next_human), (ts(8), "human", "continue"))
+        self.assertIsNone(liveness.idle_marker(compact_summary(9)))
 
 
 class Load(unittest.TestCase):
@@ -1073,9 +1100,14 @@ def idle_marker(rec: Record) -> Literal["human", "notification"] | None:
 
     :returns: ``human`` for a typed message, ``notification`` for a completion
         notice delivered as its own message, None for anything else (tool
-        results, meta records, local-command echoes, interrupts).
+        results, meta records, compaction summaries, local-command echoes,
+        interrupts).
     """
     if rec.get("type") != "user" or rec.get("isMeta") or is_tool_result(rec):
+        return None
+    # A compaction summary is a user-type record without isMeta; it marks a
+    # context reset inside a turn, not a message from the human partner.
+    if rec.get("isCompactSummary") or rec.get("isVisibleInTranscriptOnly"):
         return None
     text = text_of(rec).lstrip()
     if text.startswith(TASK_NOTICE):

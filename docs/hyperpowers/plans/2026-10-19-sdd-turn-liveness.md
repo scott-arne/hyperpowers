@@ -810,7 +810,7 @@ class TurnEnds(unittest.TestCase):
         recs = [
             human(0, "go"),
             assistant(5, tools=[("a1", "Agent", {})]),
-            result(400, "a1", RELOAD_RESULT),
+            result(400, "a1", RELOAD_RESULT, is_error=True),
             assistant(401, "No response requested."),
             human(402, "Resume"),
         ]
@@ -832,15 +832,29 @@ class TurnEnds(unittest.TestCase):
         self.assertEqual(liveness.turn_ends(recs)[0].excluded, "killed")
 
     def test_local_command_records_are_not_human_messages(self) -> None:
+        stdout = human(6.5, "<local-command-stdout>ok</local-command-stdout>")
+        del stdout["origin"]
         recs = [
             human(0, "go"),
             assistant(5, "Done for now."),
-            human(6, "<local-command-caveat>Caveat: ...</local-command-caveat>"),
+            human(6, "<local-command-caveat>Caveat: ...</local-command-caveat>", isMeta=True),
+            stdout,
             human(7, "Resume"),
         ]
         ends = liveness.turn_ends(recs)
         self.assertEqual(len(ends), 1)
         self.assertEqual(ends[0].next_human, "Resume")
+
+    def test_typed_slash_command_is_a_human_message(self) -> None:
+        recs = [
+            human(0, "go"),
+            assistant(5, "Done for now."),
+            human(6, "<command-message>hyperpowers:brainstorming</command-message>"),
+        ]
+        ends = liveness.turn_ends(recs)
+        self.assertEqual(len(ends), 1)
+        self.assertEqual(ends[0].ended_by, "human")
+        self.assertTrue((ends[0].next_human or "").startswith("<command-message>"))
 
     def test_stop_right_after_a_launch_is_judged_live(self) -> None:
         for closer in (notification(90, "a1"), human(90, "continue")):
@@ -923,7 +937,11 @@ class Tasks(unittest.TestCase):
         self.assertEqual(liveness.tasks(recs), {})
 
     def test_completion_from_a_delivered_notification(self) -> None:
-        recs = [assistant(5, tools=[("b1", "Bash", {})]), result(6, "b1", BASH_BG), notification(70, "b1")]
+        recs = [
+            assistant(5, tools=[("b1", "Bash", {"command": "sleep 60", "run_in_background": True})]),
+            result(6, "b1", BASH_BG),
+            notification(70, "b1"),
+        ]
         task = liveness.tasks(recs)["b1"]
         self.assertEqual((task.kind, task.completed), ("bash", ts(70)))
 
@@ -937,6 +955,10 @@ class Tasks(unittest.TestCase):
             result(6, "r1", "1\t" + BASH_BG),
             assistant(7, tools=[("g3", "Bash", {"command": "cat run.log"})]),
             result(8, "g3", "the session ended before this call's result was recorded"),
+            assistant(9, tools=[("g4", "Bash", {"command": "head -1 run.log"})]),
+            result(10, "g4", BASH_BG),
+            assistant(11, tools=[("g5", "Bash", {"command": "head -1 reload.log"})]),
+            result(12, "g5", RELOAD_RESULT),
         ]
         self.assertEqual(liveness.tasks(recs), {})
         self.assertEqual(liveness.reloads(recs), [])
@@ -946,7 +968,7 @@ class Tasks(unittest.TestCase):
             assistant(3, tools=[("b1", "Bash", {"command": "sleep 900", "run_in_background": True})]),
             result(4, "b1", BASH_BG),
             assistant(5, tools=[("z1", "Bash", {"command": "ls"})]),
-            result(6, "z1", RELOAD_RESULT),
+            result(6, "z1", RELOAD_RESULT, is_error=True),
         ]
         self.assertEqual(sorted(liveness.tasks(genuine)), ["a1", "b1"])
         self.assertEqual(liveness.reloads(genuine), [ts(6)])
@@ -956,9 +978,9 @@ class Tasks(unittest.TestCase):
             assistant(5, tools=[("a1", "Agent", {})]),
             result(6, "a1", AGENT_BG),
             enqueue(90, "a1"),
-            assistant(99, tools=[("b1", "Bash", {})]),
+            assistant(99, tools=[("b1", "Bash", {"command": "sleep 900", "run_in_background": True})]),
             result(100, "b1", BASH_BG),
-            result(200, "z9", RELOAD_RESULT),
+            result(200, "z9", RELOAD_RESULT, is_error=True),
         ]
         task_map = liveness.tasks(recs)
         reload_times = liveness.reloads(recs)
@@ -1175,7 +1197,14 @@ def idle_marker(rec: Record) -> Literal["human", "notification"] | None:
     text = text_of(rec).lstrip()
     if text.startswith(TASK_NOTICE):
         return "notification"
-    if not text or text.startswith(("<", INTERRUPTED)):
+    if not text or text.startswith(INTERRUPTED):
+        return None
+    # Typed slash commands and IDE context start with markup but are the human
+    # partner's own messages, which Claude Code marks human-origin; markup
+    # records without that origin are local-command and system envelopes.
+    if (rec.get("origin") or {}).get("kind") == "human":
+        return "human"
+    if text.startswith("<"):
         return None
     return "human"
 
@@ -1212,23 +1241,25 @@ def _completion_ids(rec: Record) -> list[str]:
     return []
 
 
-def _launch_kind(name: str | None, text: str) -> Kind | None:
+def _launch_kind(name: str | None, background: bool, text: str) -> Kind | None:
     """The tracked launch a tool result records, or None.
 
-    A marker counts only at the start of a result from its own tool: a
+    A marker counts only at the start of a result from its own tool, and a
+    shell launch also needs ``run_in_background: true`` on the call: a
     foreground command that prints or greps the marker text launches nothing.
     """
     head = text.lstrip()
     if name in AGENT_TOOLS and head.startswith(LAUNCH_AGENT):
         return "agent"
-    if name == "Bash" and head.startswith(LAUNCH_BASH):
+    if name == "Bash" and background and head.startswith(LAUNCH_BASH):
         return "bash"
     return None
 
 
-def _is_reload_result(text: str) -> bool:
-    head = text.lstrip()
-    return head.startswith(RELOAD_PREFIX) and RELOAD_TOOL_RESULT in head
+def _is_reload_result(block: Mapping[str, Any]) -> bool:
+    """A tool result the harness wrote when the session ended mid-call (flagged as an error)."""
+    head = result_text(block).lstrip()
+    return block.get("is_error") is True and head.startswith(RELOAD_PREFIX) and RELOAD_TOOL_RESULT in head
 
 
 def _questions(inp: Mapping[str, Any]) -> list[str]:
@@ -1240,14 +1271,14 @@ def _questions(inp: Mapping[str, Any]) -> list[str]:
 
 def tasks(records: Sequence[Record]) -> dict[str, Task]:
     """Find every tracked background launch and its first recorded completion."""
-    names: dict[str, str] = {}
+    calls: dict[str, tuple[str, bool]] = {}
     launched: dict[str, tuple[Kind, datetime]] = {}
     done: dict[str, datetime] = {}
     for rec in records:
         when = parse_ts(rec["timestamp"])
         for use in tool_uses(rec):
             if isinstance(use.get("id"), str):
-                names[use["id"]] = str(use.get("name"))
+                calls[use["id"]] = (str(use.get("name")), tool_input(use).get("run_in_background") is True)
         if rec.get("type") == "user":
             for block in blocks(rec):
                 if block.get("type") != "tool_result":
@@ -1255,7 +1286,8 @@ def tasks(records: Sequence[Record]) -> dict[str, Task]:
                 tool_id = block.get("tool_use_id")
                 if not isinstance(tool_id, str) or tool_id in launched:
                     continue
-                kind = _launch_kind(names.get(tool_id), result_text(block))
+                name, background = calls.get(tool_id, ("", False))
+                kind = _launch_kind(name, background, result_text(block))
                 if kind is not None:
                     launched[tool_id] = (kind, when)
         for tool_id in _completion_ids(rec):
@@ -1272,7 +1304,7 @@ def reloads(records: Sequence[Record]) -> list[datetime]:
     out: list[datetime] = []
     for rec in records:
         lost_result = rec.get("type") == "user" and any(
-            b.get("type") == "tool_result" and _is_reload_result(result_text(b)) for b in blocks(rec)
+            b.get("type") == "tool_result" and _is_reload_result(b) for b in blocks(rec)
         )
         reload_reply = rec.get("type") == "assistant" and text_of(rec).strip() == RELOAD_REPLY
         if lost_result or reload_reply:
@@ -1321,7 +1353,7 @@ def turn_ends(records: Sequence[Record]) -> list[TurnEnd]:
                 if block.get("tool_use_id") in asked and result_text(block).lstrip().startswith(ASK_ANSWERED):
                     asked.pop(str(block["tool_use_id"]))
             texts = [result_text(b) for b in results]
-            if any(_is_reload_result(t) for t in texts):
+            if any(_is_reload_result(b) for b in results):
                 excluded = "reload"
             elif any(t.lstrip().startswith(INTERRUPTED) for t in texts):
                 excluded = excluded or "interrupt"
@@ -3243,7 +3275,7 @@ def session() -> list[dict[str, Any]]:
         assistant(720, "Started the suite."),
         human(800, "Resume"),
         assistant(850, tools=[("z1", "Bash", {"command": "ls"})]),
-        result(900, "z1", RELOAD_RESULT),
+        result(900, "z1", RELOAD_RESULT, is_error=True),
         assistant(901, "No response requested."),
         human(902, "Resume"),
         assistant(1000, tools=[("u2", "TaskUpdate", {"taskId": "2", "status": "completed"})]),

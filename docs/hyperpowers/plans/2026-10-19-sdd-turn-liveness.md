@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use hyperpowers:subagent-driven-development (recommended) or hyperpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Spec:** `docs/hyperpowers/specs/2026-10-19-sdd-turn-liveness-design.md` (approved by the human partner on 2026-10-19). The spec is binding; where this plan and the spec disagree, the spec governs, except for the deviations listed below, which the human partner approves before Task 1.
+**Spec:** `docs/hyperpowers/specs/2026-10-19-sdd-turn-liveness-design.md` (approved by the human partner on 2026-10-19). The spec is binding; where this plan and the spec disagree, the spec governs, except for the deviations listed below, which the human partner approved (1-4 before Task 1, 5 during Task 2).
 
 **Goal:** Make the SDD controller end a turn mid-plan only for a blocker, a question or (where it cannot wait in the foreground) named tracked work; forbid untracked launches; make Claude Code controllers wait in the foreground; and measure the change with a pre-registered paired quorum campaign, a field baseline and two Zed checks before releasing 6.17.0.
 
@@ -10,12 +10,13 @@
 
 **Tech Stack:** Markdown skill text and bash contract suites (hyperpowers); TypeScript on Bun ≥ 1.3 (biome, tsc, bun test) for the setup helper; Python 3 standard library for the analyzers (ruff, mypy, `python3 -m unittest`); bash 3.2-compatible campaign scripts with `.test.sh` siblings.
 
-## Deviations from the spec (approved before Task 1)
+## Deviations from the spec (approved by the human partner)
 
 1. **Field version attribution by time window.** Spec Design §3 identifies a session's hyperpowers version "by the plugin version in each skill's install path in the transcript". On this host every Skill call loads from `/Users/johnss51/Development/agents/hyperpowers/.worktrees/plugin-install` (no version in the path), and the versioned cache paths that do appear are unreliable (one session references `6.6.1` 1,852 times). The skill text in effect at any moment is the tag that worktree had checked out, which its reflog records with timestamps. `field.py` therefore attributes events by time window: the baseline window ends before the 6.17.0 install, and the after-window starts at the reflog entry that first checked out the release candidate (the bump commit) and ends at the first later checkout of a commit with different `skills/`.
 2. **Turn ends found structurally.** Spec Design §2 defines a premature stop over "main-session turn ends (`stop_reason: end_turn`)". The interactive transcripts quorum records never carry `end_turn`: every main-session assistant record there says `tool_use`, text-only ones included (checked on `sdd-fix-loop-refutes-wrong-finding-claude-auto-20260930T091614Z-e8da`). A turn end is therefore the point where the next main-session user record is a human message or a completion notice delivered as its own message, or the transcript ends. The same rule serves field transcripts, which keeps one definition for both, as spec round-2 finding 13 asked.
 3. **Censoring in the scenario too.** Spec Design §3 defines a censored task (no completion ever recorded) for the field. The scenario analyzer applies the same rule through the shared module, so a stop while a never-completing task is open counts as censored, outside both the premature and the live-work counts.
 4. **Subagent models as an allowed set.** Spec Design §2 pins one model "for the Coding-Agent and its subagents". SDD chooses each subagent's model tier itself (`skills/subagent-driven-development/model-selection.md`), and that choice is skill text, which differs between the arms. Forcing every subagent onto `claude-opus-5-5` would override part of the behavior under test. The pin therefore fixes the Coding-Agent model exactly and fixes the set of model IDs a subagent may resolve to (`claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`); a run that records any other model is a provenance void.
+5. **The elicitation prompt keeps waiting instructions out of the fixture plan.** Spec Design §2 asks for an elicited six-task plan that names the two slow commands and their runtimes. Task 2's first three elicitations at v6.16.1 (kept as `attempt-1` to `attempt-3` in the evidence directory, with the prompt they used in `prompt-attempts-1-3.txt`) each wrote its own instructions for running and waiting on the soak tests: run both in the background, wait for the completion notice, tell the controller the soak is running. Such a stimulus would carry, or contradict, the behavior under test, so the long-job measure would credit the plan's text rather than the skill. The prompt therefore adds one sentence asking the plan to name each covering command and its runtime and to leave how commands are run and waited for to whoever executes it, and the fixture-plan test rejects a plan that mentions background or foreground runs. The plan is still written by writing-plans at the control version and never edited. Approved by the human partner on 2026-10-20, together with a looser contract test: v6.16.1 writing-plans puts a slow command after a lead-in sentence or in a code block, never on a `Run:` line, so the test requires the exact command and its runtime inside the task's section rather than on a `Run:` line.
 
 ## Global Constraints
 
@@ -204,7 +205,7 @@ git commit -m "fix(sdd): a status message never ends a turn mid-plan, long work 
 
 **Interfaces:**
 - Consumes: the control root (Before Task 1) for elicitation.
-- Produces (the fixture contract Tasks 4, 5 and 9 rely on): six plan tasks headed `### Task 1` … `### Task 6`; two task sections whose `Run:` lines carry the exact covering commands `python3 -m unittest tests.test_soak_short -v` (with "four minutes") and `python3 -m unittest tests.test_soak_long -v` (with "twelve minutes"); helper `scaffold_sdd_turn_liveness`; scenario `sdd-turn-liveness` whose `checks.sh` records a pre-checks containing `codex@openai-codex` and `plugins/cache/openai-codex` and post-checks containing `test_unit_`, `tests.test_soak_short`, `tests.test_soak_long` and `quorum-recorded-head`.
+- Produces (the fixture contract Tasks 4, 5 and 9 rely on): six plan tasks headed `### Task 1` … `### Task 6`; two task sections that carry the exact covering commands `python3 -m unittest tests.test_soak_short -v` (with "four minutes") and `python3 -m unittest tests.test_soak_long -v` (with "twelve minutes"), and no instructions about background or foreground runs (deviation 5); helper `scaffold_sdd_turn_liveness`; scenario `sdd-turn-liveness` whose `checks.sh` records a pre-checks containing `codex@openai-codex` and `plugins/cache/openai-codex` and post-checks containing `test_unit_`, `tests.test_soak_short`, `tests.test_soak_long` and `quorum-recorded-head`.
 
 **Mirror:** `evals/src/setup-helpers/sdd-fixtures.ts:15-31`, `evals/src/setup-helpers/plugin-stage.ts:32-54`, `evals/test/setup-helpers-sdd.test.ts:20-33`, `evals/scenarios/sdd-fix-loop-refutes-wrong-finding/{story.md,checks.sh}`.
 
@@ -340,8 +341,10 @@ if __name__ == "__main__":
 `evidence/2026-10-19-sdd-turn-liveness/elicitation/prompt.txt`:
 
 ```text
-Use the hyperpowers:writing-plans skill to write the implementation plan for the design in design.md. Save the plan as plan.md in the repository root. Write the plan only: do not execute it, do not create a worktree or branch, and do not commit.
+Use the hyperpowers:writing-plans skill to write the implementation plan for the design in design.md. Save the plan as plan.md in the repository root. Write the plan only: do not execute it, do not create a worktree or branch, and do not commit. Name each task's covering command and its expected runtime, and leave how commands are run and waited for to whoever executes the plan: do not add instructions about running commands in the background or the foreground, waiting for them, or reporting progress while they run.
 ```
+
+Attempts 1-3 ran with the prompt before its last sentence was added (deviation 5); save that earlier text verbatim as `evidence/2026-10-19-sdd-turn-liveness/elicitation/prompt-attempts-1-3.txt` and keep their `attempt-1` to `attempt-3` directories as the deviation's evidence.
 
 `evidence/2026-10-19-sdd-turn-liveness/elicitation/elicit-plan.sh` (adapted from `evidence/2026-10-03-communication-skill/trigger/run-trigger.sh:1-35`):
 
@@ -380,7 +383,7 @@ shasum -a 256 "$raw/turn.jsonl" | awk '{ print $1 }' > "$out/turn.sha256"
 rm -rf "$raw/config"
 ```
 
-Run (unsandboxed after the sandbox signature, tracked background, timeout 2400000): `bash evidence/2026-10-19-sdd-turn-liveness/elicitation/elicit-plan.sh 1`. Copy `attempt-1/plan.md` to `fixtures/sdd-turn-liveness/plan.md` and run Step 4's fixture-plan test. If it fails, run attempt 2, then 3, keeping each attempt's directory. Before committing, read the accepted `plan.md` for host paths (the session's temporary work directory, the plugin root) and report any you find; the plan is still never edited. If all three fail, stop and report BLOCKED with the three plans: the plan text is the experiment's stimulus and is never hand-edited.
+Run (unsandboxed after the sandbox signature, tracked background, timeout 2400000): `bash evidence/2026-10-19-sdd-turn-liveness/elicitation/elicit-plan.sh 4` (attempts 1-3 used the earlier prompt; see deviation 5). Copy `attempt-4/plan.md` to `fixtures/sdd-turn-liveness/plan.md` and run Step 4's fixture-plan test. If it fails, run attempt 5, then 6, keeping each attempt's directory. Before committing, read the accepted `plan.md` for host paths (the session's temporary work directory, the plugin root) and report any you find; the plan is still never edited. If attempts 4-6 all fail, stop and report BLOCKED with the three plans: the plan text is the experiment's stimulus and is never hand-edited.
 
 - [ ] **Step 3: Add the scaffold helper and its registry entry**
 
@@ -438,16 +441,17 @@ Add to `evals/test/setup-helpers-sdd.test.ts` (import `scaffoldSddTurnLiveness`,
     }
   });
 
-  test('the turn-liveness fixture plan has six tasks and runs both slow covering commands', () => {
+  test('the turn-liveness fixture plan has six tasks, names both slow covering commands, and says nothing about how to wait', () => {
     const plan = readFileSync(join(import.meta.dir, '..', 'fixtures', 'sdd-turn-liveness', 'plan.md'), 'utf8');
     const headings = [...plan.matchAll(/^### Task (\d+)\b/gm)].map((m) => Number(m[1]));
     expect(headings).toEqual([1, 2, 3, 4, 5, 6]);
     const sections = plan.split(/^### Task \d+\b/m).slice(1);
-    const runs = (cmd: string): RegExp => new RegExp(`Run:[^\\n]*${cmd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
     const short = 'python3 -m unittest tests.test_soak_short -v';
     const long = 'python3 -m unittest tests.test_soak_long -v';
-    expect(sections.some((s) => runs(short).test(s) && /(four|4)\s*min/i.test(s))).toBe(true);
-    expect(sections.some((s) => runs(long).test(s) && /(twelve|12)\s*min/i.test(s))).toBe(true);
+    expect(sections.some((s) => s.includes(short) && /(four|4)\s*min/i.test(s))).toBe(true);
+    expect(sections.some((s) => s.includes(long) && /(twelve|12)\s*min/i.test(s))).toBe(true);
+    // Deviation 5: the stimulus must not tell the executor how to run or wait.
+    expect(plan).not.toMatch(/run_in_background|in the background|foreground|completion notification/i);
   });
 ```
 

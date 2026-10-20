@@ -1850,6 +1850,41 @@ class Measure(unittest.TestCase):
         ]
         m = self.run_of("p8", edited, ledger=0)
         self.assertEqual((m["plan_complete"], m["plan_at"]), (True, liveness.parse_ts(at(1408)).isoformat()))
+        appended = five[:-1] + [
+            assistant(1410, tools=[("e7", "Edit", {
+                "file_path": LEDGER,
+                "old_string": "Task 5: complete (def456)",
+                "new_string": "Task 5: complete (def456)\nTask 6: complete (abc123)",
+            })]),
+            result(1411, "e7", "edited"),
+            five[-1],
+        ]
+        m = self.run_of("p9", appended, ledger=0)
+        self.assertEqual((m["plan_complete"], m["plan_at"]), (True, liveness.parse_ts(at(1410)).isoformat()))
+        rewritten = drop_call(five, "lw5")[:-1] + [
+            assistant(1412, tools=[("w7", "Write", {
+                "file_path": LEDGER,
+                "content": "# SDD ledger\n" + "".join(f"Task {n}: complete\n" for n in range(1, 7)),
+            })]),
+            result(1413, "w7", "written"),
+            five[-1],
+        ]
+        self.assertEqual(self.run_of("p10", rewritten, ledger=0)["ledger_marks"], [1, 2, 3, 4, 5, 6])
+        old_only = five[:-1] + [
+            assistant(1414, tools=[("e8", "Edit", {"file_path": LEDGER, "old_string": "Task 6: complete", "new_string": ""})]),
+            result(1415, "e8", "edited"),
+            five[-1],
+        ]
+        self.assertFalse(self.run_of("p11", old_only, ledger=0)["plan_complete"])
+
+    def test_final_review_is_read_from_the_description_only(self) -> None:
+        five = drop_call(treatment_records(), "lw6")
+        for rec in five:
+            for use in liveness.tool_uses(rec):
+                if use.get("id") == "a1":
+                    use["input"]["prompt"] = "Implement Task 1. The final review runs after Task 6."
+        m = self.run_of("f1", five, ledger=6)
+        self.assertEqual(m["plan_at"], liveness.parse_ts(at(1500)).isoformat())
 
     def test_long_job_needs_a_foreground_watch_that_saw_exit_zero(self) -> None:
         self.assertTrue(self.run_of("l1", long_job())["long_ok"])
@@ -1858,6 +1893,19 @@ class Measure(unittest.TestCase):
         self.assertFalse(self.run_of("l4", long_job(watch=False))["long_ok"])
         # Deviation 6: an exit=0 seen 300 s after launch is too fast for a 720 s soak.
         self.assertFalse(self.run_of("l5", long_job(done_at=900))["long_ok"])
+
+    def test_auto_backgrounded_short_run_is_not_a_foreground_run(self) -> None:
+        moved = "Command did not complete within its 240s timeout and was moved to the background (ID: b-auto)."
+        records = [
+            result(560, "b1", moved) if r.get("timestamp") == at(560) else r for r in treatment_records()
+        ]
+        for rec in records:
+            for use in liveness.tool_uses(rec):
+                if use.get("id") == "b1":
+                    use["input"]["timeout"] = 240000
+        m = self.run_of("s2", records)
+        self.assertTrue(m["short_runs"][0]["background"])
+        self.assertFalse(m["short_ok"])
 
     def test_short_run_must_take_real_time(self) -> None:
         fast = [result(340, "b1", "OK") if r.get("timestamp") == at(560) else r for r in treatment_records()]
@@ -1986,6 +2034,10 @@ class Untracked(unittest.TestCase):
         self.assertTrue(analyze.runs_soak("python3 -m unittest discover -s tests", "test_soak_long"))
         self.assertFalse(analyze.runs_soak('python3 -m unittest discover -s tests -p "test_unit_*.py"', "test_soak_long"))
         self.assertFalse(analyze.runs_soak("grep test_soak_short plan.md", "test_soak_short"))
+        self.assertFalse(analyze.runs_soak('grep -n "unittest tests.test_soak_long" plan.md', "test_soak_long"))
+        self.assertFalse(analyze.runs_soak('git commit -m "run python3 -m unittest tests.test_soak_short"', "test_soak_short"))
+        self.assertTrue(analyze.runs_soak("cd /x && PYTHONPATH=. python3 -m unittest tests.test_soak_long -v", "test_soak_long"))
+        self.assertTrue(analyze.runs_soak("nohup python3 -m unittest tests.test_soak_long -v > o 2>&1 &", "test_soak_long"))
 
 
 class Summary(unittest.TestCase):
@@ -2051,6 +2103,7 @@ if str(HERE) not in sys.path:
 from liveness import (
     LAUNCH_AGENT,
     LAUNCH_BASH,
+    LAUNCH_BASH_AUTO,
     Record,
     asks_or_blocks,
     blocks,
@@ -2078,6 +2131,9 @@ SHORT_MIN_ELAPSED_S = 200
 LONG_MIN_ELAPSED_S = 600
 SOAK_FILES = ("test_soak_short.py", "test_soak_long.py")
 IN_PLACE = re.compile(r"\b(?:sed|perl)\b[^\n;|&]*\s-i")
+UNITTEST_CMD = re.compile(
+    r"(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*(?:nohup\s+|timeout\s+\S+\s+)*(?:\S*/)?python3?\s+-m\s+unittest\b([^\n;|&]*)"
+)
 BASH_DEFAULT_TIMEOUT_MS = 120_000
 UNIT_TESTS = "test_unit_"
 SOAK_SHORT_CHECK = "tests.test_soak_short"
@@ -2253,14 +2309,22 @@ def shell_detaches(text: str) -> bool:
 
 
 def runs_soak(command: str, name: str) -> bool:
-    """Whether a command runs the named soak test, directly or through ``unittest discover``."""
-    if re.search(rf"\bunittest\b[^\n;|]*\b{name}\b", command):
-        return True
-    match = re.search(r"\bunittest\s+discover\b([^\n;|]*)", command)
-    if match is None:
-        return False
-    pattern = re.search(r"-p\s+['\"]?([^\s'\"]+)", match.group(1))
-    return pattern is None or fnmatch.fnmatch(f"{name}.py", pattern.group(1))
+    """Whether a command runs the named soak test, directly or through ``unittest discover``.
+
+    Only a ``python3 -m unittest`` invocation at the start of a shell command
+    counts, so a grep, echo or commit message that mentions the covering
+    command does not.
+    """
+    for match in UNITTEST_CMD.finditer(command):
+        args = match.group(1)
+        if re.search(rf"\b{name}\b", args):
+            return True
+        discover = re.match(r"\s+discover\b(.*)", args)
+        if discover:
+            pattern = re.search(r"-p\s+['\"]?([^\s'\"]+)", discover.group(1))
+            if pattern is None or fnmatch.fnmatch(f"{name}.py", pattern.group(1)):
+                return True
+    return False
 
 
 def _executed(path: str, commands: Sequence[str]) -> bool:
@@ -2328,7 +2392,14 @@ def _ledger_marks(call: Call) -> set[int]:
     if call.name in WRITERS:
         if not str(call.inp.get("file_path", "")).endswith(LEDGER_FILE):
             return set()
-        text = json.dumps(call.inp)
+        # Only the new content marks a task: an Edit's old_string repeats lines
+        # already written, and JSON-encoding the input would hide a mark that
+        # follows a newline from the word-boundary match.
+        parts = [call.inp.get("content"), call.inp.get("new_string")]
+        edits = call.inp.get("edits")
+        if isinstance(edits, list):
+            parts += [e.get("new_string") for e in edits if isinstance(e, dict)]
+        text = "\n".join(part for part in parts if isinstance(part, str))
     elif call.name == "Bash":
         text = str(call.inp.get("command", ""))
         targets = [m.group(2) for m in WRITE_TARGET.finditer(text) if m.group(2) != "/dev/null"]
@@ -2457,8 +2528,9 @@ def _transcript_measures(
             out["dispatch_fg"] += 1
         else:
             out["dispatch_unclassified"] += 1
-        text = f"{desc} {call.inp.get('prompt', '')}"
-        if call.result is not None and not call.error and FINAL.search(text) and REVIEW.search(text):
+        # The description names the role; prompts mention "final review" in
+        # passing (implementer briefs do), so they cannot identify it.
+        if call.result is not None and not call.error and FINAL.search(desc) and REVIEW.search(desc):
             final_dispatches.append(call.at)
     plan_at = written_at or (min(final_dispatches) if complete and final_dispatches else None)
     out["plan_at"] = iso(plan_at) if plan_at else None
@@ -2471,7 +2543,9 @@ def _transcript_measures(
         command = str(call.inp.get("command", ""))
         timeout = call.inp.get("timeout")
         limit = int(timeout) if isinstance(timeout, (int, float)) else BASH_DEFAULT_TIMEOUT_MS
-        background = call.result is not None and LAUNCH_BASH in call.result
+        background = call.result is not None and (
+            LAUNCH_BASH in call.result or call.result.lstrip().startswith(LAUNCH_BASH_AUTO)
+        )
         if runs_soak(command, SHORT_SOAK):
             elapsed = (call.result_at - call.at).total_seconds() if call.result_at else None
             out["short_runs"].append({"at": iso(call.at), "background": background, "timeout": limit, "elapsed": elapsed})

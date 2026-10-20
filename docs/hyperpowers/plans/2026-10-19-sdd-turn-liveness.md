@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use hyperpowers:subagent-driven-development (recommended) or hyperpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Spec:** `docs/hyperpowers/specs/2026-10-19-sdd-turn-liveness-design.md` (approved by the human partner on 2026-10-19). The spec is binding; where this plan and the spec disagree, the spec governs, except for the deviations listed below, which the human partner approved (1-4 before Task 1, 5 and 6 during Task 2).
+**Spec:** `docs/hyperpowers/specs/2026-10-19-sdd-turn-liveness-design.md` (approved by the human partner on 2026-10-19). The spec is binding; where this plan and the spec disagree, the spec governs, except for the deviations listed below, which the human partner approved (1-4 before Task 1, 5 and 6 during Task 2, 7 during Task 3).
 
 **Goal:** Make the SDD controller end a turn mid-plan only for a blocker, a question or (where it cannot wait in the foreground) named tracked work; forbid untracked launches; make Claude Code controllers wait in the foreground; and measure the change with a pre-registered paired quorum campaign, a field baseline and two Zed checks before releasing 6.17.0.
 
@@ -18,6 +18,7 @@
 4. **Subagent models as an allowed set.** Spec Design §2 pins one model "for the Coding-Agent and its subagents". SDD chooses each subagent's model tier itself (`skills/subagent-driven-development/model-selection.md`), and that choice is skill text, which differs between the arms. Forcing every subagent onto `claude-opus-5-5` would override part of the behavior under test. The pin therefore fixes the Coding-Agent model exactly and fixes the set of model IDs a subagent may resolve to (`claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`); a run that records any other model is a provenance void.
 5. **The elicitation prompt keeps waiting instructions out of the fixture plan.** Spec Design §2 asks for an elicited six-task plan that names the two slow commands and their runtimes. Task 2's first three elicitations at v6.16.1 (kept as `attempt-1` to `attempt-3` in the evidence directory, with the prompt they used in `prompt-attempts-1-3.txt`) each wrote its own instructions for running and waiting on the soak tests: run both in the background, wait for the completion notice, tell the controller the soak is running. Such a stimulus would carry, or contradict, the behavior under test, so the long-job measure would credit the plan's text rather than the skill. The prompt therefore adds one sentence asking the plan to name each covering command and its runtime and to leave how commands are run and waited for to whoever executes it, and the fixture-plan test rejects a plan that mentions background or foreground runs. The plan is still written by writing-plans at the control version and never edited. Approved by the human partner on 2026-10-20, together with a looser contract test: v6.16.1 writing-plans puts a slow command after a lead-in sentence or in a code block, never on a `Run:` line, so the test requires the exact command and its runtime inside the task's section rather than on a `Run:` line.
 6. **Measured soak runs must take real time, and soak files must stay untouched in the session.** Spec Design §2 defines the two F measures by call shape (foreground with a long enough timeout; a tracked launch watched to its end). Task 2's Codex gate found that a controller could shorten `SOAK_SECONDS`, run the soak quickly, and restore the file before the post-checks, which compare only the final tree; the scenario's post-check now also rejects a commit history that touched a soak file, but an uncommitted edit-run-restore would still pass F. The analyzer therefore also requires the short soak's main-session result to arrive at least 200 s after its call and the long job's `exit=0` watch result at least 600 s after its launch, and marks a run `soak_tampered` (which fails run success) when a successful main-session call writes to either soak file. Approved by the human partner on 2026-10-20, before pre-registration.
+7. **A command Claude Code moves to the background on its own is a tracked launch.** Spec Design §2 defines "live" by the two launch results "Async agent launched" and "Command running in background with ID". Claude Code also moves a foreground Bash call that outlives its timeout to the background by itself; the result then starts "Command did not complete within its <N>s timeout and was moved to the background", and the job's end arrives as a completion notice naming the same tool-use id, like any tracked job (about 800 such results on this host). The shared module counts that result as a shell launch, so a stop while such a job runs is a live-work turn end (W2), not a premature stop (P). F is unaffected: a four-minute soak run with the two-minute default timeout still fails it on its timeout and its elapsed time. Approved by the human partner on 2026-10-20, during Task 3's review; applied as Task 4's first step because Task 3 had closed.
 
 ## Global Constraints
 
@@ -973,6 +974,24 @@ class Tasks(unittest.TestCase):
         self.assertEqual(sorted(liveness.tasks(genuine)), ["a1", "b1"])
         self.assertEqual(liveness.reloads(genuine), [ts(6)])
 
+    def test_auto_backgrounded_command_is_a_tracked_launch(self) -> None:
+        moved = (
+            "Command did not complete within its 120s timeout and was moved to the background (ID: b-auto). "
+            "Output is being written to: /tmp/b-auto.output. You will be notified when it completes."
+        )
+        recs = [
+            assistant(5, tools=[("b9", "Bash", {"command": "python3 -m unittest tests.test_soak_short -v"})]),
+            result(125, "b9", moved),
+            enqueue(245, "b9"),
+        ]
+        task = liveness.tasks(recs)["b9"]
+        self.assertEqual((task.kind, task.launched, task.completed), ("bash", ts(125), ts(245)))
+        printed = [
+            assistant(5, tools=[("g9", "Bash", {"command": "grep moved notes.md"})]),
+            result(6, "g9", "notes.md: " + moved),
+        ]
+        self.assertEqual(liveness.tasks(printed), {})
+
     def test_states_live_none_censored_and_killed_by_reload(self) -> None:
         recs = [
             assistant(5, tools=[("a1", "Agent", {})]),
@@ -1077,6 +1096,8 @@ LAUNCH_AGENT = "Async agent launched"
 LAUNCH_BASH = "Command running in background with ID"
 RELOAD_TOOL_RESULT = "the session ended before this call's result was recorded"
 RELOAD_PREFIX = "[Tool call interrupted:"
+LAUNCH_BASH_AUTO = "Command did not complete within its"
+AUTO_MOVED = "was moved to the background"
 AGENT_TOOLS = frozenset({"Agent", "Task"})
 ASK_TOOL = "AskUserQuestion"
 ASK_ANSWERED = "Your questions have been answered"
@@ -1247,11 +1268,15 @@ def _launch_kind(name: str | None, background: bool, text: str) -> Kind | None:
     A marker counts only at the start of a result from its own tool, and a
     shell launch also needs ``run_in_background: true`` on the call: a
     foreground command that prints or greps the marker text launches nothing.
+    A Bash call that Claude Code moved to the background after its timeout is
+    a tracked launch too (plan deviation 7).
     """
     head = text.lstrip()
     if name in AGENT_TOOLS and head.startswith(LAUNCH_AGENT):
         return "agent"
     if name == "Bash" and background and head.startswith(LAUNCH_BASH):
+        return "bash"
+    if name == "Bash" and head.startswith(LAUNCH_BASH_AUTO) and AUTO_MOVED in head:
         return "bash"
     return None
 
@@ -1449,6 +1474,7 @@ git commit -m "test(evidence): the shared turn-end, background-task and stop def
 **Files:**
 - Create: `evals/evidence/2026-10-19-sdd-turn-liveness/analyze.py`
 - Modify: `evals/evidence/2026-10-19-sdd-turn-liveness/synth.py` (append `make_run`, `control_records`, `treatment_records`)
+- Modify: `evals/evidence/2026-10-19-sdd-turn-liveness/liveness.py`, `test_liveness.py` (Step 0, plan deviation 7)
 - Test: `evals/evidence/2026-10-19-sdd-turn-liveness/test_analyze.py`
 
 **Interfaces:**
@@ -1471,6 +1497,46 @@ git commit -m "test(evidence): the shared turn-end, background-task and stop def
   `synth.py` adds: `make_run(root, run_id, records, *, plugin_dir, model="claude-opus-5-5", stops=(), final="pass", final_reason="", gauntlet=None, checks_pass=True, codex_check=True, ledger=6, evals_commit="e"*40, models=("claude-opus-5-5", "claude-sonnet-5-5")) -> Path`, `control_records(version="2.1.300") -> list[Record]`, `treatment_records(version="2.1.300") -> list[Record]`, constants `LONG_CMD`, `WAIT_CMD`.
 
 **Mirror:** `evals/evidence/2026-10-03-release-6150-paired-control/tally.py:63-136` (`void_kind`, launch-record regexes, transcript readouts).
+
+- [ ] **Step 0: Count auto-backgrounded commands as tracked launches (plan deviation 7)**
+
+Task 3 closed before this deviation was approved, so it lands here, as its own commit before the rest of the task. In `liveness.py`, add two constants after `RELOAD_PREFIX`:
+
+```text
+LAUNCH_BASH_AUTO = "Command did not complete within its"
+AUTO_MOVED = "was moved to the background"
+```
+
+In `_launch_kind`, append this sentence to the docstring's paragraph: "A Bash call that Claude Code moved to the background after its timeout is a tracked launch too (plan deviation 7)." and add, just before the final `return None`:
+
+```text
+    if name == "Bash" and head.startswith(LAUNCH_BASH_AUTO) and AUTO_MOVED in head:
+        return "bash"
+```
+
+In `test_liveness.py`, add this test to the `Tasks` class, before `test_states_live_none_censored_and_killed_by_reload`:
+
+```text
+    def test_auto_backgrounded_command_is_a_tracked_launch(self) -> None:
+        moved = (
+            "Command did not complete within its 120s timeout and was moved to the background (ID: b-auto). "
+            "Output is being written to: /tmp/b-auto.output. You will be notified when it completes."
+        )
+        recs = [
+            assistant(5, tools=[("b9", "Bash", {"command": "python3 -m unittest tests.test_soak_short -v"})]),
+            result(125, "b9", moved),
+            enqueue(245, "b9"),
+        ]
+        task = liveness.tasks(recs)["b9"]
+        self.assertEqual((task.kind, task.launched, task.completed), ("bash", ts(125), ts(245)))
+        printed = [
+            assistant(5, tools=[("g9", "Bash", {"command": "grep moved notes.md"})]),
+            result(6, "g9", "notes.md: " + moved),
+        ]
+        self.assertEqual(liveness.tasks(printed), {})
+```
+
+Run the test first and see it fail (the auto-backgrounded result is not yet a launch), then make the `liveness.py` change. Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_liveness.py` — Expected: `OK` (22 tests). Ruff and mypy on both files, leak scan, then commit: `fix(evidence): a command Claude Code moves to the background is a tracked launch`.
 
 - [ ] **Step 1: Append the run builders to `synth.py`**
 

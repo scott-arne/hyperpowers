@@ -138,9 +138,10 @@ subagents" paragraph:
 - A command that may run past 10 minutes starts as a tracked background job
   and is watched in the foreground. Codex reviews already do this with the
   recipe's `status <job-id> --wait --json` loop. A shell job is launched as
-  `<command> > <out> 2>&1; echo "exit=$?" >> <out>`, so the exit line is
-  written whether the command succeeds or fails. The controller then waits
-  for that line in foreground calls of at most 600000 ms each, each call a
+  `<command> > <out> 2>&1; echo "exit=$?" > <out>.exit`, so the exit file
+  is written whether the command succeeds or fails, and nothing the command
+  prints can be mistaken for it. The controller then waits for that file in
+  foreground calls of at most 600000 ms each, each call a
   bounded loop that aborts on a non-zero status (the human partner's
   polling rules).
 - **Watch budget.** The total watch on one job is three times the plan's
@@ -149,8 +150,8 @@ subagents" paragraph:
   The tracked launch sets the job's background timeout explicitly to the
   watch budget, so the harness's default lifetime (1800000 ms on Claude
   Code) never ends a legitimate job before the budget does. The watch
-  ends early when the exit line appears, and also when the harness reports
-  the job ended without one (a killed process writes no exit line; the
+  ends early when the exit file appears, and also when the harness reports
+  the job ended without one (a killed process writes no exit file; the
   controller then reads the output and treats the job as failed). When the
   budget is spent with the job still running, the controller stops the job
   through the harness, records the output tail in the ledger, and reports

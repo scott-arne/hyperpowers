@@ -27,7 +27,7 @@
 - Campaign pin (spec Design §2), one value per key in `manifest.tsv`: `harness` (evals commit), `control`, `treatment` (root commits), `control_root`, `treatment_root`, `model claude-opus-5-5` (the Coding-Agent, through `ANTHROPIC_MODEL`), `cc` (Claude Code version), `cc_path` (the resolved `claude` binary), `provider vertex`, `subagent_models claude-opus-5-5,claude-sonnet-5-5,claude-haiku-5-5`, `codex absent`, `task_tools on` (`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, matching the field sessions). Every launch also exports `DISABLE_AUTOUPDATER=1`. A run's recorded models must be non-empty, include the pinned Coding-Agent model and lie inside the allowed set (deviation 4). Codex absence is affirmative: the scenario's two pre-checks passed (the agent's config directory exists, and its plugin registry is either absent, which means no plugin is installed, or readable without a `codex@openai-codex` entry; no `plugins/cache/openai-codex` directory exists), and no main-session command invoked the companion.
 - Void rules: harness setup failure, relaunched, no cap; every other non-pass, non-fail outcome (grader exit without a result, API or harness failure, anything unrecognized), replaced, at most three such replacements per arm combined; a run with a provenance mismatch, voided, replaced, and counted toward the same cap (the agent ran, so discarding it is the kind of re-roll the cap limits); a Claude Code version change (in a run, or caught by a launcher's preflight) restarts both arms under a new pin. Replacement rows are added to `manifest.tsv` as `r<n>` rows and launched through `launch-all.sh` like any other row.
 - Decision-rule thresholds, verbatim from the spec: W1 pooled foreground share ≥ 0.9; W2 at most one live-work turn end across treatment's ten runs; F both slow-command measures pass in at least nine of ten treatment runs; U no untracked launches; P (if control has at least one premature stop) treatment's total lower than control's and at least nine treatment runs with none, else unmeasured; R at least seven successful treatment runs and no more than one fewer than control.
-- Watch budget values, verbatim: three times the stated runtime, or 60 minutes when none is stated, capped at 7200000 ms; foreground calls at most 600000 ms; launch form `<command> > <out> 2>&1; echo "exit=$?" >> <out>`.
+- Watch budget values, verbatim: three times the stated runtime, or 60 minutes when none is stated, capped at 7200000 ms; foreground calls at most 600000 ms; launch form `<command> > <out> 2>&1; echo "exit=$?" > <out>.exit` (amended 2026-10-20 after Task 1's Codex gate: a marker in the output file could be spoofed by the command's own output; the human partner chose the separate file).
 - Commit messages follow each repository's `type(scope): sentence` style (`fix(sdd): …`, `test(evidence): …`, `docs(evidence): …`); no attribution lines of any kind. Before every commit the staged diff passes `git diff --cached | python3 ~/.claude/scripts/realval-scan.py` with `hits: 0`. No committed file carries transcript text from this host's sessions, the proxy host, the `NO_PROXY` list or the GCP project id.
 - Evals: `bun run check` runs before every evals commit; in the nested worktree seven pre-existing failures are known (the `evals/..` path assumption and the host having `claude` on `PATH`), recorded at Before Task 1 and compared, never newly introduced. Python files pass `ruff check` and `mypy` (both on `PATH`).
 - Hyperpowers: the documented offline set (`docs/testing.md:50-55`) passes at Task 1's commit, one suite per `bash` call, through the script in Task 1 Step 7.
@@ -92,8 +92,8 @@ assert_contains "$SDD" 'never start it with a trailing `&`, `nohup`, `setsid`, `
   "untracked launches are forbidden"
 assert_contains "$SDD" 'subagents with `run_in_background: false`' \
   "Claude Code dispatches SDD subagents in the foreground"
-assert_contains "$SDD" 'echo "exit=$?" >> <out>' \
-  "a long command writes its exit line whether it succeeds or fails"
+assert_contains "$SDD" 'echo "exit=$?" > <out>.exit' \
+  "a long command writes its exit status to its own file whether it succeeds or fails"
 assert_contains "$SDD" "capped at the harness's maximum background lifetime (7200000 ms on Claude Code)" \
   "the watch budget is capped at the background lifetime"
 assert_contains "$SDD" "stop the job through the harness, record the output tail in the ledger, and report BLOCKED" \
@@ -128,8 +128,8 @@ Replace the paragraph that starts `**Waiting on dispatched subagents:**` (lines 
 
 - Dispatch implementer, task-reviewer, fix-round, re-review and final-reviewer subagents with `run_in_background: false`. Your next step always depends on the result, and a foreground call keeps your turn open, which is what an editor such as Zed shows as the session working. A background dispatch ends the turn while the subagent runs, and the editor shows the session idle.
 - Run a covering command expected to finish within 10 minutes in the foreground, with an explicit timeout of at least its expected runtime and at most 600000 ms.
-- Start a command that may run past 10 minutes as a tracked background job, `<command> > <out> 2>&1; echo "exit=$?" >> <out>`, with its background timeout set explicitly to the watch budget below. Then watch it in the foreground: calls of at most 600000 ms each, each a bounded loop that waits for the `exit=` line and aborts on a non-zero status. Codex reviews already follow this shape through the recipe's `status <job-id> --wait --json` loop.
-- **Watch budget.** The total watch on one job is three times the plan's stated runtime for it, or 60 minutes when the plan states none, capped at the harness's maximum background lifetime (7200000 ms on Claude Code). The watch ends when the `exit=` line appears, or when the harness reports the job ended without one: a killed process writes no `exit=` line, so read its output and treat the job as failed. When the budget is spent with the job still running, stop the job through the harness, record the output tail in the ledger, and report BLOCKED.
+- Start a command that may run past 10 minutes as a tracked background job, `<command> > <out> 2>&1; echo "exit=$?" > <out>.exit`, with its background timeout set explicitly to the watch budget below. The exit status goes to its own file so nothing the command prints can be mistaken for it. Then watch it in the foreground: calls of at most 600000 ms each, each a bounded loop that waits for `<out>.exit` and aborts on a non-zero status. Codex reviews already follow this shape through the recipe's `status <job-id> --wait --json` loop.
+- **Watch budget.** The total watch on one job is three times the plan's stated runtime for it, or 60 minutes when the plan states none, capped at the harness's maximum background lifetime (7200000 ms on Claude Code). The watch ends when `<out>.exit` appears, or when the harness reports the job ended without one: a killed process writes no exit file, so read its output and treat the job as failed. When the budget is spent with the job still running, stop the job through the harness, record the output tail in the ledger, and report BLOCKED.
 
 On a harness whose subagents run asynchronously, never poll a wait interface with short timeouts, and never sit in one silent, open-ended wait either. While you have local work — ledger updates, packaging the next review, reading reports — keep working; child results arrive on their own. When you are genuinely idle, wait in bounded stretches (five to ten minutes, where your platform allows), and between stretches post one line of status and reconcile your live children: list them, and chase any that finished without reporting. A bounded stretch keeps nearly all of a long wait's efficiency while guaranteeing a stuck or lost child is noticed within minutes, not at the end of the session. Codex's `wait_agent` blocks inside the turn; `using-hyperpowers/references/codex-tools.md` maps it.
 ```
@@ -1315,9 +1315,9 @@ SOAK_CHECK = (
     'git diff --quiet "$(cat "$(git rev-parse --absolute-git-dir)/quorum-recorded-head")" '
     "-- tests/test_soak_short.py tests/test_soak_long.py"
 )
-LONG_CMD = 'python3 -m unittest tests.test_soak_long -v > /tmp/long.out 2>&1; echo "exit=$?" >> /tmp/long.out'
+LONG_CMD = 'python3 -m unittest tests.test_soak_long -v > /tmp/long.out 2>&1; echo "exit=$?" > /tmp/long.out.exit'
 LEDGER = "/x/home/.cache/hyperpowers/sdd/k/plans/p/progress.md"
-WAIT_CMD = "for i in $(seq 1 9); do grep -q '^exit=' /tmp/long.out && break; sleep 60; done; tail -n 1 /tmp/long.out"
+WAIT_CMD = "for i in $(seq 1 9); do test -f /tmp/long.out.exit && break; sleep 60; done; cat /tmp/long.out.exit"
 
 
 def ledger_writes(t: float, tasks: Sequence[int], version: str = "2.1.300") -> list[Record]:
@@ -3867,7 +3867,7 @@ Add above `## 6.16.1` in `CHANGELOG.md`, in the shape of `CHANGELOG.md:5-31`:
 In Zed, SDD sessions looked idle while the plan was unfinished, and a controller sometimes ended its turn after announcing its next step.
 
 - **SDD ends a turn mid-plan only for a blocker, a question, or named tracked work.** <the measured premature-stop result: control total against treatment total, or "not measured by the scenario (no control run stopped prematurely); the field rerun will measure it">.
-- **Claude Code controllers wait in the foreground.** Implementer and reviewer subagents are dispatched with `run_in_background: false`, short covering commands run in the foreground, and a long command runs as a tracked background job watched in the foreground until it writes its exit line. <foreground share, live-work turn ends, F runs, from tally.txt>.
+- **Claude Code controllers wait in the foreground.** Implementer and reviewer subagents are dispatched with `run_in_background: false`, short covering commands run in the foreground, and a long command runs as a tracked background job watched in the foreground until it writes its exit file. <foreground share, live-work turn ends, F runs, from tally.txt>.
 - **No untracked launches.** A trailing `&`, `nohup`, `setsid`, `disown` or a detaching script is forbidden; <untracked count in the treatment arm>.
 
   Evidence: `docs/hyperpowers/2026-10-19-sdd-turn-liveness-eval-evidence.md`; run artifacts in hyperpowers-evals under `evidence/2026-10-19-sdd-turn-liveness/`.

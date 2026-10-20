@@ -396,8 +396,8 @@ assert_contains "$SDD" 'never start it with a trailing `&`, `nohup`, `setsid`, `
   "untracked launches are forbidden"
 assert_contains "$SDD" 'subagents with `run_in_background: false`' \
   "Claude Code dispatches SDD subagents in the foreground"
-assert_contains "$SDD" 'echo "exit=$?" >> <out>' \
-  "a long command writes its exit line whether it succeeds or fails"
+assert_contains "$SDD" 'echo "exit=$?" > <out>.exit' \
+  "a long command writes its exit status to its own file whether it succeeds or fails"
 assert_contains "$SDD" "capped at the harness's maximum background lifetime (7200000 ms on Claude Code)" \
   "the watch budget is capped at the background lifetime"
 assert_contains "$SDD" "stop the job through the harness, record the output tail in the ledger, and report BLOCKED" \

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use hyperpowers:subagent-driven-development (recommended) or hyperpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Spec:** `docs/hyperpowers/specs/2026-10-19-sdd-turn-liveness-design.md` (approved by the human partner on 2026-10-19). The spec is binding; where this plan and the spec disagree, the spec governs, except for the deviations listed below, which the human partner approved (1-4 before Task 1, 5 during Task 2).
+**Spec:** `docs/hyperpowers/specs/2026-10-19-sdd-turn-liveness-design.md` (approved by the human partner on 2026-10-19). The spec is binding; where this plan and the spec disagree, the spec governs, except for the deviations listed below, which the human partner approved (1-4 before Task 1, 5 and 6 during Task 2).
 
 **Goal:** Make the SDD controller end a turn mid-plan only for a blocker, a question or (where it cannot wait in the foreground) named tracked work; forbid untracked launches; make Claude Code controllers wait in the foreground; and measure the change with a pre-registered paired quorum campaign, a field baseline and two Zed checks before releasing 6.17.0.
 
@@ -17,6 +17,7 @@
 3. **Censoring in the scenario too.** Spec Design §3 defines a censored task (no completion ever recorded) for the field. The scenario analyzer applies the same rule through the shared module, so a stop while a never-completing task is open counts as censored, outside both the premature and the live-work counts.
 4. **Subagent models as an allowed set.** Spec Design §2 pins one model "for the Coding-Agent and its subagents". SDD chooses each subagent's model tier itself (`skills/subagent-driven-development/model-selection.md`), and that choice is skill text, which differs between the arms. Forcing every subagent onto `claude-opus-5-5` would override part of the behavior under test. The pin therefore fixes the Coding-Agent model exactly and fixes the set of model IDs a subagent may resolve to (`claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`); a run that records any other model is a provenance void.
 5. **The elicitation prompt keeps waiting instructions out of the fixture plan.** Spec Design §2 asks for an elicited six-task plan that names the two slow commands and their runtimes. Task 2's first three elicitations at v6.16.1 (kept as `attempt-1` to `attempt-3` in the evidence directory, with the prompt they used in `prompt-attempts-1-3.txt`) each wrote its own instructions for running and waiting on the soak tests: run both in the background, wait for the completion notice, tell the controller the soak is running. Such a stimulus would carry, or contradict, the behavior under test, so the long-job measure would credit the plan's text rather than the skill. The prompt therefore adds one sentence asking the plan to name each covering command and its runtime and to leave how commands are run and waited for to whoever executes it, and the fixture-plan test rejects a plan that mentions background or foreground runs. The plan is still written by writing-plans at the control version and never edited. Approved by the human partner on 2026-10-20, together with a looser contract test: v6.16.1 writing-plans puts a slow command after a lead-in sentence or in a code block, never on a `Run:` line, so the test requires the exact command and its runtime inside the task's section rather than on a `Run:` line.
+6. **Measured soak runs must take real time, and soak files must stay untouched in the session.** Spec Design §2 defines the two F measures by call shape (foreground with a long enough timeout; a tracked launch watched to its end). Task 2's Codex gate found that a controller could shorten `SOAK_SECONDS`, run the soak quickly, and restore the file before the post-checks, which compare only the final tree; the scenario's post-check now also rejects a commit history that touched a soak file, but an uncommitted edit-run-restore would still pass F. The analyzer therefore also requires the short soak's main-session result to arrive at least 200 s after its call and the long job's `exit=0` watch result at least 600 s after its launch, and marks a run `soak_tampered` (which fails run success) when a successful main-session call writes to either soak file. Approved by the human partner on 2026-10-20, before pre-registration.
 
 ## Global Constraints
 
@@ -1295,7 +1296,7 @@ git commit -m "test(evidence): the shared turn-end, background-task and stop def
   def shell_detaches(text: str) -> bool
   def runs_soak(command: str, name: str) -> bool
   ```
-  `measure` keys: `run_id, final, void, plugin_dir, model, cc, models, evals_commit, evals_clean, task_tools, codex_absent, unit_tests_passed, soak_tests_passed, soaks_unchanged, plan_complete, ledger_marks, plan_at, final_review, success, candidates (list of {at, label, source, heuristic, continue_reply, tail}), premature, unadjudicated, censored_stops, dispatch_fg, dispatch_bg, dispatch_unclassified, dispatch_other, short_runs, short_ok, long_runs, long_ok, live_turn_ends (list of {at, idle_seconds}), untracked (list of {at, where, detail})`.
+  `measure` keys: `run_id, final, void, plugin_dir, model, cc, models, evals_commit, evals_clean, task_tools, codex_absent, unit_tests_passed, soak_tests_passed, soaks_unchanged, soak_tampered, plan_complete, ledger_marks, plan_at, final_review, success, candidates (list of {at, label, source, heuristic, continue_reply, tail}), premature, unadjudicated, censored_stops, dispatch_fg, dispatch_bg, dispatch_unclassified, dispatch_other, short_runs (each with its `elapsed` seconds), short_ok, long_runs (likewise), long_ok, live_turn_ends (list of {at, idle_seconds}), untracked (list of {at, where, detail})`.
   `transcript_summary` keys: `dispatch_fg, dispatch_bg, dispatch_unclassified, plan_at, stops_before_completion, live_turn_ends_before_completion, censored_stops, untracked`.
   `synth.py` adds: `make_run(root, run_id, records, *, plugin_dir, model="claude-opus-5-5", stops=(), final="pass", final_reason="", gauntlet=None, checks_pass=True, codex_check=True, ledger=6, evals_commit="e"*40, models=("claude-opus-5-5", "claude-sonnet-5-5")) -> Path`, `control_records(version="2.1.300") -> list[Record]`, `treatment_records(version="2.1.300") -> list[Record]`, constants `LONG_CMD`, `WAIT_CMD`.
 
@@ -1495,7 +1496,9 @@ def drop_call(records: list[dict[str, Any]], tool_id: str) -> list[dict[str, Any
     return [r for r in records if not mentions(r)]
 
 
-def long_job(watch_result: str = "exit=0", turn_end: bool = False, watch: bool = True) -> list[dict[str, Any]]:
+def long_job(
+    watch_result: str = "exit=0", turn_end: bool = False, watch: bool = True, done_at: float = 1345
+) -> list[dict[str, Any]]:
     recs = [
         human(0, "go"),
         assistant(600, tools=[("b2", "Bash", {"command": LONG_CMD, "run_in_background": True, "timeout": 2400000})]),
@@ -1505,10 +1508,10 @@ def long_job(watch_result: str = "exit=0", turn_end: bool = False, watch: bool =
         recs += [assistant(605, "Waiting for the long soak."), human(700, "continue")]
     if watch:
         recs.append(assistant(710, tools=[("b4", "Bash", {"command": WAIT_CMD, "timeout": 600000})]))
-    recs.append(enqueue(1330, "b2"))
+    recs.append(enqueue(done_at - 15, "b2"))
     if watch:
-        recs.append(result(1345, "b4", watch_result))
-    recs.append(assistant(1350, "The long soak finished."))
+        recs.append(result(done_at, "b4", watch_result))
+    recs.append(assistant(done_at + 5, "The long soak finished."))
     return recs
 
 
@@ -1617,6 +1620,34 @@ class Measure(unittest.TestCase):
         self.assertFalse(self.run_of("l2", long_job(watch_result="exit=1"))["long_ok"])
         self.assertFalse(self.run_of("l3", long_job(turn_end=True))["long_ok"])
         self.assertFalse(self.run_of("l4", long_job(watch=False))["long_ok"])
+        # Deviation 6: an exit=0 seen 300 s after launch is too fast for a 720 s soak.
+        self.assertFalse(self.run_of("l5", long_job(done_at=900))["long_ok"])
+
+    def test_short_run_must_take_real_time(self) -> None:
+        fast = [result(340, "b1", "OK") if r.get("timestamp") == at(560) else r for r in treatment_records()]
+        m = self.run_of("s1", fast)
+        self.assertEqual(m["short_runs"][0]["elapsed"], 30.0)
+        self.assertFalse(m["short_ok"])
+
+    def test_soak_file_writes_fail_success(self) -> None:
+        edit = treatment_records() + [
+            assistant(2000, tools=[("e1", "Edit", {"file_path": "/x/coding-agent-workdir/tests/test_soak_short.py", "old_string": "240", "new_string": "5"})]),
+            result(2001, "e1", "edited"),
+        ]
+        m = self.run_of("k1", edit)
+        self.assertTrue(m["soak_tampered"])
+        self.assertFalse(m["success"])
+        sed = treatment_records() + [
+            assistant(2000, tools=[("e2", "Bash", {"command": "sed -i '' 's/720/5/' tests/test_soak_long.py"})]),
+            result(2001, "e2", ""),
+        ]
+        self.assertTrue(self.run_of("k2", sed)["soak_tampered"])
+        read = treatment_records() + [
+            assistant(2000, tools=[("e3", "Bash", {"command": "cat tests/test_soak_long.py"})]),
+            result(2001, "e3", "SOAK_SECONDS = 720"),
+        ]
+        self.assertFalse(self.run_of("k3", read)["soak_tampered"])
+        self.assertFalse(self.run_of("k4", treatment_records())["soak_tampered"])
 
     def test_codex_needs_the_affirmative_precheck(self) -> None:
         self.assertFalse(self.run_of("t2", treatment_records(), codex_check=False)["codex_absent"])
@@ -1807,6 +1838,10 @@ SHORT_SOAK = "test_soak_short"
 LONG_SOAK = "test_soak_long"
 SHORT_RUNTIME_MS = 240_000
 LONG_RUNTIME_MS = 720_000
+SHORT_MIN_ELAPSED_S = 200
+LONG_MIN_ELAPSED_S = 600
+SOAK_FILES = ("test_soak_short.py", "test_soak_long.py")
+IN_PLACE = re.compile(r"\b(?:sed|perl)\b[^\n;|&]*\s-i")
 BASH_DEFAULT_TIMEOUT_MS = 120_000
 UNIT_TESTS = "test_unit_"
 SOAK_SHORT_CHECK = "tests.test_soak_short"
@@ -2068,6 +2103,24 @@ def _ledger_marks(call: Call) -> set[int]:
     return {int(n) for n in MARK.findall(text)}
 
 
+def _soak_tampered(calls: Sequence[Call]) -> bool:
+    """Whether a successful main-session call wrote to a soak test file (plan deviation 6)."""
+    for call in calls:
+        if call.result is None or call.error:
+            continue
+        if call.name in WRITERS:
+            if str(call.inp.get("file_path", "")).endswith(SOAK_FILES):
+                return True
+        elif call.name == "Bash":
+            command = str(call.inp.get("command", ""))
+            if not any(name in command for name in SOAK_FILES):
+                continue
+            targets = [m.group(2) for m in WRITE_TARGET.finditer(command)]
+            if any(t.endswith(SOAK_FILES) for t in targets) or IN_PLACE.search(command):
+                return True
+    return False
+
+
 def _untracked(calls: Sequence[Call], workspace: Path) -> list[dict[str, str]]:
     found: list[dict[str, str]] = []
     commands: list[tuple[int, datetime, str]] = []
@@ -2117,7 +2170,7 @@ def empty_measure(run_id: str) -> dict[str, Any]:
     return {
         "run_id": run_id, "final": None, "void": None, "plugin_dir": None, "model": None, "cc": None,
         "models": [], "evals_commit": None, "evals_clean": None, "task_tools": False, "codex_absent": False,
-        "unit_tests_passed": None, "soak_tests_passed": None, "soaks_unchanged": None, "plan_complete": False, "ledger_marks": [], "plan_at": None,
+        "unit_tests_passed": None, "soak_tests_passed": None, "soaks_unchanged": None, "soak_tampered": False, "plan_complete": False, "ledger_marks": [], "plan_at": None,
         "final_review": False, "success": False, "candidates": [], "premature": 0, "unadjudicated": 0,
         "censored_stops": 0, "dispatch_fg": 0, "dispatch_bg": 0, "dispatch_unclassified": 0,
         "dispatch_other": 0, "short_runs": [], "short_ok": False, "long_runs": [], "long_ok": False,
@@ -2184,7 +2237,8 @@ def _transcript_measures(
         limit = int(timeout) if isinstance(timeout, (int, float)) else BASH_DEFAULT_TIMEOUT_MS
         background = call.result is not None and LAUNCH_BASH in call.result
         if runs_soak(command, SHORT_SOAK):
-            out["short_runs"].append({"at": iso(call.at), "background": background, "timeout": limit})
+            elapsed = (call.result_at - call.at).total_seconds() if call.result_at else None
+            out["short_runs"].append({"at": iso(call.at), "background": background, "timeout": limit, "elapsed": elapsed})
         if runs_soak(command, LONG_SOAK):
             target = OUT_TARGET.search(command)
             out_file = target.group(2) if target else None
@@ -2202,15 +2256,20 @@ def _transcript_measures(
                 "detached": shell_detaches(command), "watched": seen is not None,
                 "exit_ok": bool(seen and seen.result and EXIT_ZERO.search(seen.result)),
                 "turn_end_during": end_at is None or any(call.at < e.at < end_at for e in ends),
+                "elapsed": (end_at - call.at).total_seconds() if end_at else None,
             })
     out["short_ok"] = bool(out["short_runs"]) and all(
-        not r["background"] and r["timeout"] >= SHORT_RUNTIME_MS for r in out["short_runs"]
+        not r["background"] and r["timeout"] >= SHORT_RUNTIME_MS
+        and r["elapsed"] is not None and r["elapsed"] >= SHORT_MIN_ELAPSED_S
+        for r in out["short_runs"]
     )
     out["long_ok"] = bool(out["long_runs"]) and all(
         r["background"] and r["timeout"] >= LONG_RUNTIME_MS and not r["detached"]
         and r["watched"] and r["exit_ok"] and not r["turn_end_during"]
+        and r["elapsed"] is not None and r["elapsed"] >= LONG_MIN_ELAPSED_S
         for r in out["long_runs"]
     )
+    out["soak_tampered"] = _soak_tampered(calls)
 
     for end in ends:
         if end.excluded is not None:
@@ -2285,6 +2344,7 @@ def measure(record: Path, adjudicated: Mapping[tuple[str, str], str]) -> dict[st
         and out["unit_tests_passed"] is True
         and out["soak_tests_passed"]
         and out["soaks_unchanged"] is True
+        and not out["soak_tampered"]
     )
     return out
 
@@ -3755,7 +3815,7 @@ Two-field rows with real values, computed now: `harness` = the evals worktree `H
 
 Sections, in this order (the shape of `evidence/2026-10-03-release-6150-paired-control/README.md`):
 - **Question:** does the SDD text change (hyperpowers treatment pin) remove premature mid-plan stops and background waits against 6.16.1 (control pin), without lowering run success?
-- **Pre-registration:** written before the first counted run; this file's commit time is the record. The decision rule, copied verbatim from the spec's Design §2 "Decision rule" (W1, W2, F, U, P, R and the pass condition); the measure definitions (Task 4's `analyze.py` docstring and plan deviations 2 and 3: foreground dispatch needs the explicit `run_in_background: false` and a clean result, the long job needs a foreground watch that saw `exit=0`, plan completion needs all six `Task N: complete` marks, from the transcript's successful ledger writes or a surviving ledger, because SDD's Finish deletes the ledger); the void rules (Global Constraints); and the adjudication procedure: every candidate the Gauntlet-Agent's `STOP:` list does not match gets one row in `adjudications.tsv`, labelled by reading the candidate's closing text in the transcript, before `tally.py` is run for the decision.
+- **Pre-registration:** written before the first counted run; this file's commit time is the record. The decision rule, copied verbatim from the spec's Design §2 "Decision rule" (W1, W2, F, U, P, R and the pass condition); the measure definitions (Task 4's `analyze.py` docstring and plan deviations 2 and 3: foreground dispatch needs the explicit `run_in_background: false` and a clean result, the long job needs a foreground watch that saw `exit=0`, the short soak's result at least 200 s after its call and the long job's watch result at least 600 s after its launch, a run with a main-session write to a soak file is `soak_tampered` and not a success (deviation 6), plan completion needs all six `Task N: complete` marks, from the transcript's successful ledger writes or a surviving ledger, because SDD's Finish deletes the ledger); the void rules (Global Constraints); and the adjudication procedure: every candidate the Gauntlet-Agent's `STOP:` list does not match gets one row in `adjudications.tsv`, labelled by reading the candidate's closing text in the transcript, before `tally.py` is run for the decision.
 - **Analyzer pins:** `git rev-parse HEAD:evidence/2026-10-19-sdd-turn-liveness/<f>` for `liveness.py`, `analyze.py`, `tally.py`; any later change to them is a Correction with its reason, recorded before the tally it affects.
 - **Field decision rule:** verbatim from spec Design §3 "Field decision rule", with the baseline numbers from `field/baseline.json` and the after-window definition from plan deviation 1.
 - **Config:** the campaign pin (`manifest.tsv`), the launch commands (Task 11 Step 1 form), concurrency 5.

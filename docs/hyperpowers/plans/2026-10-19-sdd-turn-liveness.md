@@ -1815,7 +1815,7 @@ class Measure(unittest.TestCase):
         self.assertEqual((m["dispatch_fg"], m["dispatch_bg"], m["dispatch_unclassified"]), (2, 0, 2))
 
     def test_plan_completion_reads_the_ledger_writes_or_the_ledger(self) -> None:
-        final_review = liveness.parse_ts(at(1500)).isoformat()
+        last_write = liveness.parse_ts(at(1398)).isoformat()
         # SDD's Finish deletes the workspace, so a finished run has no ledger file.
         m = self.run_of("p1", treatment_records(), ledger=0)
         self.assertEqual((m["plan_complete"], m["ledger_marks"]), (True, [1, 2, 3, 4, 5, 6]))
@@ -1824,7 +1824,15 @@ class Measure(unittest.TestCase):
         self.assertFalse(self.run_of("p2", five, ledger=0)["plan_complete"])
         self.assertFalse(self.run_of("p3", five, ledger=5)["plan_complete"])
         m = self.run_of("p4", five, ledger=6)
-        self.assertEqual((m["plan_complete"], m["plan_at"]), (True, final_review))
+        self.assertEqual((m["plan_complete"], m["plan_at"], m["final_review"]), (True, last_write, True))
+        stray = five[:-1] + [
+            assistant(1416, tools=[("x6", "Bash", {"command": f"echo 'Task 6: complete' >> notes.md; test -f {LEDGER}"})]),
+            result(1417, "x6", ""),
+            assistant(1418, tools=[("x7", "Write", {"file_path": "/x/coding-agent-workdir/progress.md", "content": "Task 6: complete\n"})]),
+            result(1419, "x7", "written"),
+            five[-1],
+        ]
+        self.assertFalse(self.run_of("p12", stray, ledger=0)["plan_complete"])
         grep = five[:-1] + [
             assistant(1402, tools=[("g6", "Bash", {"command": f"grep 'Task 6: complete' {LEDGER}"})]),
             result(1403, "g6", "Task 6: complete"),
@@ -1877,14 +1885,25 @@ class Measure(unittest.TestCase):
         ]
         self.assertFalse(self.run_of("p11", old_only, ledger=0)["plan_complete"])
 
-    def test_final_review_is_read_from_the_description_only(self) -> None:
-        five = drop_call(treatment_records(), "lw6")
-        for rec in five:
+    def test_final_review_is_the_review_after_the_last_task(self) -> None:
+        records = treatment_records()
+        for rec in records:
             for use in liveness.tool_uses(rec):
                 if use.get("id") == "a1":
                     use["input"]["prompt"] = "Implement Task 1. The final review runs after Task 6."
-        m = self.run_of("f1", five, ledger=6)
-        self.assertEqual(m["plan_at"], liveness.parse_ts(at(1500)).isoformat())
+                if use.get("id") == "a2":
+                    use["input"]["description"] = "Review code changes"
+        m = self.run_of("f1", records)
+        self.assertEqual(m["plan_at"], liveness.parse_ts(at(1400)).isoformat())
+        self.assertTrue(m["final_review"])
+        early = [r for r in drop_call(treatment_records(), "a2")]
+        early[4:4] = [
+            assistant(25, tools=[("r6", "Agent", {"description": "Review Task 6", "run_in_background": False})]),
+            result(26, "r6", "Approved"),
+        ]
+        m = self.run_of("f2", early)
+        self.assertFalse(m["final_review"])
+        self.assertFalse(m["success"])
 
     def test_long_job_needs_a_foreground_watch_that_saw_exit_zero(self) -> None:
         self.assertTrue(self.run_of("l1", long_job())["long_ok"])
@@ -1893,6 +1912,26 @@ class Measure(unittest.TestCase):
         self.assertFalse(self.run_of("l4", long_job(watch=False))["long_ok"])
         # Deviation 6: an exit=0 seen 300 s after launch is too fast for a 720 s soak.
         self.assertFalse(self.run_of("l5", long_job(done_at=900))["long_ok"])
+
+    def test_long_job_watch_must_read_its_own_exit_file(self) -> None:
+        unrelated = long_job(watch=False)
+        unrelated[-1:-1] = [
+            assistant(1340, tools=[("u1", "Bash", {"command": "echo exit=0"})]),
+            result(1341, "u1", "exit=0"),
+        ]
+        self.assertFalse(self.run_of("l6", unrelated)["long_ok"])
+        auto = [
+            human(0, "go"),
+            assistant(600, tools=[("b2", "Bash", {"command": LONG_CMD, "timeout": 600000})]),
+            result(1200, "b2", "Command did not complete within its 600s timeout and was moved to the background (ID: b2)."),
+            assistant(1210, tools=[("b4", "Bash", {"command": WAIT_CMD, "timeout": 600000})]),
+            enqueue(1330, "b2"),
+            result(1345, "b4", "exit=0"),
+            assistant(1350, "The long soak finished."),
+        ]
+        m = self.run_of("l7", auto)
+        self.assertFalse(m["long_runs"][0]["background"])
+        self.assertFalse(m["long_ok"])
 
     def test_auto_backgrounded_short_run_is_not_a_foreground_run(self) -> None:
         moved = "Command did not complete within its 240s timeout and was moved to the background (ID: b-auto)."
@@ -1932,6 +1971,28 @@ class Measure(unittest.TestCase):
         ]
         self.assertFalse(self.run_of("k3", read)["soak_tampered"])
         self.assertFalse(self.run_of("k4", treatment_records())["soak_tampered"])
+        for n, command in enumerate((
+            "cp /tmp/short.py tests/test_soak_short.py",
+            "python3 -c \"from pathlib import Path; Path('tests/test_soak_long.py').write_text('')\"",
+            "python3 - <<'EOF'\nopen('tests/test_soak_short.py', 'w').write('')\nEOF",
+            "git checkout -- tests/test_soak_long.py",
+        )):
+            written = treatment_records() + [
+                assistant(2000, tools=[("m1", "Bash", {"command": command})]),
+                result(2001, "m1", ""),
+            ]
+            self.assertTrue(self.run_of(f"k5{n}", written)["soak_tampered"], command)
+        for n, command in enumerate((
+            "git diff --quiet HEAD -- tests/test_soak_short.py tests/test_soak_long.py",
+            "sed -n '1,20p' tests/test_soak_long.py | head -5",
+            "python3 tests/test_soak_short.py",
+            "grep -n SOAK_SECONDS tests/test_soak_long.py",
+        )):
+            reads = treatment_records() + [
+                assistant(2000, tools=[("m2", "Bash", {"command": command})]),
+                result(2001, "m2", ""),
+            ]
+            self.assertFalse(self.run_of(f"k6{n}", reads)["soak_tampered"], command)
 
     def test_codex_needs_the_affirmative_precheck(self) -> None:
         self.assertFalse(self.run_of("t2", treatment_records(), codex_check=False)["codex_absent"])
@@ -2002,6 +2063,12 @@ class Untracked(unittest.TestCase):
             result(2041, "w8", "edited"),
             assistant(2042, tools=[("w9", "Bash", {"command": "sh tools/e.sh"})]),
             result(2043, "w9", ""),
+            assistant(2044, tools=[("wt", "Write", {"file_path": "/nowhere/t.sh", "content": "echo hi\n"})]),
+            result(2045, "wt", "written"),
+            assistant(2046, tools=[("we", "Edit", {"file_path": "/nowhere/t.sh", "old_string": "echo hi", "new_string": "nohup sleep 1 &"})]),
+            result(2047, "we", "edited"),
+            assistant(2048, tools=[("wx", "Bash", {"command": "bash /nowhere/t.sh"})]),
+            result(2049, "wx", ""),
             assistant(2050, tools=[("wa", "Bash", {"command": "bash -c 'nohup sleep 9 &'"})]),
             result(2051, "wa", ""),
             assistant(2060, tools=[("wb", "Bash", {"command": "cat > /nowhere/inline.sh <<'EOF'\nnohup sleep 7 &\nEOF\nbash /nowhere/inline.sh"})]),
@@ -2024,6 +2091,7 @@ class Untracked(unittest.TestCase):
                 "/nowhere/r.sh",
                 "/nowhere/r2.sh",
                 "/nowhere/run.sh",
+                "/nowhere/t.sh",
                 "/x/coding-agent-workdir/tools/e.sh",
             ],
         )
@@ -2143,8 +2211,15 @@ CODEX_PRECHECK = "codex@openai-codex"
 CODEX_CACHE_CHECK = "plugins/cache/openai-codex"
 WRITERS = ("Write", "Edit", "MultiEdit")
 SDD_ROLE = re.compile(r"implement|review|fix|takeover", re.IGNORECASE)
-FINAL = re.compile(r"\bfinal\b", re.IGNORECASE)
+FIX = re.compile(r"\bfix", re.IGNORECASE)
 REVIEW = re.compile(r"review", re.IGNORECASE)
+LEDGER_DIR = "hyperpowers/sdd/"
+SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|\n]")
+READ_ONLY = frozenset({
+    "cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "less", "more", "wc", "diff", "cmp",
+    "ls", "stat", "file", "sha256sum", "shasum", "md5", "md5sum", "test", "[", "pytest",
+})
+READ_ONLY_GIT = frozenset({"diff", "show", "log", "status", "blame", "ls-files", "grep", "cat-file"})
 EXIT_ZERO = re.compile(r"\bexit=0(?!\d)")
 STOP_LINE = re.compile(
     r"STOP:\s*\"(?P<quote>[^\"\n]+)\"\s*\|\s*(?P<label>question|blocked|neither)", re.IGNORECASE
@@ -2384,13 +2459,13 @@ def _ledger_marks(call: Call) -> set[int]:
 
     SDD's Finish deletes the plan workspace, ledger included, so a finished
     run's completion record survives only as these writes in the transcript:
-    an Edit, MultiEdit or Write to ``progress.md``, or a Bash command that
-    writes through a redirect or ``tee`` and names ``progress.md``.
+    an Edit, MultiEdit or Write to an SDD ``progress.md``, or the part of a
+    Bash command that writes to one through a redirect, ``tee`` or heredoc.
     """
     if call.result is None or call.error:
         return set()
     if call.name in WRITERS:
-        if not str(call.inp.get("file_path", "")).endswith(LEDGER_FILE):
+        if not _is_ledger_path(str(call.inp.get("file_path", ""))):
             return set()
         # Only the new content marks a task: an Edit's old_string repeats lines
         # already written, and JSON-encoding the input would hide a mark that
@@ -2401,17 +2476,52 @@ def _ledger_marks(call: Call) -> set[int]:
             parts += [e.get("new_string") for e in edits if isinstance(e, dict)]
         text = "\n".join(part for part in parts if isinstance(part, str))
     elif call.name == "Bash":
-        text = str(call.inp.get("command", ""))
-        targets = [m.group(2) for m in WRITE_TARGET.finditer(text) if m.group(2) != "/dev/null"]
-        if not targets or LEDGER_FILE not in text:
-            return set()
+        command = str(call.inp.get("command", ""))
+        written: list[str] = []
+        for match in HEREDOC.finditer(command):
+            start = command.rfind("\n", 0, match.start()) + 1
+            target = WRITE_TARGET.search(command[start : match.start()])
+            if target and _is_ledger_path(target.group(2)):
+                written.append(match.group(3))
+        for segment in SEGMENT_SPLIT.split(_strip_heredocs(command)):
+            if any(_is_ledger_path(m.group(2)) for m in WRITE_TARGET.finditer(segment)):
+                written.append(segment)
+        text = "\n".join(written)
     else:
         return set()
     return {int(n) for n in MARK.findall(text)}
 
 
+def _is_ledger_path(path: str) -> bool:
+    return path.endswith(LEDGER_FILE) and LEDGER_DIR in path
+
+
+def _read_only(segment: str) -> bool:
+    """Whether one shell command only reads or runs files (the soak-tamper allowlist)."""
+    words = segment.split()
+    while words and re.match(r"^\w+=", words[0]):
+        words = words[1:]
+    if not words:
+        return True
+    head = words[0].rsplit("/", 1)[-1]
+    if head in READ_ONLY:
+        return True
+    if head == "sed":
+        return not any(w.startswith("-i") or w == "--in-place" for w in words[1:])
+    if head == "git":
+        return len(words) > 1 and words[1] in READ_ONLY_GIT
+    if head in ("python", "python3"):
+        return words[1:3] == ["-m", "unittest"] or (len(words) > 1 and words[1].endswith(SOAK_FILES))
+    return False
+
+
 def _soak_tampered(calls: Sequence[Call]) -> bool:
-    """Whether a successful main-session call wrote to a soak test file (plan deviation 6)."""
+    """Whether a successful main-session call may have written to a soak test file (plan deviation 6).
+
+    Fails closed: any shell command that names a soak file and is not on the
+    read-only allowlist counts, as does a heredoc naming one that feeds a
+    command off the allowlist (``python3 - <<EOF``).
+    """
     for call in calls:
         if call.result is None or call.error:
             continue
@@ -2422,9 +2532,15 @@ def _soak_tampered(calls: Sequence[Call]) -> bool:
             command = str(call.inp.get("command", ""))
             if not any(name in command for name in SOAK_FILES):
                 continue
-            targets = [m.group(2) for m in WRITE_TARGET.finditer(command)]
-            if any(t.endswith(SOAK_FILES) for t in targets) or IN_PLACE.search(command):
+            if any(m.group(2).endswith(SOAK_FILES) for m in WRITE_TARGET.finditer(command)):
                 return True
+            for match in HEREDOC.finditer(command):
+                start = command.rfind("\n", 0, match.start()) + 1
+                if any(name in match.group(3) for name in SOAK_FILES) and not _read_only(command[start : match.start()]):
+                    return True
+            for segment in SEGMENT_SPLIT.split(_strip_heredocs(command)):
+                if any(name in segment for name in SOAK_FILES) and not _read_only(segment):
+                    return True
     return False
 
 
@@ -2455,6 +2571,14 @@ def _untracked(calls: Sequence[Call], workspace: Path) -> list[dict[str, str]]:
             content = _final_content(path, workspace)
             if content is None and call.name == "Write":
                 content = str(call.inp.get("content", ""))
+            if content is None:
+                # An Edit to a file gone from the archive (a temporary script,
+                # or a Zed checkout the summary cannot see): judge the new text.
+                parts = [call.inp.get("new_string")]
+                edits = call.inp.get("edits")
+                if isinstance(edits, list):
+                    parts += [e.get("new_string") for e in edits if isinstance(e, dict)]
+                content = "\n".join(part for part in parts if isinstance(part, str)) or None
             if path and content is not None:
                 written.append((index, call.at, path, content, ""))
     for _, when, command in commands:
@@ -2505,15 +2629,18 @@ def _transcript_measures(
 
     marked: set[int] = set()
     written_at: datetime | None = None
+    last_write: datetime | None = None
     for call in calls:
         tasks_marked = _ledger_marks(call)
         marked |= tasks_marked
+        if tasks_marked:
+            last_write = call.at
         if written_at is None and LAST_TASK in tasks_marked:
             written_at = call.at
     out["ledger_marks"] = sorted(marked)
     complete = set(range(1, LAST_TASK + 1)) <= (file_tasks | marked)
     out["plan_complete"] = complete
-    final_dispatches: list[datetime] = []
+    review_dispatches: list[datetime] = []
     for call in calls:
         if call.name not in ("Agent", "Task"):
             continue
@@ -2528,13 +2655,14 @@ def _transcript_measures(
             out["dispatch_fg"] += 1
         else:
             out["dispatch_unclassified"] += 1
-        # The description names the role; prompts mention "final review" in
-        # passing (implementer briefs do), so they cannot identify it.
-        if call.result is not None and not call.error and FINAL.search(desc) and REVIEW.search(desc):
-            final_dispatches.append(call.at)
-    plan_at = written_at or (min(final_dispatches) if complete and final_dispatches else None)
+        # The final review is the review dispatched once the last task is
+        # marked complete. Its description varies (the reviewer template says
+        # "Review code changes"), so position identifies it, not wording.
+        if call.result is not None and not call.error and REVIEW.search(desc) and not FIX.search(desc):
+            review_dispatches.append(call.at)
+    plan_at = written_at or (last_write if complete else None)
     out["plan_at"] = iso(plan_at) if plan_at else None
-    out["final_review"] = plan_at is not None and any(t >= plan_at for t in final_dispatches)
+    out["final_review"] = plan_at is not None and any(t >= plan_at for t in review_dispatches)
 
     task_map = tasks(records)
     reload_times = reloads(records)
@@ -2553,16 +2681,20 @@ def _transcript_measures(
             target = OUT_TARGET.search(command)
             out_file = target.group(2) if target else None
             seen: Call | None = None
+            # The watch must read this job's own output or exit file; any other
+            # exit=0 proves nothing about the soak.
             for later in bash[index + 1 :]:
-                if later.result is None or LAUNCH_BASH in later.result:
+                if out_file is None or later.result is None or LAUNCH_BASH in later.result:
                     continue
-                later_cmd = str(later.inp.get("command", ""))
-                if ((out_file and out_file in later_cmd) or "exit=" in later_cmd) and "exit=" in later.result:
+                if out_file in str(later.inp.get("command", "")) and "exit=" in later.result:
                     seen = later
                     break
             end_at = seen.result_at if seen else None
+            tracked = (
+                call.inp.get("run_in_background") is True and call.result is not None and LAUNCH_BASH in call.result
+            )
             out["long_runs"].append({
-                "at": iso(call.at), "background": background, "timeout": limit,
+                "at": iso(call.at), "background": tracked, "timeout": limit,
                 "detached": shell_detaches(command), "watched": seen is not None,
                 "exit_ok": bool(seen and seen.result and EXIT_ZERO.search(seen.result)),
                 "turn_end_during": end_at is None or any(call.at < e.at < end_at for e in ends),

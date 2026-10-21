@@ -15,10 +15,11 @@ five (approval before the commit, the freeze point, discovery after the plan
 is gone, path transport, supersession fan-in), fixed in this revision after
 the last round and therefore not re-reviewed by Codex (ungated-ledger
 event recorded); awaiting the human partner's review of this file.
-**Branch:** to be created off hyperpowers `main` at `3410906`, after the
-planning-directory allowlist change now in the working tree (the
-`docs-allowlist` script, its test, and the skill lines that run it) is
-committed. This design extends that allowlist.
+**Branch:** `decision-records`, to be created off hyperpowers `main` at
+`e829db0` (this spec's commit), which already contains the
+planning-directory allowlist change (`7de7dad`: the `docs-allowlist` script,
+its test, and the skill lines that run it) and the plugin-install note
+(`8197fe2`). This design extends that allowlist.
 **Provenance:** the 2026-10-21 session. The rules that kept plans and specs
 uncommitted were removed from the global instructions and from brainstorming
 and writing-plans. A size assessment then found that plans are 47% of this

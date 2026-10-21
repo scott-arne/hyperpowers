@@ -53,11 +53,21 @@ base="$(hp_cache_root)/sdd"
 
 # Reclaim plain-cache roots idle for 14+ days, never the given key's. Left
 # alone the cache grows one root per repository instance forever, and editors
-# that follow agent-touched files hold a watcher per scratch file. Best
-# effort: pruning must never break the contract that stdout is the path.
+# that follow agent-touched files hold a watcher per scratch file. A root that
+# holds an import's backup (`plans/*.importing-*`) is skipped: an import in
+# flight renamed its source aside there and that copy is the only one (the
+# import also touches the root first). Best effort: pruning must never break
+# the contract that stdout is the path.
 reclaim_plain() {
-  find "$base" -mindepth 1 -maxdepth 1 -type d ! -name "$1" -mtime +14 \
-    -exec rm -rf {} + 2>/dev/null || true
+  local r
+  for r in "$base"/*/; do
+    r=${r%/}
+    [ -d "$r" ] || continue
+    [ "$(basename "$r")" != "$1" ] || continue
+    [ -n "$(find "$r" -maxdepth 0 -mtime +14 2>/dev/null)" ] || continue
+    ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
+    rm -rf "$r" 2>/dev/null || true
+  done
 }
 
 if [ -z "$plan_dir" ]; then
@@ -76,19 +86,26 @@ ensure=$(hp_ensure_checkout "$plan_dir") || exit 2
 backend=${ensure%% *}
 root=${ensure#* }
 dir="$root/plans/$ws"
-mkdir -p "$dir"
-if [ "$backend" = plain ]; then
-  touch "$root"
-  # Writes under the plain backend take the repository lock like every other
-  # mutation; a failed materialization leaves no half-built workspace.
+# The workspace directory is created under the repository lock, and only
+# when it is missing, so the branch-backend fast path takes no lock and an
+# unlocked mkdir can never resurrect a path finish has just renamed aside.
+# Writes under the plain backend take the same lock; a failed
+# materialization leaves no half-built workspace.
+if [ "$backend" = plain ] || [ ! -d "$dir" ]; then
   hp_lock "$plan_dir" || exit 2
-  if ! hp_materialize_plain "$plan_dir" "$ws" "$dir"; then
-    rm -rf "$dir"; hp_unlock
-    echo "sdd-dir: could not materialize the branch workspace into the plain cache" >&2
-    exit 2
+  if [ "$backend" = plain ]; then
+    # The plain root may not exist yet; touch alone would create a file.
+    mkdir -p "$root" || { hp_unlock; exit 2; }
+    touch "$root"
+    if ! hp_materialize_plain "$plan_dir" "$ws" "$dir"; then
+      hp_unlock
+      echo "sdd-dir: could not materialize the branch workspace into the plain cache" >&2
+      exit 2
+    fi
   fi
+  mkdir -p "$dir" || { hp_unlock; exit 2; }
   hp_unlock
-  echo "sdd-dir: backend=plain for this repository; the dossier will not travel from this host" >&2
+  [ "$backend" != plain ] || echo "sdd-dir: backend=plain for this repository; the dossier will not travel from this host" >&2
 fi
 
 # Pull a workspace an older plugin left in the plain cache into place. A

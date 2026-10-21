@@ -611,6 +611,17 @@ printf 'report\n' > "$wsi16/task-1-report.md"
 out=$(run_state "$i16" import docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i16" ] && [ -L "$legacy_i16" ] && ! ls -d "$legacy_i16.importing-"* >/dev/null 2>&1 && [ "$(wc -l < "$wsi16/progress.md" | tr -d ' ')" = 3 ] && [ "$(tail -n 1 "$wsi16/progress.md")" = "Task 2: complete (commits 3333333..4444444, review clean)" ] && [ "$(head -n 1 "$wsi16/progress.md")" = "# SDD ledger — plan: docs/plan.md" ]; then pass "an interrupted cutover whose source gained a line is finished with the remainder reconciled"; else fail "an interrupted cutover whose source gained a line is finished with the remainder reconciled (rc=$rc: $out)"; fi
 
+# import touches the legacy root before renaming the source aside, so the
+# plain-cache reclaim of idle roots cannot take the backup during the cutover.
+i17="$TEST_ROOT/i17"; make_repo "$i17"; mkdir -p "$i17/docs"; : > "$i17/docs/plan.md"; git -C "$i17" add docs; git -C "$i17" commit -qm plan
+wsi17=$(ws_path "$i17" "$i17/docs/plan.md")
+root_i17="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i17")"
+legacy_i17="$root_i17/plans/$(basename "$wsi17")"
+mkdir -p "$legacy_i17"; printf '# SDD ledger — plan: docs/plan.md\n' > "$legacy_i17/progress.md"
+touch -t 202601010000 "$root_i17"
+out=$(run_state "$i17" import docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i17" ] && [ -z "$(find "$root_i17" -maxdepth 0 -mtime +14 2>/dev/null)" ]; then pass "import refreshes the legacy root before the cutover"; else fail "import refreshes the legacy root before the cutover (rc=$rc: $out)"; fi
+
 echo ""
 echo "=== sdd-dir and the plain fallback over branch state ==="
 make_pair p5

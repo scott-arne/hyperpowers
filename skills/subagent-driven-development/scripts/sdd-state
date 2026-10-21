@@ -352,6 +352,9 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
           # import_finish reconciles whatever the source gained after it.
           src_ledger_size=$published_prefix_size
           backup="$ref.importing-$$"
+          # The source's root is touched before anything is renamed aside, so the
+          # 14-day reclaim of plain-cache roots does not take the backup with it.
+          touch "$(dirname "$(dirname "$ref")")" 2>/dev/null || true
           mv "$ref" "$backup" 2>/dev/null || { hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
           import_finish "$c" "$backup" "$ref"; return $?
         fi
@@ -365,6 +368,9 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
     # append is reconciled. Any failure removes the installed ledger and
     # puts the source back.
     backup="$ref.importing-$$"
+    # The source's root is touched before anything is renamed aside, so the
+    # 14-day reclaim of plain-cache roots does not take the backup with it.
+    touch "$(dirname "$(dirname "$ref")")" 2>/dev/null || true
     mv "$ref" "$backup" 2>/dev/null || { hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
     stage="$dest.import-$$"
     rm -rf "$stage"; mkdir -p "$stage"

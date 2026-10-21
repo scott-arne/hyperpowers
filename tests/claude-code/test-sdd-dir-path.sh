@@ -324,6 +324,13 @@ touch -mt "$OLDSTAMP" "$stale" "$nonplan"
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
 if [ -d "$stale" ]; then pass "an idle sibling plan dir in the checkout is kept (prune is explicit)"; else fail "an idle sibling plan dir in the checkout was removed"; fi
 if [ -d "$nonplan" ]; then pass "stale NON-plan content under the plain root preserved"; else fail "reclaim deleted non-plan cache content"; fi
+idle_backup="$XDG_CACHE_HOME/hyperpowers/sdd/idlebackup0000000001"
+idle_plain="$XDG_CACHE_HOME/hyperpowers/sdd/idleplain00000000002"
+mkdir -p "$idle_backup/plans/some-plan-deadbeef.importing-4242" "$idle_plain/plans/some-plan-deadbeef"
+: > "$idle_backup/plans/some-plan-deadbeef.importing-4242/progress.md"
+touch -mt "$OLDSTAMP" "$idle_backup" "$idle_plain"
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -d "$idle_backup" ] && [ ! -d "$idle_plain" ]; then pass "an idle root holding an import backup survives the reclaim; an idle root without one is removed"; else fail "an idle root holding an import backup survives the reclaim; an idle root without one is removed (backup root: $([ -d "$idle_backup" ] && echo kept || echo gone), plain root: $([ -d "$idle_plain" ] && echo kept || echo gone))"; fi
 
 echo "Test: a plan's workspace survives another plan's invocation"
 planA_dir=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)

@@ -13,6 +13,8 @@ LIB="$REPO_ROOT/skills/subagent-driven-development/scripts/sdd-common.sh"
 failures=0
 TEST_ROOT="$(mktemp -d)"
 export XDG_CACHE_HOME="$TEST_ROOT/cache"
+# The identity-fallback assertions need a host whose global git config sets no user.name or user.email (GIT_CONFIG_GLOBAL needs git 2.32+).
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 cleanup() { rm -rf "$TEST_ROOT"; }
 trap cleanup EXIT
 

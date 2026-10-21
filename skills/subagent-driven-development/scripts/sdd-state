@@ -426,39 +426,60 @@ open_claims() {
   done
   printf '%s' "${open#,}"
 }
+# <dir> <tomb>: put a renamed-aside copy back. An unlocked writer may have
+# recreated the path meanwhile (the Write tool and mkdir -p create missing
+# parents), and mv onto an existing directory nests the copy inside it, so
+# whatever appeared is moved beside the restored copy first and named.
+restore_tomb() {
+  local dir=$1 tomb=$2
+  if [ -e "$dir" ] || [ -L "$dir" ]; then
+    mv "$dir" "$dir.reappeared-$$" 2>/dev/null
+    echo "sdd-state: $dir was recreated during its removal; the new files are at $dir.reappeared-$$" >&2
+  fi
+  # Still occupied: the copy stays at its tomb rather than nesting.
+  if [ -e "$dir" ] || [ -L "$dir" ]; then echo "sdd-state: the removed copy is at $tomb" >&2; return 1; fi
+  mv "$tomb" "$dir"
+}
 # <dir> <tree-prefix>: remove a workspace directory only if it still equals
 # the committed tip. The directory is renamed aside first (atomic), so a
 # writer that opens the old path afterwards fails with ENOENT instead of
 # writing into a directory about to vanish; then every tracked file is
 # compared by object id with the renamed copy, and any extra file that is
-# not ignored counts as a change. Unchanged: deleted, returns 0. Changed:
-# renamed back, returns 1. <tree-prefix> is "<tip>:plans/<ws>"; an empty
+# not ignored counts as a change. Unchanged and the path still free:
+# deleted, returns 0. Otherwise the copy is restored by restore_tomb and 1
+# is returned. <tree-prefix> is "<tip>:plans/<ws>"; an empty
 # prefix (plain backend) compares the ledger's size with SIZE_BEFORE.
 remove_verified() {
   local dir=$1 prefix=$2 tomb f committed live
   tomb="$(dirname "$dir")/.removing-$(basename "$dir")-$$"
+  # A tomb left by a killed run plus pid reuse would make mv nest the live
+  # workspace inside it: refuse instead.
+  [ ! -e "$tomb" ] || return 1
   mv "$dir" "$tomb" 2>/dev/null || return 1
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+    remove-after-rename:*|remove-after-rename-changed:*)
+      # Test hook: an unlocked writer recreates the path after the rename;
+      # the -changed form had also appended to the ledger after the snapshot.
+      mkdir -p "$dir"; printf 'written after rename\n' > "$dir/${HYPERPOWERS_TEST_WRITER_AT#*:}"
+      case "$HYPERPOWERS_TEST_WRITER_AT" in remove-after-rename-changed:*) printf 'concurrent write\n' >> "$tomb/progress.md" ;; esac ;;
+  esac
   if [ -z "$prefix" ]; then
-    if [ "$(wc -c < "$tomb/progress.md" 2>/dev/null | tr -d ' ')" != "${SIZE_BEFORE:-}" ]; then mv "$tomb" "$dir"; return 1; fi
-    # Something recreated the path while the copy was verified: keep what
-    # appeared beside the restored copy and report busy.
-    if [ -e "$dir" ]; then mv "$dir" "$dir.reappeared-$$" 2>/dev/null || true; mv "$tomb" "$dir"; return 1; fi
-    rm -rf "$tomb"; return 0
+    if [ "$(wc -c < "$tomb/progress.md" 2>/dev/null | tr -d ' ')" != "${SIZE_BEFORE:-}" ]; then restore_tomb "$dir" "$tomb"; return 1; fi
+  else
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      committed=$(git -C "$CO" rev-parse "$prefix/$f" 2>/dev/null)
+      live=$(git -C "$CO" hash-object "$tomb/$f" 2>/dev/null)
+      if [ "$committed" != "$live" ]; then restore_tomb "$dir" "$tomb"; return 1; fi
+    done < <(git -C "$CO" ls-tree -r --name-only "$prefix" 2>/dev/null)
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      git -C "$CO" cat-file -e "$prefix/$f" 2>/dev/null && continue
+      if ! git -C "$CO" check-ignore -q "plans/x/$f" 2>/dev/null; then restore_tomb "$dir" "$tomb"; return 1; fi
+    done < <(cd "$tomb" && find . -type f | sed 's|^\./||')
   fi
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    committed=$(git -C "$CO" rev-parse "$prefix/$f" 2>/dev/null)
-    live=$(git -C "$CO" hash-object "$tomb/$f" 2>/dev/null)
-    if [ "$committed" != "$live" ]; then mv "$tomb" "$dir"; return 1; fi
-  done < <(git -C "$CO" ls-tree -r --name-only "$prefix" 2>/dev/null)
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    git -C "$CO" cat-file -e "$prefix/$f" 2>/dev/null && continue
-    if ! git -C "$CO" check-ignore -q "plans/x/$f" 2>/dev/null; then mv "$tomb" "$dir"; return 1; fi
-  done < <(cd "$tomb" && find . -type f | sed 's|^\./||')
-  # Something recreated the path while the copy was verified: keep what
-  # appeared beside the restored copy and report busy.
-  if [ -e "$dir" ]; then mv "$dir" "$dir.reappeared-$$" 2>/dev/null || true; mv "$tomb" "$dir"; return 1; fi
+  # Something recreated the path while the copy was verified: busy.
+  if [ -e "$dir" ] || [ -L "$dir" ]; then restore_tomb "$dir" "$tomb"; return 1; fi
   rm -rf "$tomb"
   return 0
 }
@@ -500,8 +521,8 @@ cmd_finish() {
 # commit and newest file both older) and checkouts whose clone is gone. Never
 # runs implicitly.
 cmd_prune() {
-  local repo="" days=30 apply=0 repo_dir co br d name now cutoff c key list="" dead_list="" i tip
-  local plans=() paths=() dead=()
+  local repo="" days=30 apply=0 repo_dir co br d name now cutoff c key list="" dead_list="" i tip gd
+  local plans=() dead=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --days) [ $# -ge 2 ] || usage; days=$2; shift 2 ;;
@@ -511,6 +532,7 @@ cmd_prune() {
     esac
   done
   [ -n "$repo" ] || usage
+  case "$days" in ''|*[!0-9]*) usage ;; esac
   repo_dir=$(hp_physical_dir "$repo") || usage
   git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $repo" >&2; exit 2; }
   if [ "$(hp_backend "$repo_dir")" = plain ]; then echo "status=plain"; return 0; fi
@@ -532,13 +554,15 @@ cmd_prune() {
       name=$(basename "$d")
       idle "$name" || continue
       plans[${#plans[@]}]=$name
-      paths[${#paths[@]}]="plans/$name"
       list="$list,$(enc "$name")"
     done
   fi
   for c in "$(hp_cache_root)"/state/*/; do
     [ -f "$c.git" ] || continue
-    if [ ! -d "$(sed -n 's/^gitdir: //p' "$c.git")" ]; then dead[${#dead[@]}]=$(basename "$c"); dead_list="$dead_list,$(basename "$c")"; fi
+    gd=$(sed -n 's/^gitdir: //p' "$c.git" 2>/dev/null)
+    # An unparsable .git file is not evidence that the clone is gone.
+    [ -n "$gd" ] || continue
+    if [ ! -d "$gd" ]; then dead[${#dead[@]}]=$(basename "$c"); dead_list="$dead_list,$(basename "$c")"; fi
   done
   list=${list#,}; dead_list=${dead_list#,}
   if [ "$apply" -eq 0 ]; then echo "status=listed plans=$list checkouts=$dead_list"; return 0; fi

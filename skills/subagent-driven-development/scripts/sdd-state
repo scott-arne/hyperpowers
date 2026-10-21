@@ -167,12 +167,129 @@ cmd_claim() {
   return 4
 }
 
+# --- import ------------------------------------------------------------------
+# Move a workspace an older plugin (or a plain-backend run) left in the plain
+# cache into place. Candidates resolve to their physical referents; the copy
+# is staged beside the destination, compared with the source by manifest, and
+# only then installed and the source replaced by a symlink. A failure leaves
+# the source untouched and no ledger in the destination, so the next call
+# retries instead of reporting ledger-exists.
+IDENTITY_PREFIX="# SDD ledger $(printf '\xe2\x80\x94') plan: "
+rewrite_identity_line() { # <ledger> <rel>: an absolute identity inside REPO, or ending in /<rel>, becomes <rel>
+  local first path tmp
+  first=$(head -n 1 "$1")
+  case "$first" in
+    "$IDENTITY_PREFIX"/*) path=${first#"$IDENTITY_PREFIX"} ;;
+    *) return 0 ;;
+  esac
+  case "$path" in
+    "$REPO"/*) [ "${path#"$REPO"/}" = "$2" ] || return 0 ;;
+    */"$2") ;;
+    *) return 0 ;;
+  esac
+  tmp="$1.tmp.$$"
+  { printf '%s%s\n' "$IDENTITY_PREFIX" "$2"; tail -n +2 "$1"; } > "$tmp" && mv -f "$tmp" "$1"
+}
+# <dir> -> one line per entry: type, size or link target, path; sorted.
+tree_manifest() {
+  ( cd "$1" && find . -mindepth 1 \( -type f -o -type d -o -type l \) | LC_ALL=C sort | while IFS= read -r e; do
+      if [ -L "$e" ]; then printf 'l %s %s\n' "$(readlink "$e")" "$e"
+      elif [ -f "$e" ]; then printf 'f %s %s\n' "$(wc -c < "$e" | tr -d ' ')" "$e"
+      else printf 'd - %s\n' "$e"; fi
+    done )
+}
+# <src> <dst>: every entry of src is in dst with the same type and size.
+verify_subset() {
+  local line dst_manifest
+  dst_manifest=$(tree_manifest "$2")
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    grep -Fxq -- "$line" < <(printf '%s\n' "$dst_manifest") || return 1
+  done < <(tree_manifest "$1")
+  return 0
+}
+cmd_import() {
+  local plan cache candidates c ref dest dest_phys seen="" stage e rel
+  [ $# -eq 1 ] || usage
+  plan=$1
+  resolve_plan "$plan"
+  dest="$WSDIR"
+  rel=$(hp_plan_rel "$plan")
+  cache="$(hp_cache_root)/sdd"
+  if [ "$BACKEND" = plain ]; then
+    hp_lock "$PLAN_DIR" || return 2
+    if ! hp_materialize_plain "$PLAN_DIR" "$WS" "$dest"; then rm -rf "$dest"; hp_unlock; echo "status=import-failed from=$BRANCH"; return 2; fi
+    hp_unlock
+  fi
+  candidates="$cache/$(hp_legacy_key "$PLAN_DIR")/plans/$WS"
+  # The cwd's unsuffixed legacy workspace qualifies only when the cwd is a
+  # worktree of the plan repository: another repository with a plan at the
+  # same relative path owns a workspace of the same name, and a cross-
+  # repository run before 6.16.0 left ambiguous copies that stay manual.
+  if git rev-parse --git-dir >/dev/null 2>&1 && [ "$(hp_key .)" = "$(hp_key "$PLAN_DIR")" ]; then
+    candidates="$candidates
+$cache/$(hp_legacy_key .)/plans/$WS"
+  fi
+  # Pointers carry the plan repository's key prefix as their suffix; only
+  # this repository's suffixes qualify, so another repository that happens
+  # to hold a plan at the same relative path is never touched.
+  for c in "$cache"/*/plans/"$WS"+"$(hp_legacy_key "$PLAN_DIR" | cut -c1-8)" "$cache"/*/plans/"$WS"+"$(hp_key "$PLAN_DIR" | cut -c1-8)"; do
+    [ -e "$c" ] && candidates="$candidates
+$c"
+  done
+  if [ "$BACKEND" = branch ]; then
+    candidates="$candidates
+$cache/$(hp_key "$PLAN_DIR")/plans/$WS"
+  fi
+  # The lock is taken before any candidate is resolved or the destination is
+  # read, so two importers cannot both find the destination empty.
+  hp_lock "$PLAN_DIR" || return 2
+  dest_phys=$(hp_physical_dir "$dest" 2>/dev/null) || dest_phys=$dest
+  while IFS= read -r c; do
+    [ -n "$c" ] && [ -e "$c" ] || continue
+    ref=$(hp_physical_dir "$c") || continue
+    [ "$ref" != "$dest_phys" ] || continue
+    case " $seen " in *" $ref "*) continue ;; esac
+    seen="$seen $ref"
+    [ -f "$ref/progress.md" ] || continue
+    if [ -f "$dest/progress.md" ]; then hp_unlock; echo "status=skipped reason=ledger-exists path=$(enc "$c")"; return 0; fi
+    stage="$dest.import-$$"
+    rm -rf "$stage"; mkdir -p "$stage"
+    if ! cp -a "$ref/." "$stage/" 2>/dev/null || [ "$(tree_manifest "$ref")" != "$(tree_manifest "$stage")" ]; then
+      rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2
+    fi
+    rewrite_identity_line "$stage/progress.md" "$rel"
+    if [ ! -d "$dest" ] || [ -z "$(ls -A "$dest" 2>/dev/null)" ]; then
+      rmdir "$dest" 2>/dev/null
+      mv "$stage" "$dest" || { rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
+    else
+      # The destination already holds regenerable files: install the staged
+      # entries one by one, the ledger last, so a failure leaves no ledger.
+      for e in "$stage"/* "$stage"/.[!.]*; do
+        [ -e "$e" ] || [ -L "$e" ] || continue
+        [ "$(basename "$e")" != progress.md ] || continue
+        if ! mv -f "$e" "$dest/" 2>/dev/null; then cp -a "$e" "$dest/" || { rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }; fi
+      done
+      mv -f "$stage/progress.md" "$dest/progress.md" || { rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
+      rm -rf "$stage"
+      if ! verify_subset "$ref" "$dest"; then rm -f "$dest/progress.md"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; fi
+    fi
+    if [ -L "$c" ]; then rm -rf "$ref"; ln -sfn "$dest" "$c"; else rm -rf "$ref"; ln -s "$dest" "$ref"; fi
+    hp_unlock
+    echo "status=moved from=$(enc "$c")"
+    return 0
+  done < <(printf '%s\n' "$candidates")
+  hp_unlock
+  echo "status=none"
+}
+
 # --- dispatch ----------------------------------------------------------------
 sub=${1:-}
 [ -n "$sub" ] || usage
 shift
 case "$sub" in
   snapshot) cmd_snapshot "$@" ;;
+  import) cmd_import "$@" ;;
   claim) cmd_claim "$@" ;;
   *) usage ;;
 esac

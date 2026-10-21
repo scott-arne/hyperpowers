@@ -612,5 +612,21 @@ out=$(run_state "$i16" import docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i16" ] && [ -L "$legacy_i16" ] && ! ls -d "$legacy_i16.importing-"* >/dev/null 2>&1 && [ "$(wc -l < "$wsi16/progress.md" | tr -d ' ')" = 3 ] && [ "$(tail -n 1 "$wsi16/progress.md")" = "Task 2: complete (commits 3333333..4444444, review clean)" ] && [ "$(head -n 1 "$wsi16/progress.md")" = "# SDD ledger — plan: docs/plan.md" ]; then pass "an interrupted cutover whose source gained a line is finished with the remainder reconciled"; else fail "an interrupted cutover whose source gained a line is finished with the remainder reconciled (rc=$rc: $out)"; fi
 
 echo ""
+echo "=== sdd-dir and the plain fallback over branch state ==="
+make_pair p5
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+: > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+wsa=$(run_sdd_dir "$PAIR_A" docs/plan.md)
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 bash "$SDD_DIR" docs/plan.md 2>/dev/null)
+keyb=$(state_key "$PAIR_B")
+if [ "$out" = "$XDG_CACHE_HOME/hyperpowers/sdd/$keyb/plans/$(basename "$wsa")" ] && [ "$(sed -n 2p "$out/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ] && grep -q "^plain source=$(git -C "$PAIR_B" rev-parse refs/remotes/origin/hyperpowers/state)$" "$STATE_ROOT/$keyb.backend"; then pass "the plain fallback materializes the branch workspace and records its source"; else fail "the plain fallback materializes the branch workspace and records its source ($out)"; fi
+if [ ! -d "$STATE_ROOT/$keyb.lock" ]; then pass "the plain materialization released the lock"; else fail "the plain materialization released the lock"; fi
+
+echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

@@ -26,6 +26,11 @@ export XDG_CACHE_HOME="$TEST_ROOT/cache"
 cleanup() { rm -rf "$TEST_ROOT"; }
 trap cleanup EXIT
 
+STATE_ROOT="$XDG_CACHE_HOME/hyperpowers/state"
+LIB="$REPO_ROOT/skills/subagent-driven-development/scripts/sdd-common.sh"
+# shellcheck source=/dev/null
+state_key() { ( . "$LIB"; hp_key "$1" ); }
+
 pass() { echo "  [PASS] $1"; }
 fail() {
     echo "  [FAIL] $1"
@@ -160,7 +165,8 @@ else
     hash8=$(printf '%s' "$rel_path" | git hash-object --stdin | cut -c1-8)
     slug="nonexistent"
     expected_nonexistent_dir="$XDG_CACHE_HOME/hyperpowers/sdd/$repo_key/plans/$slug-$hash8"
-    if [ -d "$expected_nonexistent_dir" ]; then
+    expected_nonexistent_state="$XDG_CACHE_HOME/hyperpowers/state/$repo_key/plans/$slug-$hash8"
+    if [ -d "$expected_nonexistent_dir" ] || [ -d "$expected_nonexistent_state" ]; then
         fail "review-package should not create workspace for nonexistent plan (found: $expected_nonexistent_dir)"
     else
         pass "review-package did not create workspace for nonexistent plan"
@@ -220,16 +226,15 @@ fi
 # reader that only knows the cwd (the compaction notice) still finds the
 # ledger. The plan repository's own entry stays a real directory.
 pointer_b="$bare_b/plans/$(basename "$from_a")+$(basename "$bare_a" | cut -c1-8)"
-own_a="$bare_a/plans/$(basename "$from_a")"
 if [ -L "$pointer_b" ] && [ "$(cd "$pointer_b" 2>/dev/null && pwd -P)" = "$(cd "$from_a" && pwd -P)" ]; then
     pass "sdd-dir leaves a pointer to a cross-repository plan's workspace under the cwd key"
 else
     fail "sdd-dir leaves a pointer to a cross-repository plan's workspace under the cwd key (expected symlink $pointer_b -> $from_a)"
 fi
-if [ -d "$own_a" ] && [ ! -L "$own_a" ]; then
-    pass "sdd-dir keeps the plan repository's own workspace entry a real directory"
+if [ -d "$from_a" ] && [ ! -L "$from_a" ] && [ ! -e "$bare_a/plans/$(basename "$from_a")" ]; then
+    pass "the plan repository's workspace is a real directory in its state checkout, with no copy under its plain root"
 else
-    fail "sdd-dir keeps the plan repository's own workspace entry a real directory ($own_a)"
+    fail "the plan repository's workspace is a real directory in its state checkout, with no copy under its plain root ($from_a)"
 fi
 
 # 10h. A cwd key that holds only pointers is refreshed on every cross-
@@ -287,37 +292,41 @@ fi
 
 echo "Test: plan-scoped workspaces are distinct for same-basename plans"
 make_repo "$TEST_ROOT/repo-plan"
+git -C "$TEST_ROOT/repo-plan" commit -q --allow-empty -m "initial"
 mkdir -p "$TEST_ROOT/repo-plan/docs/a" "$TEST_ROOT/repo-plan/docs/b"
 echo plan > "$TEST_ROOT/repo-plan/docs/a/plan.md"
 echo plan > "$TEST_ROOT/repo-plan/docs/b/plan.md"
 noarg=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT")
 da=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
 db=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/b/plan.md)
+plan_key=$(state_key "$TEST_ROOT/repo-plan")
 if [ "$da" != "$db" ]; then pass "same basename, different dirs -> distinct workspaces"; else fail "collision: $da == $db"; fi
-case "$da" in "$noarg"/plans/plan-*) pass "plan dir nests under repo plans/ subdir with slug prefix";; *) fail "unexpected plan dir shape: $da (repo dir: $noarg)";; esac
+case "$da" in "$STATE_ROOT/$plan_key"/plans/plan-*) pass "plan dir nests under the state checkout's plans/ with the slug prefix";; *) fail "unexpected plan dir shape: $da";; esac
+case "$noarg" in "$XDG_CACHE_HOME/hyperpowers/sdd/$plan_key") pass "the no-argument root stays in the plain cache under the common-directory key";; *) fail "no-argument root shape: $noarg";; esac
+if [ -f "$STATE_ROOT/$plan_key/.git" ] && [ "$(git -C "$STATE_ROOT/$plan_key" branch --show-current)" = "hyperpowers/state" ]; then pass "the checkout is a worktree on hyperpowers/state"; else fail "the checkout is a worktree on hyperpowers/state"; fi
 dabs=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" "$TEST_ROOT/repo-plan/docs/a/plan.md")
 if [ "$da" = "$dabs" ]; then pass "relative and absolute plan paths agree"; else fail "path-form sensitivity: $da vs $dabs"; fi
+git -C "$TEST_ROOT/repo-plan" worktree add -q "$TEST_ROOT/repo-plan-wt" -b wt >/dev/null 2>&1
+dwt=$(cd "$TEST_ROOT/repo-plan-wt" && "$SDD_DIR_SCRIPT" "$TEST_ROOT/repo-plan/docs/a/plan.md")
+if [ "$dwt" = "$da" ]; then pass "a linked worktree of the clone resolves to the same workspace"; else fail "a linked worktree of the clone resolves to the same workspace ($dwt vs $da)"; fi
+: > "$da/task-1-brief.md"; : > "$da/review-1111111..2222222.diff"; : > "$da/progress.md"
+if git -C "$STATE_ROOT/$plan_key" check-ignore -q "$da/task-1-brief.md" && git -C "$STATE_ROOT/$plan_key" check-ignore -q "$da/review-1111111..2222222.diff" && ! git -C "$STATE_ROOT/$plan_key" check-ignore -q "$da/progress.md"; then pass "briefs and packages are ignored in the checkout, the ledger is not"; else fail "briefs and packages are ignored in the checkout, the ledger is not"; fi
 
-echo "Test: stale sibling plan workspaces pruned; fresh and non-plan content kept"
-stale="$noarg/plans/old-plan-deadbeef"
-freshdir="$noarg/plans/fresh-plan-cafef00d"
+echo "Test: nothing inside plans/ is reclaimed automatically"
+stale="$STATE_ROOT/$plan_key/plans/old-plan-deadbeef"
 nonplan="$noarg/perf-cache-notaplan"
-mkdir -p "$stale" "$freshdir" "$nonplan"
+mkdir -p "$stale" "$nonplan"
 OLDSTAMP="$(date -v-20d +%Y%m%d%H%M 2>/dev/null || date -d '20 days ago' +%Y%m%d%H%M)"
 touch -mt "$OLDSTAMP" "$stale" "$nonplan"
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
-if [ ! -d "$stale" ]; then pass "stale sibling plan dir pruned"; else fail "stale plan dir survived"; fi
-if [ -d "$freshdir" ]; then pass "fresh sibling plan dir kept"; else fail "fresh plan dir wrongly pruned"; fi
-if [ -d "$nonplan" ]; then pass "stale NON-plan sibling under repo root preserved"; else fail "GC deleted non-plan cache content"; fi
+if [ -d "$stale" ]; then pass "an idle sibling plan dir in the checkout is kept (prune is explicit)"; else fail "an idle sibling plan dir in the checkout was removed"; fi
+if [ -d "$nonplan" ]; then pass "stale NON-plan content under the plain root preserved"; else fail "reclaim deleted non-plan cache content"; fi
 
-echo "Test: resumed plan workspace survives sibling GC"
+echo "Test: a plan's workspace survives another plan's invocation"
 planA_dir=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
-mkdir -p "$planA_dir"
 touch -mt "$OLDSTAMP" "$planA_dir"
-_resume=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
-if [ "$(find "$planA_dir" -maxdepth 0 -mtime +14 | wc -l)" -eq 0 ]; then pass "resume refreshes plan dir mtime"; else fail "plan dir still stale after resume"; fi
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/b/plan.md)
-if [ -d "$planA_dir" ]; then pass "resumed plan A survives plan B's invocation"; else fail "plan A wrongly pruned by plan B GC"; fi
+if [ -d "$planA_dir" ]; then pass "plan A survives plan B's invocation"; else fail "plan A wrongly removed by plan B"; fi
 
 echo "Test: plan mode refreshes parent repo cache dir to survive cross-repo GC"
 planA_dir=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
@@ -380,7 +389,7 @@ mkdir -p "$TEST_ROOT/repo-nomode/docs"
 printf '### Task 1: Thing\n\nbody\n' > "$TEST_ROOT/repo-nomode/docs/plan.md"
 nomode="$TEST_ROOT/nomode-scripts"
 mkdir -p "$nomode"
-cp "$SDD_DIR_SCRIPT" "$TASK_BRIEF" "$REVIEW_PACKAGE" "$nomode/"
+cp "$SDD_DIR_SCRIPT" "$TASK_BRIEF" "$REVIEW_PACKAGE" "$(dirname "$SDD_DIR_SCRIPT")/sdd-common.sh" "$(dirname "$SDD_DIR_SCRIPT")/sdd-state" "$nomode/"
 chmod -x "$nomode"/*
 
 rc=0
@@ -420,6 +429,40 @@ case "$rp_out" in
     "wrote "*": "*" commit(s), "*" bytes") pass "review-package prints 'wrote <path>: <N> commit(s), <N> bytes'" ;;
     *) fail "review-package stdout shape (got: $rp_out)" ;;
 esac
+
+echo ""
+echo "Test: branch availability decides the backend"
+make_repo "$TEST_ROOT/repo-remote"
+git -C "$TEST_ROOT/repo-remote" commit -q --allow-empty -m "initial"
+git -C "$TEST_ROOT/repo-remote" remote add origin "$TEST_ROOT/nowhere.git"
+: > "$TEST_ROOT/repo-remote/plan.md"
+rc=0
+err=$(cd "$TEST_ROOT/repo-remote" && bash "$SDD_DIR_SCRIPT" plan.md 2>&1 >/dev/null) || rc=$?
+if [ "$rc" -eq 2 ] && grep -q 'needs-sync' < <(printf '%s\n' "$err"); then pass "a clone with a remote and no fetch stamp gets needs-sync"; else fail "a clone with a remote and no fetch stamp gets needs-sync (rc=$rc: $err)"; fi
+if ( cd "$TEST_ROOT/repo-remote" && bash "$SDD_DIR_SCRIPT" missing.md ) >/dev/null 2>&1; then fail "a plan file that does not exist is refused"; else pass "a plan file that does not exist is refused"; fi
+make_repo "$TEST_ROOT/repo-plain"
+git -C "$TEST_ROOT/repo-plain" commit -q --allow-empty -m "initial"
+: > "$TEST_ROOT/repo-plain/plan.md"
+plain_key=$(state_key "$TEST_ROOT/repo-plain")
+out=$(cd "$TEST_ROOT/repo-plain" && HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 bash "$SDD_DIR_SCRIPT" plan.md 2>/dev/null); rc=$?
+case "$out" in
+    "$XDG_CACHE_HOME/hyperpowers/sdd/$plain_key/plans/plan-"*) pass "a failed worktree add prints the plain-cache workspace" ;;
+    *) fail "a failed worktree add prints the plain-cache workspace (rc=$rc: $out)" ;;
+esac
+out2=$(cd "$TEST_ROOT/repo-plain" && bash "$SDD_DIR_SCRIPT" plan.md 2>/dev/null)
+if [ "$out2" = "$out" ] && [ "$(head -n1 "$STATE_ROOT/$plain_key.backend")" = plain ]; then pass "the plain backend persists for later calls"; else fail "the plain backend persists for later calls"; fi
+
+echo ""
+echo "Test: a legacy workspace is imported on the first call"
+make_repo "$TEST_ROOT/repo-legacy"
+git -C "$TEST_ROOT/repo-legacy" commit -q --allow-empty -m "initial"
+: > "$TEST_ROOT/repo-legacy/plan.md"
+legacy_key=$(state_key "$TEST_ROOT/repo-legacy")
+legacy_hash8=$(printf '%s' "plan.md" | git hash-object --stdin | cut -c1-8)
+legacy_ws="$XDG_CACHE_HOME/hyperpowers/sdd/$legacy_key/plans/plan-$legacy_hash8"
+mkdir -p "$legacy_ws"; printf '# SDD ledger — plan: plan.md\n' > "$legacy_ws/progress.md"
+out=$(cd "$TEST_ROOT/repo-legacy" && bash "$SDD_DIR_SCRIPT" plan.md 2>/dev/null)
+if [ "$out" = "$STATE_ROOT/$legacy_key/plans/plan-$legacy_hash8" ] && [ -f "$out/progress.md" ] && [ -L "$legacy_ws" ]; then pass "the legacy workspace moved into the checkout and left a symlink"; else fail "the legacy workspace moved into the checkout and left a symlink ($out)"; fi
 
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"

@@ -1,0 +1,10 @@
+# Only specs/ and plans/ are committed from this directory, plus the dated
+# eval-evidence notes and the history-rewrite map this repository keeps at
+# the top level (CLAUDE.md, "Planning and Spec Docs Are Tracked Here").
+# Run artifacts belong in hyperpowers-evals under evals/evidence/.
+/*
+!/.gitignore
+!/specs/
+!/plans/
+!/*.md
+!/*.tsv

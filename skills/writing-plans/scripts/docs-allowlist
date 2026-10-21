@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# docs-allowlist: make a planning directory commit only its specs/ and plans/.
+#
+# Usage: docs-allowlist [DIR]
+#   DIR defaults to <repository root>/docs/hyperpowers.
+#
+# Writes DIR/.gitignore as an allowlist (everything under DIR ignored except
+# specs/, plans/ and the ignore file itself) when no .gitignore exists there,
+# and leaves an existing one untouched. Prints exactly one of:
+#   wrote <path>    the allowlist was created
+#   exists <path>   a .gitignore was already present; nothing changed
+# followed, when an outer rule already ignores DIR itself, by:
+#   ignored-by <source>:<line>:<pattern>
+# Git never descends into an ignored directory, so that outer rule defeats
+# the allowlist and only its owner can lift it.
+set -euo pipefail
+
+if [ $# -gt 1 ]; then
+  echo "usage: docs-allowlist [DIR]" >&2
+  exit 64
+fi
+
+if [ $# -eq 1 ]; then
+  dir="$1"
+else
+  dir="$(git rev-parse --show-toplevel)/docs/hyperpowers"
+fi
+
+mkdir -p "$dir"
+# Resolve to a physical absolute path so the report and the ignore check
+# agree whatever form the caller used.
+dir="$(cd "$dir" && pwd -P)"
+target="$dir/.gitignore"
+
+if [ -e "$target" ]; then
+  printf 'exists %s\n' "$target"
+else
+  printf '%s\n' \
+    '# Only specs/ and plans/ are committed from this directory. Anything else' \
+    '# the workflow produces (run captures, probes, review output, ledgers)' \
+    '# belongs in the SDD workspace or an evidence repository, not here.' \
+    '/*' \
+    '!/.gitignore' \
+    '!/specs/' \
+    '!/plans/' > "$target"
+  printf 'wrote %s\n' "$target"
+fi
+
+# Outside a repository there is nothing to check. Inside one, check-ignore
+# exits 1 when the directory is not ignored; only a hit is reported.
+if root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)"; then
+  set +e
+  verdict="$(git -C "$root" check-ignore -v --no-index -- "$dir" 2>/dev/null)"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    printf 'ignored-by %s\n' "${verdict%%	*}"
+  fi
+fi

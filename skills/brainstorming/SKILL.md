@@ -110,7 +110,7 @@ your path and complete them in order.
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation. Before finalizing them, run [codex-approach-gate.md](codex-approach-gate.md) if the approach gate fires (rule below) and fold its approaches into this step with provenance tags.
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
-6. **Write design doc** — save to `docs/hyperpowers/specs/YYYY-MM-DD-<topic>-design.md` (do not commit unless the user asks)
+6. **Write design doc** — save to `docs/hyperpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit (the first spec in a repository also gets the planning-directory allowlist; see Documentation below)
 7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
 8. **Codex spec review gate** (Claude Code only) — run the Codex review gate over the spec before involving the user (see below)
 9. **User reviews written spec** — ask user to review the spec file before proceeding
@@ -296,8 +296,9 @@ Before opening the companion for the first time, read the detailed guide:
 
 - Write the validated design (spec) to `docs/hyperpowers/specs/YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
+- The first time a spec or plan lands in a repository, run `scripts/docs-allowlist` from the writing-plans skill's directory (`../writing-plans/` relative to this one). It writes `docs/hyperpowers/.gitignore` so that only `specs/` and `plans/` are ever committed from that directory, and leaves an existing file alone. Commit it with the spec. If it prints `ignored-by`, the repository's own ignore rule excludes the whole directory: tell your human partner and ask whether to remove that rule before committing.
 - Use elements-of-style:writing-clearly-and-concisely skill if available
-- Do NOT commit the design document. Leave it as an uncommitted working file unless the user explicitly asks you to commit it.
+- Commit the design document to git
 - Where the design rests on something nobody confirmed, write it as
   `Assumption: <what>, validate via <method>` rather than as a fact; the
   plan will attach the deadline. The placeholder scan accepts that form
@@ -327,7 +328,7 @@ gate never blocks the user review — at worst it is skipped.
 **User Review Gate:**
 After the spec review loop passes, ask the user to review the written spec before proceeding:
 
-> "Spec written to `<path>` (not committed). Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
+> "Spec written and committed to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
 
 Wait for the user's response. If they request changes, make them and re-run the spec review loop. Only proceed once the user approves.
 

@@ -43,7 +43,6 @@ Subagent (general-purpose):
 
     - stage ONLY the files named in this dispatch
     - NEVER `git add -A` or `git add .`
-    - nothing under docs/ planning paths (specs/plans) may be staged
     - no AI-attribution lines in the commit message
 
     ## Report

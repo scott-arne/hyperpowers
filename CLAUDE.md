@@ -28,15 +28,12 @@ Before changing anything in this repo:
 
 ## Planning and Spec Docs Are Tracked Here
 
-**This repo commits its `docs/hyperpowers/` plans, specs, and eval-evidence notes.** That is a deliberate local exception to the general rule — which the skills themselves state, and which many `CLAUDE.md` files repeat — that design documents stay uncommitted working files.
-
-The reason is that this repo *is* hyperpowers. Everywhere else, a spec is scaffolding for a change and the change is the deliverable; here the skills are the product, and the reasoning behind each one is part of it. `docs/hyperpowers/specs/` records why a skill is shaped the way it is, `docs/hyperpowers/plans/` records how it got there, and the dated eval-evidence notes record what was measured. Losing that leaves behavior-shaping prose with no argument attached, which is exactly what "Skill Changes Require Evaluation" below is trying to prevent.
+**This repo commits its `docs/hyperpowers/` plans, specs, and eval-evidence notes alongside the work they describe.** The skills are the product here, and the reasoning behind each one is part of it. `docs/hyperpowers/specs/` records why a skill is shaped the way it is, `docs/hyperpowers/plans/` records how it got there, and the dated eval-evidence notes record what was measured. Losing that leaves behavior-shaping prose with no argument attached, which is exactly what "Skill Changes Require Evaluation" below is trying to prevent.
 
 Practical consequences:
 
-- **Do not add `docs/hyperpowers` to `.gitignore` in this repo.** A global instruction to gitignore spec and plan directories does not apply here; this section is the local override.
 - Commit new plans and specs alongside the work they describe, or in their own docs commit. They are not scratch.
-- This exception is scoped to this repository. In a normal project, keep following the default: write the spec, leave it uncommitted unless your human partner asks for it.
+- `docs/hyperpowers/.gitignore` is an allowlist: only `specs/`, `plans/`, and the top-level evidence notes (`*.md`, `*.tsv`) are committed from that directory. Run artifacts, probes, and review output go to the evals repository (see "Eval harness" below) or the SDD workspace, never here.
 - **`evals/` is a different story.** It is gitignored here because it is a separate clone of [hyperpowers-evals](https://github.com/scott-arne/hyperpowers-evals/), not a submodule. Scenario and harness work gets committed *in that repo*, never in this one. See "Eval harness" below.
 
 ## What Stays Out of Core Skills

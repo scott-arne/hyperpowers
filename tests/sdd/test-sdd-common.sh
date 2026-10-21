@@ -215,6 +215,13 @@ if [ "$(git -C "$co" rev-parse "$sha3^")" = "$sha2" ] && [ "$(git -C "$co" rev-p
 rm -rf "$co/plans/p1"
 sha4=$(hp_commit_paths "$co" hyperpowers/state "remove" plans/p1)
 if [ "$sha4" != none ] && ! git -C "$co" ls-tree -r --name-only "$sha4" | grep -q 'plans/p1'; then pass "a removed directory commits as a deletion"; else fail "a removed directory commits as a deletion"; fi
+mkdir -p "$co/plans/p3"; printf 'kept on disk\n' > "$co/plans/p3/progress.md"
+sha5=$(hp_commit_paths "$co" hyperpowers/state "p3" plans/p3)
+printf 'recreated after verification\n' > "$co/plans/p3/progress.md"
+sha6=$(hp_commit_paths --remove "$co" hyperpowers/state "remove p3" plans/p3)
+if [ -n "$sha6" ] && [ "$sha6" != none ] && ! git -C "$co" ls-tree -r --name-only "$sha6" | grep -q 'plans/p3' && [ "$(git -C "$co" rev-parse "$sha6^")" = "$sha5" ] && [ "$(cat "$co/plans/p3/progress.md")" = "recreated after verification" ]; then pass "--remove drops the path from the tip without reading the working tree"; else fail "--remove drops the path from the tip without reading the working tree (got '$sha6')"; fi
+if [ "$(hp_commit_paths --remove "$co" hyperpowers/state "remove p3 again" plans/p3)" = none ]; then pass "--remove of a path the tip lacks commits nothing"; else fail "--remove of a path the tip lacks commits nothing"; fi
+rm -rf "$co/plans/p3"
 # Two concurrent first commits on an unborn branch: one creates it, the other chains.
 co2="$TEST_ROOT/co2"; git init -q -b hyperpowers/state "$co2"; mkdir -p "$co2/plans/a" "$co2/plans/b"
 printf 'a\n' > "$co2/plans/a/progress.md"; printf 'b\n' > "$co2/plans/b/progress.md"

@@ -554,15 +554,20 @@ cmd_finish() {
   esac
   remove_verified "$WSDIR" "$last:plans/$WS" keep; rc=$?
   case "$rc" in 0) ;; 1) hp_unlock; echo "status=busy"; return 3 ;; *) hp_unlock; echo "status=error"; return 2 ;; esac
-  # The removal is committed while the copy still exists; a commit that
-  # fails puts the copy back, and only a committed removal deletes it. A
-  # copy that survives the deletion is named on stderr; the branch is the
-  # record either way.
-  commit=$(hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: finish" "plans/$WS"); rc=$?
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in finish-after-verify:*) mkdir -p "$WSDIR"; printf 'late\n' > "$WSDIR/${HYPERPOWERS_TEST_WRITER_AT#finish-after-verify:}" ;; esac
+  # The removal is committed from the tip's tree, never from the live path,
+  # so a workspace recreated after the verification neither enters the
+  # commit nor blocks it: it stays on disk, uncommitted, and is named. A
+  # commit that fails puts the verified copy back; only a committed removal
+  # deletes it, and a copy that survives the deletion is named on stderr.
+  commit=$(hp_commit_paths --remove "$CO" "$BRANCH" "sdd $SLUG: finish" "plans/$WS"); rc=$?
   if [ "$rc" -ne 0 ]; then restore_tomb "$WSDIR" "$TOMB"; hp_unlock; echo "status=error"; return 2; fi
   discard_tomb "$TOMB" || true
   hp_unlock
-  [ ! -d "$WSDIR" ] || { echo "status=error"; return 2; }
+  if [ -d "$WSDIR" ]; then
+    echo "sdd-state: $WSDIR was recreated during finish; the removal is committed (last=$last) and the new files remain there, uncommitted" >&2
+    echo "status=error"; return 2
+  fi
   echo "status=finished sha=${commit:0:7} last=$last push=$REMOTE/$BRANCH"
 }
 
@@ -634,9 +639,10 @@ cmd_prune() {
     fi
     i=$((i + 1))
   done
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in prune-after-verify:*) mkdir -p "$(dirname "$co/plans/${HYPERPOWERS_TEST_WRITER_AT#prune-after-verify:}")"; printf 'late\n' > "$co/plans/${HYPERPOWERS_TEST_WRITER_AT#prune-after-verify:}" ;; esac
   # The copies outlive the commit: a commit that fails puts every one back.
   if [ "${#removed[@]}" -gt 0 ]; then
-    if ! hp_commit_paths "$co" "$br" "sdd: prune ${removed[*]}" "${removed_paths[@]}" >/dev/null; then
+    if ! hp_commit_paths --remove "$co" "$br" "sdd: prune ${removed[*]}" "${removed_paths[@]}" >/dev/null; then
       i=0
       while [ "$i" -lt "${#tombs[@]}" ]; do restore_tomb "$co/plans/${removed[$i]}" "${tombs[$i]}"; i=$((i + 1)); done
       hp_unlock; echo "status=error"; return 2
@@ -646,17 +652,21 @@ cmd_prune() {
   fi
   hp_unlock
   list=${removed_list#,}; kept_list=${kept_list#,}
-  # Each dead checkout is re-checked right before it goes: a clone restored
-  # since the scan keeps its checkout. The removal is an atomic rename
-  # first, so nothing can start using a half-deleted checkout.
+  # Each dead checkout goes under its own key's lock: the gitdir is re-read
+  # there (a clone restored since the scan keeps its checkout; a creator
+  # that arrived first is waited for and then seen), the checkout is renamed
+  # aside atomically and deleted with its sidecars, and the lock itself is
+  # the last thing to go. A lock that cannot be taken keeps the candidate.
   dead_list=""
   i=0
   while [ "$i" -lt "${#dead[@]}" ]; do
     key=${dead[$i]}; ck="$(hp_cache_root)/state/$key"; i=$((i + 1))
+    hp_lock_at "$ck.lock" || continue
     gd=$(sed -n 's/^gitdir: //p' "$ck/.git" 2>/dev/null)
     case "$gd" in ''|/*) ;; *) gd="$ck/$gd" ;; esac
-    if [ -z "$gd" ] || [ -d "$gd" ] || ! mv "$ck" "$ck.pruning-$$" 2>/dev/null; then continue; fi
-    rm -rf "$ck.pruning-$$" "$ck.backend" "$ck.lock" "$ck.lock-history" "$ck.fetched"
+    if [ -z "$gd" ] || [ -d "$gd" ] || ! mv "$ck" "$ck.pruning-$$" 2>/dev/null; then hp_unlock; continue; fi
+    rm -rf "$ck.pruning-$$" "$ck.backend" "$ck.lock-history" "$ck.fetched"
+    hp_unlock
     dead_list="$dead_list,$key"
   done
   dead_list=${dead_list#,}

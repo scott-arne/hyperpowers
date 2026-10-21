@@ -175,9 +175,14 @@ hp_lock_claim() { # <lock-dir> <generation>
   [ "$(sed -n 's/^pid=//p' "$1/owner" 2>/dev/null)" = "$$" ]
 }
 hp_lock() { # <repo-dir>
-  local lock guard waited=0 owner
+  local lock
   lock=$(hp_checkout_path "$1") || return 2
-  lock="$lock.lock"
+  hp_lock_at "$lock.lock"
+}
+# <lock-dir>: take a lock by its path. hp_lock derives the path from a
+# repository; prune's dead-checkout removal has only the key.
+hp_lock_at() { # <lock-dir>
+  local lock=$1 guard waited=0 owner
   guard="$lock.takeover"
   mkdir -p "$(dirname "$lock")"
   while ! mkdir "$lock" 2>/dev/null; do
@@ -222,13 +227,18 @@ hp_unlock() {
 
 # --- private-index commit ---------------------------------------------------
 # Commit only <paths> of <checkout> onto <branch> through a private index, so
-# another session's staged or half-written files are never included. Plumbing
-# runs no hooks and signs nothing. Prints the new commit, or "none" when the
-# paths already match the tip; a lost ref race is retried from the new tip,
-# and creation of an unborn branch is conditional on the zero oid. The index
-# path must not exist before read-tree: git rejects an existing empty file.
-hp_commit_paths() { # <checkout> <branch> <message> <path>...
-  local co=$1 br=$2 msg=$3 ref idxdir idx tip tree commit old
+# another session's staged or half-written files are never included. With
+# --remove the paths are dropped from the tip's tree without reading the
+# working tree at all, so a path recreated on disk meanwhile neither enters
+# the commit nor stops it. Plumbing runs no hooks and signs nothing. Prints
+# the new commit, or "none" when the paths already match the tip; a lost ref
+# race is retried from the new tip, and creation of an unborn branch is
+# conditional on the zero oid. The index path must not exist before
+# read-tree: git rejects an existing empty file.
+hp_commit_paths() { # [--remove] <checkout> <branch> <message> <path>...
+  local mode=add co br msg ref idxdir idx tip tree commit old
+  if [ "${1:-}" = --remove ]; then mode=remove; shift; fi
+  co=$1 br=$2 msg=$3
   shift 3
   ref="refs/heads/$br"
   idxdir=$(mktemp -d "${TMPDIR:-/tmp}/sdd-index.XXXXXX") || return 2
@@ -241,7 +251,11 @@ hp_commit_paths() { # <checkout> <branch> <message> <path>...
     else
       GIT_INDEX_FILE=$idx git -C "$co" read-tree --empty || { rm -rf "$idxdir"; return 2; }
     fi
-    GIT_INDEX_FILE=$idx git -C "$co" add -A -- "$@" 2>/dev/null || { rm -rf "$idxdir"; return 2; }
+    if [ "$mode" = remove ]; then
+      GIT_INDEX_FILE=$idx git -C "$co" ls-files -z -- "$@" 2>/dev/null | GIT_INDEX_FILE=$idx git -C "$co" update-index -z --force-remove --stdin 2>/dev/null || { rm -rf "$idxdir"; return 2; }
+    else
+      GIT_INDEX_FILE=$idx git -C "$co" add -A -- "$@" 2>/dev/null || { rm -rf "$idxdir"; return 2; }
+    fi
     tree=$(GIT_INDEX_FILE=$idx git -C "$co" write-tree) || { rm -rf "$idxdir"; return 2; }
     if [ -n "$tip" ] && [ "$tree" = "$(git -C "$co" rev-parse "$tip^{tree}")" ]; then
       rm -rf "$idxdir"; printf 'none\n'; return 0

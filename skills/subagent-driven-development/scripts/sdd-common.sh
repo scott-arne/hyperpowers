@@ -380,6 +380,8 @@ hp_ensure_checkout() {
     printf 'branch %s\n' "$co"; return 0
   fi
   hp_lock "$repo" || return 2
+  # Another caller may have chosen the plain backend while this one waited.
+  if [ "$(hp_backend "$repo")" = plain ]; then hp_unlock; printf 'plain %s\n' "$(hp_plain_root "$repo")"; return 0; fi
   if [ -e "$co/.git" ]; then
     hp_verify_checkout "$repo" "$co" "$br" || { hp_unlock; return 2; }
     hp_write_backend "$repo" branch || { hp_unlock; return 2; }
@@ -450,11 +452,12 @@ hp_ensure_checkout() {
 # side is not undone by a stale copy on the other; when they have diverged
 # and either holds the plan, exit 2 naming both, because choosing one would
 # hide the other's ledger lines or revive a finished dossier. Records the source tip in the backend file. Callers hold the
-# repository lock. A plain fallback never starts an empty ledger over branch
-# state: a failed archive is exit 2, and the caller removes the half-written
-# destination.
+# repository lock. A plain fallback never starts an empty ledger over
+# branch state: a failed archive is exit 2 and leaves no destination,
+# because the workspace is published by one rename from a staging
+# directory.
 hp_materialize_plain() {
-  local repo=$1 ws=$2 dest=$3 br remote local_tip remote_tip tip root archive_rc tar_rc local_has remote_has
+  local repo=$1 ws=$2 dest=$3 br remote local_tip remote_tip tip root staging archive_rc tar_rc local_has remote_has
   [ -f "$dest/progress.md" ] && return 0
   br=$(hp_state_branch "$repo"); remote=$(hp_state_remote "$repo")
   local_tip=$(git -C "$repo" rev-parse -q --verify "refs/heads/$br^{commit}" 2>/dev/null) || local_tip=""
@@ -480,11 +483,19 @@ hp_materialize_plain() {
   [ -n "$tip" ] || return 0
   git -C "$repo" cat-file -e "$tip:plans/$ws/progress.md" 2>/dev/null || return 0
   root=$(dirname "$(dirname "$dest")")
-  mkdir -p "$dest"
-  git -C "$repo" archive "$tip" "plans/$ws" | tar -x -C "$root"
-  # Both statuses are read in one statement: the first test below would
-  # otherwise reset PIPESTATUS before the second is read.
+  mkdir -p "$root/plans"
+  # Extract into a staging directory beside the destination and publish it
+  # with one rename, so an interrupted extraction never leaves a partial
+  # workspace that the ledger check above would accept as complete. Stale
+  # staging directories are leftovers of interrupted runs (callers hold the
+  # lock, so none is live).
+  rm -rf "${root:?}"/.materialize.* 2>/dev/null
+  staging=$(mktemp -d "$root/.materialize.XXXXXX") || return 2
+  git -C "$repo" archive "$tip" "plans/$ws" | tar -x -C "$staging"
   archive_rc=${PIPESTATUS[0]} tar_rc=${PIPESTATUS[1]}
-  if [ "$archive_rc" -ne 0 ] || [ "$tar_rc" -ne 0 ]; then return 2; fi
+  if [ "$archive_rc" -ne 0 ] || [ "$tar_rc" -ne 0 ] || [ ! -f "$staging/plans/$ws/progress.md" ]; then rm -rf "$staging"; return 2; fi
+  rm -rf "$dest"
+  if ! mv "$staging/plans/$ws" "$dest"; then rm -rf "$staging"; return 2; fi
+  rm -rf "$staging"
   hp_write_backend "$repo" "plain source=$tip"
 }

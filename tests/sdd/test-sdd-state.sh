@@ -261,6 +261,40 @@ git -C "$r10" worktree remove --force "$co10"
 err=$(ensure "$r10" "HYPERPOWERS_TEST_SWAP_REF=refs/heads/hyperpowers/state=$(git -C "$r10" rev-parse main)" 2>&1 >/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'hyperpowers.stateBranch' && [ ! -e "$co10/.git" ] && ! ls -d "$co10.tmp-"* >/dev/null 2>&1 && [ "$(registrations "$r10")" -eq 0 ]; then pass "a local branch moved under the add fails verification before the move"; else fail "a local branch moved under the add fails verification before the move (rc=$rc: $err)"; fi
 
+# A caller that waited for the lock honors a plain backend persisted by the
+# holder meanwhile, instead of creating a branch checkout beside it.
+r11="$TEST_ROOT/r11"; make_repo "$r11"
+bash -c '. "$1"; hp_lock "$2"; sleep 1; hp_write_backend "$2" plain; hp_unlock' _ "$LIB" "$r11" &
+holder11=$!
+sleep 0.3
+out=$(ensure "$r11" 2>/dev/null); rc=$?
+wait "$holder11"
+plain11="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$r11")"
+if [ "$rc" -eq 0 ] && [ "$out" = "plain $plain11" ] && [ ! -e "$STATE_ROOT/$(state_key "$r11")/.git" ] && [ "$(registrations "$r11")" -eq 0 ]; then pass "a waiter honors a plain backend persisted while it waited"; else fail "a waiter honors a plain backend persisted while it waited (rc=$rc, '$out')"; fi
+
+# Materialization publishes the whole workspace by one rename: a partial
+# destination without a ledger is replaced, a stale staging directory from
+# an interrupted run is removed, and no staging directory remains.
+make_pair p4
+: > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+coA4="$STATE_ROOT/$(state_key "$PAIR_A")"
+ensure "$PAIR_A" >/dev/null
+mkdir -p "$coA4/plans/demo-00000000"
+printf '# SDD ledger — plan: docs/plan.md\n' > "$coA4/plans/demo-00000000/progress.md"
+printf 'report\n' > "$coA4/plans/demo-00000000/task-1-report.md"
+# shellcheck source=/dev/null
+( . "$LIB"; hp_commit_paths "$coA4" hyperpowers/state "demo ledger and report" plans/demo-00000000/progress.md plans/demo-00000000/task-1-report.md >/dev/null )
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+: > "$STATE_ROOT/$(state_key "$PAIR_B").fetched"
+ensure "$PAIR_B" HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 >/dev/null 2>&1
+git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
+plainB4="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$PAIR_B")"; destB4="$plainB4/plans/demo-00000000"
+mkdir -p "$destB4" "$plainB4/.materialize.stale/plans/demo-00000000"
+printf 'partial\n' > "$destB4/task-1-report.md"
+printf 'stale\n' > "$plainB4/.materialize.stale/plans/demo-00000000/progress.md"
+materialize "$PAIR_B" demo-00000000 "$destB4"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(cat "$destB4/progress.md")" = "# SDD ledger — plan: docs/plan.md" ] && [ "$(cat "$destB4/task-1-report.md")" = report ] && [ ! -e "$plainB4/.materialize.stale" ] && ! ls -d "$plainB4"/.materialize.* >/dev/null 2>&1 && [ "$(cat "$STATE_ROOT/$(state_key "$PAIR_B").backend")" = "plain source=$(git -C "$PAIR_B" rev-parse origin/hyperpowers/state)" ]; then pass "materialization replaces a partial destination whole and leaves no staging"; else fail "materialization replaces a partial destination whole and leaves no staging (rc=$rc)"; fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

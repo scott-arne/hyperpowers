@@ -1063,23 +1063,11 @@ root_of() { git -C "$1" rev-list --max-parents=0 HEAD 2>/dev/null | sort | head 
 commit_present() {
   git -C "$1" cat-file -e "$2^{commit}" 2>/dev/null && git -C "$1" merge-base --is-ancestor "$2" HEAD 2>/dev/null
 }
-cmd_verify() {
-  local plan="" code="" ledger line rec_root rec_sha="" rec_branch="" shas sha missing="" tasks plan_line plan_root plan_sha plan_branch
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
-      -*) usage ;;
-      *) plan=$1; shift ;;
-    esac
-  done
-  [ -n "$plan" ] || usage
-  resolve_plan "$plan"
-  ledger=$(ledger_path)
-  [ -f "$ledger" ] || { echo "status=ok tasks=0"; return 0; }
-  if [ -z "$code" ]; then
-    code=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "sdd-state: not inside a code repository; pass --code-repo DIR" >&2; exit 2; }
-  fi
-  code=$(hp_physical_dir "$code") || { echo "sdd-state: no such directory: $code" >&2; exit 2; }
+# verify_ledger <ledger-copy> <code-repo>: the checks of verify over a
+# ledger already copied out from under the lock. Prints the status line and
+# returns its exit code; the caller removes the copy.
+verify_ledger() {
+  local ledger=$1 code=$2 line rec_root rec_sha="" rec_branch="" shas sha missing="" tasks plan_line plan_root plan_sha plan_branch
   line=$(grep -E '^handoff: code root=' "$ledger" | tail -n 1)
   if [ -n "$line" ]; then
     rec_root=$(printf '%s' "$line" | sed -n 's/^handoff: code root=\([0-9a-f]*\) .*/\1/p')
@@ -1111,6 +1099,41 @@ cmd_verify() {
     commit_present "$REPO" "$plan_sha" || { echo "status=plan-stale sha=${plan_sha:0:7} branch=$plan_branch"; return 9; }
   fi
   echo "status=ok tasks=$tasks"
+}
+cmd_verify() {
+  local plan="" code="" ledger copy rc
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] || usage
+  resolve_plan "$plan"
+  if [ -z "$code" ]; then
+    code=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "sdd-state: not inside a code repository; pass --code-repo DIR" >&2; exit 2; }
+  fi
+  code=$(hp_physical_dir "$code") || { echo "sdd-state: no such directory: $code" >&2; exit 2; }
+  ledger=$(ledger_path)
+  # The ledger is read under the repository lock, after an interrupted sync
+  # has been finished, so a completion line that arrived with the last
+  # fetch is seen; a copy is what gets parsed, so the lock is short.
+  hp_lock "$PLAN_DIR" || exit 2
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  if [ ! -f "$ledger" ] && [ "$BACKEND" != branch ]; then
+    # Under the plain backend the dossier may still be on the state branch
+    # only: bring it into the plain cache before judging it absent.
+    mkdir -p "$ROOT" 2>/dev/null || true; touch "$ROOT" 2>/dev/null || true
+    hp_materialize_plain "$PLAN_DIR" "$WS" "$WSDIR" || { hp_unlock; echo "status=error"; return 2; }
+  fi
+  if [ ! -f "$ledger" ]; then hp_unlock; echo "status=ok tasks=0"; return 0; fi
+  copy=$(mktemp "${TMPDIR:-/tmp}/sdd-verify.XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
+  cp "$ledger" "$copy" || { rm -f "$copy"; hp_unlock; echo "status=error"; return 2; }
+  hp_unlock
+  verify_ledger "$copy" "$code"; rc=$?
+  rm -f "$copy"
+  return "$rc"
 }
 
 # --- dispatch ----------------------------------------------------------------

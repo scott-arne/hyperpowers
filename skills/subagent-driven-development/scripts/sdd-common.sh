@@ -432,13 +432,17 @@ hp_ensure_checkout() {
         # From the validated commit, never the ref: a fetch outside the lock
         # may have moved the remote-tracking ref since the sentinel check.
         if git -C "$repo" worktree add -q -b "$br" "$tmp" "$tip" >/dev/null 2>&1; then
-          git -C "$tmp" branch -q --set-upstream-to="$remote/$br" "$br" >/dev/null 2>&1 || rc=$?
+          # Tracking is recorded directly: --set-upstream-to refuses a
+          # remote-tracking ref the clone's fetch refspec does not cover (a
+          # single-branch or depth-1 clone), and sync fetches the branch by
+          # name regardless.
+          { git -C "$tmp" config "branch.$br.remote" "$remote" && git -C "$tmp" config "branch.$br.merge" "refs/heads/$br"; } >/dev/null 2>&1 || rc=$?
         else rc=$?; fi ;;
       orphan) hp_add_orphan_worktree "$repo" "$tmp" "$br" || rc=$? ;;
     esac
   fi
   if [ "$rc" -ne 0 ]; then
-    echo "sdd-dir: git worktree add failed (rc=$rc); this repository uses the plain cache (backend=plain)" >&2
+    echo "sdd-dir: git worktree add (or its tracking setup) failed (rc=$rc); this repository uses the plain cache (backend=plain)" >&2
     git -C "$repo" worktree remove --force "$tmp" >/dev/null 2>&1 || rm -rf "$tmp"
     hp_write_backend "$repo" plain || { hp_unlock; return 2; }
     hp_unlock; printf 'plain %s\n' "$(hp_plain_root "$repo")"; return 0

@@ -1060,14 +1060,14 @@ if [ "$rc" -eq 9 ] && [ "$out" = "status=code-missing missing=$(git -C "$PAIR_A"
 git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
 if [ "$(run_state "$PAIR_B" verify docs/plan.md)" = "status=ok tasks=1" ]; then pass "verify passes after the pull"; else fail "verify passes after the pull"; fi
 # A range whose base is missing fails too: a shallow clone of depth 1 has
-# the head but not the base. --no-single-branch keeps the fetch refspec wide
-# enough for the checkout to track origin/hyperpowers/state.
+# the head but not the base.
 shallow="$TEST_ROOT/hostB/p9-shallow"
-git clone -q --depth 1 --no-single-branch "file://$PAIR_REMOTE" "$shallow" 2>/dev/null
+git clone -q --depth 1 "file://$PAIR_REMOTE" "$shallow" 2>/dev/null
 git -C "$shallow" config user.name t; git -C "$shallow" config user.email t@example.com
 run_state "$shallow" sync docs/plan.md >/dev/null
 out=$(run_state "$shallow" verify docs/plan.md); rc=$?
 if [ "$rc" -eq 9 ] && [ "${out%% *}" = "status=code-missing" ] && grep -q "missing=$(git -C "$PAIR_A" rev-parse --short=7 "$base_a")" < <(printf '%s\n' "$out"); then pass "a shallow checkout without the range's base is code-missing, not wrong-repo"; else fail "a shallow checkout without the range's base is code-missing, not wrong-repo (rc=$rc: $out)"; fi
+if [ -e "$STATE_ROOT/$(state_key "$shallow")/.git" ]; then pass "a single-branch depth-1 clone gets the branch backend, not the plain fallback"; else fail "a single-branch depth-1 clone gets the branch backend, not the plain fallback"; fi
 unrelated="$TEST_ROOT/unrelated"; make_repo "$unrelated"
 out=$(cd "$unrelated" && bash "$SDD_STATE" verify "$PAIR_B/docs/plan.md"); rc=$?
 if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-repo expected=${root_a:0:7} repo=code" ]; then pass "verify from an unrelated repository reports wrong-repo"; else fail "verify from an unrelated repository reports wrong-repo (rc=$rc: $out)"; fi
@@ -1082,6 +1082,23 @@ if [ "$(run_state "$PAIR_B" verify docs/plan.md)" = "status=ok tasks=1" ]; then 
 printf 'handoff: plan root=0000000000000000000000000000000000000001 main@%s\n' "$(git -C "$PAIR_A" rev-parse HEAD)" >> "$wsb/progress.md"
 out=$(run_state "$PAIR_B" verify docs/plan.md); rc=$?
 if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-repo expected=0000000 repo=plan" ]; then pass "a plan repository with another root is wrong-repo"; else fail "a plan repository with another root is wrong-repo (rc=$rc: $out)"; fi
+# A completion line that arrived with the last fetch but was never applied
+# (sync crashed after the ref moved): verify finishes the apply first.
+printf 'two\n' > "$PAIR_A/two.txt"; git -C "$PAIR_A" add two.txt; git -C "$PAIR_A" commit -qm "task 2"
+head2_a=$(git -C "$PAIR_A" rev-parse HEAD)
+printf 'Task 2: complete (commits %s..%s, review clean)\n' "$(git -C "$PAIR_A" rev-parse --short=7 "$base_a")" "$(git -C "$PAIR_A" rev-parse --short=7 "$head2_a")" >> "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+co_b="$STATE_ROOT/$(state_key "$PAIR_B")"
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 )
+out=$(run_state "$PAIR_B" verify docs/plan.md); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=code-missing missing=$(git -C "$PAIR_A" rev-parse --short=7 "$head2_a") branch=main" ] && [ ! -f "$co_b/.sync-applying" ]; then pass "verify finishes an interrupted sync before it reads the ledger and sees the arrived range"; else fail "verify finishes an interrupted sync before it reads the ledger and sees the arrived range (rc=$rc: $out)"; fi
+# A plain-backend host: the dossier is on the branch only until verify
+# materializes it.
+plainhost="$TEST_ROOT/hostB/p9-plain"; git clone -q "$PAIR_REMOTE" "$plainhost" 2>/dev/null
+git -C "$plainhost" config user.name t; git -C "$plainhost" config user.email t@example.com
+( cd "$plainhost" && HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 )
+out=$(run_state "$plainhost" verify docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=code-missing missing=$(git -C "$PAIR_A" rev-parse --short=7 "$head2_a") branch=main" ]; then pass "under the plain backend verify materializes the dossier before judging it, and checks its ranges"; else fail "under the plain backend verify materializes the dossier before judging it, and checks its ranges (rc=$rc: $out)"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

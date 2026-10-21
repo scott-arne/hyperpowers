@@ -188,7 +188,7 @@ rewrite_identity_line() { # <ledger> <rel>: an absolute identity inside REPO, or
     *) return 0 ;;
   esac
   tmp="$1.tmp.$$"
-  { printf '%s%s\n' "$IDENTITY_PREFIX" "$2"; tail -n +2 "$1"; } > "$tmp" && mv -f "$tmp" "$1"
+  if ! { printf '%s%s\n' "$IDENTITY_PREFIX" "$2"; tail -n +2 "$1"; } > "$tmp" || ! mv -f "$tmp" "$1"; then rm -f "$tmp"; return 1; fi
 }
 # <dir> -> one line per entry: type, size or link target, path; sorted.
 tree_manifest() {
@@ -198,18 +198,19 @@ tree_manifest() {
       else printf 'd - %s\n' "$e"; fi
     done )
 }
-# <src> <dst>: every entry of src is in dst with the same type and size.
+# <manifest> <dst>: every line of <manifest> (tree_manifest output for the
+# staged copy) is present in dst with the same type and size.
 verify_subset() {
   local line dst_manifest
   dst_manifest=$(tree_manifest "$2")
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     grep -Fxq -- "$line" < <(printf '%s\n' "$dst_manifest") || return 1
-  done < <(tree_manifest "$1")
+  done < <(printf '%s\n' "$1")
   return 0
 }
 cmd_import() {
-  local plan cache candidates c ref dest dest_phys seen="" stage e rel
+  local plan cache candidates c ref dest dest_phys seen="" stage e rel stage_manifest
   [ $# -eq 1 ] || usage
   plan=$1
   resolve_plan "$plan"
@@ -218,7 +219,7 @@ cmd_import() {
   cache="$(hp_cache_root)/sdd"
   if [ "$BACKEND" = plain ]; then
     hp_lock "$PLAN_DIR" || return 2
-    if ! hp_materialize_plain "$PLAN_DIR" "$WS" "$dest"; then rm -rf "$dest"; hp_unlock; echo "status=import-failed from=$BRANCH"; return 2; fi
+    if ! hp_materialize_plain "$PLAN_DIR" "$WS" "$dest"; then hp_unlock; echo "status=import-failed from=$(enc "$BRANCH")"; return 2; fi
     hp_unlock
   fi
   candidates="$cache/$(hp_legacy_key "$PLAN_DIR")/plans/$WS"
@@ -258,7 +259,11 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
     if ! cp -a "$ref/." "$stage/" 2>/dev/null || [ "$(tree_manifest "$ref")" != "$(tree_manifest "$stage")" ]; then
       rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2
     fi
-    rewrite_identity_line "$stage/progress.md" "$rel"
+    # The staged copy was verified against the source above; the identity is
+    # rewritten in the stage, and the installed tree is verified against the
+    # stage's manifest, so the rewrite never reads as a size mismatch.
+    if ! rewrite_identity_line "$stage/progress.md" "$rel"; then rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; fi
+    stage_manifest=$(tree_manifest "$stage")
     if [ ! -d "$dest" ] || [ -z "$(ls -A "$dest" 2>/dev/null)" ]; then
       rmdir "$dest" 2>/dev/null
       mv "$stage" "$dest" || { rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
@@ -272,7 +277,7 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
       done
       mv -f "$stage/progress.md" "$dest/progress.md" || { rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
       rm -rf "$stage"
-      if ! verify_subset "$ref" "$dest"; then rm -f "$dest/progress.md"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; fi
+      if ! verify_subset "$stage_manifest" "$dest"; then rm -f "$dest/progress.md"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; fi
     fi
     if [ -L "$c" ]; then rm -rf "$ref"; ln -sfn "$dest" "$c"; else rm -rf "$ref"; ln -s "$dest" "$ref"; fi
     hp_unlock

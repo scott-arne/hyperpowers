@@ -1038,5 +1038,50 @@ if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ ! -d "$wsf2b" ] && ! l
 out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -d "$wsf2b" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "recovery after the discard moves the ref forward and the remote finish holds"; else fail "recovery after the discard moves the ref forward and the remote finish holds (rc=$rc: $out)"; fi
 echo ""
+echo ""
+echo "=== verify ==="
+make_pair p9
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa=$(run_sdd_dir "$PAIR_A" docs/plan.md)
+base_a=$(git -C "$PAIR_A" rev-parse HEAD)
+printf 'work\n' > "$PAIR_A/work.txt"; git -C "$PAIR_A" add work.txt; git -C "$PAIR_A" commit -qm "task 1"
+head_a=$(git -C "$PAIR_A" rev-parse HEAD)
+root_a=$(git -C "$PAIR_A" rev-list --max-parents=0 HEAD | sort | head -n 1)
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits %s..%s, review clean)\n' "$(git -C "$PAIR_A" rev-parse --short=7 "$base_a")" "$(git -C "$PAIR_A" rev-parse --short=7 "$head_a")" > "$wsa/progress.md"
+if [ "$(run_state "$PAIR_A" verify docs/plan.md)" = "status=ok tasks=1" ]; then pass "verify passes where the commits live"; else fail "verify passes where the commits live"; fi
+printf 'handoff: code root=%s main@%s at 2026-10-20T00:00:00Z from hostA\n' "$root_a" "$head_a" >> "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+out=$(run_state "$PAIR_B" sync docs/plan.md)
+if [ "${out%% *}" = "status=created" ]; then pass "the second host receives the dossier"; else fail "the second host receives the dossier ($out)"; fi
+out=$(run_state "$PAIR_B" verify docs/plan.md); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=code-missing missing=$(git -C "$PAIR_A" rev-parse --short=7 "$head_a") branch=main" ]; then pass "verify names the missing head commit once and the branch before the pull"; else fail "verify names the missing head commit once and the branch before the pull (rc=$rc: $out)"; fi
+git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
+if [ "$(run_state "$PAIR_B" verify docs/plan.md)" = "status=ok tasks=1" ]; then pass "verify passes after the pull"; else fail "verify passes after the pull"; fi
+# A range whose base is missing fails too: a shallow clone of depth 1 has
+# the head but not the base. --no-single-branch keeps the fetch refspec wide
+# enough for the checkout to track origin/hyperpowers/state.
+shallow="$TEST_ROOT/hostB/p9-shallow"
+git clone -q --depth 1 --no-single-branch "file://$PAIR_REMOTE" "$shallow" 2>/dev/null
+git -C "$shallow" config user.name t; git -C "$shallow" config user.email t@example.com
+run_state "$shallow" sync docs/plan.md >/dev/null
+out=$(run_state "$shallow" verify docs/plan.md); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% *}" = "status=code-missing" ] && grep -q "missing=$(git -C "$PAIR_A" rev-parse --short=7 "$base_a")" < <(printf '%s\n' "$out"); then pass "a shallow checkout without the range's base is code-missing, not wrong-repo"; else fail "a shallow checkout without the range's base is code-missing, not wrong-repo (rc=$rc: $out)"; fi
+unrelated="$TEST_ROOT/unrelated"; make_repo "$unrelated"
+out=$(cd "$unrelated" && bash "$SDD_STATE" verify "$PAIR_B/docs/plan.md"); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-repo expected=${root_a:0:7} repo=code" ]; then pass "verify from an unrelated repository reports wrong-repo"; else fail "verify from an unrelated repository reports wrong-repo (rc=$rc: $out)"; fi
+# The plan repository is checked when a handoff: plan line exists.
+wsb="$STATE_ROOT/$(state_key "$PAIR_B")/plans/$(basename "$wsa")"
+git -C "$PAIR_A" commit -q --allow-empty -m "plan v2"
+printf 'handoff: plan root=%s main@%s\n' "$root_a" "$(git -C "$PAIR_A" rev-parse HEAD)" >> "$wsb/progress.md"
+out=$(run_state "$PAIR_B" verify docs/plan.md); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=plan-stale sha=$(git -C "$PAIR_A" rev-parse --short=7 HEAD) branch=main" ]; then pass "a destination holding an older plan is plan-stale"; else fail "a destination holding an older plan is plan-stale (rc=$rc: $out)"; fi
+git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
+if [ "$(run_state "$PAIR_B" verify docs/plan.md)" = "status=ok tasks=1" ]; then pass "verify passes once the plan repository has the recorded commit"; else fail "verify passes once the plan repository has the recorded commit"; fi
+printf 'handoff: plan root=0000000000000000000000000000000000000001 main@%s\n' "$(git -C "$PAIR_A" rev-parse HEAD)" >> "$wsb/progress.md"
+out=$(run_state "$PAIR_B" verify docs/plan.md); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-repo expected=0000000 repo=plan" ]; then pass "a plan repository with another root is wrong-repo"; else fail "a plan repository with another root is wrong-repo (rc=$rc: $out)"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

@@ -1055,6 +1055,64 @@ cmd_sync() {
   return 3
 }
 
+# --- verify ------------------------------------------------------------------
+# The repository identity recorded at hand-off: the lexicographically
+# smallest root commit of HEAD, stable across clones and hosts.
+root_of() { git -C "$1" rev-list --max-parents=0 HEAD 2>/dev/null | sort | head -n 1; }
+# <repo> <sha>: the commit exists, is unambiguous, and is reachable from HEAD.
+commit_present() {
+  git -C "$1" cat-file -e "$2^{commit}" 2>/dev/null && git -C "$1" merge-base --is-ancestor "$2" HEAD 2>/dev/null
+}
+cmd_verify() {
+  local plan="" code="" ledger line rec_root rec_sha="" rec_branch="" shas sha missing="" tasks plan_line plan_root plan_sha plan_branch
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] || usage
+  resolve_plan "$plan"
+  ledger=$(ledger_path)
+  [ -f "$ledger" ] || { echo "status=ok tasks=0"; return 0; }
+  if [ -z "$code" ]; then
+    code=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "sdd-state: not inside a code repository; pass --code-repo DIR" >&2; exit 2; }
+  fi
+  code=$(hp_physical_dir "$code") || { echo "sdd-state: no such directory: $code" >&2; exit 2; }
+  line=$(grep -E '^handoff: code root=' "$ledger" | tail -n 1)
+  if [ -n "$line" ]; then
+    rec_root=$(printf '%s' "$line" | sed -n 's/^handoff: code root=\([0-9a-f]*\) .*/\1/p')
+    rec_branch=$(printf '%s' "$line" | sed -n 's/^handoff: code root=[0-9a-f]* \(.*\)@[0-9a-f]* at .*/\1/p')
+    rec_sha=$(printf '%s' "$line" | sed -n 's/^handoff: code root=[0-9a-f]* .*@\([0-9a-f]*\) at .*/\1/p')
+    # A shallow clone's boundary commits read as roots: skip the identity
+    # comparison there and let commit presence speak.
+    if [ "$(git -C "$code" rev-parse --is-shallow-repository 2>/dev/null)" != true ] && [ "$(root_of "$code")" != "$rec_root" ]; then
+      echo "status=wrong-repo expected=${rec_root:0:7} repo=code"; return 9
+    fi
+  fi
+  # Both endpoints of every completion range, then the hand-off head.
+  shas=$(grep -Eo 'Task [0-9]+: complete \(commits [0-9a-f]+\.\.[0-9a-f]+' "$ledger" | sed 's/.*(commits //; s/\.\./ /')
+  tasks=$(printf '%s\n' "$shas" | grep -c .)
+  [ -n "$rec_sha" ] && shas="$shas $rec_sha"
+  for sha in $shas; do
+    case ",$missing," in *",${sha:0:7},"*) continue ;; esac
+    commit_present "$code" "$sha" || missing="$missing,${sha:0:7}"
+  done
+  if [ -n "$missing" ]; then echo "status=code-missing missing=${missing#,} branch=${rec_branch:-unknown}"; return 9; fi
+  plan_line=$(grep -E '^handoff: plan root=' "$ledger" | tail -n 1)
+  if [ -n "$plan_line" ]; then
+    plan_root=$(printf '%s' "$plan_line" | sed -n 's/^handoff: plan root=\([0-9a-f]*\) .*/\1/p')
+    plan_branch=$(printf '%s' "$plan_line" | sed -n 's/^handoff: plan root=[0-9a-f]* \(.*\)@[0-9a-f]*$/\1/p')
+    plan_sha=$(printf '%s' "$plan_line" | sed -n 's/^handoff: plan root=[0-9a-f]* .*@\([0-9a-f]*\)$/\1/p')
+    if [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" != true ] && [ "$(root_of "$REPO")" != "$plan_root" ]; then
+      echo "status=wrong-repo expected=${plan_root:0:7} repo=plan"; return 9
+    fi
+    commit_present "$REPO" "$plan_sha" || { echo "status=plan-stale sha=${plan_sha:0:7} branch=$plan_branch"; return 9; }
+  fi
+  echo "status=ok tasks=$tasks"
+}
+
 # --- dispatch ----------------------------------------------------------------
 sub=${1:-}
 [ -n "$sub" ] || usage
@@ -1066,5 +1124,6 @@ case "$sub" in
   finish) cmd_finish "$@" ;;
   prune) cmd_prune "$@" ;;
   sync) cmd_sync "$@" ;;
+  verify) cmd_verify "$@" ;;
   *) usage ;;
 esac

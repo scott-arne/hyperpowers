@@ -705,21 +705,52 @@ snapshot_pending() {
 blob_prefix_id() {
   if [ "$1" = - ]; then head -c "$2" | git -C "$CO" hash-object --stdin; else head -c "$2" "$1" | git -C "$CO" hash-object --stdin; fi
 }
+# rewrite_finish <journal-base>: complete a journaled ledger rewrite from
+# whatever point it reached. The staged content and the original length are
+# on disk, so every step repeats safely: the extension (the staged bytes
+# beyond the original length) is appended unless the file already carries
+# it at that offset, then the original length is overwritten in place.
+# Neither step truncates, and a racing append always lands beyond the
+# region being written, so it survives, at worst between the two parts.
+rewrite_finish() {
+  local jbase=$1 path live_size new_size file ext_size have want
+  read -r live_size new_size path < "$jbase.journal" || return 2
+  file="$CO/$path"
+  [ -f "$jbase.staged" ] && [ -f "$file" ] || return 2
+  ext_size=$((new_size - live_size))
+  if [ "$ext_size" -gt 0 ]; then
+    have=$(tail -c +"$((live_size + 1))" "$file" | head -c "$ext_size" | git -C "$CO" hash-object --stdin)
+    want=$(tail -c +"$((live_size + 1))" "$jbase.staged" | git -C "$CO" hash-object --stdin)
+    if [ "$have" != "$want" ]; then
+      tail -c +"$((live_size + 1))" "$jbase.staged" >> "$file" || return 2
+    fi
+  fi
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = rewrite-after-extend ]; then hp_unlock; exit 99; fi
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in ledger-apply-before-overwrite) printf 'raced the overwrite\n' >> "$file" ;; esac
+  head -c "$live_size" "$jbase.staged" | dd of="$file" bs=65536 conv=notrunc 2>/dev/null || return 2
+  rm -f "$jbase.journal" "$jbase.staged"
+  return 0
+}
 # ledger_apply <path> <S> <target>: bring one ledger from S to target
 # without replacing its inode or dropping a line a live writer appended.
 # When the target's blob extends S's, the new tail is appended, and skipped
 # when the file already ends with it, so a recovery never appends twice.
 # Otherwise (a merge, or a fast-forward onto another host's merge, reordered
 # lines) the file is rewritten in place to the target's content followed by
-# whatever it held beyond S's blob; the rewrite appends the new bytes and
-# then overwrites the old length in place, so it never truncates and a racing
-# append survives, at worst between the two parts. A file that already
-# starts with the target's content is left alone. Returns 0; 5 when the
-# file does not start with what S committed (a local rewrite: the caller
-# retries and ends busy); 2 on error.
+# whatever it held beyond S's blob; the rewrite is journaled under .rewrite/
+# before its first write and finished by rewrite_finish, which appends the new
+# bytes and then overwrites the old length in place, so it never truncates,
+# repeats safely after a crash, and a racing append survives, at worst between
+# the two parts. A file that already starts with the target's content is
+# left alone. Returns 0; 5 when the file does not start with what S
+# committed (a local rewrite: the caller retries and ends busy); 2 on error.
 ledger_apply() {
-  local path=$1 S=$2 target=$3 file t_blob t_size s_blob s_size live_size suffix_size tmp new_size
+  local path=$1 S=$2 target=$3 file t_blob t_size s_blob s_size live_size suffix_size new_size jbase
   file="$CO/$path"
+  jbase="$CO/.rewrite/$(basename "$(dirname "$file")")"
+  # A rewrite of this ledger interrupted earlier is finished before anything
+  # is judged about the file.
+  if [ -f "$jbase.journal" ]; then rewrite_finish "$jbase" || return 2; fi
   t_blob=$(git -C "$CO" rev-parse -q --verify "$target:$path" 2>/dev/null) || return 2
   t_size=$(git -C "$CO" cat-file -s "$t_blob" 2>/dev/null) || return 2
   [ "$t_size" -gt 0 ] || return 0
@@ -737,27 +768,26 @@ ledger_apply() {
     git -C "$CO" cat-file blob "$t_blob" | tail -c "$suffix_size" >> "$file" || return 2
     return 0
   fi
-  tmp=$(mktemp "${TMPDIR:-/tmp}/sdd-ledger.XXXXXX") || return 2
-  { git -C "$CO" cat-file blob "$t_blob" && tail -c +"$((s_size + 1))" "$file"; } > "$tmp" || { rm -f "$tmp"; return 2; }
+  mkdir -p "$CO/.rewrite" || return 2
+  { git -C "$CO" cat-file blob "$t_blob" && tail -c +"$((s_size + 1))" "$file"; } > "$jbase.staged.tmp" || { rm -f "$jbase.staged.tmp"; return 2; }
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in ledger-apply-before-rewrite) printf 'raced the rewrite\n' >> "$file" ;; esac
-  [ "$(wc -c < "$file" | tr -d ' ')" -eq "$live_size" ] || { rm -f "$tmp"; return 5; }
-  new_size=$(wc -c < "$tmp" | tr -d ' ')
-  if [ "$new_size" -ge "$live_size" ]; then
-    # Never truncate a live ledger. The bytes beyond the current length are
-    # appended first (an O_APPEND write interleaves with a racing append and
-    # overwrites nothing), then the first live_size bytes are overwritten in
-    # place; that region lies below every later end of file, so a line
-    # appended at any instant survives, at worst between the two parts.
-    tail -c +"$((live_size + 1))" "$tmp" >> "$file" || { rm -f "$tmp"; return 2; }
-    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in ledger-apply-before-overwrite) printf 'raced the overwrite\n' >> "$file" ;; esac
-    head -c "$live_size" "$tmp" | dd of="$file" bs=65536 conv=notrunc 2>/dev/null || { rm -f "$tmp"; return 2; }
-  else
+  [ "$(wc -c < "$file" | tr -d ' ')" -eq "$live_size" ] || { rm -f "$jbase.staged.tmp"; return 5; }
+  new_size=$(wc -c < "$jbase.staged.tmp" | tr -d ' ')
+  if [ "$new_size" -lt "$live_size" ]; then
     # A target shorter than the live file: the ledger shrank, which an
     # append-only ledger never does; the truncating write is the fallback.
-    cat "$tmp" > "$file" || { rm -f "$tmp"; return 2; }
+    cat "$jbase.staged.tmp" > "$file" || { rm -f "$jbase.staged.tmp"; return 2; }
+    rm -f "$jbase.staged.tmp"
+    return 0
   fi
-  rm -f "$tmp"
-  return 0
+  # The rewrite is journaled before its first write (sizes first, the path
+  # last so a name with spaces reads back whole); a crash at any later point
+  # is finished by rewrite_finish from the staged content.
+  mv -f "$jbase.staged.tmp" "$jbase.staged" || { rm -f "$jbase.staged.tmp"; return 2; }
+  printf '%s %s %s\n' "$live_size" "$new_size" "$path" > "$jbase.journal.tmp" || { rm -f "$jbase.journal.tmp" "$jbase.staged"; return 2; }
+  mv -f "$jbase.journal.tmp" "$jbase.journal" || { rm -f "$jbase.journal.tmp" "$jbase.staged"; return 2; }
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = rewrite-after-journal ]; then hp_unlock; exit 99; fi
+  rewrite_finish "$jbase"
 }
 # apply_files <S> <target>: bring the working tree from S to target without
 # replacing a ledger. Added or modified ledgers go through ledger_apply; other
@@ -792,14 +822,23 @@ apply_files() {
   done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
   return 0
 }
-# recover_apply: finish an apply that was interrupted after the ref moved.
-# ledger_apply is idempotent, so a half-applied ledger is completed, never
-# appended to twice. The marker is a barrier: a malformed marker, a branch
-# that has left the marker's target, or a recovery that fails all leave it
-# in place and say so, and every publishing subcommand refuses until the
-# tree is repaired.
+# recover_apply: finish a sync that was interrupted after its marker went
+# down. A journaled ledger rewrite is finished first (it is self-contained).
+# With the branch still at the marker's S, the irreversible pre-ref steps
+# may already have run (the verified copies of ledgers the target deletes),
+# so the apply is completed, never undone: the ref moves to the target
+# (guarded), any copy still renamed aside goes, and the post-ref apply
+# follows. ledger_apply is idempotent, so a half-applied ledger is completed,
+# never appended to twice. The marker is a barrier: a malformed marker, a
+# branch that has left both S and the target, or a recovery that fails all
+# leave it in place and say so, and every publishing subcommand refuses
+# until the tree is repaired.
 recover_apply() {
-  local S="" target="" rc head
+  local S="" target="" rc head j path
+  for j in "$CO"/.rewrite/*.journal; do
+    [ -f "$j" ] || continue
+    rewrite_finish "${j%.journal}" || { echo "sdd-state: an interrupted ledger rewrite left $j and finishing it failed; check the ledger it names, then remove it and its .staged file" >&2; return 2; }
+  done
   [ -f "$CO/.sync-applying" ] || return 0
   read -r S target < "$CO/.sync-applying" 2>/dev/null || true
   if [ "$(printf '%s\n%s\n' "$S" "$target" | grep -Ec '^[0-9a-f]{40}$')" -ne 2 ]; then
@@ -807,6 +846,14 @@ recover_apply() {
     return 2
   fi
   head=$(tip_of "$CO" "refs/heads/$BRANCH")
+  if [ "$head" = "$S" ] && [ "$S" != "$target" ]; then
+    hp_has_sentinel "$CO" "$target" || { echo "sdd-state: $CO/.sync-applying names a target without the state sentinel; check the working tree under $CO, then remove the marker" >&2; return 2; }
+    git -C "$CO" update-ref -m "sdd sync (recovered)" "refs/heads/$BRANCH" "$target" "$S" 2>/dev/null || { echo "sdd-state: an interrupted sync left $CO/.sync-applying and the branch could not be moved to its target; check the working tree under $CO, then remove the marker" >&2; return 2; }
+    while IFS= read -r path; do
+      case "$path" in plans/*/progress.md) rm -rf "$CO/plans/.removing-$(basename "$(dirname "$path")")"-* ;; esac
+    done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
+    head=$target
+  fi
   if [ "$head" != "$target" ]; then
     echo "sdd-state: an interrupted sync left $CO/.sync-applying but the branch has moved from its target ($(short "$target") to $(short "$head")); check the working tree under $CO, then remove the marker" >&2
     return 2
@@ -861,16 +908,20 @@ apply_target() {
       *) i=0; while [ "$i" -lt "${#tombs[@]}" ]; do restore_tomb "${dirs[$i]}" "${tombs[$i]}"; i=$((i + 1)); done; return 2 ;;
     esac
   done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
+  restore_all() { local k=0; while [ "$k" -lt "${#tombs[@]}" ]; do restore_tomb "${dirs[$k]}" "${tombs[$k]}"; k=$((k + 1)); done; }
   if [ -n "$REMOTE_FINISHED" ]; then
-    i=0; while [ "$i" -lt "${#tombs[@]}" ]; do restore_tomb "${dirs[$i]}" "${tombs[$i]}"; i=$((i + 1)); done
+    restore_all
     REMOTE_FINISHED=${REMOTE_FINISHED#,}; return 6
   fi
+  hp_has_sentinel "$CO" "$target" || { restore_all; return 2; }
+  # The marker goes down before anything irreversible: the verified copies
+  # are discarded only once it is on disk and read back, and the ref moves
+  # after that. A crash anywhere from here on is finished by recover_apply.
+  printf '%s %s\n' "$S" "$target" > "$CO/.sync-applying" || { rm -f "$CO/.sync-applying"; restore_all; return 2; }
+  [ "$(cat "$CO/.sync-applying" 2>/dev/null)" = "$S $target" ] || { rm -f "$CO/.sync-applying"; restore_all; return 2; }
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-marker ]; then hp_unlock; exit 99; fi
   i=0; while [ "$i" -lt "${#tombs[@]}" ]; do discard_tomb "${tombs[$i]}" || true; i=$((i + 1)); done
-  # The marker must be on disk and readable before the ref moves: a crash
-  # after update-ref with no marker would let the next snapshot publish the
-  # stale tree over the target.
-  printf '%s %s\n' "$S" "$target" > "$CO/.sync-applying" || { rm -f "$CO/.sync-applying"; return 2; }
-  [ "$(cat "$CO/.sync-applying" 2>/dev/null)" = "$S $target" ] || { rm -f "$CO/.sync-applying"; return 2; }
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-discard ]; then hp_unlock; exit 99; fi
   git -C "$CO" update-ref -m "sdd sync" "refs/heads/$BRANCH" "$target" "$S" 2>/dev/null || { rm -f "$CO/.sync-applying"; return 5; }
   if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-update-ref ]; then hp_unlock; exit 99; fi
   git -C "$CO" reset -q 2>/dev/null
@@ -944,11 +995,16 @@ cmd_sync() {
     return 1
   fi
   : > "$stamp"
+  # The remote tip is read once, here, and that sha alone is reconciled: a
+  # fetch by another process cannot swap in a different commit later.
+  R=$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")
+  [ -n "$R" ] || { echo "status=error"; return 2; }
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-pin:*) git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-pin:}" 2>/dev/null ;; esac
   # A branch at the state name whose root lacks the exact sentinel belongs
   # to someone else: it is never reconciled or written, and refs and files
   # stay as they are.
-  if ! hp_has_sentinel "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH"; then
-    S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH"); R=$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")
+  if ! hp_has_sentinel "$PLAN_DIR" "$R"; then
+    S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")
     echo "sdd-state: $REMOTE/$BRANCH exists but is not a hyperpowers state branch; set git config hyperpowers.stateBranch to another name" >&2
     echo "status=foreign local=$(short "$S") remote=$(short "$R") age=$(age_of "$PLAN_DIR" "$R")"
     return 2
@@ -957,7 +1013,6 @@ cmd_sync() {
   ensure=$(hp_ensure_checkout "$PLAN_DIR") || return 2
   if [ "${ensure%% *}" != branch ]; then echo "status=plain"; return 0; fi
   [ "$had_co" -eq 1 ] || created=created
-  R=$(tip_of "$CO" "refs/remotes/$REMOTE/$BRANCH")
   hp_lock "$PLAN_DIR" || return 2
   for _ in 1 2 3; do
     recover_apply || { hp_unlock; echo "status=error"; return 2; }

@@ -993,6 +993,50 @@ printf '%s %s\n' "$prev" "$prev" > "$co_b/.sync-applying"
 out=$(run_state "$PAIR_B" sync docs/second.md 2>"$TEST_ROOT/marker2.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'has moved from its target' "$TEST_ROOT/marker2.err" && [ -f "$co_b/.sync-applying" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$tipb" ]; then pass "a marker whose target the branch has left fails closed and is named"; else fail "a marker whose target the branch has left fails closed and is named (rc=$rc: $out)"; fi
 rm -f "$co_b/.sync-applying"
+# A fresh pair for the backstop checks.
+make_pair p8
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+co_a="$STATE_ROOT/$(state_key "$PAIR_A")"; co_b="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null; wsb="$co_b/plans/$(basename "$wsa")"; lpath="plans/$(basename "$wsa")/progress.md"
+# A remote-tracking ref swapped after the fetch is ignored.
+foreign=$(git -C "$PAIR_B" -c user.name=t -c user.email=t@example.com commit-tree "$(git -C "$PAIR_B" hash-object -t tree /dev/null)" -m foreign)
+printf 'pinned line\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-after-pin:$foreign" bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$(git -C "$PAIR_A" rev-parse hyperpowers/state)" ] && grep -q '^pinned line$' "$wsb/progress.md"; then pass "a remote-tracking ref swapped after the fetch is ignored: the pinned, validated sha is what gets reconciled"; else fail "a remote-tracking ref swapped after the fetch is ignored: the pinned, validated sha is what gets reconciled (rc=$rc: $out)"; fi
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+# Each round leaves A positioned for a fast-forward onto B's merge, where
+# S is not a prefix of the target and the ledger is rewritten.
+reorder_round() { printf '%s\n' "$1" >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; printf '%s\n' "$2" >> "$wsb/progress.md"; run_state "$PAIR_B" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null; run_state "$PAIR_B" sync docs/plan.md >/dev/null; git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null; }
+reorder_round 'j1 A' 'j1 B'
+( cd "$PAIR_A" && HYPERPOWERS_TEST_CRASH_AT=rewrite-after-journal bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -f "$co_a/.rewrite/$(basename "$wsa").journal" ] && [ -f "$co_a/.sync-applying" ]; then pass "the crash seam after the journal leaves the journal and the marker"; else fail "the crash seam after the journal leaves the journal and the marker (rc=$rc)"; fi
+out=$(run_state "$PAIR_A" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ "$(cat "$wsa/progress.md")" = "$(git -C "$co_a" show "hyperpowers/state:$lpath")" ] && [ ! -e "$co_a/.rewrite/$(basename "$wsa").journal" ] && [ ! -f "$co_a/.sync-applying" ] && [ "$(grep -c '^j1 A$' "$wsa/progress.md")" -eq 1 ] && [ "$(grep -c '^j1 B$' "$wsa/progress.md")" -eq 1 ]; then pass "recovery finishes a rewrite interrupted before its first write, byte-exact"; else fail "recovery finishes a rewrite interrupted before its first write, byte-exact (rc=$rc: $out)"; fi
+reorder_round 'j2 A' 'j2 B'
+( cd "$PAIR_A" && HYPERPOWERS_TEST_CRASH_AT=rewrite-after-extend bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+out=$(run_state "$PAIR_A" sync docs/plan.md); rc2=$?
+if [ "$rc" -eq 99 ] && [ "$rc2" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ "$(cat "$wsa/progress.md")" = "$(git -C "$co_a" show "hyperpowers/state:$lpath")" ] && [ ! -e "$co_a/.rewrite/$(basename "$wsa").journal" ] && [ "$(grep -c '^j2 A$' "$wsa/progress.md")" -eq 1 ] && [ "$(grep -c '^j2 B$' "$wsa/progress.md")" -eq 1 ]; then pass "recovery finishes a rewrite interrupted between its two writes without duplicating bytes"; else fail "recovery finishes a rewrite interrupted between its two writes without duplicating bytes (rc=$rc/$rc2: $out)"; fi
+# A crash after the marker but before the copies go, and one after they went: both recover forward.
+: > "$PAIR_A/docs/fin.md"; git -C "$PAIR_A" add docs/fin.md; git -C "$PAIR_A" commit -qm fin; git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
+wsf=$(run_sdd_dir "$PAIR_A" docs/fin.md); printf '# SDD ledger — plan: docs/fin.md\n' > "$wsf/progress.md"; run_state "$PAIR_A" snapshot docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null; wsfb="$co_b/plans/$(basename "$wsf")"
+run_state "$PAIR_A" finish docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-marker bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ ! -d "$wsfb" ] && ls -d "$co_b"/plans/.removing-* >/dev/null 2>&1 && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" != "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "the crash seam after the marker leaves the copy renamed aside, the marker down and the ref at S"; else fail "the crash seam after the marker leaves the copy renamed aside, the marker down and the ref at S (rc=$rc)"; fi
+out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -d "$wsfb" ] && ! ls -d "$co_b"/plans/.removing-* >/dev/null 2>&1 && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "recovery moves the ref forward, drops the verified copy, and the remote finish holds"; else fail "recovery moves the ref forward, drops the verified copy, and the remote finish holds (rc=$rc: $out)"; fi
+: > "$PAIR_A/docs/fin2.md"; git -C "$PAIR_A" add docs/fin2.md; git -C "$PAIR_A" commit -qm fin2; git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
+wsf2=$(run_sdd_dir "$PAIR_A" docs/fin2.md); printf '# SDD ledger — plan: docs/fin2.md\n' > "$wsf2/progress.md"; run_state "$PAIR_A" snapshot docs/fin2.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null; wsf2b="$co_b/plans/$(basename "$wsf2")"
+run_state "$PAIR_A" finish docs/fin2.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-discard bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ ! -d "$wsf2b" ] && ! ls -d "$co_b"/plans/.removing-* >/dev/null 2>&1 && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" != "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "the crash seam after the discard leaves the copy gone, the marker down and the ref at S"; else fail "the crash seam after the discard leaves the copy gone, the marker down and the ref at S (rc=$rc)"; fi
+out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -d "$wsf2b" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "recovery after the discard moves the ref forward and the remote finish holds"; else fail "recovery after the discard moves the ref forward and the remote finish holds (rc=$rc: $out)"; fi
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

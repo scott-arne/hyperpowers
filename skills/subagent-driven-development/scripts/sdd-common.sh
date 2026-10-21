@@ -261,3 +261,142 @@ hp_commit_paths() { # <checkout> <branch> <message> <path>...
   rm -rf "$idxdir"
   return 2
 }
+
+# --- checkout creation ------------------------------------------------------
+hp_git_version_at_least() { # <major> <minor>
+  local v maj rest min
+  v=$(git --version | sed 's/^git version //; s/[^0-9.].*$//')
+  maj=${v%%.*}; rest=${v#*.}; min=${rest%%.*}
+  if [ "$maj" -gt "$1" ] 2>/dev/null; then return 0; fi
+  [ "$maj" -eq "$1" ] 2>/dev/null && [ "$min" -ge "$2" ] 2>/dev/null
+}
+
+# <repo-dir> <commit>: 0 when the commit's root carries the sentinel. A
+# branch at the state name without it is someone else's and is never used.
+hp_check_sentinel() {
+  local content
+  content=$(git -C "$1" cat-file -p "$2:.hyperpowers-state" 2>/dev/null) || content=""
+  if [ "$content" != "hyperpowers-state 1" ]; then
+    echo "sdd-dir: branch $(hp_state_branch "$1") exists but is not a hyperpowers state branch; set git config hyperpowers.stateBranch to another name" >&2
+    return 2
+  fi
+}
+
+hp_write_root_files() { # <dir>
+  printf 'hyperpowers-state 1\n' > "$1/.hyperpowers-state"
+  printf '%s\n' '# Regenerable on any host: briefs come from task-brief, packages from review-package.' 'plans/*/task-*-brief.md' 'plans/*/review-*.diff' > "$1/.gitignore"
+  printf 'plans/*/progress.md merge=union\n' > "$1/.gitattributes"
+  printf '%s\n' '# hyperpowers state' '' 'This branch holds the SDD dossiers of this repository (progress ledgers, implementer reports, claims), one directory per plan under plans/. hyperpowers maintains it through skills/subagent-driven-development/scripts/sdd-state.' 'It shares no history with the code and is never merged into a code branch.' 'Design: docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md in the hyperpowers repository.' > "$1/README.md"
+}
+
+# <repo-dir> <path> <branch>: a worktree on an unborn branch. git 2.42 has
+# --orphan; older git detaches at a throwaway empty commit and switches.
+hp_add_orphan_worktree() {
+  local repo=$1 path=$2 br=$3 empty_tree seed
+  if [ -z "${HYPERPOWERS_FORCE_LEGACY_ORPHAN:-}" ] && hp_git_version_at_least 2 42; then
+    git -C "$repo" worktree add -q --orphan -b "$br" "$path" >/dev/null 2>&1
+  else
+    empty_tree=$(git -C "$repo" hash-object -t tree /dev/null)
+    seed=$(printf 'hyperpowers state seed\n' | hp_git_id "$repo" commit-tree "$empty_tree") || return 1
+    git -C "$repo" worktree add -q --detach "$path" "$seed" >/dev/null 2>&1 || return 1
+    git -C "$path" switch -q --orphan "$br" >/dev/null 2>&1
+  fi
+}
+
+# <repo-dir> <checkout> <branch>: finish or undo an interrupted creation.
+# A temporary checkout whose branch already carries the sentinel commit is
+# moved into place; any other is removed. An interrupted orphan leaves no
+# ref (the branch is unborn until its first commit), so there is nothing to
+# delete; a branch with commits but no sentinel is foreign and refused later.
+hp_recover_tmp_checkouts() {
+  local repo=$1 co=$2 br=$3 wt tip
+  git -C "$repo" worktree prune >/dev/null 2>&1 || true
+  if [ -d "$co" ] && [ ! -e "$co/.git" ]; then rmdir "$co" 2>/dev/null || true; fi
+  tip=$(git -C "$repo" rev-parse -q --verify "refs/heads/$br^{commit}" 2>/dev/null || true)
+  for wt in "$co".tmp-*; do
+    [ -e "$wt/.git" ] || continue
+    if [ -n "$tip" ] && [ ! -e "$co/.git" ] && [ "$(git -C "$repo" cat-file -p "$tip:.hyperpowers-state" 2>/dev/null)" = "hyperpowers-state 1" ]; then
+      if git -C "$repo" worktree move "$wt" "$co" >/dev/null 2>&1; then continue; fi
+    fi
+    git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || rm -rf "$wt"
+  done
+  git -C "$repo" worktree prune >/dev/null 2>&1 || true
+  rm -rf "$co".tmp-* 2>/dev/null || true
+}
+
+# <repo-dir> -> "branch <checkout>" or "plain <plain-root>". Exit 2 when the
+# repository has a remote that has never been asked (needs-sync) or the
+# state name belongs to a foreign branch. The one creation operation: it
+# owns the lock, the temporary path, recovery, and the backend file.
+hp_ensure_checkout() {
+  local repo=$1 co br remote backend tmp mode tip rc=0
+  co=$(hp_checkout_path "$repo") || return 2
+  br=$(hp_state_branch "$repo"); remote=$(hp_state_remote "$repo")
+  backend=$(hp_backend "$repo")
+  if [ "$backend" = plain ]; then printf 'plain %s\n' "$(hp_plain_root "$repo")"; return 0; fi
+  if [ -e "$co/.git" ]; then printf 'branch %s\n' "$co"; return 0; fi
+  hp_lock "$repo" || return 2
+  if [ -e "$co/.git" ]; then hp_unlock; printf 'branch %s\n' "$co"; return 0; fi
+  hp_recover_tmp_checkouts "$repo" "$co" "$br"
+  if [ -e "$co/.git" ]; then hp_write_backend "$repo" branch; hp_unlock; printf 'branch %s\n' "$co"; return 0; fi
+  if tip=$(git -C "$repo" rev-parse -q --verify "refs/heads/$br^{commit}" 2>/dev/null); then
+    hp_check_sentinel "$repo" "$tip" || { hp_unlock; return 2; }
+    mode=local
+  elif tip=$(git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$br^{commit}" 2>/dev/null); then
+    hp_check_sentinel "$repo" "$tip" || { hp_unlock; return 2; }
+    mode=remote
+  else
+    if hp_has_remote "$repo" && [ ! -f "$(hp_stamp_path "$repo")" ]; then
+      echo "sdd-dir: status=needs-sync: this repository has a remote and no state branch here; run sdd-state sync <plan> first (or sdd-state sync --assume-absent <plan>)" >&2
+      hp_unlock; return 2
+    fi
+    mode=orphan
+  fi
+  tmp="$co.tmp-$$-$RANDOM"
+  mkdir -p "$(dirname "$co")"
+  if [ -n "${HYPERPOWERS_TEST_FAIL_WORKTREE_ADD:-}" ]; then
+    rc=1
+  else
+    case "$mode" in
+      local) git -C "$repo" worktree add -q "$tmp" "$br" >/dev/null 2>&1 || rc=$? ;;
+      remote) git -C "$repo" worktree add -q --track -b "$br" "$tmp" "$remote/$br" >/dev/null 2>&1 || rc=$? ;;
+      orphan) hp_add_orphan_worktree "$repo" "$tmp" "$br" || rc=$? ;;
+    esac
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "sdd-dir: git worktree add failed (rc=$rc); this repository uses the plain cache (backend=plain)" >&2
+    git -C "$repo" worktree remove --force "$tmp" >/dev/null 2>&1 || rm -rf "$tmp"
+    hp_write_backend "$repo" plain
+    hp_unlock; printf 'plain %s\n' "$(hp_plain_root "$repo")"; return 0
+  fi
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = after-worktree-add ]; then hp_unlock; exit 99; fi
+  if [ "$mode" = orphan ]; then
+    hp_write_root_files "$tmp"
+    hp_commit_paths "$tmp" "$br" "hyperpowers state: initial layout" . >/dev/null || { hp_unlock; return 2; }
+  fi
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = after-initial-commit ]; then hp_unlock; exit 99; fi
+  git -C "$repo" worktree move "$tmp" "$co" >/dev/null 2>&1 || { echo "sdd-dir: git worktree move failed" >&2; hp_unlock; return 2; }
+  hp_write_backend "$repo" branch
+  hp_unlock
+  printf 'branch %s\n' "$co"
+}
+
+# <repo-dir> <ws> <dest-dir>: under the plain backend, copy the plan's
+# workspace out of an existing state branch (local or remote-tracking) when
+# the destination has no ledger yet. Records the source tip in the backend
+# file. Callers hold the repository lock. A plain fallback never starts an
+# empty ledger over branch state: a failed archive is exit 2, and the caller
+# removes the half-written destination.
+hp_materialize_plain() {
+  local repo=$1 ws=$2 dest=$3 br remote tip root
+  [ -f "$dest/progress.md" ] && return 0
+  br=$(hp_state_branch "$repo"); remote=$(hp_state_remote "$repo")
+  tip=$(git -C "$repo" rev-parse -q --verify "refs/heads/$br^{commit}" 2>/dev/null) \
+    || tip=$(git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$br^{commit}" 2>/dev/null) \
+    || return 0
+  git -C "$repo" cat-file -e "$tip:plans/$ws/progress.md" 2>/dev/null || return 0
+  root=$(dirname "$(dirname "$dest")")
+  mkdir -p "$dest"
+  git -C "$repo" archive "$tip" "plans/$ws" | tar -x -C "$root" || return 2
+  hp_write_backend "$repo" "plain source=$tip"
+}

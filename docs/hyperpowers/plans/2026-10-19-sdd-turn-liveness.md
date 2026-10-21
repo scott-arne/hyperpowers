@@ -1997,17 +1997,25 @@ class Measure(unittest.TestCase):
         self.assertEqual(m["plan_at"], liveness.parse_ts(at(1850)).isoformat())
         self.assertTrue(m["final_review"])
         self.assertTrue(m["success"])
-        # A task review followed by a re-review, with no final review, is not a final review.
+        # Two task-scoped reviews with no final review are not a final review:
+        # a task review then a re-review described without the word fix, and
+        # a task review dispatched twice.
         no_final = drop_call(late, "a2")
         for rec in no_final:
             for use in liveness.tool_uses(rec):
                 if use.get("id") == "r6":
-                    use["input"]["description"] = "Re-review Task 6 fix round 1"
+                    use["input"]["description"] = "Re-review Task 6 (quality)"
         no_final[-4:-4] = [
             assistant(1300, tools=[("r5", "Agent", {"description": "Review Task 6 (spec + quality)", "run_in_background": False})]),
             result(1305, "r5", "Needs fixes"),
         ]
         self.assertFalse(self.run_of("f4", no_final)["final_review"])
+        repeated = drop_call(late, "a2")
+        repeated[-4:-4] = [
+            assistant(1300, tools=[("r5", "Agent", {"description": "Review Task 6 (spec + quality)", "run_in_background": False})]),
+            result(1305, "r5", "Approved"),
+        ]
+        self.assertFalse(self.run_of("f5", repeated)["final_review"])
 
     def test_long_job_needs_a_foreground_watch_that_saw_exit_zero(self) -> None:
         self.assertTrue(self.run_of("l1", long_job())["long_ok"])
@@ -2331,6 +2339,7 @@ SDD_ROLE = re.compile(r"implement|review|fix|takeover", re.IGNORECASE)
 FIX = re.compile(r"\bfix", re.IGNORECASE)
 REVIEW = re.compile(r"review", re.IGNORECASE)
 IMPLEMENT = re.compile(r"implement|takeover", re.IGNORECASE)
+TASK_REF = re.compile(r"\bTask\s*#?\d+", re.IGNORECASE)
 LEDGER_DIR = "hyperpowers/sdd/"
 ASSIGN = re.compile(r"(?:^|[\s;&|(])(\w+)=(?:\"([^\"]*)\"|'([^']*)'|([^\s;&|<>()'\"]*))")
 VAR_REF = re.compile(r"\$\{(\w+)\}|\$(\w+)")
@@ -2855,7 +2864,7 @@ def _transcript_measures(
     out["ledger_marks"] = sorted(marked)
     complete = set(range(1, LAST_TASK + 1)) <= (file_tasks | marked)
     out["plan_complete"] = complete
-    review_dispatches: list[datetime] = []
+    reviews: list[tuple[datetime, str]] = []
     last_implementer: datetime | None = None
     for call in calls:
         if call.name not in ("Agent", "Task"):
@@ -2876,19 +2885,20 @@ def _transcript_measures(
         if IMPLEMENT.search(desc) and not REVIEW.search(desc):
             last_implementer = call.at
         if call.result is not None and not call.error and REVIEW.search(desc) and not FIX.search(desc):
-            review_dispatches.append(call.at)
+            reviews.append((call.at, desc))
     plan_at = written_at or (last_write if complete else None)
     out["plan_at"] = iso(plan_at) if plan_at else None
     # The final review is a review dispatched once the last task is marked
     # complete, or, when the controller writes that mark only after the final
     # review returns (three of the four counted smoke runs), the last of at
-    # least two review dispatches after the last implementer dispatch: the
-    # task's review and then the final one. Re-reviews and fix rounds name a
-    # fix, so they never make up the pair.
-    after_last = [t for t in review_dispatches if last_implementer is not None and t > last_implementer]
+    # least two review dispatches after the last implementer dispatch, when
+    # that last one names no task: task reviews and re-reviews name theirs
+    # ("Review Task 6 (spec + quality)", "Re-review Task 6 fix round 1"), the
+    # whole-branch review does not ("Review code changes").
+    after_last = [(t, d) for t, d in reviews if last_implementer is not None and t > last_implementer]
     out["final_review"] = bool(
-        (plan_at is not None and any(t >= plan_at for t in review_dispatches))
-        or (complete and len(after_last) >= 2)
+        (plan_at is not None and any(t >= plan_at for t, _ in reviews))
+        or (complete and len(after_last) >= 2 and not TASK_REF.search(after_last[-1][1]))
     )
 
     task_map = tasks(records)
@@ -4835,6 +4845,8 @@ Then rerun the smoke for both arms on new rows (`control … p4`, `treatment …
 - [ ] **Step 3d: The final review is recognized when the last mark comes late (approved by the human partner on 2026-10-21)**
 
 In three of the four counted smoke runs (treatment p3 and p4, control p4) the controller received the Task 6 review, dispatched the final whole-branch review, and wrote the `Task 6: complete` ledger line only after that review returned, 10 to 11 minutes later; control p3 wrote the mark first. Every one of them ran a final review after the last implementer finished, and the Gauntlet passed them, yet the analyzer's position rule (a review at or after the last completion mark) read `final_review` false and so `success` false for the three. Left alone, R would measure ledger bookkeeping order in both arms. Task 4's `analyze.py` block and `test_analyze.py` block now carry the refinement: a new `IMPLEMENT` pattern, the last implementer dispatch's time, and `final_review` true also when the plan is complete and at least two clean review-role dispatches follow the last implementer dispatch (the task's review and then the final one; re-reviews and fix rounds name a fix and never make up the pair). The existing at-or-after-the-mark condition stays. Apply the brief's amended code and test text verbatim (the test gains the `f3` late-mark and `f4` no-final cases), run `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py evidence/2026-10-19-sdd-turn-liveness/test_liveness.py evidence/2026-10-19-sdd-turn-liveness/test_tally.py evidence/2026-10-19-sdd-turn-liveness/test_field.py` (expected `OK`), ruff and mypy on both files, leak scan, commit (`fix(evidence): the final review is recognized when the last completion mark comes late`), then rerun `analyze.py` over the archived p3 and p4 runs of both arms and record the new `final_review` and `success` values in `smoke.md` beside the old ones. Expected: `final_review` and `success` true for all four counted runs (F's call-shape measures are not part of `success`; control p4's `short_ok` and `long_ok` stay false). No new quorum run.
+
+Tightened after Task 9's Codex gate (approved by the human partner on 2026-10-21): the pair alone let two task-scoped reviews, or a re-review described without the word fix, stand in for the final review. The last of the pair must now name no task (`TASK_REF`, `\bTask\s*#?\d+`): in every counted smoke run each task review and re-review names its task and the final review does not, and both arms' templates have that shape. The `f4` case now uses a re-review described as `Re-review Task 6 (quality)` and a new `f5` case dispatches the Task 6 review twice; both read false. Apply the amended blocks the same way (tests first, red on the previous commit, then the code; the four suites, ruff, mypy, leak scan), commit (`fix(evidence): the final review names no task`), and confirm the four counted runs still read `final_review` and `success` true.
 
 - [ ] **Step 4: Archive and commit**
 

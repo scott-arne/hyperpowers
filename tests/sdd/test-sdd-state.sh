@@ -817,6 +817,20 @@ git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
 out=$(run_state "$PAIR_A" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(cat "$wsa/progress.md")" = "$(git -C "$co_a" show "hyperpowers/state:plans/$(basename "$wsa")/progress.md")" ] && [ "$(grep -c '^walk A$' "$wsa/progress.md")" -eq 1 ] && [ "$(grep -c '^walk B$' "$wsa/progress.md")" -eq 1 ]; then pass "a fast-forward onto the other host's merge rewrites the ledger in place: tree order, each line once"; else fail "a fast-forward onto the other host's merge rewrites the ledger in place (rc=$rc: $out)"; fi
 if [ "$(run_state "$PAIR_A" sync docs/plan.md | cut -d' ' -f1)" = "status=up-to-date" ] && [ "$(run_state "$PAIR_B" sync docs/plan.md | cut -d' ' -f1)" = "status=up-to-date" ]; then pass "both hosts stay up-to-date afterwards: no reorder commit"; else fail "both hosts stay up-to-date afterwards: no reorder commit"; fi
+# A writer that lands between the rewrite's size check and its write on
+# every attempt: the apply stops with the ref moved and the marker kept,
+# nothing is snapshotted over it, and the next call finishes the apply with
+# every raced line preserved.
+printf 'walk2 A\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+printf 'walk2 B\n' >> "$wsb/progress.md"; run_state "$PAIR_B" snapshot docs/plan.md >/dev/null
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null; git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
+out=$(cd "$PAIR_A" && HYPERPOWERS_TEST_WRITER_AT=ledger-apply-before-rewrite bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
+remote_tip=$(git -C "$co_a" rev-parse origin/hyperpowers/state)
+if [ "$rc" -eq 3 ] && [ "${out%% *}" = "status=busy" ] && [ -f "$co_a/.sync-applying" ] && [ "$(git -C "$co_a" rev-parse hyperpowers/state)" = "$remote_tip" ]; then pass "a writer racing the rewrite leaves the apply unfinished with the marker kept and nothing snapshotted over it"; else fail "a writer racing the rewrite leaves the apply unfinished with the marker kept and nothing snapshotted over it (rc=$rc: $out)"; fi
+out=$(run_state "$PAIR_A" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=ahead" ] && [ ! -f "$co_a/.sync-applying" ] && [ -z "$(git -C "$co_a" status --porcelain -- plans/)" ] && [ "$(grep -c '^raced the rewrite$' "$wsa/progress.md")" -eq 3 ] && [ "$(grep -c '^walk2 A$' "$wsa/progress.md")" -eq 1 ] && [ "$(grep -c '^walk2 B$' "$wsa/progress.md")" -eq 1 ] && [ "$(git -C "$co_a" rev-parse hyperpowers/state^)" = "$remote_tip" ]; then pass "the next call finishes the apply, keeps all three raced lines, and snapshots them on top of the target"; else fail "the next call finishes the apply, keeps all three raced lines, and snapshots them on top of the target (rc=$rc: $out)"; fi
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null; run_state "$PAIR_B" sync docs/plan.md >/dev/null
 printf 'report edited on A\n' > "$wsa/task-1-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 printf 'report edited on B\n' > "$wsb/task-1-report.md"; run_state "$PAIR_B" snapshot docs/plan.md >/dev/null
 out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?

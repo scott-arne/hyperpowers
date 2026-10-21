@@ -1008,6 +1008,20 @@ class Tasks(unittest.TestCase):
         self.assertEqual(liveness.state_at(ts(150), task_map, reload_times), "censored")
         self.assertEqual(liveness.state_at(ts(250), task_map, reload_times), "none")
 
+    def test_censored_work_wins_over_live_work(self) -> None:
+        # One task runs to a recorded completion while another never records one.
+        recs = [
+            assistant(5, tools=[("a1", "Agent", {})]),
+            result(6, "a1", AGENT_BG),
+            assistant(7, tools=[("b1", "Bash", {"command": "sleep 900", "run_in_background": True})]),
+            result(8, "b1", BASH_BG),
+            enqueue(90, "a1"),
+        ]
+        task_map = liveness.tasks(recs)
+        self.assertEqual(liveness.state_at(ts(7), task_map, []), "live")
+        self.assertEqual(liveness.state_at(ts(50), task_map, []), "censored")
+        self.assertEqual(liveness.state_at(ts(100), task_map, []), "censored")
+
 
 class Heuristic(unittest.TestCase):
     CASES = (
@@ -1408,22 +1422,22 @@ def turn_ends(records: Sequence[Record]) -> list[TurnEnd]:
 def state_at(at: datetime, task_map: Mapping[str, Task], reload_times: Sequence[datetime]) -> State:
     """Classify the background work at ``at`` (spec Design §2 live, §3 censored).
 
-    ``live``: a task launched at or before ``at`` records its completion
-    after it. ``censored``: otherwise, a task launched at or before ``at``
-    never records a completion and no reload ended it before ``at``.
-    ``none``: neither.
+    ``censored``: a task launched at or before ``at`` never records a
+    completion and no reload ended it before ``at``. It wins over a live
+    task: the censored task's liveness is unknown, so the moment counts in
+    neither the premature nor the live-work tally (spec Design §3, plan
+    deviation 3). ``live``: otherwise, a task launched at or before ``at``
+    records its completion after it. ``none``: neither.
     """
-    censored = False
+    live = censored = False
     for task in task_map.values():
         if task.launched > at:
             continue
         if task.completed is not None:
-            if task.completed > at:
-                return "live"
-            continue
-        if not any(task.launched < r <= at for r in reload_times):
+            live = live or task.completed > at
+        elif not any(task.launched < r <= at for r in reload_times):
             censored = True
-    return "censored" if censored else "none"
+    return "censored" if censored else "live" if live else "none"
 
 
 def asks_or_blocks(text: str) -> bool:
@@ -3702,6 +3716,7 @@ git commit -m "test(evidence): the turn-liveness campaign tally applies the pre-
 
 **Files:**
 - Create: `evals/evidence/2026-10-19-sdd-turn-liveness/field.py`
+- Modify: `evals/evidence/2026-10-19-sdd-turn-liveness/liveness.py`, `test_liveness.py` (Step 0, censored precedence)
 - Test: `evals/evidence/2026-10-19-sdd-turn-liveness/test_field.py`
 
 **Interfaces:**
@@ -3718,6 +3733,51 @@ git commit -m "test(evidence): the turn-liveness campaign tally applies the pre-
   `collect` keys: `window`, `sessions`, `boundaries`, `premature`, `premature_resumed`, `premature_per_100`, `live_turn_ends`, `live_resumes`, `live_resumes_per_100`, `censored_stops`, `censored_resumes`, `excluded` (by reason), `cc_versions` (sessions per version), `models` (sessions per model). Numbers only: no transcript text.
 
 **Mirror:** Task 3's module and test layout.
+
+- [ ] **Step 0: Censored work wins over live work in `state_at` (spec Design §3, plan deviation 3)**
+
+Task 3 closed with `state_at` returning `live` as soon as any open task completes later, even while another open task never records a completion. Spec Design §3 counts every turn end and resume in a censored interval as censored, outside both the premature and the live-work counts; a read-only scan of the host transcripts found 740 such overlapping turn ends. The change lands here, as its own commit before the rest of the task. In `test_liveness.py`, add this test to the `Tasks` class, after `test_states_live_none_censored_and_killed_by_reload`:
+
+```text
+    def test_censored_work_wins_over_live_work(self) -> None:
+        # One task runs to a recorded completion while another never records one.
+        recs = [
+            assistant(5, tools=[("a1", "Agent", {})]),
+            result(6, "a1", AGENT_BG),
+            assistant(7, tools=[("b1", "Bash", {"command": "sleep 900", "run_in_background": True})]),
+            result(8, "b1", BASH_BG),
+            enqueue(90, "a1"),
+        ]
+        task_map = liveness.tasks(recs)
+        self.assertEqual(liveness.state_at(ts(7), task_map, []), "live")
+        self.assertEqual(liveness.state_at(ts(50), task_map, []), "censored")
+        self.assertEqual(liveness.state_at(ts(100), task_map, []), "censored")
+```
+
+Run it and see it fail (`'live' != 'censored'` at `ts(50)`), then replace the body and docstring of `state_at` in `liveness.py` with:
+
+```text
+    """Classify the background work at ``at`` (spec Design §2 live, §3 censored).
+
+    ``censored``: a task launched at or before ``at`` never records a
+    completion and no reload ended it before ``at``. It wins over a live
+    task: the censored task's liveness is unknown, so the moment counts in
+    neither the premature nor the live-work tally (spec Design §3, plan
+    deviation 3). ``live``: otherwise, a task launched at or before ``at``
+    records its completion after it. ``none``: neither.
+    """
+    live = censored = False
+    for task in task_map.values():
+        if task.launched > at:
+            continue
+        if task.completed is not None:
+            live = live or task.completed > at
+        elif not any(task.launched < r <= at for r in reload_times):
+            censored = True
+    return "censored" if censored else "live" if live else "none"
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_liveness.py evidence/2026-10-19-sdd-turn-liveness/test_analyze.py evidence/2026-10-19-sdd-turn-liveness/test_tally.py` — Expected: `OK` (`analyze.py` and `tally.py` read `state_at` too, and their tests have no overlapping tasks). Ruff and mypy on `liveness.py` and `test_liveness.py`, leak scan, then commit: `fix(evidence): censored background work wins over live work`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3813,6 +3873,53 @@ class Collect(unittest.TestCase):
             early = datetime(2026, 10, 20, 10, 5, tzinfo=UTC)
             out = field.collect(projects, SINCE, early)
         self.assertEqual((out["boundaries"], out["premature"], out["live_turn_ends"]), (1, 1, 0))
+
+    def test_censored_work_dominates_live_work(self) -> None:
+        # The implementer will finish; the background shell never records a completion.
+        overlap = [
+            human(0, "Execute the plan.", entrypoint="sdk-ts"),
+            assistant(5, tools=[SDD]),
+            result(6, "s1", "Launching skill"),
+            assistant(10, tools=[("k1", "TaskCreate", {"subject": "A"})]),
+            result(11, "k1", "Task #1 created successfully: A"),
+            assistant(20, tools=[("a1", "Agent", {"description": "Implement Task 1"})]),
+            result(21, "a1", AGENT_BG),
+            assistant(22, tools=[("b1", "Bash", {"command": "sleep 900", "run_in_background": True})]),
+            result(23, "b1", BASH_BG),
+            assistant(30, "Waiting for the implementer."),
+            human(40, "Resume"),
+            enqueue(300, "a1"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            projects = Path(tmp)
+            write(projects / "p1" / "zed.jsonl", overlap)
+            out = field.collect(projects, SINCE, UNTIL)
+        self.assertEqual((out["censored_stops"], out["censored_resumes"]), (1, 1))
+        self.assertEqual((out["live_turn_ends"], out["live_resumes"], out["premature"]), (0, 0, 0))
+
+    def test_failed_task_updates_change_nothing(self) -> None:
+        failed = [
+            human(0, "Execute the plan.", entrypoint="sdk-ts"),
+            assistant(5, tools=[SDD]),
+            result(6, "s1", "Launching skill"),
+            assistant(10, tools=[("k1", "TaskCreate", {"subject": "A"})]),
+            result(11, "k1", "Task #1 created successfully: A"),
+            assistant(20, tools=[("u1", "TaskUpdate", {"taskId": "1", "status": "completed"})]),
+            result(21, "u1", "Task not found", is_error=True),
+            assistant(30, "Moving on."),
+            human(40, "Resume"),
+            assistant(50, tools=[("u2", "TaskUpdate", {"taskId": "7", "status": "in_progress"})]),
+            result(51, "u2", "Task not found", is_error=True),
+            assistant(60, tools=[("u3", "TaskUpdate", {"taskId": "1", "status": "completed"})]),
+            result(61, "u3", "Updated task #1 status"),
+            assistant(70, "All done."),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            projects = Path(tmp)
+            write(projects / "p1" / "zed.jsonl", failed)
+            out = field.collect(projects, SINCE, UNTIL)
+        # The stop at 30 is premature (task 1 is still open); the one at 70 is not (task 7 never opened).
+        self.assertEqual((out["premature"], out["premature_resumed"], out["boundaries"]), (1, 1, 1))
 
 
 class Reflog(unittest.TestCase):
@@ -3939,11 +4046,16 @@ def is_sdd(records: Sequence[Record]) -> bool:
     return False
 
 
-def _open_timeline(records: Sequence[Record]) -> tuple[list[datetime], list[int]]:
-    """When the count of open task-list items changed, and to what, sorted by time."""
+def _open_timeline(records: Sequence[Record]) -> tuple[list[datetime], list[int], list[datetime]]:
+    """When the count of open task-list items changed, and to what, sorted by time; and when a task was completed.
+
+    Only a successful result changes the list: a failed ``TaskUpdate`` (an
+    unknown id, say) completes nothing and opens nothing.
+    """
     names: dict[str, tuple[str, dict[str, Any]]] = {}
     open_ids: set[str] = set()
     changes: list[tuple[datetime, int]] = []
+    completions: list[datetime] = []
     for rec in records:
         for use in tool_uses(rec):
             inp = tool_input(use)
@@ -3952,7 +4064,7 @@ def _open_timeline(records: Sequence[Record]) -> tuple[list[datetime], list[int]
         if not is_tool_result(rec):
             continue
         for block in blocks(rec):
-            if block.get("type") != "tool_result":
+            if block.get("type") != "tool_result" or block.get("is_error"):
                 continue
             name, inp = names.get(str(block.get("tool_use_id")), ("", {}))
             if name == "TaskCreate":
@@ -3964,6 +4076,8 @@ def _open_timeline(records: Sequence[Record]) -> tuple[list[datetime], list[int]
                 status = inp.get("status")
                 if status in ("completed", "deleted"):
                     open_ids.discard(task_id)
+                    if status == "completed":
+                        completions.append(parse_ts(rec["timestamp"]))
                 elif status in ("pending", "in_progress") and task_id:
                     open_ids.add(task_id)
             elif name == "TodoWrite":
@@ -3975,7 +4089,7 @@ def _open_timeline(records: Sequence[Record]) -> tuple[list[datetime], list[int]
                 continue
             changes.append((parse_ts(rec["timestamp"]), len(open_ids)))
     changes.sort(key=lambda item: item[0])
-    return [when for when, _ in changes], [n for _, n in changes]
+    return [when for when, _ in changes], [n for _, n in changes], completions
 
 
 def _open_at(times: Sequence[datetime], counts: Sequence[int], at: datetime) -> bool:
@@ -3987,11 +4101,14 @@ def _session(records: Sequence[Record], since: datetime, until: datetime) -> tup
     counts: Counter[str] = Counter()
     task_map = tasks(records)
     reload_times = reloads(records)
-    times, open_counts = _open_timeline(records)
+    times, open_counts, completions = _open_timeline(records)
 
     def inside(when: datetime) -> bool:
         return since <= when < until
 
+    boundaries = sum(1 for when in completions if inside(when))
+    if boundaries:
+        counts["boundaries"] = boundaries
     for end in turn_ends(records):
         if not inside(end.at):
             continue
@@ -4024,10 +4141,6 @@ def _session(records: Sequence[Record], since: datetime, until: datetime) -> tup
                 counts["live_resumes"] += 1
             elif state == "censored":
                 counts["censored_resumes"] += 1
-        for use in tool_uses(rec):
-            inp = tool_input(use)
-            if use.get("name") == "TaskUpdate" and inp.get("status") == "completed":
-                counts["boundaries"] += 1
     return counts, versions, models
 
 

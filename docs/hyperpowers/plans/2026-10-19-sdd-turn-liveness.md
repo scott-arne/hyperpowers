@@ -4536,7 +4536,7 @@ bash "$script" control sdd-turn-liveness 1 p7 default 2>/dev/null && fail "harne
 grep -qF "preflight=harness" "$LOGS/control-sdd-turn-liveness-p7.log" || fail "p7 lacks preflight=harness"
 ```
 
-`launch-all.test.sh` copies the template's stub-launcher test shape: a stub launcher that writes `<logs>/<arm>-<scen>-<proc>.log` ending `DONE …` (or exits 1 for one row), and asserts a malformed row stops everything, a duplicate row stops everything, a row for another scenario stops everything, a non-zero child fails the closing status, and a clean manifest ends with `launchers non-zero: 0; manifest rows without a DONE log: 0`.
+`launch-all.test.sh` copies the template's stub-launcher test shape: a stub launcher that writes `<logs>/<arm>-<scen>-<proc>.log` ending `DONE …` (or exits 1 for one row), and asserts a malformed row stops everything, a duplicate row stops everything, a row for another scenario stops everything, a missing pin, a duplicated pin, a placeholder pin value and `codex` other than `absent` each stop everything (no launcher log written, a non-zero exit and the matching message on stderr), a non-zero child fails the closing status, and a clean manifest ends with `launchers non-zero: 0; manifest rows without a DONE log: 0`.
 
 Run: `bash evidence/2026-10-19-sdd-turn-liveness/logs/measure-launch.test.sh` and `bash evidence/2026-10-19-sdd-turn-liveness/launch-all.test.sh` — Expected: FAIL (scripts missing).
 
@@ -4641,7 +4641,32 @@ case "$last" in "DONE "*) exit 0 ;; *) exit 1 ;; esac
 
 - [ ] **Step 3: Write `launch-all.sh`, `wait-done.sh` and `archive-runs.sh`**
 
-`launch-all.sh <manifest.tsv> [max-concurrent]`: copy `evidence/2026-09-23-adoption-remediation/launch-all.sh` whole, then make exactly these changes: the two-field key list `harness|control|treatment|model` becomes `harness|control|treatment|control_root|treatment_root|model|cc|cc_path|provider|subagent_models|codex|task_tools`; the scenario must be `sdd-turn-liveness` (a malformed-row error otherwise); `repeat` accepts `[1-9]`; `proc` accepts `p<n>` and `r<n>`; the header comment names this campaign and spec Design §2. `LOGS` is passed through to the launcher.
+`launch-all.sh <manifest.tsv> [max-concurrent]`: copy `evidence/2026-09-23-adoption-remediation/launch-all.sh` whole, then make exactly these changes: the two-field key list `harness|control|treatment|model` becomes `harness|control|treatment|control_root|treatment_root|model|cc|cc_path|provider|subagent_models|codex|task_tools`; the scenario must be `sdd-turn-liveness` (a malformed-row error otherwise); `repeat` accepts `[1-9]`; `proc` accepts `p<n>` and `r<n>`; the header comment names this campaign and spec Design §2; and the pin rows are checked, not only recognized (Task 8's Codex gate: a duplicated, missing or wrong pin would otherwise reach the runs, and `tally.read_pins` keeps the last duplicate). Initialise `pins=" "` beside `keys=" "`, replace the template's two-field branch with:
+
+```text
+    2) case "${f[0]}" in
+         harness|control|treatment|control_root|treatment_root|model|cc|cc_path|provider|subagent_models|codex|task_tools) ;;
+         *) echo "malformed row '$line'" >&2; bad=1; continue ;;
+       esac
+       case "$pins" in *" ${f[0]} "*) echo "duplicate pin ${f[0]}" >&2; bad=1; continue ;; esac
+       pins="$pins${f[0]} "
+       case "${f[1]}" in *'<'*) echo "pin ${f[0]} is a placeholder: ${f[1]}" >&2; bad=1 ;; esac
+       case "${f[0]}" in
+         codex) [ "${f[1]}" = absent ] || { echo "pin codex must be absent, not '${f[1]}'" >&2; bad=1; } ;;
+         task_tools) [ "${f[1]}" = on ] || { echo "pin task_tools must be on, not '${f[1]}'" >&2; bad=1; } ;;
+       esac
+       continue ;;
+```
+
+and, after the read loop and before the `bad` check:
+
+```text
+for k in harness control treatment control_root treatment_root model cc cc_path provider subagent_models codex task_tools; do
+  case "$pins" in *" $k "*) ;; *) echo "missing pin $k" >&2; bad=1 ;; esac
+done
+```
+
+`LOGS` is passed through to the launcher.
 
 `wait-done.sh <file> <iterations>`:
 
@@ -4669,7 +4694,7 @@ echo "still running after $n checks; last line: $(tail -n 1 "$file" 2>/dev/null)
 exit 3
 ```
 
-`archive-runs.sh <arm> <task-dir>`: adapted from `evidence/2026-10-03-release-6150-paired-control/archive-runs.sh:1-40` for the relocated layout, reading logs from `${LOGS:-<evidence dir>/logs}`. For every run id in `<logs>/<arm>-sdd-turn-liveness-*.log` (`sed -n 's/^run-id: \([^ ]*\)$/\1/p'`): copy `results/<id>/` to `<task-dir>/<arm>/<id>.partial/` and `results/workspaces/<id>/` to `<task-dir>/<arm>/workspaces/<id>.partial/`; run `scripts/strip-runs --results-root <task-dir>/<arm> --run <id>.partial --min-age-minutes 0`; rename `workspaces/<id>.partial/coding-agent-workdir/.git` to `git-dir`; remove `workspaces/<id>.partial/home/.claude/plugins` and `home/.codex`, browser profiles (`home/.tmp/cdp-*`), and `node_modules`, `__pycache__`, `.ruff_cache`, `.mypy_cache` directories; keep `home/.cache/hyperpowers` (an SDD ledger that survived, which `analyze.py` reads beside the transcript's ledger writes); rename both `.partial` directories into place. A run already archived is skipped; a named run without `verdict.json` stops the script. `results/` is copied, never moved.
+`archive-runs.sh <arm> <task-dir>`: adapted from `evidence/2026-10-03-release-6150-paired-control/archive-runs.sh:1-40` for the relocated layout, reading logs from `${LOGS:-<evidence dir>/logs}`. For every run id in `<logs>/<arm>-sdd-turn-liveness-*.log` (`sed -n 's/^run-id: \([^ ]*\)$/\1/p'`): copy `results/<id>/` to `<task-dir>/<arm>/<id>.partial/` and `results/workspaces/<id>/` to `<task-dir>/<arm>/workspaces/<id>.partial/`; run `scripts/strip-runs --results-root <task-dir>/<arm> --run <id>.partial --min-age-minutes 0`; rename `workspaces/<id>.partial/coding-agent-workdir/.git` to `git-dir`; remove `workspaces/<id>.partial/home/.claude/plugins` and `home/.codex`, browser profiles (`home/.tmp/cdp-*`), and `node_modules`, `__pycache__`, `.ruff_cache`, `.mypy_cache` directories; keep `home/.cache/hyperpowers` (an SDD ledger that survived, which `analyze.py` reads beside the transcript's ledger writes); rename both `.partial` directories into place. A run already archived is skipped; a named run without `verdict.json` or without its workspace stops the script. `results/` is copied, never moved. `strip-runs` skips a run whose record or verdict was modified within the last minute and still exits 0, and `cp -Rp` keeps the run's timestamps, so before calling it the script backdates the record copy (`touch -t 200001010000 <task-dir>/<arm>/<id>.partial <task-dir>/<arm>/<id>.partial/verdict.json`; git keeps no timestamps, so nothing durable changes), and after it the script stops if `workspaces/<id>.partial/home/.claude/.claude-env` or `workspaces/<id>.partial/home/.claude/sessions` still exists.
 
 - [ ] **Step 4: Run the tests and shellcheck**
 

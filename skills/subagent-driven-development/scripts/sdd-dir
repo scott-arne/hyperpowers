@@ -116,6 +116,13 @@ if [ "$backend" = plain ] || [ ! -d "$dir" ]; then
       exit 2
     fi
   fi
+  # A removal interrupted after its rename-aside left the dossier at
+  # plans/.removing-<ws>-<pid>; it comes back before an empty workspace
+  # could take its place.
+  for t in "$root/plans/.removing-$ws-"*; do
+    [ -d "$t" ] && [ ! -d "$dir" ] || continue
+    mv "$t" "$dir" 2>/dev/null || true
+  done
   mkdir -p "$dir" || { hp_unlock; exit 2; }
   hp_unlock
   [ "$backend" != plain ] || echo "sdd-dir: backend=plain for this repository; the dossier will not travel from this host" >&2

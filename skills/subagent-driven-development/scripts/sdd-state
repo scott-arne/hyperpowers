@@ -26,6 +26,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=sdd-common.sh
 . "$SCRIPT_DIR/sdd-common.sh"
 
+# Set by remove_verified when it leaves a verified copy at its tomb.
+TOMB=""
+
 usage() {
   printf '%s\n' \
     'usage: sdd-state <subcommand> ...' \
@@ -429,32 +432,52 @@ open_claims() {
 # <dir> <tomb>: put a renamed-aside copy back. An unlocked writer may have
 # recreated the path meanwhile (the Write tool and mkdir -p create missing
 # parents), and mv onto an existing directory nests the copy inside it, so
-# whatever appeared is moved beside the restored copy first and named.
+# whatever appeared is moved beside the restored copy first and named. The
+# path can also be recreated between that check and the mv; a nested copy
+# is then lifted back out.
 restore_tomb() {
-  local dir=$1 tomb=$2
+  local dir=$1 tomb=$2 aside="$1.reappeared-$$"
   if [ -e "$dir" ] || [ -L "$dir" ]; then
-    mv "$dir" "$dir.reappeared-$$" 2>/dev/null
-    echo "sdd-state: $dir was recreated during its removal; the new files are at $dir.reappeared-$$" >&2
+    mv "$dir" "$aside" 2>/dev/null && echo "sdd-state: $dir was recreated during its removal; the new files are at $aside" >&2
   fi
   # Still occupied: the copy stays at its tomb rather than nesting.
-  if [ -e "$dir" ] || [ -L "$dir" ]; then echo "sdd-state: the removed copy is at $tomb" >&2; return 1; fi
-  mv "$tomb" "$dir"
+  if [ -e "$dir" ] || [ -L "$dir" ]; then echo "sdd-state: $dir is occupied; the removed copy is at $tomb" >&2; return 1; fi
+  mv "$tomb" "$dir" || return 1
+  if [ -e "$dir/${tomb##*/}" ]; then
+    [ ! -e "$aside" ] || aside="$aside-2"
+    mv "$dir" "$aside" 2>/dev/null || return 1
+    mv "$aside/${tomb##*/}" "$dir" || return 1
+    echo "sdd-state: $dir was recreated during its removal; the new files are at $aside" >&2
+  fi
+  return 0
 }
-# <dir> <tree-prefix>: remove a workspace directory only if it still equals
-# the committed tip. The directory is renamed aside first (atomic), so a
-# writer that opens the old path afterwards fails with ENOENT instead of
-# writing into a directory about to vanish; then every tracked file is
-# compared by object id with the renamed copy, and any extra file that is
-# not ignored counts as a change. Unchanged and the path still free:
-# deleted, returns 0. Otherwise the copy is restored by restore_tomb and 1
-# is returned. <tree-prefix> is "<tip>:plans/<ws>"; an empty
-# prefix (plain backend) compares the ledger's size with SIZE_BEFORE.
+# <tomb>: delete a verified copy. A copy that survives the deletion is named;
+# the caller decides whether what remains goes back.
+discard_tomb() {
+  rm -rf "$1" 2>/dev/null
+  [ ! -e "$1" ] || { echo "sdd-state: could not delete the removed copy at $1" >&2; return 2; }
+  TOMB=""
+  return 0
+}
+# <dir> <tree-prefix> [keep]: remove a workspace directory only if it still
+# equals the committed tip. The directory is renamed aside first (atomic),
+# so a writer that opens the old path afterwards fails with ENOENT instead
+# of writing into a directory about to vanish; then every tracked entry is
+# compared by object id with the renamed copy (a symlink by its link text),
+# and any extra file or symlink that is not ignored counts as a change.
+# <tree-prefix> is "<tip>:plans/<ws>"; an empty prefix (plain backend)
+# compares the ledger's size with SIZE_BEFORE. Returns 0 when the copy was
+# verified: deleted, or with `keep` left at the tomb named in TOMB for the
+# caller to commit against and then discard_tomb. Returns 1 when the copy
+# changed or the path was recreated (the copy is restored, the caller is
+# busy) and 2 when the deletion itself failed (what remains is restored).
 remove_verified() {
-  local dir=$1 prefix=$2 tomb f committed live
+  local dir=$1 prefix=$2 keep=${3:-} tomb f committed live
+  TOMB=""
   tomb="$(dirname "$dir")/.removing-$(basename "$dir")-$$"
   # A tomb left by a killed run plus pid reuse would make mv nest the live
   # workspace inside it: refuse instead.
-  [ ! -e "$tomb" ] || return 1
+  [ ! -e "$tomb" ] || { echo "sdd-state: a copy from an earlier removal is in the way at $tomb" >&2; return 1; }
   mv "$dir" "$tomb" 2>/dev/null || return 1
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
     remove-after-rename:*|remove-after-rename-changed:*)
@@ -469,49 +492,76 @@ remove_verified() {
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       committed=$(git -C "$CO" rev-parse "$prefix/$f" 2>/dev/null)
-      live=$(git -C "$CO" hash-object "$tomb/$f" 2>/dev/null)
+      if [ -L "$tomb/$f" ]; then
+        live=$(printf '%s' "$(readlink "$tomb/$f")" | git -C "$CO" hash-object --stdin 2>/dev/null)
+      else
+        live=$(git -C "$CO" hash-object "$tomb/$f" 2>/dev/null)
+      fi
       if [ "$committed" != "$live" ]; then restore_tomb "$dir" "$tomb"; return 1; fi
     done < <(git -C "$CO" ls-tree -r --name-only "$prefix" 2>/dev/null)
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       git -C "$CO" cat-file -e "$prefix/$f" 2>/dev/null && continue
       if ! git -C "$CO" check-ignore -q "plans/x/$f" 2>/dev/null; then restore_tomb "$dir" "$tomb"; return 1; fi
-    done < <(cd "$tomb" && find . -type f | sed 's|^\./||')
+    done < <(cd "$tomb" && find . \( -type f -o -type l \) | sed 's|^\./||')
   fi
   # Something recreated the path while the copy was verified: busy.
   if [ -e "$dir" ] || [ -L "$dir" ]; then restore_tomb "$dir" "$tomb"; return 1; fi
-  rm -rf "$tomb"
+  TOMB=$tomb
+  [ -z "$keep" ] || return 0
+  discard_tomb "$tomb" || { restore_tomb "$dir" "$tomb"; return 2; }
   return 0
 }
 cmd_finish() {
-  local plan="" force=0 open last commit rc
+  local plan="" force=0 open last commit rc t
   while [ $# -gt 0 ]; do
-    case "$1" in --force) force=1; shift ;; -*) usage ;; *) plan=$1; shift ;; esac
+    case "$1" in --force) force=1; shift ;; -*) usage ;; *) [ -z "$plan" ] || usage; plan=$1; shift ;; esac
   done
   [ -n "$plan" ] || usage
   resolve_plan "$plan"
-  [ -d "$WSDIR" ] || { echo "status=none"; return 0; }
+  hp_lock "$PLAN_DIR" || return 2
+  # A removal interrupted after its rename-aside left the dossier at
+  # plans/.removing-<ws>-<pid>. With the path free the copy comes back and
+  # finish proceeds; beside a new workspace it is named for a human to
+  # merge or delete, and finish refuses.
+  for t in "$(dirname "$WSDIR")/.removing-$(basename "$WSDIR")-"*; do
+    [ -d "$t" ] || continue
+    if [ -d "$WSDIR" ]; then
+      echo "sdd-state: a copy from an interrupted removal remains at $t; move its files back into $WSDIR or delete it" >&2
+      hp_unlock; echo "status=busy"; return 3
+    fi
+    restore_tomb "$WSDIR" "$t" || { hp_unlock; echo "status=error"; return 2; }
+  done
+  [ -d "$WSDIR" ] || { hp_unlock; echo "status=none"; return 0; }
   # The claims are read under the lock, so a claim published after a first
   # look, or a takeover in flight, is seen before anything is removed.
-  hp_lock "$PLAN_DIR" || return 2
   open=$(open_claims)
   if [ -n "$open" ] && [ "$force" -eq 0 ]; then hp_unlock; echo "status=open-claims tasks=$open"; return 6; fi
   if [ "$BACKEND" != branch ]; then
     SIZE_BEFORE=$(wc -c < "$WSDIR/progress.md" 2>/dev/null | tr -d ' ')
-    if ! remove_verified "$WSDIR" ""; then hp_unlock; echo "status=busy"; return 3; fi
+    remove_verified "$WSDIR" ""; rc=$?
     hp_unlock
-    echo "status=finished backend=plain"; return 0
+    case "$rc" in 0) echo "status=finished backend=plain"; return 0 ;; 1) echo "status=busy"; return 3 ;; *) echo "status=error"; return 2 ;; esac
   fi
   if type recover_apply >/dev/null 2>&1; then recover_apply || { hp_unlock; echo "status=error"; return 2; }; fi
   hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: snapshot before finish" "plans/$WS" >/dev/null || { hp_unlock; echo "status=error"; return 2; }
   last=$(git -C "$CO" rev-parse "refs/heads/$BRANCH")
   # Controllers append without the lock: the removal renames the directory
   # aside and verifies it against the snapshot before deleting it.
-  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in finish-before-remove:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#finish-before-remove:}" ;; esac
-  if ! remove_verified "$WSDIR" "$last:plans/$WS"; then hp_unlock; echo "status=busy"; return 3; fi
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+    finish-before-remove:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#finish-before-remove:}" ;;
+    finish-before-remove-link:*) ln -s progress.md "$CO/${HYPERPOWERS_TEST_WRITER_AT#finish-before-remove-link:}" ;;
+  esac
+  remove_verified "$WSDIR" "$last:plans/$WS" keep; rc=$?
+  case "$rc" in 0) ;; 1) hp_unlock; echo "status=busy"; return 3 ;; *) hp_unlock; echo "status=error"; return 2 ;; esac
+  # The removal is committed while the copy still exists; a commit that
+  # fails puts the copy back, and only a committed removal deletes it. A
+  # copy that survives the deletion is named on stderr; the branch is the
+  # record either way.
   commit=$(hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: finish" "plans/$WS"); rc=$?
+  if [ "$rc" -ne 0 ]; then restore_tomb "$WSDIR" "$TOMB"; hp_unlock; echo "status=error"; return 2; fi
+  discard_tomb "$TOMB" || true
   hp_unlock
-  [ "$rc" -eq 0 ] || { echo "status=error"; return 2; }
   [ ! -d "$WSDIR" ] || { echo "status=error"; return 2; }
   echo "status=finished sha=${commit:0:7} last=$last push=$REMOTE/$BRANCH"
 }
@@ -521,8 +571,8 @@ cmd_finish() {
 # commit and newest file both older) and checkouts whose clone is gone. Never
 # runs implicitly.
 cmd_prune() {
-  local repo="" days=30 apply=0 repo_dir co br d name now cutoff c key list="" dead_list="" i tip gd
-  local plans=() dead=()
+  local repo="" days=30 apply=0 repo_dir co br d name now cutoff c key list="" dead_list="" i tip gd ck
+  local plans=() dead=() tombs=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --days) [ $# -ge 2 ] || usage; days=$2; shift 2 ;;
@@ -533,6 +583,7 @@ cmd_prune() {
   done
   [ -n "$repo" ] || usage
   case "$days" in ''|*[!0-9]*) usage ;; esac
+  days=$((10#$days))
   repo_dir=$(hp_physical_dir "$repo") || usage
   git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $repo" >&2; exit 2; }
   if [ "$(hp_backend "$repo_dir")" = plain ]; then echo "status=plain"; return 0; fi
@@ -557,11 +608,14 @@ cmd_prune() {
       list="$list,$(enc "$name")"
     done
   fi
+  # A checkout is dead when the directory its .git file names is gone. A
+  # relative gitdir (worktree.useRelativePaths) resolves against the
+  # checkout; an unparsable .git file is not evidence that the clone is gone.
   for c in "$(hp_cache_root)"/state/*/; do
     [ -f "$c.git" ] || continue
     gd=$(sed -n 's/^gitdir: //p' "$c.git" 2>/dev/null)
-    # An unparsable .git file is not evidence that the clone is gone.
     [ -n "$gd" ] || continue
+    case "$gd" in /*) ;; *) gd="$c$gd" ;; esac
     if [ ! -d "$gd" ]; then dead[${#dead[@]}]=$(basename "$c"); dead_list="$dead_list,$(basename "$c")"; fi
   done
   list=${list#,}; dead_list=${dead_list#,}
@@ -573,24 +627,39 @@ cmd_prune() {
   i=0
   while [ "$i" -lt "${#plans[@]}" ]; do
     name=${plans[$i]}
-    if idle "$name" && remove_verified "$co/plans/$name" "$tip:plans/$name"; then
-      removed[${#removed[@]}]=$name; removed_paths[${#removed_paths[@]}]="plans/$name"; removed_list="$removed_list,$(enc "$name")"
+    if idle "$name" && remove_verified "$co/plans/$name" "$tip:plans/$name" keep; then
+      removed[${#removed[@]}]=$name; removed_paths[${#removed_paths[@]}]="plans/$name"; tombs[${#tombs[@]}]=$TOMB; removed_list="$removed_list,$(enc "$name")"
     else
       kept_list="$kept_list,$(enc "$name")"
     fi
     i=$((i + 1))
   done
+  # The copies outlive the commit: a commit that fails puts every one back.
   if [ "${#removed[@]}" -gt 0 ]; then
-    hp_commit_paths "$co" "$br" "sdd: prune ${removed[*]}" "${removed_paths[@]}" >/dev/null || { hp_unlock; echo "status=error"; return 2; }
+    if ! hp_commit_paths "$co" "$br" "sdd: prune ${removed[*]}" "${removed_paths[@]}" >/dev/null; then
+      i=0
+      while [ "$i" -lt "${#tombs[@]}" ]; do restore_tomb "$co/plans/${removed[$i]}" "${tombs[$i]}"; i=$((i + 1)); done
+      hp_unlock; echo "status=error"; return 2
+    fi
+    i=0
+    while [ "$i" -lt "${#tombs[@]}" ]; do discard_tomb "${tombs[$i]}" || true; i=$((i + 1)); done
   fi
   hp_unlock
   list=${removed_list#,}; kept_list=${kept_list#,}
+  # Each dead checkout is re-checked right before it goes: a clone restored
+  # since the scan keeps its checkout. The removal is an atomic rename
+  # first, so nothing can start using a half-deleted checkout.
+  dead_list=""
   i=0
   while [ "$i" -lt "${#dead[@]}" ]; do
-    key=${dead[$i]}
-    rm -rf "$(hp_cache_root)/state/$key" "$(hp_cache_root)/state/$key.backend" "$(hp_cache_root)/state/$key.lock" "$(hp_cache_root)/state/$key.lock-history" "$(hp_cache_root)/state/$key.fetched"
-    i=$((i + 1))
+    key=${dead[$i]}; ck="$(hp_cache_root)/state/$key"; i=$((i + 1))
+    gd=$(sed -n 's/^gitdir: //p' "$ck/.git" 2>/dev/null)
+    case "$gd" in ''|/*) ;; *) gd="$ck/$gd" ;; esac
+    if [ -z "$gd" ] || [ -d "$gd" ] || ! mv "$ck" "$ck.pruning-$$" 2>/dev/null; then continue; fi
+    rm -rf "$ck.pruning-$$" "$ck.backend" "$ck.lock" "$ck.lock-history" "$ck.fetched"
+    dead_list="$dead_list,$key"
   done
+  dead_list=${dead_list#,}
   echo "status=pruned plans=$list kept=$kept_list checkouts=$dead_list"
 }
 

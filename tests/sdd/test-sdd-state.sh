@@ -683,6 +683,37 @@ if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -q '^concurrent write$'
 rm -rf "$wsf6".reappeared-*
 out=$(run_state "$f1" finish docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsf6" ]; then pass "finish succeeds once the recreated files are out of the way"; else fail "finish succeeds once the recreated files are out of the way (rc=$rc: $out)"; fi
+wsf7=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf7/progress.md"
+out=$(run_state "$f1" finish docs/plan.md docs/other.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ -d "$wsf7" ]; then pass "a second positional argument is a usage error and finishes nothing"; else fail "a second positional argument is a usage error and finishes nothing (rc=$rc: $out)"; fi
+ln -s progress.md "$wsf7/ledger-link"; run_state "$f1" snapshot docs/plan.md >/dev/null
+out=$(run_state "$f1" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsf7" ]; then pass "a tracked symlink compares by its link text and does not block finish"; else fail "a tracked symlink compares by its link text and does not block finish (rc=$rc: $out)"; fi
+wsf8=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf8/progress.md"
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove-link:plans/$(basename "$wsf8")/late-link" bash "$SDD_STATE" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ -L "$wsf8/late-link" ]; then pass "a symlink created between the snapshot and the removal counts as an extra entry"; else fail "a symlink created between the snapshot and the removal counts as an extra entry (rc=$rc: $out)"; fi
+rm -f "$wsf8/late-link"
+tomb8="$(dirname "$wsf8")/.removing-$(basename "$wsf8")-424242"; mv "$wsf8" "$tomb8"
+out=$(run_state "$f1" finish docs/plan.md 2>/dev/null); rc=$?
+last8=$(printf '%s' "$out" | sed -n 's/.* last=\([0-9a-f]*\).*/\1/p')
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$tomb8" ] && [ ! -d "$wsf8" ] && [ "$(git -C "$co_f1" show "$last8:plans/$(basename "$wsf8")/progress.md" 2>/dev/null | sed -n 2p)" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "a copy left by an interrupted removal is restored and finished, its ledger in history"; else fail "a copy left by an interrupted removal is restored and finished (rc=$rc: $out)"; fi
+wsf9=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf9/progress.md"
+tomb9="$(dirname "$wsf9")/.removing-$(basename "$wsf9")-434343"; mkdir -p "$tomb9"; printf 'older copy\n' > "$tomb9/progress.md"
+err=$(run_state "$f1" finish docs/plan.md 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 3 ] && printf '%s' "$err" | grep -q "$tomb9" && [ -d "$wsf9" ] && [ -d "$tomb9" ]; then pass "a leftover copy beside a live workspace makes finish refuse and name the copy"; else fail "a leftover copy beside a live workspace makes finish refuse and name the copy (rc=$rc: $err)"; fi
+rm -rf "$tomb9"
+out=$(run_state "$f1" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ]; then pass "finish proceeds once the leftover copy is resolved"; else fail "finish proceeds once the leftover copy is resolved (rc=$rc: $out)"; fi
+wsf10=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nrestored by sdd-dir\n' > "$wsf10/progress.md"
+mv "$wsf10" "$(dirname "$wsf10")/.removing-$(basename "$wsf10")-454545"
+out=$(run_sdd_dir "$f1" docs/plan.md)
+if [ "$out" = "$wsf10" ] && [ "$(sed -n 2p "$wsf10/progress.md")" = "restored by sdd-dir" ] && ! ls -d "$(dirname "$wsf10")"/.removing-* >/dev/null 2>&1; then pass "sdd-dir brings back a copy left by an interrupted removal instead of creating an empty workspace"; else fail "sdd-dir brings back a copy left by an interrupted removal instead of creating an empty workspace ($out)"; fi
+run_state "$f1" finish docs/plan.md >/dev/null
+wsf11=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsf11/progress.md"; mkdir "$wsf11/held"; : > "$wsf11/held/f"; chmod 555 "$wsf11/held"
+err=$(run_state "$f1" finish docs/plan.md 2>&1 >/dev/null); rc=$?
+chmod 755 "$(dirname "$wsf11")"/.removing-*/held 2>/dev/null
+if [ "$rc" -eq 0 ] && printf '%s' "$err" | grep -q 'could not delete' && ! git -C "$co_f1" ls-tree -r --name-only hyperpowers/state | grep -q "plans/$(basename "$wsf11")/" && ls -d "$(dirname "$wsf11")"/.removing-* >/dev/null 2>&1 && [ ! -d "$wsf11" ]; then pass "under the branch backend the removal is committed and a deletion that fails names the surviving copy"; else fail "under the branch backend the removal is committed and a deletion that fails names the surviving copy (rc=$rc: $err)"; fi
+rm -rf "$(dirname "$wsf11")"/.removing-*
 wsp=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp/progress.md"
 out=$(run_state "$rp" finish docs/plan.md 2>/dev/null)
 if [ "$out" = "status=finished backend=plain" ] && [ ! -d "$wsp" ]; then pass "finish under the plain backend removes the plain workspace"; else fail "finish under the plain backend removes the plain workspace ($out)"; fi
@@ -690,6 +721,11 @@ wsp2=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp2/progre
 out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -q '^concurrent write$' "$wsp2/progress.md" && ! ls -d "$wsp2"/.removing-* >/dev/null 2>&1 && [ "$(cat "$wsp2".reappeared-*/task-2-report.md 2>/dev/null)" = "written after rename" ]; then pass "under the plain backend a changed copy restored over a recreated workspace is not nested either"; else fail "under the plain backend a changed copy restored over a recreated workspace is not nested (rc=$rc: $out)"; fi
 rm -rf "$wsp2".reappeared-*
+wsp3=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp3/progress.md"; mkdir "$wsp3/held"; : > "$wsp3/held/f"; chmod 555 "$wsp3/held"
+err=$(run_state "$rp" finish docs/plan.md 2>&1 >/dev/null); rc=$?
+chmod 755 "$wsp3/held" 2>/dev/null; chmod 755 "$(dirname "$wsp3")"/.removing-*/held 2>/dev/null
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'could not delete' && [ -f "$wsp3/held/f" ] && ! ls -d "$(dirname "$wsp3")"/.removing-* >/dev/null 2>&1; then pass "under the plain backend a deletion that fails is an error and what remains is restored"; else fail "under the plain backend a deletion that fails is an error and what remains is restored (rc=$rc: $err)"; fi
+rm -rf "$wsp3"
 
 echo ""
 echo "=== prune ==="
@@ -704,6 +740,7 @@ wso_enc=$(basename "$wso" | sed 's/ /%20/g')
 mkdir -p "$STATE_ROOT/deadkey0000000000000000000000000000000000"; printf 'gitdir: %s/gone/.git/worktrees/x\n' "$TEST_ROOT" > "$STATE_ROOT/deadkey0000000000000000000000000000000000/.git"
 : > "$STATE_ROOT/deadkey0000000000000000000000000000000000.backend"
 mkdir -p "$STATE_ROOT/badkey0000000000000000000000000000000000"; printf 'not a gitdir line\n' > "$STATE_ROOT/badkey0000000000000000000000000000000000/.git"
+mkdir -p "$STATE_ROOT/relkey0000000000000000000000000000000000/.gitdir-here"; printf 'gitdir: .gitdir-here\n' > "$STATE_ROOT/relkey0000000000000000000000000000000000/.git"
 out=$(run_state "$pr" prune --repo "$pr"); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=listed plans=$wso_enc checkouts=deadkey0000000000000000000000000000000000" ] && [ -d "$wso" ]; then pass "prune lists the idle plan (space percent-encoded) and the dead checkout without removing them"; else fail "prune lists the idle plan and the dead checkout without removing them (rc=$rc: $out)"; fi
 out=$(cd "$pr" && HYPERPOWERS_TEST_WRITER_AT="prune-before-remove:plans/$(basename "$wso")/progress.md" bash "$SDD_STATE" prune --repo "$pr" --apply); rc=$?
@@ -714,6 +751,9 @@ mkdir -p "$STATE_ROOT/deadkey0000000000000000000000000000000000"; printf 'gitdir
 out=$(run_state "$pr" prune --repo "$pr" --apply); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=pruned plans=$wso_enc kept= checkouts=deadkey0000000000000000000000000000000000" ] && [ ! -d "$wso" ] && [ -d "$wsn" ] && [ ! -d "$STATE_ROOT/deadkey0000000000000000000000000000000000" ] && [ ! -e "$STATE_ROOT/deadkey0000000000000000000000000000000000.backend" ] && [ "$(git -C "$co_pr" log -1 --format=%s hyperpowers/state)" = "sdd: prune $(basename "$wso")" ] && ! git -C "$co_pr" ls-tree -r --name-only hyperpowers/state | grep -q "^plans/$(basename "$wso")/"; then pass "prune --apply removes the whole idle plan, space and all, in one commit and the dead checkout"; else fail "prune --apply removes the idle plan in one commit and the dead checkout (rc=$rc: $out)"; fi
 if [ -d "$STATE_ROOT/badkey0000000000000000000000000000000000" ]; then pass "a checkout whose .git file cannot be parsed is neither listed nor removed"; else fail "a checkout whose .git file cannot be parsed is neither listed nor removed"; fi
+if [ -d "$STATE_ROOT/relkey0000000000000000000000000000000000/.gitdir-here" ]; then pass "a relative gitdir resolves against its checkout and a live one is kept"; else fail "a relative gitdir resolves against its checkout and a live one is kept"; fi
+out=$(run_state "$pr" prune --repo "$pr" --days 08); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=listed" ]; then pass "--days 08 is read as decimal eight"; else fail "--days 08 is read as decimal eight (rc=$rc: $out)"; fi
 out=$(run_state "$pr" prune --repo "$pr" --days abc 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "--days rejects a non-numeric value with usage"; else fail "--days rejects a non-numeric value with usage (rc=$rc: $out)"; fi
 if [ "$(run_state "$rp" prune --repo "$rp" 2>/dev/null)" = "status=plain" ]; then pass "prune under the plain backend reports plain"; else fail "prune under the plain backend reports plain"; fi

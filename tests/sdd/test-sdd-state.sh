@@ -219,6 +219,26 @@ git -C "$PAIR_B" update-ref refs/heads/hyperpowers/state "$(git -C "$PAIR_B" rev
 err=$(materialize "$PAIR_B" demo-00000000 "$destB" 2>&1 >/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'hyperpowers.stateBranch' && [ ! -f "$destB/progress.md" ]; then pass "a foreign tip at the state name is refused by the plain fallback"; else fail "a foreign tip at the state name is refused by the plain fallback (rc=$rc: $err)"; fi
 
+# A descendant that removed the plan (finish) is authoritative over a stale
+# ancestor that still holds it, in either direction; a diverged pair that
+# disagrees about the plan is refused.
+initial_tree=$(git -C "$PAIR_B" rev-parse "$initial^{tree}")
+finished=$(git -C "$PAIR_B" commit-tree "$initial_tree" -p "$remote_tip" -m "finished: workspace removed")
+git -C "$PAIR_B" update-ref refs/heads/hyperpowers/state "$remote_tip"
+git -C "$PAIR_B" update-ref refs/remotes/origin/hyperpowers/state "$finished"
+rm -rf "$destB"
+materialize "$PAIR_B" demo-00000000 "$destB"; rc=$?
+if [ "$rc" -eq 0 ] && [ ! -e "$destB" ] && [ "$(cat "$STATE_ROOT/$keyB.backend")" = "plain source=$ahead" ]; then pass "a remote descendant that finished the plan is not undone by a stale local copy"; else fail "a remote descendant that finished the plan is not undone by a stale local copy (rc=$rc)"; fi
+git -C "$PAIR_B" update-ref refs/heads/hyperpowers/state "$finished"
+git -C "$PAIR_B" update-ref refs/remotes/origin/hyperpowers/state "$remote_tip"
+materialize "$PAIR_B" demo-00000000 "$destB"; rc=$?
+if [ "$rc" -eq 0 ] && [ ! -e "$destB" ]; then pass "a local descendant that finished the plan is not undone by a stale remote copy"; else fail "a local descendant that finished the plan is not undone by a stale remote copy (rc=$rc)"; fi
+git -C "$PAIR_B" update-ref refs/heads/hyperpowers/state "$diverged"
+git -C "$PAIR_B" update-ref refs/remotes/origin/hyperpowers/state "$finished"
+err=$(materialize "$PAIR_B" demo-00000000 "$destB" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q "$diverged" && printf '%s' "$err" | grep -q "$finished" && [ ! -e "$destB" ]; then pass "a diverged pair that disagrees about the plan is refused, naming both"; else fail "a diverged pair that disagrees about the plan is refused, naming both (rc=$rc: $err)"; fi
+git -C "$PAIR_B" update-ref refs/remotes/origin/hyperpowers/state "$remote_tip"
+
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

@@ -436,33 +436,39 @@ hp_ensure_checkout() {
 # workspace out of the state branch when the destination has no ledger yet.
 # The local branch and the remote-tracking branch are both candidates and
 # each must carry the sentinel (a foreign tip is exit 2). The source is the
-# tip that holds the plan; when both do, the descendant; when they have
-# diverged, exit 2 naming both, because choosing one would hide the other's
-# ledger lines. Records the source tip in the backend file. Callers hold the
+# descendant when both tips resolve, whatever it holds, so a finish on one
+# side is not undone by a stale copy on the other; when they have diverged
+# and either holds the plan, exit 2 naming both, because choosing one would
+# hide the other's ledger lines or revive a finished dossier. Records the source tip in the backend file. Callers hold the
 # repository lock. A plain fallback never starts an empty ledger over branch
 # state: a failed archive is exit 2, and the caller removes the half-written
 # destination.
 hp_materialize_plain() {
-  local repo=$1 ws=$2 dest=$3 br remote local_tip remote_tip tip root archive_rc tar_rc
+  local repo=$1 ws=$2 dest=$3 br remote local_tip remote_tip tip root archive_rc tar_rc local_has remote_has
   [ -f "$dest/progress.md" ] && return 0
   br=$(hp_state_branch "$repo"); remote=$(hp_state_remote "$repo")
   local_tip=$(git -C "$repo" rev-parse -q --verify "refs/heads/$br^{commit}" 2>/dev/null) || local_tip=""
   remote_tip=$(git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$br^{commit}" 2>/dev/null) || remote_tip=""
   if [ -n "$local_tip" ]; then hp_check_sentinel "$repo" "$local_tip" || return 2; fi
   if [ -n "$remote_tip" ]; then hp_check_sentinel "$repo" "$remote_tip" || return 2; fi
-  if [ -n "$local_tip" ] && ! git -C "$repo" cat-file -e "$local_tip:plans/$ws/progress.md" 2>/dev/null; then local_tip=""; fi
-  if [ -n "$remote_tip" ] && ! git -C "$repo" cat-file -e "$remote_tip:plans/$ws/progress.md" 2>/dev/null; then remote_tip=""; fi
+  # Ancestry before presence: a descendant that removed the plan (finish)
+  # is authoritative over an ancestor that still holds it.
   if [ -n "$local_tip" ] && [ -n "$remote_tip" ] && [ "$local_tip" != "$remote_tip" ]; then
     if git -C "$repo" merge-base --is-ancestor "$local_tip" "$remote_tip" 2>/dev/null; then tip=$remote_tip
     elif git -C "$repo" merge-base --is-ancestor "$remote_tip" "$local_tip" 2>/dev/null; then tip=$local_tip
     else
-      echo "sdd-dir: $br ($local_tip) and $remote/$br ($remote_tip) both hold plans/$ws and have diverged; reconcile them (sdd-state sync under the branch backend, or merge the state branch) before the plain fallback can materialize this plan" >&2
+      local_has=0; remote_has=0
+      git -C "$repo" cat-file -e "$local_tip:plans/$ws/progress.md" 2>/dev/null && local_has=1
+      git -C "$repo" cat-file -e "$remote_tip:plans/$ws/progress.md" 2>/dev/null && remote_has=1
+      if [ "$local_has" -eq 0 ] && [ "$remote_has" -eq 0 ]; then return 0; fi
+      echo "sdd-dir: $br ($local_tip) and $remote/$br ($remote_tip) have diverged and at least one of them holds plans/$ws; reconcile them (sdd-state sync under the branch backend, or merge the state branch) before the plain fallback can materialize this plan" >&2
       return 2
     fi
   else
     tip=${local_tip:-$remote_tip}
   fi
   [ -n "$tip" ] || return 0
+  git -C "$repo" cat-file -e "$tip:plans/$ws/progress.md" 2>/dev/null || return 0
   root=$(dirname "$(dirname "$dest")")
   mkdir -p "$dest"
   git -C "$repo" archive "$tip" "plans/$ws" | tar -x -C "$root"

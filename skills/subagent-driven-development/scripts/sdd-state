@@ -415,6 +415,161 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
   echo "status=none"
 }
 
+# --- finish ------------------------------------------------------------------
+# Task numbers that hold a claim but have no completion line in the ledger.
+open_claims() {
+  local d n open=""
+  for d in "$WSDIR"/claims/task-*/; do
+    [ -d "$d" ] || continue
+    n=${d%/}; n=${n##*/task-}
+    if ! grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md" 2>/dev/null; then open="$open,$n"; fi
+  done
+  printf '%s' "${open#,}"
+}
+# <dir> <tree-prefix>: remove a workspace directory only if it still equals
+# the committed tip. The directory is renamed aside first (atomic), so a
+# writer that opens the old path afterwards fails with ENOENT instead of
+# writing into a directory about to vanish; then every tracked file is
+# compared by object id with the renamed copy, and any extra file that is
+# not ignored counts as a change. Unchanged: deleted, returns 0. Changed:
+# renamed back, returns 1. <tree-prefix> is "<tip>:plans/<ws>"; an empty
+# prefix (plain backend) compares the ledger's size with SIZE_BEFORE.
+remove_verified() {
+  local dir=$1 prefix=$2 tomb f committed live
+  tomb="$(dirname "$dir")/.removing-$(basename "$dir")-$$"
+  mv "$dir" "$tomb" 2>/dev/null || return 1
+  if [ -z "$prefix" ]; then
+    if [ "$(wc -c < "$tomb/progress.md" 2>/dev/null | tr -d ' ')" != "${SIZE_BEFORE:-}" ]; then mv "$tomb" "$dir"; return 1; fi
+    # Something recreated the path while the copy was verified: keep what
+    # appeared beside the restored copy and report busy.
+    if [ -e "$dir" ]; then mv "$dir" "$dir.reappeared-$$" 2>/dev/null || true; mv "$tomb" "$dir"; return 1; fi
+    rm -rf "$tomb"; return 0
+  fi
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    committed=$(git -C "$CO" rev-parse "$prefix/$f" 2>/dev/null)
+    live=$(git -C "$CO" hash-object "$tomb/$f" 2>/dev/null)
+    if [ "$committed" != "$live" ]; then mv "$tomb" "$dir"; return 1; fi
+  done < <(git -C "$CO" ls-tree -r --name-only "$prefix" 2>/dev/null)
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    git -C "$CO" cat-file -e "$prefix/$f" 2>/dev/null && continue
+    if ! git -C "$CO" check-ignore -q "plans/x/$f" 2>/dev/null; then mv "$tomb" "$dir"; return 1; fi
+  done < <(cd "$tomb" && find . -type f | sed 's|^\./||')
+  # Something recreated the path while the copy was verified: keep what
+  # appeared beside the restored copy and report busy.
+  if [ -e "$dir" ]; then mv "$dir" "$dir.reappeared-$$" 2>/dev/null || true; mv "$tomb" "$dir"; return 1; fi
+  rm -rf "$tomb"
+  return 0
+}
+cmd_finish() {
+  local plan="" force=0 open last commit rc
+  while [ $# -gt 0 ]; do
+    case "$1" in --force) force=1; shift ;; -*) usage ;; *) plan=$1; shift ;; esac
+  done
+  [ -n "$plan" ] || usage
+  resolve_plan "$plan"
+  [ -d "$WSDIR" ] || { echo "status=none"; return 0; }
+  # The claims are read under the lock, so a claim published after a first
+  # look, or a takeover in flight, is seen before anything is removed.
+  hp_lock "$PLAN_DIR" || return 2
+  open=$(open_claims)
+  if [ -n "$open" ] && [ "$force" -eq 0 ]; then hp_unlock; echo "status=open-claims tasks=$open"; return 6; fi
+  if [ "$BACKEND" != branch ]; then
+    SIZE_BEFORE=$(wc -c < "$WSDIR/progress.md" 2>/dev/null | tr -d ' ')
+    if ! remove_verified "$WSDIR" ""; then hp_unlock; echo "status=busy"; return 3; fi
+    hp_unlock
+    echo "status=finished backend=plain"; return 0
+  fi
+  if type recover_apply >/dev/null 2>&1; then recover_apply || { hp_unlock; echo "status=error"; return 2; }; fi
+  hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: snapshot before finish" "plans/$WS" >/dev/null || { hp_unlock; echo "status=error"; return 2; }
+  last=$(git -C "$CO" rev-parse "refs/heads/$BRANCH")
+  # Controllers append without the lock: the removal renames the directory
+  # aside and verifies it against the snapshot before deleting it.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in finish-before-remove:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#finish-before-remove:}" ;; esac
+  if ! remove_verified "$WSDIR" "$last:plans/$WS"; then hp_unlock; echo "status=busy"; return 3; fi
+  commit=$(hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: finish" "plans/$WS"); rc=$?
+  hp_unlock
+  [ "$rc" -eq 0 ] || { echo "status=error"; return 2; }
+  [ ! -d "$WSDIR" ] || { echo "status=error"; return 2; }
+  echo "status=finished sha=${commit:0:7} last=$last push=$REMOTE/$BRANCH"
+}
+
+# --- prune -------------------------------------------------------------------
+# Lists, and with --apply removes, plan directories idle for N days (last
+# commit and newest file both older) and checkouts whose clone is gone. Never
+# runs implicitly.
+cmd_prune() {
+  local repo="" days=30 apply=0 repo_dir co br d name now cutoff c key list="" dead_list="" i tip
+  local plans=() paths=() dead=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --days) [ $# -ge 2 ] || usage; days=$2; shift 2 ;;
+      --apply) apply=1; shift ;;
+      --repo) [ $# -ge 2 ] || usage; repo=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$repo" ] || usage
+  repo_dir=$(hp_physical_dir "$repo") || usage
+  git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $repo" >&2; exit 2; }
+  if [ "$(hp_backend "$repo_dir")" = plain ]; then echo "status=plain"; return 0; fi
+  co=$(hp_checkout_path "$repo_dir"); br=$(hp_state_branch "$repo_dir")
+  now=$(date +%s); cutoff=$((now - days * 86400))
+  # <name> -> 0 when the plan directory is idle: last commit and newest file both older than N days.
+  idle() {
+    local lc
+    lc=$(git -C "$co" log -1 --format=%ct -- "plans/$1" 2>/dev/null)
+    [ -n "$lc" ] && [ "$lc" -lt "$cutoff" ] && [ -z "$(find "$co/plans/$1" -type f -mtime -"$days" 2>/dev/null | head -n 1)" ]
+  }
+  # With --apply the selection itself runs under the lock, and each candidate
+  # is revalidated right before its removal; a workspace that became active
+  # in between is kept and reported.
+  if [ "$apply" -eq 1 ]; then hp_lock "$repo_dir" || return 2; fi
+  if [ -e "$co/.git" ]; then
+    for d in "$co"/plans/*/; do
+      [ -d "$d" ] || continue
+      name=$(basename "$d")
+      idle "$name" || continue
+      plans[${#plans[@]}]=$name
+      paths[${#paths[@]}]="plans/$name"
+      list="$list,$(enc "$name")"
+    done
+  fi
+  for c in "$(hp_cache_root)"/state/*/; do
+    [ -f "$c.git" ] || continue
+    if [ ! -d "$(sed -n 's/^gitdir: //p' "$c.git")" ]; then dead[${#dead[@]}]=$(basename "$c"); dead_list="$dead_list,$(basename "$c")"; fi
+  done
+  list=${list#,}; dead_list=${dead_list#,}
+  if [ "$apply" -eq 0 ]; then echo "status=listed plans=$list checkouts=$dead_list"; return 0; fi
+  local removed=() removed_paths=() kept_list="" removed_list=""
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in prune-before-remove:*) printf 'concurrent write\n' >> "$co/${HYPERPOWERS_TEST_WRITER_AT#prune-before-remove:}" ;; esac
+  CO=$co
+  tip=$(git -C "$co" rev-parse "refs/heads/$br")
+  i=0
+  while [ "$i" -lt "${#plans[@]}" ]; do
+    name=${plans[$i]}
+    if idle "$name" && remove_verified "$co/plans/$name" "$tip:plans/$name"; then
+      removed[${#removed[@]}]=$name; removed_paths[${#removed_paths[@]}]="plans/$name"; removed_list="$removed_list,$(enc "$name")"
+    else
+      kept_list="$kept_list,$(enc "$name")"
+    fi
+    i=$((i + 1))
+  done
+  if [ "${#removed[@]}" -gt 0 ]; then
+    hp_commit_paths "$co" "$br" "sdd: prune ${removed[*]}" "${removed_paths[@]}" >/dev/null || { hp_unlock; echo "status=error"; return 2; }
+  fi
+  hp_unlock
+  list=${removed_list#,}; kept_list=${kept_list#,}
+  i=0
+  while [ "$i" -lt "${#dead[@]}" ]; do
+    key=${dead[$i]}
+    rm -rf "$(hp_cache_root)/state/$key" "$(hp_cache_root)/state/$key.backend" "$(hp_cache_root)/state/$key.lock" "$(hp_cache_root)/state/$key.lock-history" "$(hp_cache_root)/state/$key.fetched"
+    i=$((i + 1))
+  done
+  echo "status=pruned plans=$list kept=$kept_list checkouts=$dead_list"
+}
+
 # --- dispatch ----------------------------------------------------------------
 sub=${1:-}
 [ -n "$sub" ] || usage
@@ -423,5 +578,7 @@ case "$sub" in
   snapshot) cmd_snapshot "$@" ;;
   import) cmd_import "$@" ;;
   claim) cmd_claim "$@" ;;
+  finish) cmd_finish "$@" ;;
+  prune) cmd_prune "$@" ;;
   *) usage ;;
 esac

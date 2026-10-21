@@ -242,17 +242,23 @@ import_abort() {
   hp_unlock
   echo "status=import-failed from=$(enc "$1")"
 }
-# <ref> <dest>: 0 when the destination holds a faithful copy of the source:
+# <ref> <dest>: 0 when the destination holds a published copy of the source:
 # every entry of the source other than the ledger is present with the same
-# type and size, and the two ledgers agree from their second line on (the
-# first line is rewritten by import). Used to finish a cutover that was
-# interrupted after publication.
+# type and size, and the destination's ledger body (from line 2) is a prefix
+# of the source's: identical, or the source gained an append after the copy
+# was taken. Sets published_prefix_size to the number of source-ledger bytes
+# the destination already holds (its first line plus the shared body), so
+# import_finish reconciles only the remainder. Used to finish a cutover that
+# was interrupted after publication.
 import_published() {
-  local rest
+  local rest dbody head1
   rest=$(tree_manifest "$1" | grep -v ' \./progress\.md$')
   verify_subset "$rest" "$2" || return 1
   [ -f "$2/progress.md" ] || return 1
-  cmp -s <(tail -n +2 "$1/progress.md") <(tail -n +2 "$2/progress.md")
+  dbody=$(tail -n +2 "$2/progress.md" | wc -c | tr -d ' ')
+  cmp -s <(tail -n +2 "$2/progress.md") <(tail -n +2 "$1/progress.md" 2>/dev/null | head -c "$dbody") || return 1
+  head1=$(head -n 1 "$1/progress.md" | wc -c | tr -d ' ')
+  published_prefix_size=$((head1 + dbody))
 }
 # <candidate> <backup> <ref>: reconcile a ledger append that landed in the
 # source after it was copied (the ledger is append-only, so the new bytes
@@ -271,7 +277,7 @@ import_finish() {
   if [ "${now:-0}" -gt "$src_ledger_size" ]; then
     tail -c +"$((src_ledger_size + 1))" "$2/progress.md" >> "$dest/progress.md" || { import_abort "$1" "$2" "$3" "" ledger; return 2; }
   fi
-  if ! cmp -s <(tail -n +2 "$2/progress.md") <(tail -n +2 "$dest/progress.md") || [ "$(tree_manifest "$2" | grep -v ' \./progress\.md$')" != "$src_manifest_rest" ]; then
+  if ! cmp -s <(tail -n +2 "$2/progress.md" 2>/dev/null) <(tail -n +2 "$dest/progress.md") || [ "$(tree_manifest "$2" | grep -v ' \./progress\.md$')" != "$src_manifest_rest" ]; then
     echo "sdd-state: the legacy workspace changed while it was imported; nothing was moved, run import again" >&2
     import_abort "$1" "$2" "$3" "" ledger; return 2
   fi
@@ -285,7 +291,7 @@ import_finish() {
   return 0
 }
 cmd_import() {
-  local plan cache candidates c ref dest dest_phys seen="" stage e rel stage_manifest backup link rc restored src_ledger_size src_manifest_rest
+  local plan cache candidates c ref dest dest_phys seen="" stage e rel stage_manifest backup link rc restored src_ledger_size src_manifest_rest published_prefix_size
   [ $# -eq 1 ] || usage
   plan=$1
   command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 2; }
@@ -342,6 +348,9 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
         src_ledger_size=$(wc -c < "$ref/progress.md" | tr -d ' ')
         src_manifest_rest=$(tree_manifest "$ref" | grep -v ' \./progress\.md$')
         if import_published "$ref" "$dest"; then
+          # The destination already holds this prefix of the source ledger;
+          # import_finish reconciles whatever the source gained after it.
+          src_ledger_size=$published_prefix_size
           backup="$ref.importing-$$"
           mv "$ref" "$backup" 2>/dev/null || { hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
           import_finish "$c" "$backup" "$ref"; return $?

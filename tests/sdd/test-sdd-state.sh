@@ -597,6 +597,20 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=import-failed from=$legacy_i15" ] && [ 
 out=$(run_state "$i15" import docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i15" ] && [ -L "$legacy_i15" ] && [ "$(wc -l < "$wsi15/progress.md" | tr -d ' ')" = 1 ]; then pass "the next import moves the current source"; else fail "the next import moves the current source (rc=$rc: $out)"; fi
 
+# A cutover interrupted after publication whose source then gained a line
+# (the destination is a published prefix of the source) is finished with
+# the remainder reconciled, not reported as ledger-exists.
+i16="$TEST_ROOT/i16"; make_repo "$i16"; mkdir -p "$i16/docs"; : > "$i16/docs/plan.md"; git -C "$i16" add docs; git -C "$i16" commit -qm plan
+wsi16=$(ws_path "$i16" "$i16/docs/plan.md"); mkdir -p "$wsi16"
+legacy_i16="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i16")/plans/$(basename "$wsi16")"
+mkdir -p "$legacy_i16.importing-616"
+printf '# SDD ledger — plan: %s/docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\nTask 2: complete (commits 3333333..4444444, review clean)\n' "$i16" > "$legacy_i16.importing-616/progress.md"
+printf 'report\n' > "$legacy_i16.importing-616/task-1-report.md"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsi16/progress.md"
+printf 'report\n' > "$wsi16/task-1-report.md"
+out=$(run_state "$i16" import docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i16" ] && [ -L "$legacy_i16" ] && ! ls -d "$legacy_i16.importing-"* >/dev/null 2>&1 && [ "$(wc -l < "$wsi16/progress.md" | tr -d ' ')" = 3 ] && [ "$(tail -n 1 "$wsi16/progress.md")" = "Task 2: complete (commits 3333333..4444444, review clean)" ] && [ "$(head -n 1 "$wsi16/progress.md")" = "# SDD ledger — plan: docs/plan.md" ]; then pass "an interrupted cutover whose source gained a line is finished with the remainder reconciled"; else fail "an interrupted cutover whose source gained a line is finished with the remainder reconciled (rc=$rc: $out)"; fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

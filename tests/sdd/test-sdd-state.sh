@@ -772,5 +772,131 @@ out=$(run_state "$pr" prune --repo "$pr" --days abc 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "--days rejects a non-numeric value with usage"; else fail "--days rejects a non-numeric value with usage (rc=$rc: $out)"; fi
 if [ "$(run_state "$rp" prune --repo "$rp" 2>/dev/null)" = "status=plain" ]; then pass "prune under the plain backend reports plain"; else fail "prune under the plain backend reports plain"; fi
 echo ""
+echo "=== sync ==="
+make_pair p7
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+co_a="$STATE_ROOT/$(state_key "$PAIR_A")"; co_b="$STATE_ROOT/$(state_key "$PAIR_B")"
+out=$(run_state "$PAIR_A" sync docs/plan.md); rc=$?
+case "$out" in "status=absent local="???????" remote=none age="*) pass "a remote without the branch is absent and the orphan is created" ;; *) fail "a remote without the branch is absent and the orphan is created (rc=$rc: $out)" ;; esac
+if [ -f "$STATE_ROOT/$(state_key "$PAIR_A").fetched" ]; then pass "a successful fetch writes the stamp"; else fail "a successful fetch writes the stamp"; fi
+wsa=$(run_sdd_dir "$PAIR_A" docs/plan.md)
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa/progress.md"
+printf 'report A\n' > "$wsa/task-1-report.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
+case "$out" in "status=created local="???????" remote="???????" age="*) pass "the second host creates its checkout from the remote" ;; *) fail "the second host creates its checkout from the remote (rc=$rc: $out)" ;; esac
+wsb="$co_b/plans/$(basename "$wsa")"
+if [ "$(sed -n 2p "$wsb/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "the ledger arrived on the second host"; else fail "the ledger arrived on the second host"; fi
+if [ "$(run_state "$PAIR_B" sync docs/plan.md | cut -d' ' -f1)" = "status=up-to-date" ]; then pass "a second sync is up-to-date"; else fail "a second sync is up-to-date"; fi
+printf 'Task 2: complete (commits 3333333..4444444, review clean)\n' >> "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+out=$(run_state "$PAIR_B" sync docs/plan.md)
+if [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(sed -n 3p "$wsb/progress.md")" = "Task 2: complete (commits 3333333..4444444, review clean)" ]; then pass "a behind checkout fast-forwards, after private-index commits left its index stale"; else fail "a behind checkout fast-forwards ($out)"; fi
+printf 'Task 3: complete (commits 5555555..6666666, review clean)\n' >> "$wsb/progress.md"
+run_state "$PAIR_B" snapshot docs/plan.md >/dev/null
+out=$(run_state "$PAIR_B" sync docs/plan.md)
+if [ "${out%% *}" = "status=ahead" ]; then pass "an unpushed snapshot reports ahead"; else fail "an unpushed snapshot reports ahead ($out)"; fi
+git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
+printf 'note from A while behind\n' >> "$wsa/progress.md"
+out=$(run_state "$PAIR_A" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=merged" ] && grep -q '^Task 3: complete' "$wsa/progress.md" && grep -q '^note from A while behind$' "$wsa/progress.md" && ! grep -q '^<<<<<<<' "$wsa/progress.md" && [ "$(git -C "$co_a" log -1 --format=%P hyperpowers/state | wc -w | tr -d ' ')" = 2 ]; then pass "behind with pending ledger edits ends merged with both sides' lines and two parents"; else fail "behind with pending ledger edits ends merged (rc=$rc: $out)"; fi
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+printf 'report edited on A\n' > "$wsa/task-1-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+printf 'report edited on B\n' > "$wsb/task-1-report.md"; run_state "$PAIR_B" snapshot docs/plan.md >/dev/null
+out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 3 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f1)" = "status=diverged" ] && [ "$(printf '%s\n' "$out" | sed -n 2p)" = "merge=git -C $co_b merge origin/hyperpowers/state" ] && [ "$(cat "$wsb/task-1-report.md")" = "report edited on B" ]; then pass "conflicting report edits end diverged with the merge command and nothing changed"; else fail "conflicting report edits end diverged (rc=$rc: $out)"; fi
+git -C "$co_b" -c user.name=t -c user.email=t@example.com merge -q -m "resolve" -X ours origin/hyperpowers/state >/dev/null 2>&1
+if [ -z "$(git -C "$co_b" status --porcelain)" ] && [ "$(git -C "$co_b" log -1 --format=%P hyperpowers/state | wc -w | tr -d ' ')" = 2 ]; then pass "the human-run merge resolves the conflict (ours) and the ledger needs no markers"; else fail "the human-run merge resolves the conflict"; fi
+git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+
+# A live writer during reconciliation: a ledger line appended while apply is
+# held survives; a report that keeps changing ends busy.
+printf 'Task 4: complete (commits 7777777..8888888, review clean)\n' >> "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+: > "$co_b/.sync-pause"
+( cd "$PAIR_B" && HYPERPOWERS_TEST_PAUSE_AT=sync-before-apply bash "$SDD_STATE" sync docs/plan.md > "$TEST_ROOT/p7.sync.out" 2>/dev/null ) &
+sync_pid=$!
+sleep 1
+printf 'appended during sync\n' >> "$wsb/progress.md"
+rm -f "$co_b/.sync-pause"
+wait "$sync_pid"
+if [ "$(cut -d' ' -f1 "$TEST_ROOT/p7.sync.out")" = "status=fast-forwarded" ] && grep -q '^Task 4: complete' "$wsb/progress.md" && grep -q '^appended during sync$' "$wsb/progress.md" && [ "$(grep -c '^Task 4: complete' "$wsb/progress.md")" -eq 1 ]; then pass "a ledger line appended while apply is held survives the fast-forward, and the remote line lands once"; else fail "a ledger line appended while apply is held survives the fast-forward ($(cat "$TEST_ROOT/p7.sync.out"))"; fi
+# The held-apply line is still local: publish it so the next remote change is
+# a plain fast-forward for this host.
+settle_pair() { run_state "$PAIR_B" snapshot docs/plan.md >/dev/null; run_state "$PAIR_B" sync docs/plan.md >/dev/null; git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null; run_state "$PAIR_A" sync docs/plan.md >/dev/null; }
+settle_pair
+# A write after the status check: the ledger is appended to, never replaced,
+# so a line written at the last moment is kept too.
+printf 'Task 4b: complete (commits bbbbbbb..ccccccc, review clean)\n' >> "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-before-apply:plans/$(basename "$wsa")/progress.md" bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && grep -q '^concurrent write$' "$wsb/progress.md" && grep -q '^Task 4b: complete' "$wsb/progress.md"; then pass "a ledger line written during apply is kept beside the remote lines"; else fail "a ledger line written during apply is kept beside the remote lines (rc=$rc: $out)"; fi
+settle_pair
+printf 'Task 5: complete (commits 9999999..aaaaaaa, review clean)\n' >> "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" snapshot docs/plan.md >/dev/null
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-before-apply:plans/$(basename "$wsa")/task-1-report.md" bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 3 ] && [ "${out%% *}" = "status=busy" ]; then pass "a report that keeps changing across three attempts ends busy"; else fail "a report that keeps changing across three attempts ends busy (rc=$rc: $out)"; fi
+
+# The busy attempts left local snapshots behind; stand in for the human
+# partner discarding them, so the next remote change is a plain fast-forward.
+git -C "$co_b" reset -q --hard origin/hyperpowers/state
+# A second plan created on A appears on B, parent directory and all.
+: > "$PAIR_A/docs/second.md"; git -C "$PAIR_A" add docs/second.md; git -C "$PAIR_A" commit -qm second; git -C "$PAIR_A" push -q origin main 2>/dev/null
+ws2a=$(run_sdd_dir "$PAIR_A" docs/second.md); printf '# SDD ledger — plan: docs/second.md\n' > "$ws2a/progress.md"
+run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+out=$(run_state "$PAIR_B" sync docs/plan.md)
+if [ "${out%% *}" = "status=fast-forwarded" ] && [ -f "$co_b/plans/$(basename "$ws2a")/progress.md" ]; then pass "a plan added on the other host is materialized, parent directory included"; else fail "a plan added on the other host is materialized ($out)"; fi
+
+# A crash after the ref moved: the next sync finishes the apply instead of
+# snapshotting stale files as a revert.
+printf 'Task 5b: complete (commits fffffff..1111111, review clean)\n' >> "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && ! grep -q '^Task 5b: complete' "$wsb/progress.md"; then pass "the crash seam stops after the ref moved, marker left"; else fail "the crash seam stops after the ref moved (rc=$rc)"; fi
+tip_before=$(git -C "$co_b" rev-parse hyperpowers/state)
+out=$(run_state "$PAIR_B" sync docs/plan.md)
+if [ "${out%% *}" = "status=up-to-date" ] && grep -q '^Task 5b: complete' "$wsb/progress.md" && [ ! -f "$co_b/.sync-applying" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$tip_before" ]; then pass "the next sync recovers the interrupted apply without a revert commit"; else fail "the next sync recovers the interrupted apply without a revert commit ($out)"; fi
+
+# A remote finish racing a local writer: refused, nothing changed. The seam
+# writes after the pending check and right before the rename.
+printf 'Task 6: complete (commits ddddddd..eeeeeee, review clean)\n' >> "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+run_state "$PAIR_A" finish docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-before-delete:plans/$(basename "$wsa")/progress.md" bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 3 ] && [ "${out%% *}" = "status=remote-finished" ] && grep -q "plans=$(basename "$wsa")" < <(printf '%s\n' "$out") && [ -f "$wsb/progress.md" ] && grep -q '^concurrent write$' "$wsb/progress.md" && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" != "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "a line written after the check and before the rename still makes the remote finish refuse, ledger and ref intact"; else fail "a remote finish racing a local ledger write is refused (rc=$rc: $out)"; fi
+if ( cd "$co_b" && printf 'late\n' >> "plans/.removing-probe-0/progress.md" ) 2>/dev/null; then fail "a write to a renamed-away path fails loudly"; else pass "a write to a renamed-away path fails loudly (ENOENT), never silently"; fi
+run_state "$PAIR_B" snapshot docs/plan.md >/dev/null
+out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 3 ] && [ "${out%% *}" = "status=diverged" ]; then pass "after snapshotting the local line the race is an ordinary divergence"; else fail "after snapshotting the local line the race is an ordinary divergence (rc=$rc: $out)"; fi
+git -C "$co_b" merge --abort >/dev/null 2>&1 || true
+wsa=$(run_sdd_dir "$PAIR_A" docs/plan.md); run_state "$PAIR_A" sync docs/plan.md >/dev/null
+
+# Offline outcomes and the explicit override.
+off="$TEST_ROOT/hostA/p7-off"; git clone -q --single-branch -b main "$PAIR_REMOTE" "$off" 2>/dev/null
+git -C "$off" remote set-url origin "$TEST_ROOT/does-not-exist.git"
+out=$(run_state "$off" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 1 ] && [ "${out%% *}" = "status=offline-no-state" ]; then pass "a fresh clone that cannot fetch reports offline-no-state"; else fail "a fresh clone that cannot fetch reports offline-no-state (rc=$rc: $out)"; fi
+if run_sdd_dir "$off" docs/plan.md >/dev/null 2>&1; then fail "sdd-dir refuses to invent a dossier on that host"; else pass "sdd-dir refuses to invent a dossier on that host"; fi
+out=$(run_state "$off" sync docs/plan.md --assume-absent); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=assumed-absent" ] && [ -f "$STATE_ROOT/$(state_key "$off").fetched" ] && [ -e "$STATE_ROOT/$(state_key "$off")/.git" ]; then pass "--assume-absent writes the stamp and creates the orphan"; else fail "--assume-absent writes the stamp and creates the orphan (rc=$rc: $out)"; fi
+out=$(run_state "$off" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 1 ] && [ "${out%% *}" = "status=offline" ]; then pass "a later failed fetch with a local branch reports offline"; else fail "a later failed fetch with a local branch reports offline (rc=$rc: $out)"; fi
+norem="$TEST_ROOT/norem"; make_repo "$norem"; mkdir -p "$norem/docs"; : > "$norem/docs/plan.md"; git -C "$norem" add docs; git -C "$norem" commit -qm plan
+out=$(run_state "$norem" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=no-remote" ]; then pass "no remote reports no-remote"; else fail "no remote reports no-remote (rc=$rc: $out)"; fi
+if [ "$(run_state "$rp" sync docs/plan.md 2>/dev/null)" = "status=plain" ]; then pass "sync under the plain backend reports plain"; else fail "sync under the plain backend reports plain"; fi
+
+# Cross-repository: sync resolves the plan's repository, not the cwd's.
+other_cwd="$TEST_ROOT/other-cwd"; make_repo "$other_cwd"
+out=$(cd "$other_cwd" && bash "$SDD_STATE" sync "$PAIR_A/docs/plan.md"); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -d "$STATE_ROOT/$(state_key "$other_cwd")" ]; then pass "sync from another repository's cwd touches only the plan repository"; else fail "sync from another repository's cwd touches only the plan repository (rc=$rc: $out)"; fi
+echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

@@ -96,6 +96,7 @@ cmd_snapshot() {
   [ -d "$WSDIR" ] || { echo "status=none"; return 0; }
   [ -n "$msg" ] || msg="sdd $SLUG: snapshot $(hp_utc_now)"
   hp_lock "$PLAN_DIR" || return 2
+  if type recover_apply >/dev/null 2>&1; then recover_apply || { hp_unlock; echo "status=error"; return 2; }; fi
   out=$(hp_commit_paths "$CO" "$BRANCH" "$msg" "plans/$WS"); rc=$?
   hp_unlock
   [ "$rc" -eq 0 ] || { echo "status=error"; return 2; }
@@ -673,6 +674,206 @@ cmd_prune() {
   echo "status=pruned plans=$list kept=$kept_list checkouts=$dead_list"
 }
 
+# --- sync --------------------------------------------------------------------
+tip_of() { git -C "$1" rev-parse -q --verify "$2^{commit}" 2>/dev/null || true; }
+short() { if [ -n "$1" ]; then printf '%s' "${1:0:7}"; else printf 'none'; fi; }
+age_of() { # <checkout> <sha>... -> seconds since the newest of them
+  local co=$1 newest=0 t s
+  shift
+  for s in "$@"; do
+    [ -n "$s" ] || continue
+    t=$(git -C "$co" log -1 --format=%ct "$s" 2>/dev/null || echo 0)
+    [ "$t" -gt "$newest" ] && newest=$t
+  done
+  if [ "$newest" -gt 0 ]; then echo $(( $(date +%s) - newest )); else echo 0; fi
+}
+# Commit every plan directory with pending tracked changes, so the working
+# tree equals the local tip and nothing local can be lost.
+snapshot_pending() {
+  local d name
+  for d in "$CO"/plans/*/; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    [ -n "$(git -C "$CO" status --porcelain -- "plans/$name" 2>/dev/null)" ] || continue
+    hp_commit_paths "$CO" "$BRANCH" "sdd $name: snapshot $(hp_utc_now)" "plans/$name" >/dev/null || return 2
+  done
+}
+# apply_files <S> <target>: bring the working tree from S to target without
+# ever overwriting a ledger. Added or modified ledgers get the target's new
+# lines appended; other files are checked out; files the target deletes are
+# removed, a ledger among them through remove_verified. Any failure returns 2;
+# a changed ledger the target deletes returns 6.
+apply_files() {
+  local S=$1 target=$2 path dir
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    mkdir -p "$(dirname "$CO/$path")" || return 2
+    case "$path" in
+      plans/*/progress.md)
+        if [ -f "$CO/$path" ]; then
+          git -C "$CO" diff -U0 "$S" "$target" -- "$path" | sed -n '/^+++/d; s/^+//p' >> "$CO/$path" || return 2
+        else
+          git -C "$CO" show "$target:$path" > "$CO/$path" || return 2
+        fi ;;
+      *) git -C "$CO" checkout -q "$target" -- "$path" || return 2 ;;
+    esac
+  done < <(git -C "$CO" diff --name-only --diff-filter=AM "$S" "$target")
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in
+      plans/*/progress.md)
+        dir=$(dirname "$CO/$path")
+        if [ -d "$dir" ]; then remove_verified "$dir" "$S:plans/$(basename "$dir")" || return 6; fi ;;
+      *) rm -f "$CO/$path" ;;
+    esac
+  done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
+  return 0
+}
+# recover_apply: finish an apply that was interrupted after the ref moved.
+recover_apply() {
+  local S target
+  [ -f "$CO/.sync-applying" ] || return 0
+  read -r S target < "$CO/.sync-applying"
+  if [ "$(tip_of "$CO" "refs/heads/$BRANCH")" = "$target" ]; then
+    git -C "$CO" reset -q 2>/dev/null
+    apply_files "$S" "$target" || return 2
+  fi
+  rm -f "$CO/.sync-applying"
+}
+# apply_target <S> <target>: 0 applied, 5 retry (a non-ledger file changed
+# meanwhile), 6 remote-finished (a ledger the target deletes changed here),
+# 2 error. Controllers write without the lock, so the working tree is live.
+apply_target() {
+  local S=$1 target=$2 pending line status path res
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-apply:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-apply:}" ;; esac
+  if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = sync-before-apply ]; then
+    while [ -e "$CO/.sync-pause" ]; do sleep 0.1; done
+  fi
+  pending=$(git -C "$CO" status --porcelain -- plans/ 2>/dev/null)
+  if [ -n "$pending" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      status=${line:0:2}; path=${line:3}
+      case "$status|$path" in
+        " M|plans/"*"/progress.md") ;;
+        *) return 5 ;;
+      esac
+    done < <(printf '%s\n' "$pending")
+  fi
+  # Ledgers the target deletes are a remote finish: rename, verify, delete
+  # each one first, before the ref moves, so a line written up to the rename
+  # is caught and nothing has changed when it is.
+  REMOTE_FINISHED=""
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-delete:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-delete:}" ;; esac
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in plans/*/progress.md) ;; *) continue ;; esac
+    if [ -d "$(dirname "$CO/$path")" ] && ! remove_verified "$(dirname "$CO/$path")" "$S:plans/$(basename "$(dirname "$path")")"; then
+      REMOTE_FINISHED="$REMOTE_FINISHED,$(enc "$(basename "$(dirname "$path")")")"
+    fi
+  done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
+  if [ -n "$REMOTE_FINISHED" ]; then REMOTE_FINISHED=${REMOTE_FINISHED#,}; return 6; fi
+  printf '%s %s\n' "$S" "$target" > "$CO/.sync-applying"
+  git -C "$CO" update-ref -m "sdd sync" "refs/heads/$BRANCH" "$target" "$S" 2>/dev/null || { rm -f "$CO/.sync-applying"; return 5; }
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-update-ref ]; then hp_unlock; exit 99; fi
+  git -C "$CO" reset -q 2>/dev/null
+  apply_files "$S" "$target"; res=$?
+  [ "$res" -eq 0 ] || return "$res"
+  rm -f "$CO/.sync-applying"
+  return 0
+}
+cmd_sync() {
+  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure
+  REMOTE_FINISHED=""
+  # remove_verified (Task 6) and recover_apply live in this file; sync, finish, handoff and snapshot share them.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --assume-absent) assume=1; shift ;;
+      --repo) [ $# -ge 2 ] || usage; repo=$2; shift 2 ;;
+      -*) usage ;;
+      *) plan=$1; shift ;;
+    esac
+  done
+  if [ -n "$plan" ]; then
+    resolve_plan_basic "$plan"
+  elif [ -n "$repo" ]; then
+    PLAN_DIR=$(hp_physical_dir "$repo") || usage
+    git -C "$PLAN_DIR" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $repo" >&2; exit 2; }
+    BRANCH=$(hp_state_branch "$PLAN_DIR"); REMOTE=$(hp_state_remote "$PLAN_DIR"); CO=$(hp_checkout_path "$PLAN_DIR")
+  else
+    usage
+  fi
+  if [ "$(hp_backend "$PLAN_DIR")" = plain ]; then echo "status=plain"; return 0; fi
+  stamp=$(hp_stamp_path "$PLAN_DIR")
+  mkdir -p "$(dirname "$stamp")"
+  # Outcomes that end before reconciliation still ensure the checkout.
+  settle() { # <status> <exit>
+    ensure=$(hp_ensure_checkout "$PLAN_DIR") || return 2
+    if [ "${ensure%% *}" != branch ]; then echo "status=plain"; return 0; fi
+    S=$(tip_of "$CO" "refs/heads/$BRANCH")
+    echo "status=$1 local=$(short "$S") remote=none age=$(age_of "$CO" "$S")"
+    return "$2"
+  }
+  if [ "$assume" -eq 1 ]; then : > "$stamp"; settle assumed-absent 0; return $?; fi
+  if ! hp_has_remote "$PLAN_DIR"; then : > "$stamp"; settle no-remote 0; return $?; fi
+  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 git -C "$PLAN_DIR" fetch -q "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?
+  if [ "$rc" -ne 0 ]; then
+    case "$err" in
+      *"couldn't find remote ref"*) : > "$stamp"; settle absent 0; return $? ;;
+    esac
+    S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")
+    if [ -n "$S" ]; then
+      hp_ensure_checkout "$PLAN_DIR" >/dev/null 2>&1 || true
+      echo "status=offline local=$(short "$S") remote=$(short "$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")") age=$(age_of "$PLAN_DIR" "$S")"
+      return 1
+    fi
+    echo "status=offline-no-state local=none remote=none age=0"
+    return 1
+  fi
+  : > "$stamp"
+  had_co=0; [ -e "$CO/.git" ] && had_co=1
+  ensure=$(hp_ensure_checkout "$PLAN_DIR") || return 2
+  if [ "${ensure%% *}" != branch ]; then echo "status=plain"; return 0; fi
+  [ "$had_co" -eq 1 ] || created=created
+  R=$(tip_of "$CO" "refs/remotes/$REMOTE/$BRANCH")
+  hp_lock "$PLAN_DIR" || return 2
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  for _ in 1 2 3; do
+    snapshot_pending || { hp_unlock; echo "status=error"; return 2; }
+    S=$(tip_of "$CO" "refs/heads/$BRANCH")
+    if [ "$S" = "$R" ]; then
+      hp_unlock; echo "status=${created:-up-to-date} local=$(short "$S") remote=$(short "$R") age=$(age_of "$CO" "$S")"; return 0
+    fi
+    if git -C "$CO" merge-base --is-ancestor "$S" "$R" 2>/dev/null; then
+      target=$R; kind=fast-forwarded
+    elif git -C "$CO" merge-base --is-ancestor "$R" "$S" 2>/dev/null; then
+      hp_unlock; echo "status=ahead local=$(short "$S") remote=$(short "$R") age=$(age_of "$CO" "$S" "$R")"; return 0
+    else
+      if hp_git_version_at_least 2 38 && mt=$(git -C "$CO" merge-tree --write-tree "$S" "$R" 2>/dev/null); then
+        tree=$(printf '%s\n' "$mt" | head -n 1)
+        target=$(printf 'sdd: merge %s into %s\n' "$(short "$R")" "$(short "$S")" | hp_git_id "$CO" commit-tree "$tree" -p "$S" -p "$R") || { hp_unlock; echo "status=error"; return 2; }
+        kind=merged
+      else
+        hp_unlock
+        echo "status=diverged local=$(short "$S") remote=$(short "$R") age=$(age_of "$CO" "$S" "$R")"
+        echo "merge=git -C $CO merge $REMOTE/$BRANCH"
+        return 3
+      fi
+    fi
+    apply_target "$S" "$target"; res=$?
+    if [ "$res" -eq 0 ]; then
+      hp_unlock; echo "status=$kind local=$(short "$target") remote=$(short "$R") age=$(age_of "$CO" "$target")"; return 0
+    fi
+    if [ "$res" -eq 6 ]; then
+      hp_unlock; echo "status=remote-finished plans=$REMOTE_FINISHED local=$(short "$S") remote=$(short "$R") age=$(age_of "$CO" "$S" "$R")"; return 3
+    fi
+    [ "$res" -eq 5 ] || { hp_unlock; echo "status=error"; return 2; }
+  done
+  hp_unlock
+  echo "status=busy local=$(short "$S") remote=$(short "$R") age=$(age_of "$CO" "$S" "$R")"
+  return 3
+}
+
 # --- dispatch ----------------------------------------------------------------
 sub=${1:-}
 [ -n "$sub" ] || usage
@@ -683,5 +884,6 @@ case "$sub" in
   claim) cmd_claim "$@" ;;
   finish) cmd_finish "$@" ;;
   prune) cmd_prune "$@" ;;
+  sync) cmd_sync "$@" ;;
   *) usage ;;
 esac

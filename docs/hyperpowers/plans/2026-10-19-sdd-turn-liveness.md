@@ -4369,20 +4369,28 @@ Run it first and see it fail (a resume is not yet a launch), then make the `live
 ```bash
 #!/usr/bin/env bash
 # Records the field baseline (spec Design §3): every Zed SDD session event from
-# 2026-07-01 up to now, which is before any 6.17.0 install, plus the
+# 2026-07-01 to a fixed cutoff, which is before any 6.17.0 install, plus the
 # plugin-install worktree's reflog for the after-window. Counts only.
+# field.py classifies an event from later records (a task's completion, the
+# transcript's end, the session's SDD invocation), so a cutoff at the moment of
+# capture drifts while sessions keep writing. The cutoff sits more than a day
+# before capture: the work open at it has finished and sessions started after
+# it are out, and two runs must agree before the result is kept.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-until="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+until="2026-10-20T00:00:00+00:00"
+recheck="${TMPDIR:-/tmp}/field-baseline-recheck.json"
 git -C /Users/johnss51/Development/agents/hyperpowers/.worktrees/plugin-install reflog --date=iso-strict HEAD > "$here/reflog-plugin-install.txt"
 python3 "$here/../field.py" --since 2026-07-01T00:00:00+00:00 --until "$until" --out "$here/baseline.json" > "$here/baseline.txt"
+python3 "$here/../field.py" --since 2026-07-01T00:00:00+00:00 --until "$until" --out "$recheck" > /dev/null
+cmp -s "$here/baseline.json" "$recheck" || { echo "two runs of the fixed window disagree" >&2; exit 1; }
 echo "baseline window ends $until" >> "$here/baseline.txt"
 ```
 
 - [ ] **Step 2: Run it**
 
-Run (tracked background, timeout 3600000; it reads several gigabytes): `bash evidence/2026-10-19-sdd-turn-liveness/field/run-baseline.sh`
-Expected: `baseline.json` with `sessions` ≥ 10 and `boundaries` > 0; `baseline.txt` ends with the window line. If `sessions` is below 10 or `boundaries` is 0, stop and report: the classifier disagrees with the investigation's 14 sessions, which is a defect to fix in Task 6's module before any campaign.
+Run (tracked background, timeout 3600000; it reads several gigabytes, twice): `bash evidence/2026-10-19-sdd-turn-liveness/field/run-baseline.sh`
+Expected: exit 0 (the two runs agree); `baseline.json` with `sessions` ≥ 10 and `boundaries` > 0; `baseline.txt` ends with `baseline window ends 2026-10-20T00:00:00+00:00`. If the two runs disagree, stop and report which keys differ. If `sessions` is below 10 or `boundaries` is 0, stop and report: the classifier disagrees with the investigation's 14 sessions, which is a defect to fix in Task 6's module before any campaign.
 
 - [ ] **Step 3: Check the output carries no text**
 

@@ -408,9 +408,16 @@ hp_ensure_checkout() {
   if [ -n "${HYPERPOWERS_TEST_FAIL_WORKTREE_ADD:-}" ]; then
     rc=1
   else
+    # Test hook: move a ref between the validation and the add (REF=SHA).
+    if [ -n "${HYPERPOWERS_TEST_SWAP_REF:-}" ]; then git -C "$repo" update-ref "${HYPERPOWERS_TEST_SWAP_REF%%=*}" "${HYPERPOWERS_TEST_SWAP_REF#*=}"; fi
     case "$mode" in
       local) git -C "$repo" worktree add -q "$tmp" "$br" >/dev/null 2>&1 || rc=$? ;;
-      remote) git -C "$repo" worktree add -q --track -b "$br" "$tmp" "$remote/$br" >/dev/null 2>&1 || rc=$? ;;
+      remote)
+        # From the validated commit, never the ref: a fetch outside the lock
+        # may have moved the remote-tracking ref since the sentinel check.
+        if git -C "$repo" worktree add -q -b "$br" "$tmp" "$tip" >/dev/null 2>&1; then
+          git -C "$tmp" branch -q --set-upstream-to="$remote/$br" "$br" >/dev/null 2>&1 || rc=$?
+        else rc=$?; fi ;;
       orphan) hp_add_orphan_worktree "$repo" "$tmp" "$br" || rc=$? ;;
     esac
   fi
@@ -426,6 +433,9 @@ hp_ensure_checkout() {
     hp_commit_paths "$tmp" "$br" "hyperpowers state: initial layout" . >/dev/null || { hp_unlock; return 2; }
   fi
   if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = after-initial-commit ]; then hp_unlock; exit 99; fi
+  # Whatever moved under the add, the checkout that becomes live is the one
+  # whose own HEAD was verified.
+  hp_verify_checkout "$repo" "$tmp" "$br" || { git -C "$repo" worktree remove --force "$tmp" >/dev/null 2>&1 || rm -rf "$tmp"; hp_unlock; return 2; }
   git -C "$repo" worktree move "$tmp" "$co" >/dev/null 2>&1 || { echo "sdd-dir: git worktree move of $tmp to $co failed; remove whatever occupies $co and run again" >&2; hp_unlock; return 2; }
   hp_write_backend "$repo" branch || { hp_unlock; return 2; }
   hp_unlock

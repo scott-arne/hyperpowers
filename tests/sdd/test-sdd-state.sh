@@ -239,6 +239,28 @@ err=$(materialize "$PAIR_B" demo-00000000 "$destB" 2>&1 >/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q "$diverged" && printf '%s' "$err" | grep -q "$finished" && [ ! -e "$destB" ]; then pass "a diverged pair that disagrees about the plan is refused, naming both"; else fail "a diverged pair that disagrees about the plan is refused, naming both (rc=$rc: $err)"; fi
 git -C "$PAIR_B" update-ref refs/remotes/origin/hyperpowers/state "$remote_tip"
 
+# A ref that moves between the sentinel check and the worktree add cannot
+# smuggle a foreign commit in: remote mode creates from the validated
+# commit, and every mode verifies the temporary checkout before the move.
+make_pair p3
+: > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+ensure "$PAIR_A" >/dev/null
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
+validated=$(git -C "$PAIR_B" rev-parse origin/hyperpowers/state)
+foreign=$(git -C "$PAIR_B" rev-parse main)
+out=$(ensure "$PAIR_B" "HYPERPOWERS_TEST_SWAP_REF=refs/remotes/origin/hyperpowers/state=$foreign" 2>/dev/null); rc=$?
+coB3="$STATE_ROOT/$(state_key "$PAIR_B")"
+if [ "$rc" -eq 0 ] && [ "$out" = "branch $coB3" ] && [ "$(git -C "$PAIR_B" rev-parse hyperpowers/state)" = "$validated" ] && [ "$(git -C "$PAIR_B" config branch.hyperpowers/state.remote)" = origin ]; then pass "remote mode creates from the validated commit when the remote ref moves under it"; else fail "remote mode creates from the validated commit when the remote ref moves under it (rc=$rc, '$out', branch=$(git -C "$PAIR_B" rev-parse hyperpowers/state 2>/dev/null))"; fi
+git -C "$PAIR_B" update-ref refs/remotes/origin/hyperpowers/state "$validated"
+# Local mode: the local branch is moved to a foreign commit under the add;
+# the temporary checkout fails verification and nothing becomes live.
+r10="$TEST_ROOT/r10"; make_repo "$r10"
+ensure "$r10" >/dev/null; co10="$STATE_ROOT/$(state_key "$r10")"
+git -C "$r10" worktree remove --force "$co10"
+err=$(ensure "$r10" "HYPERPOWERS_TEST_SWAP_REF=refs/heads/hyperpowers/state=$(git -C "$r10" rev-parse main)" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'hyperpowers.stateBranch' && [ ! -e "$co10/.git" ] && ! ls -d "$co10.tmp-"* >/dev/null 2>&1 && [ "$(registrations "$r10")" -eq 0 ]; then pass "a local branch moved under the add fails verification before the move"; else fail "a local branch moved under the add fails verification before the move (rc=$rc: $err)"; fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

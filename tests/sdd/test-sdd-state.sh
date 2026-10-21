@@ -540,6 +540,37 @@ legacy_i10="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i10")/plans/$(basename
 mkdir -p "$legacy_i10.importing-424242"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$legacy_i10.importing-424242/progress.md"
 out=$(run_state "$i10" import docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i10" ] && [ -L "$legacy_i10" ] && [ "$(sed -n 2p "$wsi10/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ] && ! ls -d "$legacy_i10.importing-"* >/dev/null 2>&1; then pass "an interrupted import's backup is recovered and imported on the next call"; else fail "an interrupted import's backup is recovered and imported on the next call (rc=$rc: $out)"; fi
+# A cutover interrupted after publication (destination complete, source still
+# in its backup) is finished on the next call; one whose destination differs
+# from the source is left as ledger-exists with the source restored.
+i11="$TEST_ROOT/i11"; make_repo "$i11"; mkdir -p "$i11/docs"; : > "$i11/docs/plan.md"; git -C "$i11" add docs; git -C "$i11" commit -qm plan
+wsi11=$(ws_path "$i11" "$i11/docs/plan.md"); mkdir -p "$wsi11"
+legacy_i11="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i11")/plans/$(basename "$wsi11")"
+mkdir -p "$legacy_i11.importing-555"
+printf '# SDD ledger — plan: %s/docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' "$i11" > "$legacy_i11.importing-555/progress.md"
+printf 'report\n' > "$legacy_i11.importing-555/task-1-report.md"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsi11/progress.md"
+printf 'report\n' > "$wsi11/task-1-report.md"
+out=$(run_state "$i11" import docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i11" ] && [ -L "$legacy_i11" ] && ! ls -d "$legacy_i11.importing-"* >/dev/null 2>&1 && [ "$(head -n 1 "$wsi11/progress.md")" = "# SDD ledger — plan: docs/plan.md" ]; then pass "a cutover interrupted after publication is finished on the next call"; else fail "a cutover interrupted after publication is finished on the next call (rc=$rc: $out)"; fi
+i12="$TEST_ROOT/i12"; make_repo "$i12"; mkdir -p "$i12/docs"; : > "$i12/docs/plan.md"; git -C "$i12" add docs; git -C "$i12" commit -qm plan
+wsi12=$(ws_path "$i12" "$i12/docs/plan.md"); mkdir -p "$wsi12"
+legacy_i12="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i12")/plans/$(basename "$wsi12")"
+mkdir -p "$legacy_i12.importing-556"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$legacy_i12.importing-556/progress.md"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\nTask 2: complete (commits 3333333..4444444, review clean)\n' > "$wsi12/progress.md"
+out=$(run_state "$i12" import docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=skipped reason=ledger-exists path=$legacy_i12" ] && [ -d "$legacy_i12" ] && [ ! -L "$legacy_i12" ] && [ "$(wc -l < "$wsi12/progress.md" | tr -d ' ')" = 3 ]; then pass "a restored source that differs from the destination is reported, not merged"; else fail "a restored source that differs from the destination is reported, not merged (rc=$rc: $out)"; fi
+
+# An empty pre-existing destination is replaced by the published stage (no
+# nesting), and a ledger line appended to the source after the copy was
+# taken is carried into the destination before the backup goes.
+i13="$TEST_ROOT/i13"; make_repo "$i13"; mkdir -p "$i13/docs"; : > "$i13/docs/plan.md"; git -C "$i13" add docs; git -C "$i13" commit -qm plan
+wsi13=$(ws_path "$i13" "$i13/docs/plan.md"); mkdir -p "$wsi13"
+legacy_i13="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i13")/plans/$(basename "$wsi13")"
+mkdir -p "$legacy_i13"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$legacy_i13/progress.md"
+out=$(HYPERPOWERS_TEST_LATE_APPEND='Task 2: complete (commits 3333333..4444444, review clean)' run_state "$i13" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i13" ] && [ -f "$wsi13/progress.md" ] && [ ! -d "$wsi13/$(basename "$wsi13")" ] && ! ls -d "$wsi13.import-"* >/dev/null 2>&1 && [ "$(tail -n 1 "$wsi13/progress.md")" = "Task 2: complete (commits 3333333..4444444, review clean)" ] && ! ls -d "$legacy_i13.importing-"* >/dev/null 2>&1; then pass "an empty destination is replaced in place and a late ledger append is carried over"; else fail "an empty destination is replaced in place and a late ledger append is carried over (rc=$rc: $out)"; fi
 
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi

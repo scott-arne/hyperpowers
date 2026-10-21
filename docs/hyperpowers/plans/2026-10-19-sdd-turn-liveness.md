@@ -3951,6 +3951,29 @@ class Collect(unittest.TestCase):
         # The stop at 30 is premature (task 1 is still open); the one at 70 is not (task 7 never opened).
         self.assertEqual((out["premature"], out["premature_resumed"], out["boundaries"]), (1, 1, 1))
 
+    def test_records_after_the_window_change_nothing(self) -> None:
+        cutoff = datetime(2026, 10, 20, 10, 5, tzinfo=UTC)
+        late_sdd = [
+            human(0, "Plan first.", entrypoint="sdk-ts"),
+            assistant(5, "Planning."),
+            human(400, "Now execute it."),
+            assistant(410, tools=[SDD]),
+            result(411, "s1", "Launching skill"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            projects = Path(tmp)
+            write(projects / "p1" / "zed.jsonl", session()[:10])
+            seen_at_cutoff = field.collect(projects, SINCE, cutoff)
+            # The same session grows: a resume at 500 answers the stop at 110, and work goes on.
+            write(projects / "p1" / "zed.jsonl", session())
+            grown = field.collect(projects, SINCE, cutoff)
+            # A session that invokes SDD only after the cutoff does not join the window.
+            write(projects / "p2" / "late.jsonl", late_sdd)
+            joined = field.collect(projects, SINCE, cutoff)
+        self.assertEqual((seen_at_cutoff["sessions"], seen_at_cutoff["premature"]), (1, 1))
+        self.assertEqual(grown, seen_at_cutoff)
+        self.assertEqual(joined, seen_at_cutoff)
+
 
 class Reflog(unittest.TestCase):
     TEXT = (
@@ -4175,7 +4198,13 @@ def _session(records: Sequence[Record], since: datetime, until: datetime) -> tup
 
 
 def collect(projects: Path, since: datetime, until: datetime) -> dict[str, Any]:
-    """Aggregate counts over every Zed SDD session with events in the window."""
+    """Aggregate counts over every Zed SDD session with events in the window.
+
+    ``until`` is also the observation cutoff: every record at or after it is
+    dropped before anything is classified, so a session qualifies only by an
+    SDD invocation inside the window, and records appended later (a completion,
+    a resume, a session's first SDD call) cannot change the result.
+    """
     totals: Counter[str] = Counter()
     versions: Counter[str] = Counter()
     models: Counter[str] = Counter()
@@ -4183,7 +4212,7 @@ def collect(projects: Path, since: datetime, until: datetime) -> dict[str, Any]:
     for path in sorted(projects.glob("*/*.jsonl")):
         if entrypoint(path) != "sdk-ts":
             continue
-        records = load(path, slim=True)
+        records = [rec for rec in load(path, slim=True) if parse_ts(rec["timestamp"]) < until]
         if not is_sdd(records):
             continue
         counts, session_versions, session_models = _session(records, since, until)
@@ -4313,6 +4342,7 @@ git commit -m "test(evidence): the field instrument counts SDD turn liveness in 
 - Create: `evals/evidence/2026-10-19-sdd-turn-liveness/field/run-baseline.sh`
 - Create: `evals/evidence/2026-10-19-sdd-turn-liveness/field/baseline.json`, `field/baseline.txt`, `field/reflog-plugin-install.txt`
 - Modify: `evals/evidence/2026-10-19-sdd-turn-liveness/liveness.py`, `test_liveness.py` (Step 0, plan deviation 8)
+- Modify: `evals/evidence/2026-10-19-sdd-turn-liveness/field.py`, `test_field.py` (Step 0b, the observation cutoff)
 
 **Interfaces:**
 - Consumes: `field.py` (Task 6).
@@ -4361,6 +4391,53 @@ In `test_liveness.py`, add this test to the `Tasks` class, before `test_states_l
 ```
 
 Run it first and see it fail (a resume is not yet a launch), then make the `liveness.py` change. Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_liveness.py evidence/2026-10-19-sdd-turn-liveness/test_analyze.py evidence/2026-10-19-sdd-turn-liveness/test_tally.py evidence/2026-10-19-sdd-turn-liveness/test_field.py` — Expected: `OK`. Ruff and mypy on both files, leak scan, then commit: `fix(evidence): an agent resumed with SendMessage is a tracked launch`.
+
+- [ ] **Step 0b: Classify only from records before the cutoff (the observation cutoff)**
+
+The baseline's fixed cutoff bounds which events count, but `field.collect` used to classify them from each whole transcript, so a session spanning the cutoff that invoked SDD later, or a later completion of a task open at the cutoff, could still change the baseline (Codex gate, round 2). `until` becomes the observation cutoff too. In `test_field.py`, add this test to the `Collect` class, after `test_failed_task_updates_change_nothing`:
+
+```text
+    def test_records_after_the_window_change_nothing(self) -> None:
+        cutoff = datetime(2026, 10, 20, 10, 5, tzinfo=UTC)
+        late_sdd = [
+            human(0, "Plan first.", entrypoint="sdk-ts"),
+            assistant(5, "Planning."),
+            human(400, "Now execute it."),
+            assistant(410, tools=[SDD]),
+            result(411, "s1", "Launching skill"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            projects = Path(tmp)
+            write(projects / "p1" / "zed.jsonl", session()[:10])
+            seen_at_cutoff = field.collect(projects, SINCE, cutoff)
+            # The same session grows: a resume at 500 answers the stop at 110, and work goes on.
+            write(projects / "p1" / "zed.jsonl", session())
+            grown = field.collect(projects, SINCE, cutoff)
+            # A session that invokes SDD only after the cutoff does not join the window.
+            write(projects / "p2" / "late.jsonl", late_sdd)
+            joined = field.collect(projects, SINCE, cutoff)
+        self.assertEqual((seen_at_cutoff["sessions"], seen_at_cutoff["premature"]), (1, 1))
+        self.assertEqual(grown, seen_at_cutoff)
+        self.assertEqual(joined, seen_at_cutoff)
+```
+
+Run it and see it fail (the grown session's stop at 110 reads as resumed), then in `field.py` replace `collect`'s docstring and its `records = load(path, slim=True)` line with:
+
+```text
+    """Aggregate counts over every Zed SDD session with events in the window.
+
+    ``until`` is also the observation cutoff: every record at or after it is
+    dropped before anything is classified, so a session qualifies only by an
+    SDD invocation inside the window, and records appended later (a completion,
+    a resume, a session's first SDD call) cannot change the result.
+    """
+```
+
+```text
+        records = [rec for rec in load(path, slim=True) if parse_ts(rec["timestamp"]) < until]
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_field.py evidence/2026-10-19-sdd-turn-liveness/test_liveness.py` — Expected: `OK`. Ruff and mypy on both files, leak scan, then commit: `fix(evidence): the field window's end is also its observation cutoff`.
 
 - [ ] **Step 1: Write the baseline script**
 

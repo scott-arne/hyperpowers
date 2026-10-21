@@ -19,6 +19,7 @@
 5. **The elicitation prompt keeps waiting instructions out of the fixture plan.** Spec Design §2 asks for an elicited six-task plan that names the two slow commands and their runtimes. Task 2's first three elicitations at v6.16.1 (kept as `attempt-1` to `attempt-3` in the evidence directory, with the prompt they used in `prompt-attempts-1-3.txt`) each wrote its own instructions for running and waiting on the soak tests: run both in the background, wait for the completion notice, tell the controller the soak is running. Such a stimulus would carry, or contradict, the behavior under test, so the long-job measure would credit the plan's text rather than the skill. The prompt therefore adds one sentence asking the plan to name each covering command and its runtime and to leave how commands are run and waited for to whoever executes it, and the fixture-plan test rejects a plan that mentions background or foreground runs. The plan is still written by writing-plans at the control version and never edited. Approved by the human partner on 2026-10-20, together with a looser contract test: v6.16.1 writing-plans puts a slow command after a lead-in sentence or in a code block, never on a `Run:` line, so the test requires the exact command and its runtime inside the task's section rather than on a `Run:` line.
 6. **Measured soak runs must take real time, and soak files must stay untouched in the session.** Spec Design §2 defines the two F measures by call shape (foreground with a long enough timeout; a tracked launch watched to its end). Task 2's Codex gate found that a controller could shorten `SOAK_SECONDS`, run the soak quickly, and restore the file before the post-checks, which compare only the final tree; the scenario's post-check now also rejects a commit history that touched a soak file, but an uncommitted edit-run-restore would still pass F. The analyzer therefore also requires the short soak's main-session result to arrive at least 200 s after its call and the long job's `exit=0` watch result at least 600 s after its launch, and marks a run `soak_tampered` (which fails run success) when a successful main-session call writes to either soak file. Approved by the human partner on 2026-10-20, before pre-registration.
 7. **A command Claude Code moves to the background on its own is a tracked launch.** Spec Design §2 defines "live" by the two launch results "Async agent launched" and "Command running in background with ID". Claude Code also moves a foreground Bash call that outlives its timeout to the background by itself; the result then starts "Command did not complete within its <N>s timeout and was moved to the background", and the job's end arrives as a completion notice naming the same tool-use id, like any tracked job (about 800 such results on this host). The shared module counts that result as a shell launch, so a stop while such a job runs is a live-work turn end (W2), not a premature stop (P). F is unaffected: a four-minute soak run with the two-minute default timeout still fails it on its timeout and its elapsed time. Approved by the human partner on 2026-10-20, during Task 3's review; applied as Task 4's first step because Task 3 had closed.
+8. **An agent resumed with `SendMessage` is a tracked launch.** Spec Design §2 defines "live" by the two launch results, while the spec's Problem section, the investigation this work answers, describes a premature stop as a turn end "with no subagent or background command running". When the controller resumes a finished agent with `SendMessage`, Claude Code runs it in the background and returns a successful result whose message says "Resuming agent …" or "… resumed … in the background with your message"; the agent's end arrives as a completion notice naming the `SendMessage` tool-use id, like any tracked job (3257 such results on this host; SDD's fix rounds 1-3 resume the implementer this way). The shared module counts that result as an agent launch, so a stop while a resumed agent works is a live-work turn end (W2 in the scenario), not a premature stop (P). Task 7's review found that waits on resumed agents made up about 41% of the premature stops in the three sessions it probed. Approved by the human partner on 2026-10-21, during Task 7's review; applied as Task 7's first step, and the field baseline is re-recorded under it.
 
 ## Global Constraints
 
@@ -992,6 +993,28 @@ class Tasks(unittest.TestCase):
         ]
         self.assertEqual(liveness.tasks(printed), {})
 
+    def test_an_agent_resumed_with_send_message_is_a_tracked_launch(self) -> None:
+        resumed = '{"success":true,"message":"Resuming agent a101f9c","resumedAgentId":"a101f9c7fb53d3bd5"}'
+        stopped = (
+            '{"success":true,"message":"Agent \\"a5b6c7d8\\" was stopped (completed); resumed it in the background '
+            'with your message. You will be notified when it finishes.","resumedAgentId":"a5b6c7d8"}'
+        )
+        recs = [
+            assistant(5, tools=[("m1", "SendMessage", {"to": "a101f9c7fb53d3bd5", "message": "Fix the finding."})]),
+            result(6, "m1", resumed),
+            enqueue(200, "m1"),
+            assistant(210, tools=[("m2", "SendMessage", {"to": "a5b6c7d8", "message": "Fix the next one."})]),
+            result(211, "m2", stopped),
+            enqueue(300, "m2"),
+            assistant(310, tools=[("m3", "SendMessage", {"to": "worker", "message": "Status?"})]),
+            result(311, "m3", '{"success":true,"message":"Message queued for worker"}'),
+        ]
+        task_map = liveness.tasks(recs)
+        self.assertEqual(sorted(task_map), ["m1", "m2"])
+        self.assertEqual((task_map["m1"].kind, task_map["m1"].launched, task_map["m1"].completed), ("agent", ts(6), ts(200)))
+        self.assertEqual((task_map["m2"].kind, task_map["m2"].launched, task_map["m2"].completed), ("agent", ts(211), ts(300)))
+        self.assertEqual(liveness.state_at(ts(100), task_map, []), "live")
+
     def test_states_live_none_censored_and_killed_by_reload(self) -> None:
         recs = [
             assistant(5, tools=[("a1", "Agent", {})]),
@@ -1113,6 +1136,8 @@ RELOAD_PREFIX = "[Tool call interrupted:"
 LAUNCH_BASH_AUTO = "Command did not complete within its"
 AUTO_MOVED = "was moved to the background"
 AGENT_TOOLS = frozenset({"Agent", "Task"})
+SEND_OK = '{"success":true,"message":"'
+RESUMED = ("Resuming agent ", "in the background with your message")
 ASK_TOOL = "AskUserQuestion"
 ASK_ANSWERED = "Your questions have been answered"
 RELOAD_REPLY = "No response requested."
@@ -1283,7 +1308,10 @@ def _launch_kind(name: str | None, background: bool, text: str) -> Kind | None:
     shell launch also needs ``run_in_background: true`` on the call: a
     foreground command that prints or greps the marker text launches nothing.
     A Bash call that Claude Code moved to the background after its timeout is
-    a tracked launch too (plan deviation 7).
+    a tracked launch too (plan deviation 7), and so is an agent that
+    ``SendMessage`` resumed in the background (plan deviation 8). The resume
+    markers sit in the result's message, inside the first 300 characters a
+    slim load keeps.
     """
     head = text.lstrip()
     if name in AGENT_TOOLS and head.startswith(LAUNCH_AGENT):
@@ -1292,6 +1320,8 @@ def _launch_kind(name: str | None, background: bool, text: str) -> Kind | None:
         return "bash"
     if name == "Bash" and head.startswith(LAUNCH_BASH_AUTO) and AUTO_MOVED in head:
         return "bash"
+    if name == "SendMessage" and head.startswith(SEND_OK) and any(m in head for m in RESUMED):
+        return "agent"
     return None
 
 
@@ -4282,10 +4312,55 @@ git commit -m "test(evidence): the field instrument counts SDD turn liveness in 
 **Files:**
 - Create: `evals/evidence/2026-10-19-sdd-turn-liveness/field/run-baseline.sh`
 - Create: `evals/evidence/2026-10-19-sdd-turn-liveness/field/baseline.json`, `field/baseline.txt`, `field/reflog-plugin-install.txt`
+- Modify: `evals/evidence/2026-10-19-sdd-turn-liveness/liveness.py`, `test_liveness.py` (Step 0, plan deviation 8)
 
 **Interfaces:**
 - Consumes: `field.py` (Task 6).
 - Produces: the baseline numbers Task 10 copies into the evidence notes; the saved reflog the after-window follow-up reads.
+
+- [ ] **Step 0: Count agents resumed with `SendMessage` as tracked launches (plan deviation 8)**
+
+Deviation 8 was approved during this task's review, after a first baseline had been committed; it lands as its own commit, and Steps 2-4 then re-record the baseline under it. In `liveness.py`, add two constants after `AGENT_TOOLS`:
+
+```text
+SEND_OK = '{"success":true,"message":"'
+RESUMED = ("Resuming agent ", "in the background with your message")
+```
+
+In `_launch_kind`, replace the docstring's last sentence ("A Bash call that Claude Code moved to the background after its timeout is a tracked launch too (plan deviation 7).") with "A Bash call that Claude Code moved to the background after its timeout is a tracked launch too (plan deviation 7), and so is an agent that ``SendMessage`` resumed in the background (plan deviation 8). The resume markers sit in the result's message, inside the first 300 characters a slim load keeps." and add, just before the final `return None`:
+
+```text
+    if name == "SendMessage" and head.startswith(SEND_OK) and any(m in head for m in RESUMED):
+        return "agent"
+```
+
+In `test_liveness.py`, add this test to the `Tasks` class, before `test_states_live_none_censored_and_killed_by_reload`:
+
+```text
+    def test_an_agent_resumed_with_send_message_is_a_tracked_launch(self) -> None:
+        resumed = '{"success":true,"message":"Resuming agent a101f9c","resumedAgentId":"a101f9c7fb53d3bd5"}'
+        stopped = (
+            '{"success":true,"message":"Agent \\"a5b6c7d8\\" was stopped (completed); resumed it in the background '
+            'with your message. You will be notified when it finishes.","resumedAgentId":"a5b6c7d8"}'
+        )
+        recs = [
+            assistant(5, tools=[("m1", "SendMessage", {"to": "a101f9c7fb53d3bd5", "message": "Fix the finding."})]),
+            result(6, "m1", resumed),
+            enqueue(200, "m1"),
+            assistant(210, tools=[("m2", "SendMessage", {"to": "a5b6c7d8", "message": "Fix the next one."})]),
+            result(211, "m2", stopped),
+            enqueue(300, "m2"),
+            assistant(310, tools=[("m3", "SendMessage", {"to": "worker", "message": "Status?"})]),
+            result(311, "m3", '{"success":true,"message":"Message queued for worker"}'),
+        ]
+        task_map = liveness.tasks(recs)
+        self.assertEqual(sorted(task_map), ["m1", "m2"])
+        self.assertEqual((task_map["m1"].kind, task_map["m1"].launched, task_map["m1"].completed), ("agent", ts(6), ts(200)))
+        self.assertEqual((task_map["m2"].kind, task_map["m2"].launched, task_map["m2"].completed), ("agent", ts(211), ts(300)))
+        self.assertEqual(liveness.state_at(ts(100), task_map, []), "live")
+```
+
+Run it first and see it fail (a resume is not yet a launch), then make the `liveness.py` change. Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_liveness.py evidence/2026-10-19-sdd-turn-liveness/test_analyze.py evidence/2026-10-19-sdd-turn-liveness/test_tally.py evidence/2026-10-19-sdd-turn-liveness/test_field.py` — Expected: `OK`. Ruff and mypy on both files, leak scan, then commit: `fix(evidence): an agent resumed with SendMessage is a tracked launch`.
 
 - [ ] **Step 1: Write the baseline script**
 

@@ -491,7 +491,9 @@ hp_materialize_plain() {
   # lock, so none is live).
   rm -rf "${root:?}"/.materialize.* 2>/dev/null
   staging=$(mktemp -d "$root/.materialize.XXXXXX") || return 2
-  git -C "$repo" archive "$tip" "plans/$ws" | tar -x -C "$staging"
+  # Archive from the top level: a pathspec is relative to the current
+  # directory, and the plan may sit in a subdirectory of the work tree.
+  git -C "$(git -C "$repo" rev-parse --show-toplevel)" archive "$tip" "plans/$ws" | tar -x -C "$staging"
   archive_rc=${PIPESTATUS[0]} tar_rc=${PIPESTATUS[1]}
   if [ "$archive_rc" -ne 0 ] || [ "$tar_rc" -ne 0 ] || [ ! -f "$staging/plans/$ws/progress.md" ]; then rm -rf "$staging"; return 2; fi
   rm -rf "$dest"

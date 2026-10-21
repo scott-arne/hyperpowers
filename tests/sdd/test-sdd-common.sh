@@ -138,6 +138,27 @@ touch -t 202601010000 "$lock_dir" "$lock_dir.takeover"
 start=$(date +%s); hp_lock "$lock_repo"; rc=$?; end=$(date +%s)
 if [ "$rc" -eq 0 ] && [ $((end - start)) -le 5 ] && [ ! -d "$lock_dir.takeover" ]; then pass "a stranded takeover guard is cleared and the lock taken"; else fail "a stranded takeover guard is cleared and the lock taken (rc=$rc)"; fi
 hp_unlock
+# A contender that paused after validating a stale lock cannot take the lock
+# from the faster contender that replaced that owner meanwhile: its claim
+# names a generation that is already taken, and the fresh owner survives.
+mkdir -p "$lock_dir"; printf 'session=old\npid=999999\nhost=x\ntime=t\n' > "$lock_dir/owner"; touch -t 202601010000 "$lock_dir"
+paused_gen=$(hp_lock_generation "$(hp_lock_owner_text "$lock_dir")")
+hp_lock "$lock_repo"; rc=$?
+bash -c '. "$1"; hp_lock_claim "$2" "$3"' _ "$LIB" "$lock_dir" "$paused_gen" 2>/dev/null; claim_rc=$?
+if [ "$rc" -eq 0 ] && [ "$claim_rc" -ne 0 ] && grep -q "^pid=$$\$" "$lock_dir/owner" 2>/dev/null && [ -d "$lock_dir/taken-$paused_gen" ] && [ -d "$lock_dir" ]; then pass "a paused contender's late claim fails and the fresh owner survives"; else fail "a paused contender's late claim fails and the fresh owner survives (rc=$rc claim_rc=$claim_rc)"; fi
+hp_unlock
+if [ ! -d "$lock_dir" ]; then pass "hp_unlock removes a taken-over lock and its markers"; else fail "hp_unlock removes a taken-over lock and its markers"; fi
+# A claimant that died before renaming its identity over owner is the
+# effective owner: the next contender follows the chain and takes over
+# that generation, and the history names the dead claimant.
+mkdir -p "$lock_dir"; printf 'session=old\npid=999999\nhost=x\ntime=t\n' > "$lock_dir/owner"
+dead_gen=$(hp_lock_generation "$(cat "$lock_dir/owner")")
+mkdir -p "$lock_dir/taken-$dead_gen"; printf 'session=dead\npid=999998\nhost=x\ntime=t\n' > "$lock_dir/taken-$dead_gen/owner"
+chain_gen=$(hp_lock_generation "$(cat "$lock_dir/taken-$dead_gen/owner")")
+touch -t 202601010000 "$lock_dir"
+hp_lock "$lock_repo"; rc=$?
+if [ "$rc" -eq 0 ] && grep -q "^pid=$$\$" "$lock_dir/owner" 2>/dev/null && [ -d "$lock_dir/taken-$chain_gen" ] && tail -n 1 "$lock_dir-history" | grep -q 'session=dead pid=999998'; then pass "a stranded claim is the effective owner and the next contender takes over its generation"; else fail "a stranded claim is the effective owner and the next contender takes over its generation (rc=$rc)"; fi
+hp_unlock
 # unlock refuses a lock another process owns.
 mkdir -p "$lock_dir"; printf 'session=x\npid=999998\nhost=x\ntime=t\n' > "$lock_dir/owner"
 # shellcheck disable=SC2034 # read by hp_unlock from the sourced library

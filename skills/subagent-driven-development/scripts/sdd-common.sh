@@ -116,18 +116,63 @@ hp_git_id() { # <repo-dir> <git args...>
 }
 
 # --- lock -------------------------------------------------------------------
-# mkdir is atomic. A lock older than ten minutes whose pid is dead, or cannot
-# be checked, is taken over; the takeover itself goes through a second
-# atomic directory, the guard, so two contenders cannot both remove a lock
-# and one of them delete the other's fresh one. Readers never take the lock.
+# One lock per repository: `mkdir <checkout>.lock`, which is atomic; the
+# holder's identity sits in `<lock>/owner`. Acquisition retries every 200 ms
+# for 30 s, then gives up with the owner shown (exit 2). A lock older than
+# ten minutes whose pid is dead, or cannot be checked, is taken over in
+# place: the contender claims the generation it validated by creating
+# `<lock>/taken-<generation>` (atomic, exactly one winner per generation),
+# writes its identity there, and only then renames a copy over `owner`. The
+# lock directory is never removed or renamed during a takeover, so a
+# contender that paused after validating a stale lock cannot destroy the
+# hold a faster contender established meanwhile: its claim names a
+# generation that is already taken. A claimant that dies before the rename
+# leaves its marker as the newest link of the takeover chain; readers follow
+# the chain, so that dead claimant is the effective owner and the next
+# contender takes over its generation. The guard directory
+# `<lock>.takeover` serializes takeover attempts and is reclaimed when a
+# contender died inside it; exclusion does not depend on it. Readers never
+# take the lock.
 HP_LOCK_DIR=""
-hp_lock_stale() { # <lock-dir>
-  local pid
+hp_write_owner() { # <file>
+  printf 'session=%s\npid=%s\nhost=%s\ntime=%s\n' "$(hp_session_id)" "$$" "$(hostname)" "$(hp_utc_now)" > "$1"
+}
+hp_lock_generation() { # <owner-text>
+  printf '%s\n' "$1" | cksum | cut -d' ' -f1
+}
+# Print the content of the effective owner: the newest link of the chain of
+# claimed generations. A missing file reads as empty text.
+hp_lock_owner_text() { # <lock-dir>
+  local text g n=0
+  text=$(cat "$1/owner" 2>/dev/null)
+  while [ "$n" -lt 64 ]; do
+    g=$(hp_lock_generation "$text")
+    [ -d "$1/taken-$g" ] || break
+    text=$(cat "$1/taken-$g/owner" 2>/dev/null)
+    n=$((n + 1))
+  done
+  printf '%s\n' "$text"
+}
+# Stale: older than ten minutes and the effective owner's pid is dead or
+# unknown. The optional second argument is owner text already read, so the
+# caller validates and claims the same bytes.
+hp_lock_stale() { # <lock-dir> [owner-text]
+  local pid text
   [ -n "$(find "$1" -maxdepth 0 -mmin +10 2>/dev/null)" ] || return 1
-  pid=$(sed -n 's/^pid=//p' "$1/owner" 2>/dev/null)
+  text=${2-$(hp_lock_owner_text "$1")}
+  pid=$(printf '%s\n' "$text" | sed -n 's/^pid=//p')
   [ -n "$pid" ] || return 0
   if kill -0 "$pid" 2>/dev/null; then return 1; fi
   return 0
+}
+# Claim <generation> of <lock-dir> for this pid. Succeeds only when this
+# process created the marker and its identity is now the owner file.
+hp_lock_claim() { # <lock-dir> <generation>
+  local marker="$1/taken-$2" tmp="$1/owner.$$"
+  mkdir "$marker" 2>/dev/null || return 1
+  hp_write_owner "$marker/owner" 2>/dev/null || return 1
+  { cp "$marker/owner" "$tmp" 2>/dev/null && mv -f "$tmp" "$1/owner" 2>/dev/null; } || { rm -f "$tmp"; return 1; }
+  [ "$(sed -n 's/^pid=//p' "$1/owner" 2>/dev/null)" = "$$" ]
 }
 hp_lock() { # <repo-dir>
   local lock guard waited=0 owner
@@ -141,24 +186,26 @@ hp_lock() { # <repo-dir>
       rmdir "$guard" 2>/dev/null || rm -rf "$guard"
     fi
     if hp_lock_stale "$lock" && mkdir "$guard" 2>/dev/null; then
-      # Re-check under the guard: the lock may have been replaced meanwhile.
-      if [ -d "$lock" ] && hp_lock_stale "$lock"; then
-        owner=$(tr '\n' ' ' < "$lock/owner" 2>/dev/null)
-        printf 'takeover by pid %s at %s of: %s\n' "$$" "$(hp_utc_now)" "$owner" >> "$lock-history"
-        rm -rf "$lock"
+      # Re-check under the guard and claim the generation that was checked.
+      owner=$(hp_lock_owner_text "$lock")
+      if [ -d "$lock" ] && hp_lock_stale "$lock" "$owner" && hp_lock_claim "$lock" "$(hp_lock_generation "$owner")"; then
+        printf 'takeover by pid %s at %s of: %s\n' "$$" "$(hp_utc_now)" "$(printf '%s' "$owner" | tr '\n' ' ')" >> "$lock-history"
+        rmdir "$guard" 2>/dev/null
+        break
       fi
       rmdir "$guard" 2>/dev/null
       waited=$((waited + 1))
       continue
     fi
     if [ "$waited" -ge 150 ]; then
-      echo "sdd-state: lock held: $(tr '\n' ' ' < "$lock/owner" 2>/dev/null)" >&2
+      echo "sdd-state: lock held: $(hp_lock_owner_text "$lock" | tr '\n' ' ')" >&2
       return 2
     fi
     sleep 0.2
     waited=$((waited + 1))
   done
-  printf 'session=%s\npid=%s\nhost=%s\ntime=%s\n' "$(hp_session_id)" "$$" "$(hostname)" "$(hp_utc_now)" > "$lock/owner"
+  # A fresh lock gets its owner here; a takeover already wrote it.
+  if [ "$(sed -n 's/^pid=//p' "$lock/owner" 2>/dev/null)" != "$$" ]; then hp_write_owner "$lock/owner"; fi
   HP_LOCK_DIR=$lock
   trap 'hp_unlock' EXIT
   trap 'hp_unlock; exit 130' INT

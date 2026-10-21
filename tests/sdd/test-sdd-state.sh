@@ -934,6 +934,65 @@ if [ "$(run_state "$rp" sync docs/plan.md 2>/dev/null)" = "status=plain" ]; then
 other_cwd="$TEST_ROOT/other-cwd"; make_repo "$other_cwd"
 out=$(cd "$other_cwd" && bash "$SDD_STATE" sync "$PAIR_A/docs/plan.md"); rc=$?
 if [ "$rc" -eq 0 ] && [ ! -d "$STATE_ROOT/$(state_key "$other_cwd")" ]; then pass "sync from another repository's cwd touches only the plan repository"; else fail "sync from another repository's cwd touches only the plan repository (rc=$rc: $out)"; fi
+# The remaining checks use docs/second.md, present on both hosts.
+ws2b="$co_b/plans/$(basename "$ws2a")"
+run_state "$PAIR_A" sync docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null; run_state "$PAIR_B" sync docs/second.md >/dev/null
+# The race test above left B's snapshot of its local line unmerged (an
+# ordinary divergence by design); the human partner discards it here so the
+# checks below start from a host that is level with the remote.
+git -C "$co_b" merge --abort >/dev/null 2>&1 || true
+git -C "$co_b" reset -q --hard origin/hyperpowers/state
+# A branch at the state name without the sentinel is foreign.
+foreign=$(git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$(git -C "$PAIR_A" hash-object -t tree /dev/null)" -m foreign)
+git -C "$PAIR_A" push -qf origin "$foreign:refs/heads/hyperpowers/state" 2>/dev/null
+tip_b=$(git -C "$co_b" rev-parse hyperpowers/state)
+out=$(run_state "$PAIR_B" sync docs/second.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "${out%% *}" = "status=foreign" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$tip_b" ] && [ -f "$ws2b/progress.md" ]; then pass "a remote branch without the sentinel is foreign: nothing reconciled, ref and files untouched"; else fail "a remote branch without the sentinel is foreign: nothing reconciled, ref and files untouched (rc=$rc: $out)"; fi
+git -C "$PAIR_A" push -qf origin hyperpowers/state 2>/dev/null
+if [ "$(run_state "$PAIR_B" sync docs/second.md | cut -d' ' -f1)" = "status=up-to-date" ]; then pass "with the real branch restored, sync resumes"; else fail "with the real branch restored, sync resumes"; fi
+# A deletion the target asks for that cannot be done is an error, never "applied".
+printf 'report two\n' > "$ws2a/task-2-report.md"; run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/second.md >/dev/null
+rm -f "$ws2a/task-2-report.md"; run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+chmod 555 "$ws2b"
+out=$(run_state "$PAIR_B" sync docs/second.md 2>/dev/null); rc=$?
+chmod 755 "$ws2b"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && [ -f "$ws2b/task-2-report.md" ]; then pass "a deletion the target asks for that fails is an error with the marker kept, never reported as applied"; else fail "a deletion the target asks for that fails is an error with the marker kept, never reported as applied (rc=$rc: $out)"; fi
+out=$(run_state "$PAIR_B" sync docs/second.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -e "$ws2b/task-2-report.md" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "once the directory is writable the next sync finishes the deletion"; else fail "once the directory is writable the next sync finishes the deletion (rc=$rc: $out)"; fi
+# A writer that lands between the extension append and the in-place
+# overwrite: the line survives and the apply succeeds.
+printf 'ov A\n' >> "$ws2a/progress.md"; run_state "$PAIR_A" snapshot docs/second.md >/dev/null
+printf 'ov B\n' >> "$ws2b/progress.md"; run_state "$PAIR_B" snapshot docs/second.md >/dev/null
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/second.md >/dev/null; git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
+out=$(cd "$PAIR_A" && HYPERPOWERS_TEST_WRITER_AT=ledger-apply-before-overwrite bash "$SDD_STATE" sync docs/second.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(grep -c '^raced the overwrite$' "$ws2a/progress.md")" -eq 1 ] && [ "$(grep -c '^ov A$' "$ws2a/progress.md")" -eq 1 ] && [ "$(grep -c '^ov B$' "$ws2a/progress.md")" -eq 1 ]; then pass "a line appended between the extension append and the overwrite survives the rewrite"; else fail "a line appended between the extension append and the overwrite survives the rewrite (rc=$rc: $out)"; fi
+run_state "$PAIR_A" sync docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null; run_state "$PAIR_B" sync docs/second.md >/dev/null
+# The marker is a barrier for claim, prune and finish.
+printf 'Task 9: complete (commits fffffff..0000000, review clean)\n' >> "$ws2a/progress.md"; run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/second.md >/dev/null 2>&1 )
+out=$(run_state "$PAIR_B" claim docs/second.md 9 --session s-claim); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=done task=9" ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 9: complete' "$ws2b/progress.md"; then pass "claim recovers an interrupted apply before it reads the ledger"; else fail "claim recovers an interrupted apply before it reads the ledger (rc=$rc: $out)"; fi
+printf 'Task 10: complete (commits 1212121..3434343, review clean)\n' >> "$ws2a/progress.md"; run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/second.md >/dev/null 2>&1 )
+out=$(run_state "$PAIR_B" prune --repo "$PAIR_B" --apply); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=pruned" ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 10: complete' "$ws2b/progress.md"; then pass "prune --apply recovers an interrupted apply before it selects"; else fail "prune --apply recovers an interrupted apply before it selects (rc=$rc: $out)"; fi
+printf 'Task 11: complete (commits 5656565..7878787, review clean)\n' >> "$ws2a/progress.md"; run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/second.md >/dev/null 2>&1 )
+out=$(run_state "$PAIR_B" finish docs/second.md --force); rc=$?
+last_b=$(printf '%s' "$out" | sed -n 's/.* last=\([0-9a-f]*\).*/\1/p')
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -f "$co_b/.sync-applying" ] && git -C "$co_b" show "$last_b:plans/$(basename "$ws2a")/progress.md" 2>/dev/null | grep -q '^Task 11: complete'; then pass "finish recovers an interrupted apply before it reads claims or snapshots"; else fail "finish recovers an interrupted apply before it reads claims or snapshots (rc=$rc: $out)"; fi
+# A marker that cannot be trusted fails closed and is named.
+printf 'garbage\n' > "$co_b/.sync-applying"
+out=$(run_state "$PAIR_B" sync docs/second.md 2>"$TEST_ROOT/marker.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'not a valid sync marker' "$TEST_ROOT/marker.err" && [ -f "$co_b/.sync-applying" ]; then pass "a malformed marker fails closed and is named"; else fail "a malformed marker fails closed and is named (rc=$rc: $out)"; fi
+rm -f "$co_b/.sync-applying"
+tipb=$(git -C "$co_b" rev-parse hyperpowers/state); prev=$(git -C "$co_b" rev-parse hyperpowers/state^)
+printf '%s %s\n' "$prev" "$prev" > "$co_b/.sync-applying"
+out=$(run_state "$PAIR_B" sync docs/second.md 2>"$TEST_ROOT/marker2.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'has moved from its target' "$TEST_ROOT/marker2.err" && [ -f "$co_b/.sync-applying" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$tipb" ]; then pass "a marker whose target the branch has left fails closed and is named"; else fail "a marker whose target the branch has left fails closed and is named (rc=$rc: $out)"; fi
+rm -f "$co_b/.sync-applying"
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

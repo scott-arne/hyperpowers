@@ -96,7 +96,7 @@ cmd_snapshot() {
   [ -d "$WSDIR" ] || { echo "status=none"; return 0; }
   [ -n "$msg" ] || msg="sdd $SLUG: snapshot $(hp_utc_now)"
   hp_lock "$PLAN_DIR" || return 2
-  if type recover_apply >/dev/null 2>&1; then recover_apply || { hp_unlock; echo "status=error"; return 2; }; fi
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
   out=$(hp_commit_paths "$CO" "$BRANCH" "$msg" "plans/$WS"); rc=$?
   hp_unlock
   [ "$rc" -eq 0 ] || { echo "status=error"; return 2; }
@@ -134,6 +134,7 @@ cmd_claim() {
   # is durable and names this session, because a caller that believes it
   # owns a task it does not own duplicates work.
   hp_lock "$PLAN_DIR" || return 2
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
   if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace task=$n"; return 2; fi
   grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md"; rc=$?
   if [ "$rc" -eq 0 ]; then hp_unlock; echo "status=done task=$n"; return 0; fi
@@ -521,6 +522,7 @@ cmd_finish() {
   [ -n "$plan" ] || usage
   resolve_plan "$plan"
   hp_lock "$PLAN_DIR" || return 2
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
   # A removal interrupted after its rename-aside left the dossier at
   # plans/.removing-<ws>-<pid>. With the path free the copy comes back and
   # finish proceeds; beside a new workspace it is named for a human to
@@ -544,7 +546,6 @@ cmd_finish() {
     hp_unlock
     case "$rc" in 0) echo "status=finished backend=plain"; return 0 ;; 1) echo "status=busy"; return 3 ;; *) echo "status=error"; return 2 ;; esac
   fi
-  if type recover_apply >/dev/null 2>&1; then recover_apply || { hp_unlock; echo "status=error"; return 2; }; fi
   hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: snapshot before finish" "plans/$WS" >/dev/null || { hp_unlock; echo "status=error"; return 2; }
   last=$(git -C "$CO" rev-parse "refs/heads/$BRANCH")
   # Controllers append without the lock: the removal renames the directory
@@ -605,6 +606,7 @@ cmd_prune() {
   # is revalidated right before its removal; a workspace that became active
   # in between is kept and reported.
   if [ "$apply" -eq 1 ]; then hp_lock "$repo_dir" || return 2; fi
+  if [ "$apply" -eq 1 ]; then CO=$co; BRANCH=$br; recover_apply || { hp_unlock; echo "status=error"; return 2; }; fi
   if [ -e "$co/.git" ]; then
     for d in "$co"/plans/*/; do
       [ -d "$d" ] || continue
@@ -709,14 +711,14 @@ blob_prefix_id() {
 # when the file already ends with it, so a recovery never appends twice.
 # Otherwise (a merge, or a fast-forward onto another host's merge, reordered
 # lines) the file is rewritten in place to the target's content followed by
-# whatever it held beyond S's blob; the rewrite is the one step with a
-# window (a line appended between the size check and the truncation is
-# lost), narrowed to the instant before the write. A file that already
+# whatever it held beyond S's blob; the rewrite appends the new bytes and
+# then overwrites the old length in place, so it never truncates and a racing
+# append survives, at worst between the two parts. A file that already
 # starts with the target's content is left alone. Returns 0; 5 when the
 # file does not start with what S committed (a local rewrite: the caller
 # retries and ends busy); 2 on error.
 ledger_apply() {
-  local path=$1 S=$2 target=$3 file t_blob t_size s_blob s_size live_size suffix_size tmp
+  local path=$1 S=$2 target=$3 file t_blob t_size s_blob s_size live_size suffix_size tmp new_size
   file="$CO/$path"
   t_blob=$(git -C "$CO" rev-parse -q --verify "$target:$path" 2>/dev/null) || return 2
   t_size=$(git -C "$CO" cat-file -s "$t_blob" 2>/dev/null) || return 2
@@ -739,7 +741,21 @@ ledger_apply() {
   { git -C "$CO" cat-file blob "$t_blob" && tail -c +"$((s_size + 1))" "$file"; } > "$tmp" || { rm -f "$tmp"; return 2; }
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in ledger-apply-before-rewrite) printf 'raced the rewrite\n' >> "$file" ;; esac
   [ "$(wc -c < "$file" | tr -d ' ')" -eq "$live_size" ] || { rm -f "$tmp"; return 5; }
-  cat "$tmp" > "$file" || { rm -f "$tmp"; return 2; }
+  new_size=$(wc -c < "$tmp" | tr -d ' ')
+  if [ "$new_size" -ge "$live_size" ]; then
+    # Never truncate a live ledger. The bytes beyond the current length are
+    # appended first (an O_APPEND write interleaves with a racing append and
+    # overwrites nothing), then the first live_size bytes are overwritten in
+    # place; that region lies below every later end of file, so a line
+    # appended at any instant survives, at worst between the two parts.
+    tail -c +"$((live_size + 1))" "$tmp" >> "$file" || { rm -f "$tmp"; return 2; }
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in ledger-apply-before-overwrite) printf 'raced the overwrite\n' >> "$file" ;; esac
+    head -c "$live_size" "$tmp" | dd of="$file" bs=65536 conv=notrunc 2>/dev/null || { rm -f "$tmp"; return 2; }
+  else
+    # A target shorter than the live file: the ledger shrank, which an
+    # append-only ledger never does; the truncating write is the fallback.
+    cat "$tmp" > "$file" || { rm -f "$tmp"; return 2; }
+  fi
   rm -f "$tmp"
   return 0
 }
@@ -760,7 +776,7 @@ apply_files() {
           ledger_apply "$path" "$S" "$target" || return $?
           if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-ledger-apply ]; then hp_unlock; exit 99; fi
         else
-          git -C "$CO" show "$target:$path" > "$CO/$path" || return 2
+          git -C "$CO" show "$target:$path" >> "$CO/$path" || return 2
         fi ;;
       *) git -C "$CO" checkout -q "$target" -- "$path" || return 2 ;;
     esac
@@ -771,26 +787,35 @@ apply_files() {
       plans/*/progress.md)
         dir=$(dirname "$CO/$path")
         if [ -d "$dir" ]; then remove_verified "$dir" "$S:plans/$(basename "$dir")" || return 6; fi ;;
-      *) rm -f "$CO/$path" ;;
+      *) rm -f "$CO/$path" 2>/dev/null; [ ! -e "$CO/$path" ] || return 2 ;;
     esac
   done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
   return 0
 }
 # recover_apply: finish an apply that was interrupted after the ref moved.
 # ledger_apply is idempotent, so a half-applied ledger is completed, never
-# appended to twice. A recovery that fails leaves the marker and says so:
-# every subcommand refuses until the working tree is repaired.
+# appended to twice. The marker is a barrier: a malformed marker, a branch
+# that has left the marker's target, or a recovery that fails all leave it
+# in place and say so, and every publishing subcommand refuses until the
+# tree is repaired.
 recover_apply() {
-  local S target rc
+  local S="" target="" rc head
   [ -f "$CO/.sync-applying" ] || return 0
-  read -r S target < "$CO/.sync-applying"
-  if [ "$(tip_of "$CO" "refs/heads/$BRANCH")" = "$target" ]; then
-    git -C "$CO" reset -q 2>/dev/null
-    apply_files "$S" "$target"; rc=$?
-    if [ "$rc" -ne 0 ]; then
-      echo "sdd-state: an interrupted sync left $CO/.sync-applying and finishing it failed (rc=$rc); repair the working tree under $CO and run sdd-state sync again" >&2
-      return 2
-    fi
+  read -r S target < "$CO/.sync-applying" 2>/dev/null || true
+  if [ "$(printf '%s\n%s\n' "$S" "$target" | grep -Ec '^[0-9a-f]{40}$')" -ne 2 ]; then
+    echo "sdd-state: $CO/.sync-applying is not a valid sync marker; check the working tree under $CO, then remove the marker" >&2
+    return 2
+  fi
+  head=$(tip_of "$CO" "refs/heads/$BRANCH")
+  if [ "$head" != "$target" ]; then
+    echo "sdd-state: an interrupted sync left $CO/.sync-applying but the branch has moved from its target ($(short "$target") to $(short "$head")); check the working tree under $CO, then remove the marker" >&2
+    return 2
+  fi
+  git -C "$CO" reset -q 2>/dev/null
+  apply_files "$S" "$target"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "sdd-state: an interrupted sync left $CO/.sync-applying and finishing it failed (rc=$rc); repair the working tree under $CO and run sdd-state sync again" >&2
+    return 2
   fi
   rm -f "$CO/.sync-applying"
 }
@@ -841,7 +866,11 @@ apply_target() {
     REMOTE_FINISHED=${REMOTE_FINISHED#,}; return 6
   fi
   i=0; while [ "$i" -lt "${#tombs[@]}" ]; do discard_tomb "${tombs[$i]}" || true; i=$((i + 1)); done
-  printf '%s %s\n' "$S" "$target" > "$CO/.sync-applying"
+  # The marker must be on disk and readable before the ref moves: a crash
+  # after update-ref with no marker would let the next snapshot publish the
+  # stale tree over the target.
+  printf '%s %s\n' "$S" "$target" > "$CO/.sync-applying" || { rm -f "$CO/.sync-applying"; return 2; }
+  [ "$(cat "$CO/.sync-applying" 2>/dev/null)" = "$S $target" ] || { rm -f "$CO/.sync-applying"; return 2; }
   git -C "$CO" update-ref -m "sdd sync" "refs/heads/$BRANCH" "$target" "$S" 2>/dev/null || { rm -f "$CO/.sync-applying"; return 5; }
   if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-update-ref ]; then hp_unlock; exit 99; fi
   git -C "$CO" reset -q 2>/dev/null
@@ -915,6 +944,15 @@ cmd_sync() {
     return 1
   fi
   : > "$stamp"
+  # A branch at the state name whose root lacks the exact sentinel belongs
+  # to someone else: it is never reconciled or written, and refs and files
+  # stay as they are.
+  if ! hp_has_sentinel "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH"; then
+    S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH"); R=$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")
+    echo "sdd-state: $REMOTE/$BRANCH exists but is not a hyperpowers state branch; set git config hyperpowers.stateBranch to another name" >&2
+    echo "status=foreign local=$(short "$S") remote=$(short "$R") age=$(age_of "$PLAN_DIR" "$R")"
+    return 2
+  fi
   had_co=0; [ -e "$CO/.git" ] && had_co=1
   ensure=$(hp_ensure_checkout "$PLAN_DIR") || return 2
   if [ "${ensure%% *}" != branch ]; then echo "status=plain"; return 0; fi
@@ -936,6 +974,7 @@ cmd_sync() {
       if hp_git_version_at_least 2 38 && mt=$(git -C "$CO" merge-tree --write-tree "$S" "$R" 2>/dev/null); then
         tree=$(printf '%s\n' "$mt" | head -n 1)
         target=$(printf 'sdd: merge %s into %s\n' "$(short "$R")" "$(short "$S")" | hp_git_id "$CO" commit-tree "$tree" -p "$S" -p "$R") || { hp_unlock; echo "status=error"; return 2; }
+        hp_has_sentinel "$CO" "$target" || { hp_unlock; echo "status=error"; return 2; }
         kind=merged
       else
         hp_unlock

@@ -396,6 +396,10 @@ assert_contains "$SDD" 'never start it with a trailing `&`, `nohup`, `setsid`, `
   "untracked launches are forbidden"
 assert_contains "$SDD" 'subagents with `run_in_background: false`' \
   "Claude Code dispatches SDD subagents in the foreground"
+for template in "$IMPL" "$REVW" "$REREVW" "$FIXP" "$CODEREVW"; do
+  assert_contains "$template" 'run_in_background: false # Claude Code: dispatch in the foreground (SKILL.md "Waiting on subagents"); omit on harnesses without the flag' \
+    "the $(basename "$template") dispatch block carries the foreground flag"
+done
 assert_contains "$SDD" 'echo "exit=$?" > <out>.exit' \
   "a long command writes its exit status to its own file whether it succeeds or fails"
 assert_contains "$SDD" "capped at the harness's maximum background lifetime (7200000 ms on Claude Code)" \

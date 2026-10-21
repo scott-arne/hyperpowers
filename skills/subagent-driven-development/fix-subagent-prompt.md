@@ -11,6 +11,7 @@ Subagent (general-purpose):
   description: "Fix findings for Task N: [task name]"
   model: [MODEL — REQUIRED: match the smallest model the fix demands;
          single-file mechanical fixes take the cheapest tier]
+  run_in_background: false   # Claude Code: dispatch in the foreground (SKILL.md "Waiting on subagents"); omit on harnesses without the flag
   prompt: |
     You are fixing review findings for [Task N: task name | the final whole-branch review wave].
 

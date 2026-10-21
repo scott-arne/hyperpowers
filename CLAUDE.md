@@ -59,6 +59,16 @@ Skill-behavior evals live in [hyperpowers-evals](https://github.com/scott-arne/h
 
 **Run artifacts an evidence note cites live in the evals repository, not in the SDD workspace.** When a plan preserves live-run verdicts, captures, or transcripts that its evidence note will cite, copy them into `evals/evidence/<YYYY-MM-DD-plan-slug>/task-<N>-runs/` (committed in hyperpowers-evals; see `evals/evidence/README.md`) and cite that path. The SDD workspace under the user cache is scratch: Finish deletes it and the reaper reclaims idle siblings, so a citation into it rots. Name the evidence directory in the plan's Global Constraints before the first run.
 
+## Local Plugin Install
+
+Claude Code loads this plugin in place from `.worktrees/plugin-install`, a detached worktree at the release tag, so whatever that directory holds is what sessions run. It is a sparse checkout that leaves `docs/` out, because plans and specs are two thirds of the tree and no runtime file reads them:
+
+```bash
+git -C .worktrees/plugin-install sparse-checkout set --no-cone '/*' '!/docs/'
+```
+
+Recreate the worktree with the same patterns. Per release, check out the new tag there and reload plugins.
+
 ## New Harness Support
 
 If you add support for a new harness (IDE, CLI tool, agent runner), verify the integration end-to-end. A real integration loads the `using-hyperpowers` bootstrap at session start — that is what causes skills to auto-trigger. Without it, the skills are present on disk but never invoked.

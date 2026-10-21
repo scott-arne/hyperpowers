@@ -48,6 +48,9 @@ make_pair() { # <name> -> PAIR_REMOTE PAIR_A PAIR_B
 }
 # ensure <repo> [VAR=value...]: hp_ensure_checkout in a fresh bash; prints its line.
 ensure() { local repo=$1; shift; env "$@" bash -c '. "$1"; hp_ensure_checkout "$2"' _ "$LIB" "$repo"; }
+# materialize <repo> <ws> <dest>: hp_materialize_plain in a subshell.
+# shellcheck source=/dev/null
+materialize() { ( . "$LIB"; hp_materialize_plain "$@" ); }
 # shellcheck source=/dev/null
 state_key() { ( . "$LIB"; hp_key "$1" ); }
 run_state() { ( cd "$1" && shift && bash "$SDD_STATE" "$@" ); }
@@ -145,6 +148,76 @@ rp="$TEST_ROOT/rp"; make_repo "$rp"
 ensure "$rp" HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 >/dev/null 2>&1
 mkdir -p "$rp/docs"; : > "$rp/docs/plan.md"; git -C "$rp" add docs; git -C "$rp" commit -qm plan
 if [ "$(ensure "$rp" 2>/dev/null)" = "plain $XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$rp")" ]; then pass "the plain fixture repository stays plain"; else fail "the plain fixture repository stays plain"; fi
+
+# A checkout left on another branch than the configured one is refused on
+# the fast path, with the remedy, and nothing is created for the new name.
+git -C "$r1" config hyperpowers.stateBranch renamed/state
+err=$(ensure "$r1" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'renamed/state' && printf '%s' "$err" | grep -q 'refs/heads/hyperpowers/state' && ! git -C "$r1" rev-parse -q --verify renamed/state >/dev/null; then pass "a checkout on another branch than configured is refused with the remedy"; else fail "a checkout on another branch than configured is refused with the remedy (rc=$rc: $err)"; fi
+git -C "$r1" config --unset hyperpowers.stateBranch
+out=$(ensure "$r1"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "branch $co1" ]; then pass "restoring the config restores the fast path"; else fail "restoring the config restores the fast path (rc=$rc, '$out')"; fi
+# A checkout whose backend record is missing (a crash between the move and
+# the backend write) is repaired on the next call.
+rm -f "$co1.backend"
+out=$(ensure "$r1"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "branch $co1" ] && [ "$(cat "$co1.backend" 2>/dev/null)" = branch ]; then pass "a missing backend record is repaired on the next call"; else fail "a missing backend record is repaired on the next call (rc=$rc)"; fi
+
+# The sentinel is byte-exact: an extra trailing newline makes the branch foreign.
+r8="$TEST_ROOT/r8"; make_repo "$r8"
+sloppy_blob=$(printf 'hyperpowers-state 1\n\n' | git -C "$r8" hash-object -w --stdin)
+sloppy_tree=$(printf '100644 blob %s\t.hyperpowers-state\n' "$sloppy_blob" | git -C "$r8" mktree)
+sloppy_commit=$(git -C "$r8" commit-tree "$sloppy_tree" -m sloppy)
+git -C "$r8" branch hyperpowers/state "$sloppy_commit"
+err=$(ensure "$r8" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'hyperpowers.stateBranch' && [ ! -e "$STATE_ROOT/$(state_key "$r8")/.git" ]; then pass "a sentinel with an extra trailing newline is foreign"; else fail "a sentinel with an extra trailing newline is foreign (rc=$rc: $err)"; fi
+
+# Recovery promotes only a temporary checkout that is itself on the
+# configured branch: a leftover on another branch is removed and a fresh
+# checkout is created from the branch tip.
+r9="$TEST_ROOT/r9"; make_repo "$r9"
+ensure "$r9" >/dev/null; co9="$STATE_ROOT/$(state_key "$r9")"
+git -C "$r9" worktree remove --force "$co9"
+git -C "$r9" worktree add -q -b leftover "$co9.tmp-stale" >/dev/null 2>&1
+out=$(ensure "$r9"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "branch $co9" ] && [ "$(git -C "$co9" symbolic-ref -q HEAD)" = refs/heads/hyperpowers/state ] && [ ! -e "$co9.tmp-stale" ] && [ "$(registrations "$r9")" -eq 1 ]; then pass "recovery removes a leftover on another branch and recreates from the tip"; else fail "recovery removes a leftover on another branch and recreates from the tip (rc=$rc, '$out')"; fi
+
+# The plain fallback reads both owned tips: the one that holds the plan is
+# the source, the descendant when both do, diverged tips are refused, and a
+# foreign tip is refused before anything is read from it.
+make_pair p2
+keyA=$(state_key "$PAIR_A"); keyB=$(state_key "$PAIR_B")
+: > "$STATE_ROOT/$keyA.fetched"
+coA="$STATE_ROOT/$keyA"
+ensure "$PAIR_A" >/dev/null
+mkdir -p "$coA/plans/demo-00000000"
+printf '# SDD ledger — plan: docs/plan.md\n' > "$coA/plans/demo-00000000/progress.md"
+# shellcheck source=/dev/null
+( . "$LIB"; hp_commit_paths "$coA" hyperpowers/state "demo ledger" plans/demo-00000000/progress.md >/dev/null )
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+: > "$STATE_ROOT/$keyB.fetched"
+ensure "$PAIR_B" HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 >/dev/null 2>&1
+git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
+remote_tip=$(git -C "$PAIR_B" rev-parse origin/hyperpowers/state)
+initial=$(git -C "$PAIR_B" rev-parse "origin/hyperpowers/state~1")
+remote_tree=$(git -C "$PAIR_B" rev-parse "origin/hyperpowers/state^{tree}")
+git -C "$PAIR_B" branch hyperpowers/state "$initial"
+plainB="$XDG_CACHE_HOME/hyperpowers/sdd/$keyB"; destB="$plainB/plans/demo-00000000"
+materialize "$PAIR_B" demo-00000000 "$destB"; rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$destB/progress.md" ] && [ "$(cat "$STATE_ROOT/$keyB.backend")" = "plain source=$remote_tip" ]; then pass "the plain fallback materializes from the remote tip when only it holds the plan"; else fail "the plain fallback materializes from the remote tip when only it holds the plan (rc=$rc)"; fi
+ahead=$(git -C "$PAIR_B" commit-tree "$remote_tree" -p "$remote_tip" -m "local ahead")
+git -C "$PAIR_B" update-ref refs/heads/hyperpowers/state "$ahead"
+rm -rf "$destB"
+materialize "$PAIR_B" demo-00000000 "$destB"; rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$destB/progress.md" ] && [ "$(cat "$STATE_ROOT/$keyB.backend")" = "plain source=$ahead" ]; then pass "when both tips hold the plan the descendant is the source"; else fail "when both tips hold the plan the descendant is the source (rc=$rc)"; fi
+diverged=$(git -C "$PAIR_B" commit-tree "$remote_tree" -p "$initial" -m "diverged")
+git -C "$PAIR_B" update-ref refs/heads/hyperpowers/state "$diverged"
+rm -rf "$destB"
+err=$(materialize "$PAIR_B" demo-00000000 "$destB" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q "$diverged" && printf '%s' "$err" | grep -q "$remote_tip" && [ ! -f "$destB/progress.md" ]; then pass "diverged tips that both hold the plan are refused, naming both"; else fail "diverged tips that both hold the plan are refused, naming both (rc=$rc: $err)"; fi
+git -C "$PAIR_B" update-ref refs/heads/hyperpowers/state "$(git -C "$PAIR_B" rev-parse main)"
+err=$(materialize "$PAIR_B" demo-00000000 "$destB" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'hyperpowers.stateBranch' && [ ! -f "$destB/progress.md" ]; then pass "a foreign tip at the state name is refused by the plain fallback"; else fail "a foreign tip at the state name is refused by the plain fallback (rc=$rc: $err)"; fi
 
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi

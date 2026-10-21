@@ -271,15 +271,23 @@ hp_git_version_at_least() { # <major> <minor>
   [ "$maj" -eq "$1" ] 2>/dev/null && [ "$min" -ge "$2" ] 2>/dev/null
 }
 
-# <repo-dir> <commit>: 0 when the commit's root carries the sentinel. A
-# branch at the state name without it is someone else's and is never used.
+# The ownership sentinel is the blob of exactly one line. It is compared by
+# object id: command substitution would drop trailing newlines and accept a
+# copy with a missing or extra newline as exact.
+hp_sentinel_blob() { # <repo-dir>
+  printf 'hyperpowers-state 1\n' | git -C "$1" hash-object --stdin
+}
+# <repo-dir> <commit>: 0 when the commit's root carries the exact sentinel.
+hp_has_sentinel() {
+  [ "$(git -C "$1" rev-parse -q --verify "$2:.hyperpowers-state" 2>/dev/null)" = "$(hp_sentinel_blob "$1")" ]
+}
+# <repo-dir> <commit>: hp_has_sentinel with the message for a branch at the
+# state name that belongs to someone else (exit 2). Such a branch is never
+# used and never written to.
 hp_check_sentinel() {
-  local content
-  content=$(git -C "$1" cat-file -p "$2:.hyperpowers-state" 2>/dev/null) || content=""
-  if [ "$content" != "hyperpowers-state 1" ]; then
-    echo "sdd-dir: branch $(hp_state_branch "$1") exists but is not a hyperpowers state branch; set git config hyperpowers.stateBranch to another name" >&2
-    return 2
-  fi
+  hp_has_sentinel "$1" "$2" && return 0
+  echo "sdd-dir: branch $(hp_state_branch "$1") exists but is not a hyperpowers state branch; set git config hyperpowers.stateBranch to another name" >&2
+  return 2
 }
 
 hp_write_root_files() { # <dir>
@@ -304,24 +312,51 @@ hp_add_orphan_worktree() {
 }
 
 # <repo-dir> <checkout> <branch>: finish or undo an interrupted creation.
-# A temporary checkout whose branch already carries the sentinel commit is
-# moved into place; any other is removed. An interrupted orphan leaves no
-# ref (the branch is unborn until its first commit), so there is nothing to
-# delete; a branch with commits but no sentinel is foreign and refused later.
+# A temporary checkout is promoted only when it is itself on the configured
+# branch and its own HEAD carries the sentinel; the candidate is validated,
+# not the branch tip, so a leftover from another configuration is removed.
+# An interrupted orphan leaves no ref (the branch is unborn until its first
+# commit), so there is nothing to delete; a branch with commits but no
+# sentinel is foreign and refused later.
 hp_recover_tmp_checkouts() {
-  local repo=$1 co=$2 br=$3 wt tip
+  local repo=$1 co=$2 br=$3 wt head
   git -C "$repo" worktree prune >/dev/null 2>&1 || true
   if [ -d "$co" ] && [ ! -e "$co/.git" ]; then rmdir "$co" 2>/dev/null || true; fi
-  tip=$(git -C "$repo" rev-parse -q --verify "refs/heads/$br^{commit}" 2>/dev/null || true)
   for wt in "$co".tmp-*; do
     [ -e "$wt/.git" ] || continue
-    if [ -n "$tip" ] && [ ! -e "$co/.git" ] && [ "$(git -C "$repo" cat-file -p "$tip:.hyperpowers-state" 2>/dev/null)" = "hyperpowers-state 1" ]; then
+    head=$(git -C "$wt" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || head=""
+    if [ ! -e "$co/.git" ] && [ -n "$head" ] && [ "$(git -C "$wt" symbolic-ref -q HEAD 2>/dev/null)" = "refs/heads/$br" ] && hp_has_sentinel "$repo" "$head"; then
       if git -C "$repo" worktree move "$wt" "$co" >/dev/null 2>&1; then continue; fi
     fi
     git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || rm -rf "$wt"
   done
   git -C "$repo" worktree prune >/dev/null 2>&1 || true
   rm -rf "$co".tmp-* 2>/dev/null || true
+}
+
+# <repo-dir> <checkout> <branch>: 0 when the checkout at the final path is a
+# worktree of this repository on the configured branch whose HEAD carries
+# the sentinel. The fast paths run it on every lookup, so a checkout left on
+# another branch (hyperpowers.stateBranch changed after creation, or the
+# worktree switched by hand) is never handed to a writer; exit 2 with the
+# remedy.
+hp_verify_checkout() {
+  local repo=$1 co=$2 br=$3 sym head
+  if [ "$(hp_common_dir "$co" 2>/dev/null)" != "$(hp_common_dir "$repo" 2>/dev/null)" ]; then
+    echo "sdd-dir: state checkout $co does not belong to this repository; remove it and run again" >&2
+    return 2
+  fi
+  sym=$(git -C "$co" symbolic-ref -q HEAD 2>/dev/null) || sym=""
+  if [ "$sym" != "refs/heads/$br" ]; then
+    echo "sdd-dir: state checkout $co is on ${sym:-a detached HEAD} but git config hyperpowers.stateBranch names $br; restore the config, or remove the checkout (git -C $repo worktree remove --force $co) and run again" >&2
+    return 2
+  fi
+  head=$(git -C "$co" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || head=""
+  if [ -z "$head" ]; then
+    echo "sdd-dir: state checkout $co has no commit; remove it (git -C $repo worktree remove --force $co) and run again" >&2
+    return 2
+  fi
+  hp_check_sentinel "$repo" "$head"
 }
 
 # <repo-dir> -> "branch <checkout>" or "plain <plain-root>". Exit 2 when the
@@ -334,11 +369,27 @@ hp_ensure_checkout() {
   br=$(hp_state_branch "$repo"); remote=$(hp_state_remote "$repo")
   backend=$(hp_backend "$repo")
   if [ "$backend" = plain ]; then printf 'plain %s\n' "$(hp_plain_root "$repo")"; return 0; fi
-  if [ -e "$co/.git" ]; then printf 'branch %s\n' "$co"; return 0; fi
+  if [ -e "$co/.git" ]; then
+    hp_verify_checkout "$repo" "$co" "$br" || return 2
+    if [ "$backend" != branch ]; then
+      # A crash between the move and the backend write left it unrecorded.
+      hp_lock "$repo" || return 2
+      hp_write_backend "$repo" branch || { hp_unlock; return 2; }
+      hp_unlock
+    fi
+    printf 'branch %s\n' "$co"; return 0
+  fi
   hp_lock "$repo" || return 2
-  if [ -e "$co/.git" ]; then hp_unlock; printf 'branch %s\n' "$co"; return 0; fi
+  if [ -e "$co/.git" ]; then
+    hp_verify_checkout "$repo" "$co" "$br" || { hp_unlock; return 2; }
+    hp_write_backend "$repo" branch || { hp_unlock; return 2; }
+    hp_unlock; printf 'branch %s\n' "$co"; return 0
+  fi
   hp_recover_tmp_checkouts "$repo" "$co" "$br"
-  if [ -e "$co/.git" ]; then hp_write_backend "$repo" branch; hp_unlock; printf 'branch %s\n' "$co"; return 0; fi
+  if [ -e "$co/.git" ]; then
+    hp_write_backend "$repo" branch || { hp_unlock; return 2; }
+    hp_unlock; printf 'branch %s\n' "$co"; return 0
+  fi
   if tip=$(git -C "$repo" rev-parse -q --verify "refs/heads/$br^{commit}" 2>/dev/null); then
     hp_check_sentinel "$repo" "$tip" || { hp_unlock; return 2; }
     mode=local
@@ -366,7 +417,7 @@ hp_ensure_checkout() {
   if [ "$rc" -ne 0 ]; then
     echo "sdd-dir: git worktree add failed (rc=$rc); this repository uses the plain cache (backend=plain)" >&2
     git -C "$repo" worktree remove --force "$tmp" >/dev/null 2>&1 || rm -rf "$tmp"
-    hp_write_backend "$repo" plain
+    hp_write_backend "$repo" plain || { hp_unlock; return 2; }
     hp_unlock; printf 'plain %s\n' "$(hp_plain_root "$repo")"; return 0
   fi
   if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = after-worktree-add ]; then hp_unlock; exit 99; fi
@@ -375,28 +426,49 @@ hp_ensure_checkout() {
     hp_commit_paths "$tmp" "$br" "hyperpowers state: initial layout" . >/dev/null || { hp_unlock; return 2; }
   fi
   if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = after-initial-commit ]; then hp_unlock; exit 99; fi
-  git -C "$repo" worktree move "$tmp" "$co" >/dev/null 2>&1 || { echo "sdd-dir: git worktree move failed" >&2; hp_unlock; return 2; }
-  hp_write_backend "$repo" branch
+  git -C "$repo" worktree move "$tmp" "$co" >/dev/null 2>&1 || { echo "sdd-dir: git worktree move of $tmp to $co failed; remove whatever occupies $co and run again" >&2; hp_unlock; return 2; }
+  hp_write_backend "$repo" branch || { hp_unlock; return 2; }
   hp_unlock
   printf 'branch %s\n' "$co"
 }
 
 # <repo-dir> <ws> <dest-dir>: under the plain backend, copy the plan's
-# workspace out of an existing state branch (local or remote-tracking) when
-# the destination has no ledger yet. Records the source tip in the backend
-# file. Callers hold the repository lock. A plain fallback never starts an
-# empty ledger over branch state: a failed archive is exit 2, and the caller
-# removes the half-written destination.
+# workspace out of the state branch when the destination has no ledger yet.
+# The local branch and the remote-tracking branch are both candidates and
+# each must carry the sentinel (a foreign tip is exit 2). The source is the
+# tip that holds the plan; when both do, the descendant; when they have
+# diverged, exit 2 naming both, because choosing one would hide the other's
+# ledger lines. Records the source tip in the backend file. Callers hold the
+# repository lock. A plain fallback never starts an empty ledger over branch
+# state: a failed archive is exit 2, and the caller removes the half-written
+# destination.
 hp_materialize_plain() {
-  local repo=$1 ws=$2 dest=$3 br remote tip root
+  local repo=$1 ws=$2 dest=$3 br remote local_tip remote_tip tip root archive_rc tar_rc
   [ -f "$dest/progress.md" ] && return 0
   br=$(hp_state_branch "$repo"); remote=$(hp_state_remote "$repo")
-  tip=$(git -C "$repo" rev-parse -q --verify "refs/heads/$br^{commit}" 2>/dev/null) \
-    || tip=$(git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$br^{commit}" 2>/dev/null) \
-    || return 0
-  git -C "$repo" cat-file -e "$tip:plans/$ws/progress.md" 2>/dev/null || return 0
+  local_tip=$(git -C "$repo" rev-parse -q --verify "refs/heads/$br^{commit}" 2>/dev/null) || local_tip=""
+  remote_tip=$(git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$br^{commit}" 2>/dev/null) || remote_tip=""
+  if [ -n "$local_tip" ]; then hp_check_sentinel "$repo" "$local_tip" || return 2; fi
+  if [ -n "$remote_tip" ]; then hp_check_sentinel "$repo" "$remote_tip" || return 2; fi
+  if [ -n "$local_tip" ] && ! git -C "$repo" cat-file -e "$local_tip:plans/$ws/progress.md" 2>/dev/null; then local_tip=""; fi
+  if [ -n "$remote_tip" ] && ! git -C "$repo" cat-file -e "$remote_tip:plans/$ws/progress.md" 2>/dev/null; then remote_tip=""; fi
+  if [ -n "$local_tip" ] && [ -n "$remote_tip" ] && [ "$local_tip" != "$remote_tip" ]; then
+    if git -C "$repo" merge-base --is-ancestor "$local_tip" "$remote_tip" 2>/dev/null; then tip=$remote_tip
+    elif git -C "$repo" merge-base --is-ancestor "$remote_tip" "$local_tip" 2>/dev/null; then tip=$local_tip
+    else
+      echo "sdd-dir: $br ($local_tip) and $remote/$br ($remote_tip) both hold plans/$ws and have diverged; reconcile them (sdd-state sync under the branch backend, or merge the state branch) before the plain fallback can materialize this plan" >&2
+      return 2
+    fi
+  else
+    tip=${local_tip:-$remote_tip}
+  fi
+  [ -n "$tip" ] || return 0
   root=$(dirname "$(dirname "$dest")")
   mkdir -p "$dest"
-  git -C "$repo" archive "$tip" "plans/$ws" | tar -x -C "$root" || return 2
+  git -C "$repo" archive "$tip" "plans/$ws" | tar -x -C "$root"
+  # Both statuses are read in one statement: the first test below would
+  # otherwise reset PIPESTATUS before the second is read.
+  archive_rc=${PIPESTATUS[0]} tar_rc=${PIPESTATUS[1]}
+  if [ "$archive_rc" -ne 0 ] || [ "$tar_rc" -ne 0 ]; then return 2; fi
   hp_write_backend "$repo" "plain source=$tip"
 }

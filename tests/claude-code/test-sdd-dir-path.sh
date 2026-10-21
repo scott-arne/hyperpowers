@@ -331,6 +331,16 @@ mkdir -p "$idle_backup/plans/some-plan-deadbeef.importing-4242" "$idle_plain/pla
 touch -mt "$OLDSTAMP" "$idle_backup" "$idle_plain"
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
 if [ -d "$idle_backup" ] && [ ! -d "$idle_plain" ]; then pass "an idle root holding an import backup survives the reclaim; an idle root without one is removed"; else fail "an idle root holding an import backup survives the reclaim; an idle root without one is removed (backup root: $([ -d "$idle_backup" ] && echo kept || echo gone), plain root: $([ -d "$idle_plain" ] && echo kept || echo gone))"; fi
+idle_raced="$XDG_CACHE_HOME/hyperpowers/sdd/idleraced000000000003"
+mkdir -p "$idle_raced/plans/some-plan-deadbeef"; : > "$idle_raced/plans/some-plan-deadbeef/progress.md"
+touch -mt "$OLDSTAMP" "$idle_raced"
+_=$(cd "$TEST_ROOT/repo-plan" && HYPERPOWERS_TEST_RECLAIM_RACE="$idle_raced" "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -d "$idle_raced" ] && [ -f "$idle_raced/plans/some-plan-deadbeef/progress.md" ] && [ -d "$idle_raced/plans/x.importing-1" ] && ! ls -d "$idle_raced.reclaiming-"* >/dev/null 2>&1; then pass "an import that wins the race by an instant gets its root back, backup and all"; else fail "an import that wins the race by an instant gets its root back, backup and all (root: $([ -d "$idle_raced" ] && echo kept || echo gone))"; fi
+ln -s "$TEST_ROOT/repo-plan" "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004"
+touch -h -t 202601010000 "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004" 2>/dev/null || true
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -L "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004" ] && [ -d "$TEST_ROOT/repo-plan/.git" ]; then pass "a symlinked cache root is left alone by the reclaim"; else fail "a symlinked cache root is left alone by the reclaim"; fi
+rm -f "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004"
 
 echo "Test: a plan's workspace survives another plan's invocation"
 planA_dir=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)

@@ -240,12 +240,15 @@ fi
 # 10h. A cwd key that holds only pointers is refreshed on every cross-
 # repository invocation, so the repo-level reclaim (14 idle days, which
 # excludes only the plan repository's key) does not take the pointer with it.
+: > "$repo_a/plan2.md"
+second_b=$(cd "$repo_b" && bash "$SDD_DIR_SCRIPT" "$repo_a/plan2.md")
+pointer_b2="$bare_b/plans/$(basename "$second_b")+$(state_key "$repo_a" | cut -c1-8)"
 touch -t 202601010000 "$bare_b"
 from_b_again=$(cd "$repo_b" && bash "$SDD_DIR_SCRIPT" "$repo_a/plan.md")
-if [ "$from_b_again" = "$from_a" ] && [ -L "$pointer_b" ] && [ "$(find "$bare_b" -maxdepth 0 -mtime +14 | wc -l | tr -d ' ')" -eq 0 ]; then
-    pass "a cross-repository invocation refreshes the cwd key so its pointer survives the reclaim"
+if [ "$from_b_again" = "$from_a" ] && [ -L "$pointer_b" ] && [ "$(find "$bare_b" -maxdepth 0 -mtime +14 | wc -l | tr -d ' ')" -eq 0 ] && [ -L "$pointer_b2" ]; then
+    pass "a cross-repository invocation refreshes the cwd key so its pointers survive the reclaim"
 else
-    fail "a cross-repository invocation refreshes the cwd key so its pointer survives the reclaim (dir present: $([ -d "$bare_b" ] && echo yes || echo no), pointer present: $([ -L "$pointer_b" ] && echo yes || echo no))"
+    fail "a cross-repository invocation refreshes the cwd key so its pointers survive the reclaim (dir present: $([ -d "$bare_b" ] && echo yes || echo no), pointer present: $([ -L "$pointer_b" ] && echo yes || echo no))"
 fi
 
 # 10i. The cwd repository's own plan at the same repo-relative path keeps its
@@ -440,6 +443,10 @@ rc=0
 err=$(cd "$TEST_ROOT/repo-remote" && bash "$SDD_DIR_SCRIPT" plan.md 2>&1 >/dev/null) || rc=$?
 if [ "$rc" -eq 2 ] && grep -q 'needs-sync' < <(printf '%s\n' "$err"); then pass "a clone with a remote and no fetch stamp gets needs-sync"; else fail "a clone with a remote and no fetch stamp gets needs-sync (rc=$rc: $err)"; fi
 if ( cd "$TEST_ROOT/repo-remote" && bash "$SDD_DIR_SCRIPT" missing.md ) >/dev/null 2>&1; then fail "a plan file that does not exist is refused"; else pass "a plan file that does not exist is refused"; fi
+ln -s plan.md "$TEST_ROOT/repo-remote/link-plan.md"
+rc=0
+out=$(cd "$TEST_ROOT/repo-remote" && bash "$SDD_DIR_SCRIPT" link-plan.md 2>"$TEST_ROOT/link-plan.err") || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q 'symlink' < <(cat "$TEST_ROOT/link-plan.err"); then pass "a symlinked plan file is refused with exit 2 and a reason"; else fail "a symlinked plan file is refused with exit 2 and a reason (rc=$rc, out='$out', err=$(cat "$TEST_ROOT/link-plan.err" 2>/dev/null))"; fi
 make_repo "$TEST_ROOT/repo-plain"
 git -C "$TEST_ROOT/repo-plain" commit -q --allow-empty -m "initial"
 : > "$TEST_ROOT/repo-plain/plan.md"

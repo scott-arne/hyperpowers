@@ -70,8 +70,8 @@ if [ -z "$plan_dir" ]; then
   exit 0
 fi
 
-key=$(hp_key "$plan_dir")
-ws=$(hp_plan_ws_name "$plan")
+key=$(hp_key "$plan_dir") || { echo "sdd-dir: could not derive the repository key for: $plan" >&2; exit 2; }
+ws=$(hp_plan_ws_name "$plan") || { echo "sdd-dir: plan file must be a regular file inside the repository, not a symlink: $plan" >&2; exit 2; }
 ensure=$(hp_ensure_checkout "$plan_dir") || exit 2
 backend=${ensure%% *}
 root=${ensure#* }
@@ -102,10 +102,11 @@ bash "$SCRIPT_DIR/sdd-state" import "$plan" >/dev/null || {
 
 # Keep the plan repository's plain root fresh: it holds pointers for other
 # repositories and the no-argument scratch, and another repository's reclaim
-# would otherwise take it after 14 idle days.
+# would otherwise take it after 14 idle days. The reclaim itself runs last,
+# after the cwd key below has been touched, so a pointer-only key is never
+# taken with it.
 mkdir -p "$base/$key" 2>/dev/null || true
 touch "$base/$key" 2>/dev/null || true
-reclaim_plain "$key"
 
 # A plan run from another repository's checkout: leave a pointer under the
 # cwd's key in the plain cache, so the compaction notice finds the ledger
@@ -130,5 +131,7 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     done
   fi
 fi
+
+reclaim_plain "$key"
 
 printf '%s\n' "$dir"

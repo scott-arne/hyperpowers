@@ -254,28 +254,32 @@ import_published() {
   [ -f "$2/progress.md" ] || return 1
   cmp -s <(tail -n +2 "$1/progress.md") <(tail -n +2 "$2/progress.md")
 }
-# <candidate> <backup> <ref>: relink the legacy path (or the pointer) to the
-# destination and check it resolves there; reconcile a ledger append that
-# landed in the source after it was copied (the ledger is append-only, so
-# the new bytes are added to the destination); remove the backup unless
-# something else changed, in which case it is kept and named; print the
-# moved line. Reads src_ledger_size and src_manifest_rest from the caller.
-# Returns 2 after import_abort when the relink fails.
+# <candidate> <backup> <ref>: reconcile a ledger append that landed in the
+# source after it was copied (the ledger is append-only, so the new bytes
+# are added to the destination), verify that the two ledger bodies then
+# agree from their second line on and that nothing else changed, relink the
+# legacy path (or the pointer) to the destination and check it resolves
+# there, and remove the backup. Reconciliation runs before the relink so a
+# crash leaves the legacy path absent and the backup recoverable; any
+# failure or non-append change aborts with the source restored, and the next
+# import starts over from the current source. Reads src_ledger_size and
+# src_manifest_rest from the caller (both taken from the frozen copy).
+# Returns 2 after import_abort on failure.
 import_finish() {
   local link now
+  now=$(wc -c < "$2/progress.md" 2>/dev/null | tr -d ' ')
+  if [ "${now:-0}" -gt "$src_ledger_size" ]; then
+    tail -c +"$((src_ledger_size + 1))" "$2/progress.md" >> "$dest/progress.md" || { import_abort "$1" "$2" "$3" "" ledger; return 2; }
+  fi
+  if ! cmp -s <(tail -n +2 "$2/progress.md") <(tail -n +2 "$dest/progress.md") || [ "$(tree_manifest "$2" | grep -v ' \./progress\.md$')" != "$src_manifest_rest" ]; then
+    echo "sdd-state: the legacy workspace changed while it was imported; nothing was moved, run import again" >&2
+    import_abort "$1" "$2" "$3" "" ledger; return 2
+  fi
   if [ -L "$1" ]; then link=$1; else link=$3; fi
   if [ -n "${HYPERPOWERS_TEST_FAIL_RELINK:-}" ] || ! ln -sfn "$dest" "$link" 2>/dev/null || [ "$(hp_physical_dir "$link" 2>/dev/null)" != "$(hp_physical_dir "$dest")" ]; then
     import_abort "$1" "$2" "$3" "" ledger; return 2
   fi
-  now=$(wc -c < "$2/progress.md" 2>/dev/null | tr -d ' ')
-  if [ "${now:-0}" -gt "$src_ledger_size" ]; then
-    tail -c +"$((src_ledger_size + 1))" "$2/progress.md" >> "$dest/progress.md"
-  fi
-  if [ "$(tree_manifest "$2" | grep -v ' \./progress\.md$')" != "$src_manifest_rest" ]; then
-    echo "sdd-state: the legacy workspace changed while it was imported; its copy was kept at $2" >&2
-  else
-    rm -rf "$2" || echo "sdd-state: the imported source's backup could not be removed: $2" >&2
-  fi
+  rm -rf "$2" || echo "sdd-state: the imported source's backup could not be removed: $2" >&2
   hp_unlock
   echo "status=moved from=$(enc "$1")"
   return 0
@@ -305,9 +309,11 @@ $cache/$(hp_legacy_key .)/plans/$WS"
   fi
   # Pointers carry the plan repository's key prefix as their suffix; only
   # this repository's suffixes qualify, so another repository that happens
-  # to hold a plan at the same relative path is never touched.
+  # to hold a plan at the same relative path is never touched. A dangling
+  # pointer qualifies too: its referent may be a backup an interrupted
+  # import left aside.
   for c in "$cache"/*/plans/"$WS"+"$(hp_legacy_key "$PLAN_DIR" | cut -c1-8)" "$cache"/*/plans/"$WS"+"$(hp_key "$PLAN_DIR" | cut -c1-8)"; do
-    [ -e "$c" ] && candidates="$candidates
+    { [ -e "$c" ] || [ -L "$c" ]; } && candidates="$candidates
 $c"
   done
   if [ "$BACKEND" = branch ]; then
@@ -329,13 +335,17 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
     [ -f "$ref/progress.md" ] || continue
     if [ -f "$dest/progress.md" ]; then
       # A cutover interrupted after publication left the source (just put
-      # back from its backup) beside a complete destination: finish it.
-      if [ "$restored" -eq 1 ] && import_published "$ref" "$dest"; then
+      # back from its backup) beside a complete destination: finish it. The
+      # baseline is taken before the comparison, so a write that lands
+      # afterwards is reconciled, not blessed.
+      if [ "$restored" -eq 1 ]; then
         src_ledger_size=$(wc -c < "$ref/progress.md" | tr -d ' ')
         src_manifest_rest=$(tree_manifest "$ref" | grep -v ' \./progress\.md$')
-        backup="$ref.importing-$$"
-        mv "$ref" "$backup" 2>/dev/null || { hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
-        import_finish "$c" "$backup" "$ref"; return $?
+        if import_published "$ref" "$dest"; then
+          backup="$ref.importing-$$"
+          mv "$ref" "$backup" 2>/dev/null || { hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
+          import_finish "$c" "$backup" "$ref"; return $?
+        fi
       fi
       hp_unlock; echo "status=skipped reason=ledger-exists path=$(enc "$c")"; return 0
     fi
@@ -352,9 +362,12 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
     if ! cp -a "$backup/." "$stage/" 2>/dev/null || [ "$(tree_manifest "$backup")" != "$(tree_manifest "$stage")" ]; then
       import_abort "$c" "$backup" "$ref" "$stage" ""; return 2
     fi
-    src_ledger_size=$(wc -c < "$backup/progress.md" | tr -d ' ')
-    src_manifest_rest=$(tree_manifest "$backup" | grep -v ' \./progress\.md$')
+    # The baseline comes from the staged copy, frozen at cp: every byte the
+    # source gains after the copy is outside it and gets reconciled.
+    src_ledger_size=$(wc -c < "$stage/progress.md" | tr -d ' ')
+    src_manifest_rest=$(tree_manifest "$stage" | grep -v ' \./progress\.md$')
     if [ -n "${HYPERPOWERS_TEST_LATE_APPEND:-}" ]; then printf '%s\n' "$HYPERPOWERS_TEST_LATE_APPEND" >> "$backup/progress.md"; fi
+    if [ -n "${HYPERPOWERS_TEST_LATE_REPLACE:-}" ]; then printf '%s\n' "$HYPERPOWERS_TEST_LATE_REPLACE" > "$backup/progress.md"; fi
     # The identity is rewritten in the stage, and the installed tree is
     # verified against the stage's manifest, so the rewrite never reads as a
     # size mismatch.

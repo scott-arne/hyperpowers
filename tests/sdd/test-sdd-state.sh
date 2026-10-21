@@ -572,6 +572,31 @@ mkdir -p "$legacy_i13"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: com
 out=$(HYPERPOWERS_TEST_LATE_APPEND='Task 2: complete (commits 3333333..4444444, review clean)' run_state "$i13" import docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i13" ] && [ -f "$wsi13/progress.md" ] && [ ! -d "$wsi13/$(basename "$wsi13")" ] && ! ls -d "$wsi13.import-"* >/dev/null 2>&1 && [ "$(tail -n 1 "$wsi13/progress.md")" = "Task 2: complete (commits 3333333..4444444, review clean)" ] && ! ls -d "$legacy_i13.importing-"* >/dev/null 2>&1; then pass "an empty destination is replaced in place and a late ledger append is carried over"; else fail "an empty destination is replaced in place and a late ledger append is carried over (rc=$rc: $out)"; fi
 
+# An import interrupted while its candidate was a pointer leaves the pointer
+# dangling (its referent is the backup); the next call recovers it and moves
+# the referent, relinking the pointer to the new workspace.
+i14="$TEST_ROOT/i14"; make_repo "$i14"; mkdir -p "$i14/docs"; : > "$i14/docs/plan.md"; git -C "$i14" add docs; git -C "$i14" commit -qm plan
+wsi14=$(ws_path "$i14" "$i14/docs/plan.md")
+ptr_dir="$XDG_CACHE_HOME/hyperpowers/sdd/otherkey00000014/plans"; mkdir -p "$ptr_dir"
+ptr14="$ptr_dir/$(basename "$wsi14")+$(state_key "$i14" | cut -c1-8)"
+referent14="$TEST_ROOT/ptrref14/$(basename "$wsi14")"; mkdir -p "$referent14.importing-777"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$referent14.importing-777/progress.md"
+ln -s "$referent14" "$ptr14"
+out=$(run_state "$i14" import docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$ptr14" ] && [ "$(sed -n 2p "$wsi14/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ] && [ -L "$ptr14" ] && [ "$(cd "$ptr14" && pwd -P)" = "$(cd "$wsi14" && pwd -P)" ] && ! ls -d "$referent14.importing-"* >/dev/null 2>&1; then pass "a dangling pointer whose referent is an interrupted import's backup is recovered and moved"; else fail "a dangling pointer whose referent is an interrupted import's backup is recovered and moved (rc=$rc: $out)"; fi
+
+# A late change that is not an append (the ledger replaced after the copy)
+# aborts the import: the source is restored with the new content, nothing
+# is moved, and the next import starts over.
+i15="$TEST_ROOT/i15"; make_repo "$i15"; mkdir -p "$i15/docs"; : > "$i15/docs/plan.md"; git -C "$i15" add docs; git -C "$i15" commit -qm plan
+wsi15=$(ws_path "$i15" "$i15/docs/plan.md")
+legacy_i15="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i15")/plans/$(basename "$wsi15")"
+mkdir -p "$legacy_i15"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$legacy_i15/progress.md"
+out=$(HYPERPOWERS_TEST_LATE_REPLACE='# SDD ledger — plan: docs/plan.md' run_state "$i15" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=import-failed from=$legacy_i15" ] && [ -d "$legacy_i15" ] && [ ! -L "$legacy_i15" ] && [ "$(wc -l < "$legacy_i15/progress.md" | tr -d ' ')" = 1 ] && [ ! -f "$wsi15/progress.md" ] && ! ls -d "$legacy_i15.importing-"* >/dev/null 2>&1; then pass "a non-append late change aborts the import and restores the current source"; else fail "a non-append late change aborts the import and restores the current source (rc=$rc: $out)"; fi
+out=$(run_state "$i15" import docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i15" ] && [ -L "$legacy_i15" ] && [ "$(wc -l < "$wsi15/progress.md" | tr -d ' ')" = 1 ]; then pass "the next import moves the current source"; else fail "the next import moves the current source (rc=$rc: $out)"; fi
+
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

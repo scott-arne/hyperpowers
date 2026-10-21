@@ -794,6 +794,7 @@ printf 'Task 2: complete (commits 3333333..4444444, review clean)\n' >> "$wsa/pr
 run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 out=$(run_state "$PAIR_B" sync docs/plan.md)
 if [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(sed -n 3p "$wsb/progress.md")" = "Task 2: complete (commits 3333333..4444444, review clean)" ]; then pass "a behind checkout fast-forwards, after private-index commits left its index stale"; else fail "a behind checkout fast-forwards ($out)"; fi
+if [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ] && [ "$(cat "$wsb/progress.md")" = "$(git -C "$co_b" show "hyperpowers/state:plans/$(basename "$wsa")/progress.md")" ]; then pass "after a writer-free fast-forward the checkout is clean and the ledger equals the tree's blob"; else fail "after a writer-free fast-forward the checkout is clean and the ledger equals the tree's blob"; fi
 printf 'Task 3: complete (commits 5555555..6666666, review clean)\n' >> "$wsb/progress.md"
 run_state "$PAIR_B" snapshot docs/plan.md >/dev/null
 out=$(run_state "$PAIR_B" sync docs/plan.md)
@@ -802,8 +803,20 @@ git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
 printf 'note from A while behind\n' >> "$wsa/progress.md"
 out=$(run_state "$PAIR_A" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=merged" ] && grep -q '^Task 3: complete' "$wsa/progress.md" && grep -q '^note from A while behind$' "$wsa/progress.md" && ! grep -q '^<<<<<<<' "$wsa/progress.md" && [ "$(git -C "$co_a" log -1 --format=%P hyperpowers/state | wc -w | tr -d ' ')" = 2 ]; then pass "behind with pending ledger edits ends merged with both sides' lines and two parents"; else fail "behind with pending ledger edits ends merged (rc=$rc: $out)"; fi
+if [ -z "$(git -C "$co_a" status --porcelain -- plans/)" ] && [ "$(cat "$wsa/progress.md")" = "$(git -C "$co_a" show "hyperpowers/state:plans/$(basename "$wsa")/progress.md")" ]; then pass "after a merge the checkout is clean and the ledger equals the merged blob"; else fail "after a merge the checkout is clean and the ledger equals the merged blob"; fi
 git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md >/dev/null
+# Two hosts append concurrently; the second host's fast-forward lands on
+# the first host's merge, where S is not a prefix of the target.
+printf 'walk A\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+printf 'walk B\n' >> "$wsb/progress.md"; run_state "$PAIR_B" snapshot docs/plan.md >/dev/null
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=merged" ] && [ "$(cat "$wsb/progress.md")" = "$(git -C "$co_b" show "hyperpowers/state:plans/$(basename "$wsa")/progress.md")" ]; then pass "the merging host's live ledger equals the merged blob"; else fail "the merging host's live ledger equals the merged blob (rc=$rc: $out)"; fi
+git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
+out=$(run_state "$PAIR_A" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(cat "$wsa/progress.md")" = "$(git -C "$co_a" show "hyperpowers/state:plans/$(basename "$wsa")/progress.md")" ] && [ "$(grep -c '^walk A$' "$wsa/progress.md")" -eq 1 ] && [ "$(grep -c '^walk B$' "$wsa/progress.md")" -eq 1 ]; then pass "a fast-forward onto the other host's merge rewrites the ledger in place: tree order, each line once"; else fail "a fast-forward onto the other host's merge rewrites the ledger in place (rc=$rc: $out)"; fi
+if [ "$(run_state "$PAIR_A" sync docs/plan.md | cut -d' ' -f1)" = "status=up-to-date" ] && [ "$(run_state "$PAIR_B" sync docs/plan.md | cut -d' ' -f1)" = "status=up-to-date" ]; then pass "both hosts stay up-to-date afterwards: no reorder commit"; else fail "both hosts stay up-to-date afterwards: no reorder commit"; fi
 printf 'report edited on A\n' > "$wsa/task-1-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 printf 'report edited on B\n' > "$wsb/task-1-report.md"; run_state "$PAIR_B" snapshot docs/plan.md >/dev/null
 out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
@@ -820,7 +833,7 @@ run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q o
 : > "$co_b/.sync-pause"
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_PAUSE_AT=sync-before-apply bash "$SDD_STATE" sync docs/plan.md > "$TEST_ROOT/p7.sync.out" 2>/dev/null ) &
 sync_pid=$!
-sleep 1
+n=0; while [ ! -e "$co_b/.sync-paused" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
 printf 'appended during sync\n' >> "$wsb/progress.md"
 rm -f "$co_b/.sync-pause"
 wait "$sync_pid"
@@ -862,6 +875,12 @@ if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && ! grep -q '^Task 5b: com
 tip_before=$(git -C "$co_b" rev-parse hyperpowers/state)
 out=$(run_state "$PAIR_B" sync docs/plan.md)
 if [ "${out%% *}" = "status=up-to-date" ] && grep -q '^Task 5b: complete' "$wsb/progress.md" && [ ! -f "$co_b/.sync-applying" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$tip_before" ]; then pass "the next sync recovers the interrupted apply without a revert commit"; else fail "the next sync recovers the interrupted apply without a revert commit ($out)"; fi
+printf 'Task 5c: complete (commits 9999999..aaaaaaa, review clean)\n' >> "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-ledger-apply bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ "$(grep -c '^Task 5c: complete' "$wsb/progress.md")" -eq 1 ]; then pass "the crash seam after the ledger apply leaves the line applied and the marker in place"; else fail "the crash seam after the ledger apply leaves the line applied and the marker in place (rc=$rc)"; fi
+out=$(run_state "$PAIR_B" sync docs/plan.md)
+if [ "${out%% *}" = "status=up-to-date" ] && [ "$(grep -c '^Task 5c: complete' "$wsb/progress.md")" -eq 1 ] && [ ! -f "$co_b/.sync-applying" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "recovery after the ledger apply appends nothing twice"; else fail "recovery after the ledger apply appends nothing twice ($out)"; fi
 
 # A remote finish racing a local writer: refused, nothing changed. The seam
 # writes after the pending check and right before the rename.
@@ -884,6 +903,10 @@ git -C "$off" remote set-url origin "$TEST_ROOT/does-not-exist.git"
 out=$(run_state "$off" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 1 ] && [ "${out%% *}" = "status=offline-no-state" ]; then pass "a fresh clone that cannot fetch reports offline-no-state"; else fail "a fresh clone that cannot fetch reports offline-no-state (rc=$rc: $out)"; fi
 if run_sdd_dir "$off" docs/plan.md >/dev/null 2>&1; then fail "sdd-dir refuses to invent a dossier on that host"; else pass "sdd-dir refuses to invent a dossier on that host"; fi
+off2="$TEST_ROOT/hostA/p7-off2"; git clone -q "$PAIR_REMOTE" "$off2" 2>/dev/null
+git -C "$off2" remote set-url origin "$TEST_ROOT/does-not-exist.git"
+out=$(run_state "$off2" sync docs/plan.md); rc=$?
+if [ "$rc" -eq 1 ] && [ "${out%% *}" = "status=offline" ] && [ -e "$STATE_ROOT/$(state_key "$off2")/.git" ] && [ -n "$(git -C "$off2" rev-parse -q --verify refs/heads/hyperpowers/state 2>/dev/null)" ]; then pass "a default clone that cannot fetch still has the branch as a remote-tracking ref: offline, checkout built from it"; else fail "a default clone that cannot fetch still has the branch as a remote-tracking ref (rc=$rc: $out)"; fi
 out=$(run_state "$off" sync docs/plan.md --assume-absent); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=assumed-absent" ] && [ -f "$STATE_ROOT/$(state_key "$off").fetched" ] && [ -e "$STATE_ROOT/$(state_key "$off")/.git" ]; then pass "--assume-absent writes the stamp and creates the orphan"; else fail "--assume-absent writes the stamp and creates the orphan (rc=$rc: $out)"; fi
 out=$(run_state "$off" sync docs/plan.md); rc=$?

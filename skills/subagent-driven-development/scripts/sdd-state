@@ -698,11 +698,56 @@ snapshot_pending() {
     hp_commit_paths "$CO" "$BRANCH" "sdd $name: snapshot $(hp_utc_now)" "plans/$name" >/dev/null || return 2
   done
 }
+# blob_prefix_id <file|-> <n>: the blob id of the first <n> bytes of a file
+# or of stdin. Callers never pass 0 (BSD head rejects it).
+blob_prefix_id() {
+  if [ "$1" = - ]; then head -c "$2" | git -C "$CO" hash-object --stdin; else head -c "$2" "$1" | git -C "$CO" hash-object --stdin; fi
+}
+# ledger_apply <path> <S> <target>: bring one ledger from S to target
+# without replacing its inode or dropping a line a live writer appended.
+# When the target's blob extends S's, the new tail is appended, and skipped
+# when the file already ends with it, so a recovery never appends twice.
+# Otherwise (a merge, or a fast-forward onto another host's merge, reordered
+# lines) the file is rewritten in place to the target's content followed by
+# whatever it held beyond S's blob; the rewrite is the one step with a
+# window (a line appended between the size check and the truncation is
+# lost), narrowed to the instant before the write. A file that already
+# starts with the target's content is left alone. Returns 0; 5 when the
+# file does not start with what S committed (a local rewrite: the caller
+# retries and ends busy); 2 on error.
+ledger_apply() {
+  local path=$1 S=$2 target=$3 file t_blob t_size s_blob s_size live_size suffix_size tmp
+  file="$CO/$path"
+  t_blob=$(git -C "$CO" rev-parse -q --verify "$target:$path" 2>/dev/null) || return 2
+  t_size=$(git -C "$CO" cat-file -s "$t_blob" 2>/dev/null) || return 2
+  [ "$t_size" -gt 0 ] || return 0
+  s_blob=$(git -C "$CO" rev-parse -q --verify "$S:$path" 2>/dev/null || true)
+  s_size=0
+  if [ -n "$s_blob" ]; then s_size=$(git -C "$CO" cat-file -s "$s_blob" 2>/dev/null) || return 2; fi
+  live_size=$(wc -c < "$file" | tr -d ' ')
+  if [ "$live_size" -ge "$t_size" ] && [ "$(blob_prefix_id "$file" "$t_size")" = "$t_blob" ]; then return 0; fi
+  if [ "$live_size" -lt "$s_size" ]; then return 5; fi
+  if [ "$s_size" -gt 0 ] && [ "$(blob_prefix_id "$file" "$s_size")" != "$s_blob" ]; then return 5; fi
+  if [ "$t_size" -ge "$s_size" ] && { [ "$s_size" -eq 0 ] || [ "$(git -C "$CO" cat-file blob "$t_blob" | blob_prefix_id - "$s_size")" = "$s_blob" ]; }; then
+    suffix_size=$((t_size - s_size))
+    [ "$suffix_size" -gt 0 ] || return 0
+    if [ "$live_size" -ge "$t_size" ] && [ "$(tail -c "$suffix_size" "$file" | git -C "$CO" hash-object --stdin)" = "$(git -C "$CO" cat-file blob "$t_blob" | tail -c "$suffix_size" | git -C "$CO" hash-object --stdin)" ]; then return 0; fi
+    git -C "$CO" cat-file blob "$t_blob" | tail -c "$suffix_size" >> "$file" || return 2
+    return 0
+  fi
+  tmp=$(mktemp "${TMPDIR:-/tmp}/sdd-ledger.XXXXXX") || return 2
+  { git -C "$CO" cat-file blob "$t_blob" && tail -c +"$((s_size + 1))" "$file"; } > "$tmp" || { rm -f "$tmp"; return 2; }
+  [ "$(wc -c < "$file" | tr -d ' ')" -eq "$live_size" ] || { rm -f "$tmp"; return 5; }
+  cat "$tmp" > "$file" || { rm -f "$tmp"; return 2; }
+  rm -f "$tmp"
+  return 0
+}
 # apply_files <S> <target>: bring the working tree from S to target without
-# ever overwriting a ledger. Added or modified ledgers get the target's new
-# lines appended; other files are checked out; files the target deletes are
-# removed, a ledger among them through remove_verified. Any failure returns 2;
-# a changed ledger the target deletes returns 6.
+# replacing a ledger. Added or modified ledgers go through ledger_apply; other
+# files are checked out; files the target deletes are removed, a ledger among
+# them through remove_verified. Any failure returns 2; a ledger rewritten
+# locally returns 5 (from ledger_apply); a changed ledger the target deletes
+# returns 6.
 apply_files() {
   local S=$1 target=$2 path dir
   while IFS= read -r path; do
@@ -711,7 +756,8 @@ apply_files() {
     case "$path" in
       plans/*/progress.md)
         if [ -f "$CO/$path" ]; then
-          git -C "$CO" diff -U0 "$S" "$target" -- "$path" | sed -n '/^+++/d; s/^+//p' >> "$CO/$path" || return 2
+          ledger_apply "$path" "$S" "$target" || return $?
+          if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-ledger-apply ]; then hp_unlock; exit 99; fi
         else
           git -C "$CO" show "$target:$path" > "$CO/$path" || return 2
         fi ;;
@@ -730,24 +776,34 @@ apply_files() {
   return 0
 }
 # recover_apply: finish an apply that was interrupted after the ref moved.
+# ledger_apply is idempotent, so a half-applied ledger is completed, never
+# appended to twice. A recovery that fails leaves the marker and says so:
+# every subcommand refuses until the working tree is repaired.
 recover_apply() {
-  local S target
+  local S target rc
   [ -f "$CO/.sync-applying" ] || return 0
   read -r S target < "$CO/.sync-applying"
   if [ "$(tip_of "$CO" "refs/heads/$BRANCH")" = "$target" ]; then
     git -C "$CO" reset -q 2>/dev/null
-    apply_files "$S" "$target" || return 2
+    apply_files "$S" "$target"; rc=$?
+    if [ "$rc" -ne 0 ]; then
+      echo "sdd-state: an interrupted sync left $CO/.sync-applying and finishing it failed (rc=$rc); repair the working tree under $CO and run sdd-state sync again" >&2
+      return 2
+    fi
   fi
   rm -f "$CO/.sync-applying"
 }
 # apply_target <S> <target>: 0 applied, 5 retry (a non-ledger file changed
-# meanwhile), 6 remote-finished (a ledger the target deletes changed here),
-# 2 error. Controllers write without the lock, so the working tree is live.
+# meanwhile, or a ledger was rewritten locally), 6 remote-finished (a ledger
+# the target deletes changed here), 2 error. Controllers write without the
+# lock, so the working tree is live.
 apply_target() {
-  local S=$1 target=$2 pending line status path res
+  local S=$1 target=$2 pending line status path res dir rc i tombs=() dirs=()
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-apply:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-apply:}" ;; esac
   if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = sync-before-apply ]; then
+    : > "$CO/.sync-paused"
     while [ -e "$CO/.sync-pause" ]; do sleep 0.1; done
+    rm -f "$CO/.sync-paused"
   fi
   pending=$(git -C "$CO" status --porcelain -- plans/ 2>/dev/null)
   if [ -n "$pending" ]; then
@@ -760,19 +816,29 @@ apply_target() {
       esac
     done < <(printf '%s\n' "$pending")
   fi
-  # Ledgers the target deletes are a remote finish: rename, verify, delete
-  # each one first, before the ref moves, so a line written up to the rename
-  # is caught and nothing has changed when it is.
+  # Ledgers the target deletes are a remote finish: every one is renamed
+  # aside and verified first, before the ref moves, so a line written up to
+  # the rename is caught; one refusal puts them all back and nothing has
+  # changed; only when every one verified are the copies discarded.
   REMOTE_FINISHED=""
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-delete:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-delete:}" ;; esac
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     case "$path" in plans/*/progress.md) ;; *) continue ;; esac
-    if [ -d "$(dirname "$CO/$path")" ] && ! remove_verified "$(dirname "$CO/$path")" "$S:plans/$(basename "$(dirname "$path")")"; then
-      REMOTE_FINISHED="$REMOTE_FINISHED,$(enc "$(basename "$(dirname "$path")")")"
-    fi
+    dir=$(dirname "$CO/$path")
+    [ -d "$dir" ] || continue
+    remove_verified "$dir" "$S:plans/$(basename "$dir")" keep; rc=$?
+    case "$rc" in
+      0) dirs[${#dirs[@]}]=$dir; tombs[${#tombs[@]}]=$TOMB ;;
+      1) REMOTE_FINISHED="$REMOTE_FINISHED,$(enc "$(basename "$dir")")" ;;
+      *) i=0; while [ "$i" -lt "${#tombs[@]}" ]; do restore_tomb "${dirs[$i]}" "${tombs[$i]}"; i=$((i + 1)); done; return 2 ;;
+    esac
   done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
-  if [ -n "$REMOTE_FINISHED" ]; then REMOTE_FINISHED=${REMOTE_FINISHED#,}; return 6; fi
+  if [ -n "$REMOTE_FINISHED" ]; then
+    i=0; while [ "$i" -lt "${#tombs[@]}" ]; do restore_tomb "${dirs[$i]}" "${tombs[$i]}"; i=$((i + 1)); done
+    REMOTE_FINISHED=${REMOTE_FINISHED#,}; return 6
+  fi
+  i=0; while [ "$i" -lt "${#tombs[@]}" ]; do discard_tomb "${tombs[$i]}" || true; i=$((i + 1)); done
   printf '%s %s\n' "$S" "$target" > "$CO/.sync-applying"
   git -C "$CO" update-ref -m "sdd sync" "refs/heads/$BRANCH" "$target" "$S" 2>/dev/null || { rm -f "$CO/.sync-applying"; return 5; }
   if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-update-ref ]; then hp_unlock; exit 99; fi
@@ -822,6 +888,12 @@ cmd_sync() {
       *"couldn't find remote ref"*) : > "$stamp"; settle absent 0; return $? ;;
     esac
     S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")
+    # A default clone has the branch as a remote-tracking ref only; the
+    # checkout is built from it, which creates the local head.
+    if [ -z "$S" ] && [ -n "$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")" ]; then
+      hp_ensure_checkout "$PLAN_DIR" >/dev/null 2>&1 || true
+      S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")
+    fi
     if [ -n "$S" ]; then
       hp_ensure_checkout "$PLAN_DIR" >/dev/null 2>&1 || true
       echo "status=offline local=$(short "$S") remote=$(short "$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")") age=$(age_of "$PLAN_DIR" "$S")"

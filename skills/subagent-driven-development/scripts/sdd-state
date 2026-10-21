@@ -16,7 +16,7 @@
 # stdout: one line of space-separated key=value pairs, status= first; sync
 # adds a second line "merge=<command>" on diverged.
 # exit: 0 ok | 1 offline, offline-no-state, push-failed | 2 usage or internal
-#       (needs-sync, foreign branch, import-failed) | 3 diverged, busy |
+#       (needs-sync, foreign branch, no-workspace, import-failed) | 3 diverged, busy |
 #       4 claim held by another session | 5 scan-failed | 6 open-claims |
 #       7 plain backend (handoff) | 8 plan-not-committed |
 #       9 wrong-repo, code-missing, plan-stale | 10 code-dirty
@@ -69,6 +69,8 @@ ledger_path() { printf '%s/progress.md\n' "$WSDIR"; }
 enc() { printf '%s' "$1" | sed 's/ /%20/g'; }
 owner_record() { # <sid>
   local top b
+  # Test hook: a failed owner write, so the fail-closed paths are provable.
+  [ -z "${HYPERPOWERS_TEST_FAIL_OWNER_WRITE:-}" ] || return 1
   top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
   b=$(git branch --show-current 2>/dev/null)
   [ -n "$b" ] || b="detached@$(git rev-parse --short=7 HEAD 2>/dev/null || echo none)"
@@ -107,41 +109,61 @@ cmd_snapshot() {
 # the same lock finish holds while it reads the claims and removes the
 # workspace, so a claim can never slip in between those two steps.
 cmd_claim() {
-  local plan="" n="" sid="" takeover=0 claims target tmp rc owner
+  local plan="" n="" sid="" takeover=0 claims target tmp rc owner since wt prev
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
       --takeover) takeover=1; shift ;;
       -*) usage ;;
-      *) if [ -z "$plan" ]; then plan=$1; else n=$1; fi; shift ;;
+      *) if [ -z "$plan" ]; then plan=$1; elif [ -z "$n" ]; then n=$1; else usage; fi; shift ;;
     esac
   done
   [ -n "$plan" ] && [ -n "$n" ] && [ -n "$sid" ] || usage
+  case "$n" in ''|*[!0-9]*) usage ;; esac
+  command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 2; }
   resolve_plan "$plan"
   claims="$WSDIR/claims"; target="$claims/task-$n"
   # Everything below runs under the repository lock, the same lock finish
   # holds while it reads the claims and removes the workspace: a claim can
   # never slip in between those steps, and never resurrect a finished one.
+  # Every write is checked: a claim is reported only once its owner record
+  # is durable and names this session, because a caller that believes it
+  # owns a task it does not own duplicates work.
   hp_lock "$PLAN_DIR" || return 2
   if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace task=$n"; return 2; fi
-  if grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md"; then hp_unlock; echo "status=done task=$n"; return 0; fi
+  grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md"; rc=$?
+  if [ "$rc" -eq 0 ]; then hp_unlock; echo "status=done task=$n"; return 0; fi
+  if [ "$rc" -ne 1 ]; then hp_unlock; echo "status=error"; return 2; fi
   mkdir -p "$claims" || { hp_unlock; echo "status=error"; return 2; }
   if [ "$takeover" -eq 1 ] && [ -d "$target" ]; then
-    { printf -- '--- superseded at %s\n' "$(hp_utc_now)"; cat "$target/owner" 2>/dev/null; } >> "$target/owner.history"
-    owner_record "$sid" > "$target/owner.new" && mv -f "$target/owner.new" "$target/owner"
+    # New record first (invisible until the rename), then the history line,
+    # then the atomic replacement; a failure anywhere leaves the old owner.
+    if ! owner_record "$sid" > "$target/owner.new"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
+    prev=$(cat "$target/owner" 2>/dev/null)
+    if ! printf -- '--- superseded at %s\n%s\n' "$(hp_utc_now)" "$prev" >> "$target/owner.history"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
+    if ! mv -f "$target/owner.new" "$target/owner"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
+    if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
     hp_unlock
     echo "status=claimed task=$n takeover=1"; return 0
   fi
   tmp=$(mktemp -d "$claims/.tmp-XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
-  owner_record "$sid" > "$tmp/owner"
+  if ! owner_record "$sid" > "$tmp/owner"; then rm -rf "$tmp"; hp_unlock; echo "status=error"; return 2; fi
   node -e 'const fs=require("fs");try{fs.renameSync(process.argv[1],process.argv[2]);}catch(e){process.exit(e.code==="ENOTEMPTY"||e.code==="EEXIST"?4:2);}' "$tmp" "$target"; rc=$?
-  if [ "$rc" -eq 0 ]; then hp_unlock; echo "status=claimed task=$n"; return 0; fi
+  if [ "$rc" -eq 0 ]; then
+    if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
+    hp_unlock; echo "status=claimed task=$n"; return 0
+  fi
   rm -rf "$tmp"
-  hp_unlock
-  [ "$rc" -eq 4 ] || { echo "status=error"; return 2; }
+  if [ "$rc" -ne 4 ]; then hp_unlock; echo "status=error"; return 2; fi
+  # Read the holder's record while the lock still excludes takeovers and
+  # finish, so the fields come from one record.
   owner=$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)
+  since=$(sed -n 's/^time=//p' "$target/owner" 2>/dev/null)
+  wt=$(sed -n 's/^worktree=//p' "$target/owner" 2>/dev/null)
+  hp_unlock
+  if [ -z "$owner" ]; then echo "status=error"; return 2; fi
   if [ "$owner" = "$sid" ]; then echo "status=held task=$n owner=$owner own=1"; return 0; fi
-  echo "status=held task=$n owner=$owner since=$(sed -n 's/^time=//p' "$target/owner" 2>/dev/null) worktree=$(enc "$(sed -n 's/^worktree=//p' "$target/owner" 2>/dev/null)")"
+  echo "status=held task=$n owner=$owner since=$since worktree=$(enc "$wt")"
   return 4
 }
 

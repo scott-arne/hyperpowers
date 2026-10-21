@@ -184,7 +184,7 @@ rewrite_identity_line() { # <ledger> <rel>: an absolute identity inside REPO, or
   esac
   case "$path" in
     "$REPO"/*) [ "${path#"$REPO"/}" = "$2" ] || return 0 ;;
-    */"$2") ;;
+    */"$2") [ ! -e "$path" ] || return 0 ;;
     *) return 0 ;;
   esac
   tmp="$1.tmp.$$"
@@ -209,8 +209,40 @@ verify_subset() {
   done < <(printf '%s\n' "$1")
   return 0
 }
+# <candidate>: an interrupted import leaves the source renamed aside as
+# <ref>.importing-<pid> and nothing at the legacy path (or a dangling
+# pointer). Put it back before the candidate is examined. Runs under the
+# lock.
+recover_import_backup() {
+  local t b
+  if [ -L "$1" ]; then t=$(readlink "$1"); else t=$1; fi
+  [ -e "$t" ] && return 0
+  for b in "$t".importing-*; do
+    [ -d "$b" ] || continue
+    mv "$b" "$t" 2>/dev/null && return 0
+  done
+  return 0
+}
+# <candidate> <backup> <ref> <stage> <installed>: undo an import that failed
+# after the source was renamed aside. <installed> is "" (nothing published),
+# "whole" (the destination was published by one rename) or "ledger" (entries
+# were installed into an existing destination). Leaves no ledger in the
+# destination, puts the source back, releases the lock and prints the
+# failure line; the caller returns 2.
+import_abort() {
+  [ -z "$4" ] || rm -rf "$4"
+  case "$5" in
+    whole) rm -rf "$dest" ;;
+    ledger) rm -f "$dest/progress.md" ;;
+  esac
+  [ ! -L "$3" ] || rm -f "$3"
+  if [ ! -e "$3" ]; then mv "$2" "$3" 2>/dev/null || echo "sdd-state: could not restore the legacy workspace; it is at $2" >&2; fi
+  if [ "$1" != "$3" ] && [ ! -e "$1" ] && [ ! -L "$1" ]; then ln -s "$3" "$1" 2>/dev/null || true; fi
+  hp_unlock
+  echo "status=import-failed from=$(enc "$1")"
+}
 cmd_import() {
-  local plan cache candidates c ref dest dest_phys seen="" stage e rel stage_manifest
+  local plan cache candidates c ref dest dest_phys seen="" stage e rel stage_manifest backup link
   [ $# -eq 1 ] || usage
   plan=$1
   resolve_plan "$plan"
@@ -247,39 +279,58 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
   hp_lock "$PLAN_DIR" || return 2
   dest_phys=$(hp_physical_dir "$dest" 2>/dev/null) || dest_phys=$dest
   while IFS= read -r c; do
-    [ -n "$c" ] && [ -e "$c" ] || continue
+    [ -n "$c" ] || continue
+    recover_import_backup "$c"
+    [ -e "$c" ] || continue
     ref=$(hp_physical_dir "$c") || continue
     [ "$ref" != "$dest_phys" ] || continue
     case " $seen " in *" $ref "*) continue ;; esac
     seen="$seen $ref"
     [ -f "$ref/progress.md" ] || continue
     if [ -f "$dest/progress.md" ]; then hp_unlock; echo "status=skipped reason=ledger-exists path=$(enc "$c")"; return 0; fi
+    # The cutover is a transaction: the source is renamed aside first, so
+    # nothing can write to it between the verification and its replacement;
+    # the staged copy is verified against that quiesced tree; the legacy path
+    # is relinked only after the installed tree is verified; the backup goes
+    # last. Any failure removes the installed ledger and puts the source back.
+    backup="$ref.importing-$$"
+    mv "$ref" "$backup" 2>/dev/null || { hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
     stage="$dest.import-$$"
     rm -rf "$stage"; mkdir -p "$stage"
-    if ! cp -a "$ref/." "$stage/" 2>/dev/null || [ "$(tree_manifest "$ref")" != "$(tree_manifest "$stage")" ]; then
-      rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2
+    if ! cp -a "$backup/." "$stage/" 2>/dev/null || [ "$(tree_manifest "$backup")" != "$(tree_manifest "$stage")" ]; then
+      import_abort "$c" "$backup" "$ref" "$stage" ""; return 2
     fi
-    # The staged copy was verified against the source above; the identity is
-    # rewritten in the stage, and the installed tree is verified against the
-    # stage's manifest, so the rewrite never reads as a size mismatch.
-    if ! rewrite_identity_line "$stage/progress.md" "$rel"; then rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; fi
+    # The identity is rewritten in the stage, and the installed tree is
+    # verified against the stage's manifest, so the rewrite never reads as a
+    # size mismatch.
+    if ! rewrite_identity_line "$stage/progress.md" "$rel"; then import_abort "$c" "$backup" "$ref" "$stage" ""; return 2; fi
     stage_manifest=$(tree_manifest "$stage")
-    if [ ! -d "$dest" ] || [ -z "$(ls -A "$dest" 2>/dev/null)" ]; then
-      rmdir "$dest" 2>/dev/null
-      mv "$stage" "$dest" || { rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
+    if [ ! -e "$dest" ] || rmdir "$dest" 2>/dev/null; then
+      # An absent or empty destination: one rename publishes the whole stage.
+      # rmdir succeeds only on an empty directory, so a destination that
+      # filled up meanwhile takes the branch below instead of receiving the
+      # stage as a subdirectory.
+      if ! mv "$stage" "$dest" 2>/dev/null || [ ! -f "$dest/progress.md" ]; then import_abort "$c" "$backup" "$ref" "$stage" whole; return 2; fi
     else
       # The destination already holds regenerable files: install the staged
       # entries one by one, the ledger last, so a failure leaves no ledger.
       for e in "$stage"/* "$stage"/.[!.]*; do
         [ -e "$e" ] || [ -L "$e" ] || continue
         [ "$(basename "$e")" != progress.md ] || continue
-        if ! mv -f "$e" "$dest/" 2>/dev/null; then cp -a "$e" "$dest/" || { rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }; fi
+        if ! mv -f "$e" "$dest/" 2>/dev/null; then cp -a "$e" "$dest/" || { import_abort "$c" "$backup" "$ref" "$stage" ledger; return 2; }; fi
       done
-      mv -f "$stage/progress.md" "$dest/progress.md" || { rm -rf "$stage"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
+      mv -f "$stage/progress.md" "$dest/progress.md" || { import_abort "$c" "$backup" "$ref" "$stage" ledger; return 2; }
       rm -rf "$stage"
-      if ! verify_subset "$stage_manifest" "$dest"; then rm -f "$dest/progress.md"; hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; fi
+      if ! verify_subset "$stage_manifest" "$dest"; then import_abort "$c" "$backup" "$ref" "" ledger; return 2; fi
     fi
-    if [ -L "$c" ]; then rm -rf "$ref"; ln -sfn "$dest" "$c"; else rm -rf "$ref"; ln -s "$dest" "$ref"; fi
+    # Relink the legacy path (or the pointer) to the new workspace and check
+    # that it resolves there before the backup is removed. The test hook
+    # stands in for a failed relink.
+    if [ -L "$c" ]; then link=$c; else link=$ref; fi
+    if [ -n "${HYPERPOWERS_TEST_FAIL_RELINK:-}" ] || ! ln -sfn "$dest" "$link" 2>/dev/null || [ "$(hp_physical_dir "$link" 2>/dev/null)" != "$(hp_physical_dir "$dest")" ]; then
+      import_abort "$c" "$backup" "$ref" "" ledger; return 2
+    fi
+    rm -rf "$backup" || echo "sdd-state: the imported source's backup could not be removed: $backup" >&2
     hp_unlock
     echo "status=moved from=$(enc "$c")"
     return 0

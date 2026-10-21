@@ -510,6 +510,36 @@ if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i7" ] && [ "$(head -
 run_state "$i7" import >/dev/null 2>&1; rc=$?
 run_state "$i7" import docs/plan.md extra >/dev/null 2>&1; rc2=$?
 if [ "$rc" -eq 2 ] && [ "$rc2" -eq 2 ]; then pass "import with zero or two operands is a usage error"; else fail "import with zero or two operands is a usage error (rc=$rc/$rc2)"; fi
+# An identity naming another repository's plan that EXISTS on this host is
+# left alone (the SDD skill's identity check flags it); only a path that does
+# not exist here is rewritten by its suffix.
+i8a="$TEST_ROOT/i8a"; make_repo "$i8a"; mkdir -p "$i8a/docs"; : > "$i8a/docs/plan.md"; git -C "$i8a" add docs; git -C "$i8a" commit -qm plan
+i8b="$TEST_ROOT/i8b"; make_repo "$i8b"; mkdir -p "$i8b/docs"; : > "$i8b/docs/plan.md"; git -C "$i8b" add docs; git -C "$i8b" commit -qm plan
+wsi8b=$(ws_path "$i8b" "$i8b/docs/plan.md")
+legacy_i8b="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i8b")/plans/$(basename "$wsi8b")"
+mkdir -p "$legacy_i8b"; printf '# SDD ledger — plan: %s/docs/plan.md\n' "$i8a" > "$legacy_i8b/progress.md"
+out=$(run_state "$i8b" import docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i8b" ] && [ "$(head -n 1 "$wsi8b/progress.md")" = "# SDD ledger — plan: $i8a/docs/plan.md" ]; then pass "an identity naming another repository's existing plan is not rewritten"; else fail "an identity naming another repository's existing plan is not rewritten (rc=$rc: $out: $(head -n 1 "$wsi8b/progress.md" 2>/dev/null))"; fi
+
+# A failed relink is undone: the source is back as a real directory with its
+# files, no backup remains, and the destination holds no ledger.
+i9="$TEST_ROOT/i9"; make_repo "$i9"; mkdir -p "$i9/docs"; : > "$i9/docs/plan.md"; git -C "$i9" add docs; git -C "$i9" commit -qm plan
+wsi9=$(ws_path "$i9" "$i9/docs/plan.md")
+legacy_i9="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i9")/plans/$(basename "$wsi9")"
+mkdir -p "$legacy_i9"; printf '# SDD ledger — plan: docs/plan.md\n' > "$legacy_i9/progress.md"; printf 'report\n' > "$legacy_i9/task-1-report.md"
+out=$(HYPERPOWERS_TEST_FAIL_RELINK=1 run_state "$i9" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=import-failed from=$legacy_i9" ] && [ -d "$legacy_i9" ] && [ ! -L "$legacy_i9" ] && [ -f "$legacy_i9/progress.md" ] && [ -f "$legacy_i9/task-1-report.md" ] && ! ls -d "$legacy_i9.importing-"* >/dev/null 2>&1 && [ ! -f "$wsi9/progress.md" ]; then pass "a failed relink restores the source and leaves no ledger or backup"; else fail "a failed relink restores the source and leaves no ledger or backup (rc=$rc: $out)"; fi
+out=$(run_state "$i9" import docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i9" ] && [ -L "$legacy_i9" ] && [ -f "$wsi9/progress.md" ]; then pass "the next import succeeds after a failed relink"; else fail "the next import succeeds after a failed relink (rc=$rc: $out)"; fi
+
+# An import interrupted after the source was renamed aside is recovered on
+# the next call: the backup is put back, then imported.
+i10="$TEST_ROOT/i10"; make_repo "$i10"; mkdir -p "$i10/docs"; : > "$i10/docs/plan.md"; git -C "$i10" add docs; git -C "$i10" commit -qm plan
+wsi10=$(ws_path "$i10" "$i10/docs/plan.md")
+legacy_i10="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i10")/plans/$(basename "$wsi10")"
+mkdir -p "$legacy_i10.importing-424242"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$legacy_i10.importing-424242/progress.md"
+out=$(run_state "$i10" import docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i10" ] && [ -L "$legacy_i10" ] && [ "$(sed -n 2p "$wsi10/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ] && ! ls -d "$legacy_i10.importing-"* >/dev/null 2>&1; then pass "an interrupted import's backup is recovered and imported on the next call"; else fail "an interrupted import's backup is recovered and imported on the next call (rc=$rc: $out)"; fi
 
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi

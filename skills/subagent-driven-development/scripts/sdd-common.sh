@@ -18,7 +18,12 @@ hp_physical_dir() { (cd "$1" 2>/dev/null && pwd -P); }
 # <repo-dir> -> physical absolute common git directory.
 hp_common_dir() {
   local d
-  if ! d=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+  d=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || d=""
+  # Git 2.23-2.30 does not know --path-format: it echoes the flag as a second
+  # line and exits 0, so only a single line naming a directory is trusted.
+  case "$d" in *"
+"*) d="" ;; esac
+  if [ -z "$d" ] || [ ! -d "$d" ]; then
     d=$(git -C "$1" rev-parse --git-common-dir 2>/dev/null) || return 1
     case "$d" in /*) ;; *) d="$(hp_physical_dir "$1")/$d" ;; esac
   fi
@@ -46,19 +51,22 @@ hp_state_branch() { git -C "$1" config --get hyperpowers.stateBranch 2>/dev/null
 hp_state_remote() { git -C "$1" config --get hyperpowers.stateRemote 2>/dev/null || printf 'origin\n'; }
 hp_has_remote() { git -C "$1" remote get-url "$(hp_state_remote "$1")" >/dev/null 2>&1; }
 
-hp_checkout_path() { printf '%s/state/%s\n' "$(hp_cache_root)" "$(hp_key "$1")"; }
-hp_plain_root() { printf '%s/sdd/%s\n' "$(hp_cache_root)" "$(hp_key "$1")"; }
-hp_stamp_path() { printf '%s.fetched\n' "$(hp_checkout_path "$1")"; }
+# Each fails outside a repository rather than naming an unkeyed shared path.
+hp_checkout_path() { local k; k=$(hp_key "$1") || return 1; printf '%s/state/%s\n' "$(hp_cache_root)" "$k"; }
+hp_plain_root() { local k; k=$(hp_key "$1") || return 1; printf '%s/sdd/%s\n' "$(hp_cache_root)" "$k"; }
+hp_stamp_path() { local c; c=$(hp_checkout_path "$1") || return 1; printf '%s.fetched\n' "$c"; }
 
 # The backend file: first word branch|plain, the rest free-form key=value.
 hp_backend() {
-  local f
-  f="$(hp_checkout_path "$1").backend"
+  local c f
+  c=$(hp_checkout_path "$1") || return 1
+  f="$c.backend"
   if [ -f "$f" ]; then head -n 1 "$f" | cut -d' ' -f1; else printf 'none\n'; fi
 }
 hp_write_backend() { # <repo-dir> <line>
-  local f tmp
-  f="$(hp_checkout_path "$1").backend"
+  local c f tmp
+  c=$(hp_checkout_path "$1") || return 1
+  f="$c.backend"
   tmp="$f.tmp.$$"
   mkdir -p "$(dirname "$f")"
   printf '%s\n' "$2" > "$tmp" && mv -f "$tmp" "$f"
@@ -71,6 +79,8 @@ hp_utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # regular file inside a repository: a mistyped path never earns a workspace.
 hp_plan_dir() {
   local d
+  # The plan must be a regular file git can carry, not a link out of the repo.
+  [ -L "$1" ] && return 1
   [ -f "$1" ] || return 1
   d=$(cd "$(dirname "$1")" 2>/dev/null && pwd -P) || return 1
   git -C "$d" rev-parse --git-dir >/dev/null 2>&1 || return 1
@@ -121,10 +131,15 @@ hp_lock_stale() { # <lock-dir>
 }
 hp_lock() { # <repo-dir>
   local lock guard waited=0 owner
-  lock="$(hp_checkout_path "$1").lock"
+  lock=$(hp_checkout_path "$1") || return 2
+  lock="$lock.lock"
   guard="$lock.takeover"
   mkdir -p "$(dirname "$lock")"
   while ! mkdir "$lock" 2>/dev/null; do
+    # A contender that died inside the takeover leaves the guard behind.
+    if [ -d "$guard" ] && [ -n "$(find "$guard" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
+      rmdir "$guard" 2>/dev/null || rm -rf "$guard"
+    fi
     if hp_lock_stale "$lock" && mkdir "$guard" 2>/dev/null; then
       # Re-check under the guard: the lock may have been replaced meanwhile.
       if [ -d "$lock" ] && hp_lock_stale "$lock"; then
@@ -133,6 +148,7 @@ hp_lock() { # <repo-dir>
         rm -rf "$lock"
       fi
       rmdir "$guard" 2>/dev/null
+      waited=$((waited + 1))
       continue
     fi
     if [ "$waited" -ge 150 ]; then

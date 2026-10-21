@@ -11,11 +11,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 LIB="$REPO_ROOT/skills/subagent-driven-development/scripts/sdd-common.sh"
 
 failures=0
-TEST_ROOT="$(mktemp -d)"
+TEST_ROOT=$(mktemp -d) || exit 2
+[ -n "$TEST_ROOT" ] && [ -d "$TEST_ROOT" ] || exit 2
 export XDG_CACHE_HOME="$TEST_ROOT/cache"
 # The identity-fallback assertions need a host whose global git config sets no user.name or user.email (GIT_CONFIG_GLOBAL needs git 2.32+).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
-cleanup() { rm -rf "$TEST_ROOT"; }
+cleanup() { if [ -n "$TEST_ROOT" ] && [ -d "$TEST_ROOT" ]; then rm -rf "$TEST_ROOT"; fi; }
 trap cleanup EXIT
 
 pass() { echo "  [PASS] $1"; }
@@ -86,6 +87,25 @@ if [ "$ws_rel" != "$ws_y" ]; then pass "same basename in another directory names
 if hp_plan_dir "$TEST_ROOT/nowhere/plan.md" >/dev/null 2>&1; then fail "hp_plan_dir fails outside a repository"; else pass "hp_plan_dir fails outside a repository"; fi
 if hp_plan_dir "$repo_a/docs/x/missing.md" >/dev/null 2>&1; then fail "hp_plan_dir fails for a plan file that does not exist"; else pass "hp_plan_dir fails for a plan file that does not exist"; fi
 
+ln -s "$TEST_ROOT/outside.md" "$repo_a/docs/x/link.md"; : > "$TEST_ROOT/outside.md"
+if hp_plan_dir "$repo_a/docs/x/link.md" >/dev/null 2>&1; then fail "hp_plan_dir rejects a symlinked plan file"; else pass "hp_plan_dir rejects a symlinked plan file"; fi
+
+# --- old git and no repository ---------------------------------------------
+real_git=$(command -v git)
+stub="$TEST_ROOT/stub"; mkdir -p "$stub"
+printf '#!/bin/sh\ncase "$*" in *--path-format=absolute*) echo --path-format=absolute; exec "%s" "$@" ;; esac\nexec "%s" "$@"\n' "$real_git" "$real_git" > "$stub/git"
+chmod +x "$stub/git"
+stub_dir=$(PATH="$stub:$PATH" hp_common_dir "$repo_a")
+if [ "$stub_dir" = "$(cd "$repo_a/.git" && pwd -P)" ]; then pass "hp_common_dir survives a git that echoes --path-format"; else fail "hp_common_dir survives a git that echoes --path-format (got '$stub_dir')"; fi
+nogit="$TEST_ROOT/nogit"; mkdir -p "$nogit"
+bad=0
+for fn in hp_checkout_path hp_plain_root hp_stamp_path hp_backend; do
+    if (cd "$nogit" && $fn "$nogit") >/dev/null 2>&1; then bad=1; fi
+done
+if (cd "$nogit" && hp_lock "$nogit") >/dev/null 2>&1; then bad=1; fi
+state_root="$XDG_CACHE_HOME/hyperpowers/state"
+if [ "$bad" -eq 0 ] && [ ! -e "$state_root/.lock" ] && [ ! -e "$state_root/.backend" ] && [ ! -e "$state_root/.fetched" ] && [ ! -e "$state_root/.lock-history" ]; then pass "keyed paths and the lock fail outside a repository without unkeyed files"; else fail "keyed paths and the lock fail outside a repository without unkeyed files"; fi
+
 # --- lock ------------------------------------------------------------------
 lock_repo="$TEST_ROOT/lock"; make_repo "$lock_repo"
 lock_dir="$(hp_checkout_path "$lock_repo").lock"
@@ -112,6 +132,12 @@ bash -c '. "$1"; hp_lock "$2" && { echo "$$" > "$3"; sleep 1; hp_unlock; }' _ "$
 bash -c '. "$1"; hp_lock "$2" && { echo "$$" > "$3"; sleep 1; hp_unlock; }' _ "$LIB" "$lock_repo" "$TEST_ROOT/race2" &
 wait
 if [ -f "$TEST_ROOT/race1" ] && [ -f "$TEST_ROOT/race2" ] && [ "$(grep -c takeover "$lock_dir-history")" -eq 2 ] && [ ! -d "$lock_dir" ]; then pass "two contenders on one stale lock serialize through the takeover guard"; else fail "two contenders on one stale lock serialize through the takeover guard"; fi
+# A stale lock plus a stranded, backdated takeover guard is recovered.
+mkdir -p "$lock_dir" "$lock_dir.takeover"; printf 'session=old\npid=999999\nhost=x\ntime=t\n' > "$lock_dir/owner"
+touch -t 202601010000 "$lock_dir" "$lock_dir.takeover"
+start=$(date +%s); hp_lock "$lock_repo"; rc=$?; end=$(date +%s)
+if [ "$rc" -eq 0 ] && [ $((end - start)) -le 5 ] && [ ! -d "$lock_dir.takeover" ]; then pass "a stranded takeover guard is cleared and the lock taken"; else fail "a stranded takeover guard is cleared and the lock taken (rc=$rc)"; fi
+hp_unlock
 # unlock refuses a lock another process owns.
 mkdir -p "$lock_dir"; printf 'session=x\npid=999998\nhost=x\ntime=t\n' > "$lock_dir/owner"
 # shellcheck disable=SC2034 # read by hp_unlock from the sourced library

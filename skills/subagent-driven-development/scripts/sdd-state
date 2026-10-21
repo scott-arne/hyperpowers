@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# sdd-state — lifecycle helper for the SDD state branch, the durable home of
+# a plan's dossier (ledger, reports, claims). Design and contracts:
+# docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md.
+#
+# Usage:
+#   sdd-state sync PLAN_FILE [--assume-absent]      (or: sync --repo DIR [--assume-absent])
+#   sdd-state verify PLAN_FILE [--code-repo DIR]
+#   sdd-state snapshot PLAN_FILE [-m MSG]
+#   sdd-state handoff PLAN_FILE [--push] [--plan-untracked-ok] [--code-dirty-ok] [--code-repo DIR]
+#   sdd-state finish PLAN_FILE [--force]
+#   sdd-state import PLAN_FILE
+#   sdd-state prune [--days N] [--apply] --repo DIR
+#   sdd-state claim PLAN_FILE N --session SID [--takeover]
+#
+# stdout: one line of space-separated key=value pairs, status= first; sync
+# adds a second line "merge=<command>" on diverged.
+# exit: 0 ok | 1 offline, offline-no-state, push-failed | 2 usage or internal
+#       (needs-sync, foreign branch, import-failed) | 3 diverged, busy |
+#       4 claim held by another session | 5 scan-failed | 6 open-claims |
+#       7 plain backend (handoff) | 8 plan-not-committed |
+#       9 wrong-repo, code-missing, plan-stale | 10 code-dirty
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=sdd-common.sh
+. "$SCRIPT_DIR/sdd-common.sh"
+
+usage() {
+  printf '%s\n' \
+    'usage: sdd-state <subcommand> ...' \
+    '  sync PLAN_FILE [--assume-absent]   |   sync --repo DIR [--assume-absent]' \
+    '  verify PLAN_FILE [--code-repo DIR]' \
+    '  snapshot PLAN_FILE [-m MSG]' \
+    '  handoff PLAN_FILE [--push] [--plan-untracked-ok] [--code-dirty-ok] [--code-repo DIR]' \
+    '  finish PLAN_FILE [--force]' \
+    '  import PLAN_FILE' \
+    '  prune [--days N] [--apply] --repo DIR' \
+    '  claim PLAN_FILE N --session SID [--takeover]' >&2
+  exit 2
+}
+
+PLAN=""; PLAN_DIR=""; REPO=""; WS=""; SLUG=""; BRANCH=""; REMOTE=""; CO=""; BACKEND=""; ROOT=""; WSDIR=""
+
+# Resolve PLAN_FILE without touching the checkout: sync fetches first.
+# REPO and REMOTE are consumed by the sync, verify and handoff subcommands.
+# shellcheck disable=SC2034
+resolve_plan_basic() {
+  PLAN=$1
+  PLAN_DIR=$(hp_plan_dir "$PLAN") || { echo "sdd-state: plan file is not inside a git repository: $PLAN" >&2; exit 2; }
+  REPO=$(hp_physical_dir "$(git -C "$PLAN_DIR" rev-parse --show-toplevel)")
+  WS=$(hp_plan_ws_name "$PLAN")
+  SLUG=${WS%-*}
+  BRANCH=$(hp_state_branch "$PLAN_DIR")
+  REMOTE=$(hp_state_remote "$PLAN_DIR")
+  CO=$(hp_checkout_path "$PLAN_DIR")
+}
+# Resolve and make sure the checkout (or the plain root) exists.
+resolve_plan() {
+  local ensure
+  resolve_plan_basic "$1"
+  ensure=$(hp_ensure_checkout "$PLAN_DIR") || exit 2
+  BACKEND=${ensure%% *}
+  ROOT=${ensure#* }
+  WSDIR="$ROOT/plans/$WS"
+}
+ledger_path() { printf '%s/progress.md\n' "$WSDIR"; }
+# One encoding for every path-valued stdout field: a space becomes %20.
+enc() { printf '%s' "$1" | sed 's/ /%20/g'; }
+owner_record() { # <sid>
+  local top b
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
+  b=$(git branch --show-current 2>/dev/null)
+  [ -n "$b" ] || b="detached@$(git rev-parse --short=7 HEAD 2>/dev/null || echo none)"
+  printf 'session=%s\nworktree=%s\nbranch=%s\nhost=%s\ntime=%s\n' "$1" "$top" "$b" "$(hostname)" "$(hp_utc_now)"
+}
+
+# --- snapshot ----------------------------------------------------------------
+cmd_snapshot() {
+  local plan="" msg="" out rc n
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -m) [ $# -ge 2 ] || usage; msg=$2; shift 2 ;;
+      -*) usage ;;
+      *) plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] || usage
+  resolve_plan "$plan"
+  if [ "$BACKEND" != branch ]; then echo "status=plain"; return 0; fi
+  [ -d "$WSDIR" ] || { echo "status=none"; return 0; }
+  [ -n "$msg" ] || msg="sdd $SLUG: snapshot $(hp_utc_now)"
+  hp_lock "$PLAN_DIR" || return 2
+  out=$(hp_commit_paths "$CO" "$BRANCH" "$msg" "plans/$WS"); rc=$?
+  hp_unlock
+  [ "$rc" -eq 0 ] || { echo "status=error"; return 2; }
+  if [ "$out" = none ]; then echo "status=none"; return 0; fi
+  n=$(git -C "$CO" show --name-only --format= "$out" | grep -c .)
+  echo "status=snapshot sha=${out:0:7} files=$n"
+}
+
+# --- claim -------------------------------------------------------------------
+# The record is prepared in a temporary directory and published with one
+# rename(2), through node because a shell mv on macOS moves a directory into
+# an existing target instead of failing. A loser never sees a claim without
+# its owner file. Publication and takeover run under the repository lock,
+# the same lock finish holds while it reads the claims and removes the
+# workspace, so a claim can never slip in between those two steps.
+cmd_claim() {
+  local plan="" n="" sid="" takeover=0 claims target tmp rc owner
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --takeover) takeover=1; shift ;;
+      -*) usage ;;
+      *) if [ -z "$plan" ]; then plan=$1; else n=$1; fi; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$n" ] && [ -n "$sid" ] || usage
+  resolve_plan "$plan"
+  claims="$WSDIR/claims"; target="$claims/task-$n"
+  # Everything below runs under the repository lock, the same lock finish
+  # holds while it reads the claims and removes the workspace: a claim can
+  # never slip in between those steps, and never resurrect a finished one.
+  hp_lock "$PLAN_DIR" || return 2
+  if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace task=$n"; return 2; fi
+  if grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md"; then hp_unlock; echo "status=done task=$n"; return 0; fi
+  mkdir -p "$claims" || { hp_unlock; echo "status=error"; return 2; }
+  if [ "$takeover" -eq 1 ] && [ -d "$target" ]; then
+    { printf -- '--- superseded at %s\n' "$(hp_utc_now)"; cat "$target/owner" 2>/dev/null; } >> "$target/owner.history"
+    owner_record "$sid" > "$target/owner.new" && mv -f "$target/owner.new" "$target/owner"
+    hp_unlock
+    echo "status=claimed task=$n takeover=1"; return 0
+  fi
+  tmp=$(mktemp -d "$claims/.tmp-XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
+  owner_record "$sid" > "$tmp/owner"
+  node -e 'const fs=require("fs");try{fs.renameSync(process.argv[1],process.argv[2]);}catch(e){process.exit(e.code==="ENOTEMPTY"||e.code==="EEXIST"?4:2);}' "$tmp" "$target"; rc=$?
+  if [ "$rc" -eq 0 ]; then hp_unlock; echo "status=claimed task=$n"; return 0; fi
+  rm -rf "$tmp"
+  hp_unlock
+  [ "$rc" -eq 4 ] || { echo "status=error"; return 2; }
+  owner=$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)
+  if [ "$owner" = "$sid" ]; then echo "status=held task=$n owner=$owner own=1"; return 0; fi
+  echo "status=held task=$n owner=$owner since=$(sed -n 's/^time=//p' "$target/owner" 2>/dev/null) worktree=$(enc "$(sed -n 's/^worktree=//p' "$target/owner" 2>/dev/null)")"
+  return 4
+}
+
+# --- dispatch ----------------------------------------------------------------
+sub=${1:-}
+[ -n "$sub" ] || usage
+shift
+case "$sub" in
+  snapshot) cmd_snapshot "$@" ;;
+  claim) cmd_claim "$@" ;;
+  *) usage ;;
+esac

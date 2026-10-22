@@ -16,8 +16,11 @@ ALLOWLIST="$REPO_ROOT/skills/writing-plans/scripts/docs-allowlist"
 failures=0
 # Physical path: the script reports physical paths, and macOS puts mktemp
 # output behind a symlink.
-TEST_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
-cleanup() { rm -rf "$TEST_ROOT"; }
+TEST_ROOT=$(mktemp -d) || { echo "mktemp failed" >&2; exit 1; }
+[ -n "$TEST_ROOT" ] && [ -d "$TEST_ROOT" ] || { echo "no temporary directory" >&2; exit 1; }
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || exit 1
+case "$TEST_ROOT" in ""|/|"$REPO_ROOT"|"$REPO_ROOT"/*) echo "refusing temporary root $TEST_ROOT" >&2; exit 1 ;; esac
+cleanup() { case "$TEST_ROOT" in ""|/|"$REPO_ROOT"|"$REPO_ROOT"/*) return ;; esac; rm -rf "$TEST_ROOT"; }
 trap cleanup EXIT
 
 pass() { echo "  [PASS] $1"; }
@@ -50,7 +53,8 @@ else
 fi
 
 for p in docs/hyperpowers/specs/a.md docs/hyperpowers/plans/b.md \
-         docs/hyperpowers/plans/nested/c.md docs/hyperpowers/.gitignore; do
+         docs/hyperpowers/plans/nested/c.md docs/hyperpowers/decisions/d.md \
+         docs/hyperpowers/decisions/README.md docs/hyperpowers/.gitignore; do
     if ignored "$repo" "$p"; then fail "$p is ignored"; else pass "$p is not ignored"; fi
 done
 for p in docs/hyperpowers/evidence/run.log docs/hyperpowers/notes.md \
@@ -59,16 +63,17 @@ for p in docs/hyperpowers/evidence/run.log docs/hyperpowers/notes.md \
 done
 
 # End to end: a blanket add stages only the allowed paths.
-mkdir -p "$repo/docs/hyperpowers/specs" "$repo/docs/hyperpowers/plans" "$repo/docs/hyperpowers/evidence"
+mkdir -p "$repo/docs/hyperpowers/specs" "$repo/docs/hyperpowers/plans" "$repo/docs/hyperpowers/decisions" "$repo/docs/hyperpowers/evidence"
 echo s > "$repo/docs/hyperpowers/specs/a.md"
 echo p > "$repo/docs/hyperpowers/plans/b.md"
+echo d > "$repo/docs/hyperpowers/decisions/d.md"
 echo e > "$repo/docs/hyperpowers/evidence/run.log"
 echo n > "$repo/docs/hyperpowers/notes.md"
 git -C "$repo" add -A
 staged=$(git -C "$repo" diff --cached --name-only | sort | tr '\n' ' ')
-expected="docs/hyperpowers/.gitignore docs/hyperpowers/plans/b.md docs/hyperpowers/specs/a.md "
+expected="docs/hyperpowers/.gitignore docs/hyperpowers/decisions/d.md docs/hyperpowers/plans/b.md docs/hyperpowers/specs/a.md "
 if [ "$staged" = "$expected" ]; then
-    pass "git add -A stages only the ignore file, specs/ and plans/"
+    pass "git add -A stages only the ignore file, specs/, plans/ and decisions/"
 else
     fail "staged set (got: $staged)"
 fi

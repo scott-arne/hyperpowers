@@ -5,7 +5,7 @@
 #   DIR defaults to <repository root>/docs/hyperpowers.
 #
 # Writes DIR/.gitignore as an allowlist (everything under DIR ignored except
-# specs/, plans/ and the ignore file itself) when no .gitignore exists there,
+# specs/, plans/, decisions/ and the ignore file itself) when no .gitignore exists there,
 # and leaves an existing one untouched. Prints exactly one of:
 #   wrote <path>    the allowlist was created
 #   exists <path>   a .gitignore was already present; nothing changed
@@ -36,13 +36,14 @@ if [ -e "$target" ]; then
   printf 'exists %s\n' "$target"
 else
   printf '%s\n' \
-    '# Only specs/ and plans/ are committed from this directory. Anything else' \
-    '# the workflow produces (run captures, probes, review output, ledgers)' \
+    '# Only specs/, plans/ and decisions/ are committed from this directory. Anything' \
+    '# else the workflow produces (run captures, probes, review output, ledgers)' \
     '# belongs in the SDD workspace or an evidence repository, not here.' \
     '/*' \
     '!/.gitignore' \
     '!/specs/' \
-    '!/plans/' > "$target"
+    '!/plans/' \
+    '!/decisions/' > "$target"
   printf 'wrote %s\n' "$target"
 fi
 

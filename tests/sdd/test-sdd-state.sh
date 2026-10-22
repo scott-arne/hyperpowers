@@ -1149,6 +1149,20 @@ printf 'SECRETTOKEN again\n' > "$wsa/task-3-report.md"; run_state "$PAIR_A" snap
 rm -f "$wsa/task-3-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
 out=$(run_state "$PAIR_A" handoff docs/plan.md --push 2>/dev/null); rc=$?
 if [ "$rc" -eq 5 ]; then pass "content added and deleted since the last push blocks a later push"; else fail "content added and deleted since the last push blocks a later push (rc=$rc: $out)"; fi
+# A side branch that added and deleted a secret before being merged: the
+# merge's net diff is clean, the side commits are what the push publishes.
+co_a7="$STATE_ROOT/$(state_key "$PAIR_A")"
+# The earlier SECRETTOKEN commits are still unpushed and in range, so this check
+# scans for a token only the side branch carries.
+git -C "$PAIR_A" config hyperpowers.prePushScan '! grep -q SIDETOKEN'
+git -C "$co_a7" checkout -q -b side
+printf 'SIDETOKEN on the side\n' > "$co_a7/plans/$(basename "$wsa")/task-11-report.md"
+git -C "$co_a7" add -A -- "plans/$(basename "$wsa")"; git -C "$co_a7" -c user.name=t -c user.email=t@example.com commit -qm "side adds"
+git -C "$co_a7" rm -q -- "plans/$(basename "$wsa")/task-11-report.md"; git -C "$co_a7" -c user.name=t -c user.email=t@example.com commit -qm "side removes"
+git -C "$co_a7" checkout -q hyperpowers/state
+git -C "$co_a7" -c user.name=t -c user.email=t@example.com merge -q --no-ff -m "merge side" side; git -C "$co_a7" branch -q -D side
+out=$(run_state "$PAIR_A" handoff docs/plan.md --push 2>/dev/null); rc=$?
+if [ "$rc" -eq 5 ] && [ "$out" = "status=scan-failed reason=scanner" ]; then pass "a secret added and deleted on a merged side branch still blocks the push"; else fail "a secret added and deleted on a merged side branch still blocks the push (rc=$rc: $out)"; fi
 git -C "$PAIR_A" config --unset hyperpowers.prePushScan
 
 # A snapshot queued during a hand-off lands after the push; the push carries

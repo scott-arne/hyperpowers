@@ -1228,11 +1228,12 @@ cmd_handoff() {
   fi
   cmd=$(git -C "$PLAN_DIR" config --get hyperpowers.prePushScan 2>/dev/null || true)
   if [ -n "$cmd" ]; then
-    # Every commit the push publishes: the root commit's own patch, a merge
-    # as its diff against its first parent, binary content as bytes.
+    # Every commit the push publishes: the root commit's own patch, every
+    # commit the range reaches on any parent line, a merge as its diff
+    # against each parent, binary content as bytes.
     if [ -n "$remote_tip" ]; then range="$remote_tip..$sha"; else range=$sha; fi
     patch=$(mktemp "${TMPDIR:-/tmp}/sdd-scan.XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
-    if ! git -C "$CO" log --root -p --format= --no-color -m --first-parent --text "$range" -- . > "$patch" 2>/dev/null; then rm -f "$patch"; hp_unlock; echo "status=scan-failed reason=git"; return 5; fi
+    if ! git -C "$CO" log --root -p --format= --no-color -m --text "$range" -- . > "$patch" 2>/dev/null; then rm -f "$patch"; hp_unlock; echo "status=scan-failed reason=git"; return 5; fi
     if ! (cd "$CO" && HYPERPOWERS_SCAN_RANGE="$range" sh -c "$cmd" < "$patch" >&2); then rm -f "$patch"; hp_unlock; echo "status=scan-failed reason=scanner"; return 5; fi
     rm -f "$patch"
   fi

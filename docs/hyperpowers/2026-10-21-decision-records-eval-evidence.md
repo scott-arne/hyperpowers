@@ -90,16 +90,16 @@ match. The tree was clean after the run.
 
 ## 2. Finishing-path rehearsal
 
-Five print-mode Claude Code sessions (model claude-opus-5-5, CC 2.1.302):
-the two planned runs, an extra re-run of the fast one, a padded run, and a
-clean run against the amended Step 4 that ran three turns; each against a
+Six print-mode Claude Code sessions (model claude-opus-5-5, CC 2.1.302):
+the two planned runs, an extra re-run of the fast one, a padded run, and two
+clean runs against the amended Step 4 that ran three turns; each against a
 fixture branch with a two-decision spec and a plan, the decision-records
 worktree loaded with `--plugin-dir`, and an empty config dir, which in the
-`stop` and `slow-clean` runs also carries a `claudeMdExcludes` list.
-Artifacts: `evidence/2026-10-21-decision-records/task-13-runs/` in
+`stop`, `slow-clean` and `slow-clean2` runs also carries a `claudeMdExcludes`
+list. Artifacts: `evidence/2026-10-21-decision-records/task-13-runs/` in
 hyperpowers-evals (commit b80b7ee4d for the first four runs; commit pending in
-hyperpowers-evals for `slow-clean`, the manifest `runs.md` and the launcher
-changes).
+hyperpowers-evals for `slow-clean`, `slow-clean2`, the manifest `runs.md` and
+the launcher changes).
 
 | Run | Suite | Extractor at collection | Records staged | Plan deletion staged | Menu message carried the diff | Notes applied | Records commit after "3" | Suite end to menu | Answer to commit |
 |---|---|---|---|---|---|---|---|---|---|
@@ -108,6 +108,7 @@ changes).
 | fast2 (extra re-run of fast) | instant | finished, TaskStop sent in the same second | yes | yes | no, summarised | yes | 75e674c (fixture repo) | 28 s | 20 s |
 | stop (ancestor CLAUDE.md excluded) | instant, 5,000-line diff | stopped unfinished (TaskStop seen) | yes | yes | yes | no (Nothing recorded.) | 237e440 (fixture repo) | 27 s | 15 s |
 | slow-clean (amended Step 4, three turns) | 150 s | finished | yes | yes | yes, literal `diff --git` output | yes | fc91297 (fixture repo; no proposals were open, so the commit came at turn 2, as before) | 28 s | 21 s |
+| slow-clean2 (amended Step 4, three turns) | 150 s, undocumented choice in the diff | finished | yes | yes | yes, literal `diff --git` output | yes | 2666c4d (fixture repo; followed the dispositions at turn 3, no commit at turn 2) | 32 s (suite completion event) | 17 s from the turn-3 start |
 
 Intervals: suite end to menu is the suite's tool result (fast, fast2) or its
 completion event (slow, where the suite outran the Bash 120 s timeout and the
@@ -162,14 +163,21 @@ exactly the one subject line. It did not show the first: the extractor
 proposed no undocumented decisions this time (the compile output reports
 `undocumented 0`), so the bare "3" committed directly and the third turn,
 "Dismiss all of them.", met nothing to dismiss; the session said so and
-changed nothing. The unanswered-proposal rule is therefore untested live; the
-extractor's proposals vary run to run. The launcher gained
+changed nothing. The unanswered-proposal rule is therefore untested in that
+run; the extractor's proposals vary run to run. The `slow-clean2` run, whose
+launcher option `UNDOCUMENTED=1` adds a case-insensitive tag match the spec
+does not mention, exercised it: the extractor proposed four undocumented
+decisions, the menu asked add or dismiss for each, the bare "3" drew a
+question for the dispositions and no commit, and "Dismiss all of them." drew
+the one-line-subject records commit with the four dismissals listed in the
+hand-back. Its turn 1 hit the 1200 s timeout (exit 124) after emitting its
+result, a hung process rather than a failed turn. The launcher gained
 `EXCLUDE_ANCESTORS` (default 1; 0 skips the settings file), an optional third
-turn from `prompt-3.txt`, `PAD_LINES`, and a `config:` first line in
-status.txt; `runs.md` in `task-13-runs/` lists every run with its command and
-configuration. `fast`, `slow` and `fast2` ran before the parameter existed,
-without ancestor excludes (the host CLAUDE.md loaded); `stop` and
-`slow-clean` wrote them.
+turn from `prompt-3.txt`, `PAD_LINES`, `UNDOCUMENTED`, and a `config:` first
+line in status.txt; `runs.md` in `task-13-runs/` lists every run with its
+command and configuration. `fast`, `slow` and `fast2` ran before the
+parameter existed, without ancestor excludes (the host CLAUDE.md loaded);
+`stop`, `slow-clean` and `slow-clean2` wrote them.
 
 ## 3. SDD-path rehearsal
 

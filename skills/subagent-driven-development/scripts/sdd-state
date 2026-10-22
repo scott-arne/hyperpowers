@@ -19,7 +19,7 @@
 #       (needs-sync, foreign branch, no-workspace, import-failed) | 3 diverged, busy |
 #       4 claim held by another session | 5 scan-failed | 6 open-claims |
 #       7 plain backend (handoff) | 8 plan-not-committed |
-#       9 wrong-repo, code-missing, plan-stale | 10 code-dirty
+#       9 wrong-repo, code-missing, plan-stale | 10 code-dirty | 11 detached-head | 12 shallow-source
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -1138,12 +1138,15 @@ cmd_verify() {
 
 # --- handoff -----------------------------------------------------------------
 # Snapshot for another host. Refuses an uncommitted plan file (the
-# destination could not start) and a dirty code tree (work would stay
-# behind unnoticed); records the code repository's identity, and the plan
-# repository's when it differs; pushes only with --push, after the
-# configured scan over every commit the push would publish.
+# destination could not start), a dirty code tree (work would stay behind
+# unnoticed) and a shallow source (its oldest commit is a fetch boundary,
+# not the identity a full clone would compute); records the code
+# repository's identity, and the plan repository's when it differs, as one
+# write under the repository lock; pushes only with --push, after the
+# configured scan over every commit the push publishes, with a lease on the
+# remote tip the scan was computed against.
 cmd_handoff() {
-  local plan="" push=0 plan_ok=0 dirty_ok=0 code="" rel dirty code_root code_branch code_sha plan_root plan_sha plan_branch extra="" ledger out rc sha cmd range patch err pushto
+  local plan="" push=0 plan_ok=0 dirty_ok=0 code="" rel status_out dirty code_root code_branch code_sha plan_root plan_sha plan_branch extra="" record ledger out rc sha cmd range patch err pushto remote_line remote_tip
   while [ $# -gt 0 ]; do
     case "$1" in
       --push) push=1; shift ;;
@@ -1167,7 +1170,9 @@ cmd_handoff() {
   fi
   code=$(hp_physical_dir "$code") || { echo "sdd-state: no such directory: $code" >&2; exit 2; }
   if [ "$dirty_ok" -eq 0 ]; then
-    dirty=$(git -C "$code" status --porcelain 2>/dev/null | head -n 3 | sed 's/^...//; s/ /%20/g' | tr '\n' ',')
+    # A cleanliness check that could not run is not a clean tree.
+    status_out=$(git -C "$code" status --porcelain 2>/dev/null) || { echo "sdd-state: git status failed in $code; the code tree's cleanliness could not be established" >&2; echo "status=error"; return 2; }
+    dirty=$(printf '%s\n' "$status_out" | grep . | head -n 3 | sed 's/^...//; s/ /%20/g' | tr '\n' ',')
     if [ -n "$dirty" ]; then echo "status=code-dirty paths=${dirty%,}"; return 10; fi
   fi
   if [ "$BACKEND" != branch ]; then echo "status=plain"; return 7; fi
@@ -1178,20 +1183,28 @@ cmd_handoff() {
     plan_branch=$(git -C "$REPO" branch --show-current 2>/dev/null)
     [ -n "$plan_branch" ] || { echo "status=detached-head repo=plan"; return 11; }
   fi
-  code_root=$(root_of "$code"); code_sha=$(git -C "$code" rev-parse HEAD)
-  mkdir -p "$WSDIR"
-  ledger=$(ledger_path)
-  [ -f "$ledger" ] || printf '%s%s\n' "$IDENTITY_PREFIX" "$rel" > "$ledger"
-  printf 'handoff: code root=%s %s@%s at %s from %s\n' "$code_root" "$code_branch" "$code_sha" "$(hp_utc_now)" "$(hostname)" >> "$ledger"
+  # A shallow clone's oldest commits are a fetch boundary, not the root a
+  # full clone computes; the identity it would record misleads verify there.
+  if [ "$(git -C "$code" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=code"; return 12; fi
+  if [ "$code" != "$REPO" ] && [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=plan"; return 12; fi
+  code_root=$(root_of "$code"); code_sha=$(git -C "$code" rev-parse HEAD 2>/dev/null)
+  [ -n "$code_root" ] && [ -n "$code_sha" ] || { echo "status=error"; return 2; }
+  record=$(printf 'handoff: code root=%s %s@%s at %s from %s' "$code_root" "$code_branch" "$code_sha" "$(hp_utc_now)" "$(hostname)")
   if [ "$code" != "$REPO" ]; then
-    plan_root=$(root_of "$REPO"); plan_sha=$(git -C "$REPO" rev-parse HEAD)
-    printf 'handoff: plan root=%s %s@%s\n' "$plan_root" "$plan_branch" "$plan_sha" >> "$ledger"
+    plan_root=$(root_of "$REPO"); plan_sha=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
+    [ -n "$plan_root" ] && [ -n "$plan_sha" ] || { echo "status=error"; return 2; }
+    record=$(printf '%s\nhandoff: plan root=%s %s@%s' "$record" "$plan_root" "$plan_branch" "$plan_sha")
     extra=" plan=$plan_branch@${plan_sha:0:7}"
   fi
-  # The lock is held from here through the scan and the push, so what is
-  # pushed is exactly what was scanned.
+  # Everything that touches the dossier runs under the lock: an interrupted
+  # sync is finished first, the record goes in as one write, and the commit,
+  # the scan and the push follow with nothing else interleaving.
   hp_lock "$PLAN_DIR" || return 2
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  mkdir -p "$WSDIR" || { hp_unlock; echo "status=error"; return 2; }
+  ledger=$(ledger_path)
+  if [ ! -f "$ledger" ]; then printf '%s%s\n' "$IDENTITY_PREFIX" "$rel" > "$ledger" || { hp_unlock; echo "status=error"; return 2; }; fi
+  printf '%s\n' "$record" >> "$ledger" || { hp_unlock; echo "status=error"; return 2; }
   out=$(hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: handoff $(hp_utc_now)" "plans/$WS"); rc=$?
   [ "$rc" -eq 0 ] || { hp_unlock; echo "status=error"; return 2; }
   sha=$(git -C "$CO" rev-parse "refs/heads/$BRANCH")
@@ -1200,17 +1213,31 @@ cmd_handoff() {
     hp_unlock
     echo "status=snapshot sha=${sha:0:7} code=$code_branch@${code_sha:0:7}$extra push=$pushto"; return 0
   fi
+  # The remote tip is read now, from the remote itself, so the scan covers
+  # exactly the commits this push publishes, and the push carries a lease
+  # on that tip: a remote that moves in between is refused, never
+  # overwritten with history the scanner did not see.
+  remote_line=$(git -C "$CO" ls-remote --exit-code "$REMOTE" "refs/heads/$BRANCH" 2>/dev/null); rc=$?
+  case "$rc" in
+    0) remote_tip=$(printf '%s\n' "$remote_line" | cut -f1) ;;
+    2) remote_tip="" ;;
+    *) hp_unlock; echo "sdd-state: could not read $REMOTE" >&2; echo "status=push-failed sha=${sha:0:7}"; return 1 ;;
+  esac
+  if [ -n "$remote_tip" ] && ! git -C "$CO" merge-base --is-ancestor "$remote_tip" "$sha" 2>/dev/null; then
+    hp_unlock; echo "sdd-state: $REMOTE/$BRANCH has moved since the last sync; run sdd-state sync first" >&2; echo "status=push-failed sha=${sha:0:7}"; return 1
+  fi
   cmd=$(git -C "$PLAN_DIR" config --get hyperpowers.prePushScan 2>/dev/null || true)
   if [ -n "$cmd" ]; then
-    # Every commit the push publishes, the root commit's own patch included.
-    if git -C "$CO" rev-parse -q --verify "refs/remotes/$REMOTE/$BRANCH^{commit}" >/dev/null 2>&1; then range="$REMOTE/$BRANCH..HEAD"; else range=HEAD; fi
+    # Every commit the push publishes: the root commit's own patch, a merge
+    # as its diff against its first parent, binary content as bytes.
+    if [ -n "$remote_tip" ]; then range="$remote_tip..$sha"; else range=$sha; fi
     patch=$(mktemp "${TMPDIR:-/tmp}/sdd-scan.XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
-    if ! git -C "$CO" log --root -p --format= --no-color "$range" -- . > "$patch" 2>/dev/null; then rm -f "$patch"; hp_unlock; echo "status=scan-failed reason=git"; return 5; fi
+    if ! git -C "$CO" log --root -p --format= --no-color -m --first-parent --text "$range" -- . > "$patch" 2>/dev/null; then rm -f "$patch"; hp_unlock; echo "status=scan-failed reason=git"; return 5; fi
     if ! (cd "$CO" && HYPERPOWERS_SCAN_RANGE="$range" sh -c "$cmd" < "$patch" >&2); then rm -f "$patch"; hp_unlock; echo "status=scan-failed reason=scanner"; return 5; fi
     rm -f "$patch"
   fi
   if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = handoff-after-scan ]; then while [ -e "$CO/.handoff-pause" ]; do sleep 0.1; done; fi
-  if ! err=$(git -C "$CO" push -q "$REMOTE" "$sha:refs/heads/$BRANCH" 2>&1); then
+  if ! err=$(git -C "$CO" push -q --force-with-lease="refs/heads/$BRANCH:$remote_tip" "$REMOTE" "$sha:refs/heads/$BRANCH" 2>&1); then
     hp_unlock
     printf '%s\n' "$err" >&2
     echo "status=push-failed sha=${sha:0:7}"; return 1

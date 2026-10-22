@@ -1123,6 +1123,10 @@ git -C "$PAIR_A" checkout -q -- docs/plan.md
 : > "$PAIR_A/stray.txt"
 out=$(run_state "$PAIR_A" handoff docs/plan.md); rc=$?
 if [ "$rc" -eq 10 ] && [ "$out" = "status=code-dirty paths=stray.txt" ]; then pass "an untracked file is a dirty code tree"; else fail "an untracked file is a dirty code tree (rc=$rc: $out)"; fi
+printf 'staged\n' > "$PAIR_A/staged.txt"; git -C "$PAIR_A" add staged.txt
+out=$(run_state "$PAIR_A" handoff docs/plan.md); rc=$?
+if [ "$rc" -eq 10 ] && [ "$out" = "status=code-dirty paths=staged.txt,stray.txt" ]; then pass "a staged change is a dirty code tree, listed with the untracked file"; else fail "a staged change is a dirty code tree, listed with the untracked file (rc=$rc: $out)"; fi
+git -C "$PAIR_A" reset -q staged.txt; rm -f "$PAIR_A/staged.txt"
 out=$(run_state "$PAIR_A" handoff docs/plan.md --code-dirty-ok); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=snapshot" ]; then pass "--code-dirty-ok waives the dirty check"; else fail "--code-dirty-ok waives the dirty check (rc=$rc: $out)"; fi
 rm -f "$PAIR_A/stray.txt"
@@ -1137,9 +1141,9 @@ printf 'SECRETTOKEN\n' > "$wsa/task-2-report.md"; run_state "$PAIR_A" snapshot d
 rm -f "$wsa/task-2-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
 out=$(run_state "$PAIR_A" handoff docs/plan.md --push 2>/dev/null); rc=$?
 if [ "$rc" -eq 5 ] && [ "$out" = "status=scan-failed reason=scanner" ] && ! git -C "$PAIR_REMOTE" rev-parse -q --verify refs/heads/hyperpowers/state >/dev/null 2>&1; then pass "content added and deleted before the first push still blocks it"; else fail "content added and deleted before the first push still blocks it (rc=$rc: $out)"; fi
-git -C "$PAIR_A" config hyperpowers.prePushScan 'cat > /dev/null'
+git -C "$PAIR_A" config hyperpowers.prePushScan 'grep -q "^+hyperpowers-state 1$"'
 out=$(run_state "$PAIR_A" handoff docs/plan.md --push); rc=$?
-if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=pushed" ] && [ "$(git -C "$PAIR_REMOTE" rev-parse refs/heads/hyperpowers/state)" = "$(git -C "$PAIR_A" rev-parse hyperpowers/state)" ]; then pass "a passing scanner lets --push publish the state branch"; else fail "a passing scanner lets --push publish the state branch (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=pushed" ] && [ "$(git -C "$PAIR_REMOTE" rev-parse refs/heads/hyperpowers/state)" = "$(git -C "$PAIR_A" rev-parse hyperpowers/state)" ]; then pass "a passing scanner lets --push publish the state branch, and the first push's scan includes the root commit"; else fail "a passing scanner lets --push publish the state branch, and the first push's scan includes the root commit (rc=$rc: $out)"; fi
 git -C "$PAIR_A" config hyperpowers.prePushScan '! grep -q SECRETTOKEN'
 printf 'SECRETTOKEN again\n' > "$wsa/task-3-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
 rm -f "$wsa/task-3-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
@@ -1160,6 +1164,20 @@ sleep 1; rm -f "$co_a7/.handoff-pause"; wait
 pushed_sha=$(sed -n 's/^status=pushed sha=\([0-9a-f]*\).*/\1/p' "$TEST_ROOT/p7.handoff")
 if [ -n "$pushed_sha" ] && [ "$(git -C "$PAIR_REMOTE" rev-parse --short=7 refs/heads/hyperpowers/state)" = "$pushed_sha" ] && [ "$(git -C "$PAIR_A" rev-parse --short=7 hyperpowers/state)" != "$pushed_sha" ] && grep -q '^status=snapshot' "$TEST_ROOT/p7.snap"; then pass "a snapshot queued during a hand-off waits; the push carries the scanned commit only"; else fail "a snapshot queued during a hand-off waits ($(cat "$TEST_ROOT/p7.handoff") / $(cat "$TEST_ROOT/p7.snap"))"; fi
 git -C "$PAIR_A" config --unset hyperpowers.prePushScan
+# The remote rewound between the scan and the push: the lease refuses it.
+git -C "$PAIR_A" config hyperpowers.prePushScan 'cat > /dev/null'
+remote_before=$(git -C "$PAIR_REMOTE" rev-parse refs/heads/hyperpowers/state)
+printf 'lease\n' > "$wsa/task-10-report.md"
+: > "$co_a7/.handoff-pause"
+( cd "$PAIR_A" && HYPERPOWERS_TEST_PAUSE_AT=handoff-after-scan bash "$SDD_STATE" handoff docs/plan.md --push > "$TEST_ROOT/p7.lease" 2>/dev/null ) &
+sleep 1
+git -C "$PAIR_REMOTE" update-ref refs/heads/hyperpowers/state "$remote_before^"
+rm -f "$co_a7/.handoff-pause"; wait
+if [ "$(cut -d' ' -f1 "$TEST_ROOT/p7.lease")" = "status=push-failed" ] && [ "$(git -C "$PAIR_REMOTE" rev-parse refs/heads/hyperpowers/state)" = "$(git -C "$PAIR_REMOTE" rev-parse "$remote_before^")" ]; then pass "a remote that moved between the scan and the push is refused by the lease, nothing overwritten"; else fail "a remote that moved between the scan and the push is refused by the lease, nothing overwritten ($(cat "$TEST_ROOT/p7.lease"))"; fi
+git -C "$PAIR_REMOTE" update-ref refs/heads/hyperpowers/state "$remote_before"
+out=$(run_state "$PAIR_A" handoff docs/plan.md --push); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=pushed" ]; then pass "with the remote back where the scan saw it the push lands"; else fail "with the remote back where the scan saw it the push lands (rc=$rc: $out)"; fi
+git -C "$PAIR_A" config --unset hyperpowers.prePushScan
 git -C "$PAIR_A" checkout -q --detach
 out=$(run_state "$PAIR_A" handoff docs/plan.md); rc=$?
 if [ "$rc" -eq 11 ] && [ "$out" = "status=detached-head repo=code" ]; then pass "a detached code checkout cannot hand off"; else fail "a detached code checkout cannot hand off (rc=$rc: $out)"; fi
@@ -1172,6 +1190,29 @@ out=$(run_state "$PAIR_B" verify docs/plan.md); rc=$?
 if [ "$rc" -eq 9 ] && [ "${out%% *}" = "status=code-missing" ]; then pass "arrival before the code pull is code-missing"; else fail "arrival before the code pull is code-missing (rc=$rc: $out)"; fi
 git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
 if [ "$(run_state "$PAIR_B" verify docs/plan.md)" = "status=ok tasks=1" ]; then pass "arrival after the code pull verifies"; else fail "arrival after the code pull verifies"; fi
+# The remote moved since the last sync: refused before the scan, nothing
+# overwritten; a sync makes it a plain push again.
+wsb10="$STATE_ROOT/$(state_key "$PAIR_B")/plans/$(basename "$wsa")"
+printf 'B line\n' >> "$wsb10/progress.md"; run_state "$PAIR_B" snapshot docs/plan.md >/dev/null; git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
+remote_b=$(git -C "$PAIR_REMOTE" rev-parse refs/heads/hyperpowers/state)
+out=$(run_state "$PAIR_A" handoff docs/plan.md --push 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && [ "${out%% *}" = "status=push-failed" ] && [ "$(git -C "$PAIR_REMOTE" rev-parse refs/heads/hyperpowers/state)" = "$remote_b" ]; then pass "a remote that moved since the last sync is push-failed before the scan, nothing overwritten"; else fail "a remote that moved since the last sync is push-failed before the scan, nothing overwritten (rc=$rc: $out)"; fi
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+out=$(run_state "$PAIR_A" handoff docs/plan.md --push); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=pushed" ] && git -C "$PAIR_REMOTE" merge-base --is-ancestor "$remote_b" refs/heads/hyperpowers/state; then pass "after a sync the hand-off pushes on top of the other host's line"; else fail "after a sync the hand-off pushes on top of the other host's line (rc=$rc: $out)"; fi
+# A cleanliness check that cannot run is an error, never a clean tree.
+badidx="$TEST_ROOT/hostA/p10-badidx"; git clone -q "$PAIR_REMOTE" "$badidx" 2>/dev/null
+git -C "$badidx" config user.name t; git -C "$badidx" config user.email t@example.com
+run_state "$badidx" sync docs/plan.md >/dev/null
+printf 'garbage\n' > "$badidx/.git/index"
+out=$(run_state "$badidx" handoff docs/plan.md --plan-untracked-ok 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "a code tree whose status cannot be read is an error, not clean"; else fail "a code tree whose status cannot be read is an error, not clean (rc=$rc: $out)"; fi
+# A shallow source would record a boundary commit as the identity.
+shallow10="$TEST_ROOT/hostA/p10-shallow"; git clone -q --depth 1 "file://$PAIR_REMOTE" "$shallow10" 2>/dev/null
+git -C "$shallow10" config user.name t; git -C "$shallow10" config user.email t@example.com
+run_state "$shallow10" sync docs/plan.md >/dev/null
+out=$(run_state "$shallow10" handoff docs/plan.md); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=shallow-source repo=code" ]; then pass "a shallow code clone cannot hand off"; else fail "a shallow code clone cannot hand off (rc=$rc: $out)"; fi
 if [ "$(run_state "$rp" handoff docs/plan.md 2>/dev/null)" = "status=plain" ]; then pass "handoff under the plain backend reports plain"; else fail "handoff under the plain backend reports plain"; fi
 rc=0; run_state "$rp" handoff docs/plan.md >/dev/null 2>&1 || rc=$?
 if [ "$rc" -eq 7 ]; then pass "handoff under the plain backend exits 7"; else fail "handoff under the plain backend exits 7 (rc=$rc)"; fi
@@ -1185,7 +1226,7 @@ wsp=$(cd "$C_A" && bash "$SDD_DIR" "$P_A/docs/plan.md")
 printf 'code\n' > "$C_A/code.txt"; git -C "$C_A" add code.txt; git -C "$C_A" commit -qm "task 1"
 printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits %s..%s, review clean)\n' "$(git -C "$C_A" rev-parse --short=7 HEAD~1)" "$(git -C "$C_A" rev-parse --short=7 HEAD)" > "$wsp/progress.md"
 out=$(cd "$C_A" && bash "$SDD_STATE" handoff "$P_A/docs/plan.md" --push); rc=$?
-if [ "$rc" -eq 0 ] && case "$out" in "status=pushed sha="???????" code=main@"???????" plan=main@"???????) true;; *) false;; esac && grep -q '^handoff: plan root=' "$wsp/progress.md"; then pass "a cross-repository handoff records and names the plan branch"; else fail "a cross-repository handoff records and names the plan branch (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "$out" = "status=pushed sha=$(git -C "$P_A" rev-parse --short=7 hyperpowers/state) code=main@$(git -C "$C_A" rev-parse --short=7 HEAD) plan=main@$(git -C "$P_A" rev-parse --short=7 HEAD)" ] && grep -q "^handoff: plan root=[0-9a-f]\{40\} main@$(git -C "$P_A" rev-parse HEAD)\$" "$wsp/progress.md" && grep -q "^handoff: code root=[0-9a-f]\{40\} main@$(git -C "$C_A" rev-parse HEAD) at " "$wsp/progress.md"; then pass "a cross-repository handoff records and names the plan branch"; else fail "a cross-repository handoff records and names the plan branch (rc=$rc: $out)"; fi
 git -C "$C_A" push -q origin main 2>/dev/null
 git -C "$P_B" pull -q origin main 2>/dev/null; git -C "$C_B" pull -q origin main 2>/dev/null
 ( cd "$C_B" && bash "$SDD_STATE" sync "$P_B/docs/plan.md" >/dev/null )

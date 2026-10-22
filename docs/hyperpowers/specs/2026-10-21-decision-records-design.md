@@ -242,10 +242,14 @@ spaces. When that paragraph opens with bold text (`**...**`), the title is
 that text with one trailing `.` or `:` removed, matched across the joined
 paragraph, so a bold title that wraps to a second line is whole. Otherwise
 the title is the paragraph's first clause: the text up to the first `. ` or
-`: `, or the whole paragraph, cut to 80 characters at a word boundary;
-trailing spaces and any trailing `.`, `,`, `;` or `:` left by the clause or
-the cut are dropped. A title never begins with `**`. (Corrected 2026-10-22: the dry run over this
-repository's specs found wrapped bold titles and first-line fragments.)
+`: `, or the whole paragraph. A clause longer than 80 characters is cut
+inside its first 80: at the last `, ` or `; ` that leaves at least 20
+characters, else at the last space, else not at all, so a single token
+longer than 80 characters stays whole and no cut lands inside a multibyte
+character. Trailing spaces and any trailing `.`, `,`, `;` or `:` left by the
+clause or the cut are dropped. A title never begins with `**`. (Corrected
+2026-10-22: the dry run over this repository's specs found wrapped bold
+titles and first-line fragments.)
 
 **Supersedes in a spec item.** A line inside the item, after any list marker
 and whitespace, of the form `Supersedes: <path>[, <path>]`. This line is the

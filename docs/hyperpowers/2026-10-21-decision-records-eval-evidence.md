@@ -2,11 +2,12 @@
 
 **Spec:** docs/hyperpowers/specs/2026-10-21-decision-records-design.md
 **Plan:** docs/hyperpowers/plans/2026-10-21-decision-records.md
-**Compiler:** skills/finishing-a-development-branch/scripts/decisions-compile at 5f82cb9 (Task 6's d076e53 plus the Task 12 correction: `title_of` reads the item's first paragraph joined across lines)
+**Compiler:** skills/finishing-a-development-branch/scripts/decisions-compile at 56bb8ac (Task 6's d076e53 plus the Task 12 corrections: the title comes from the item's first paragraph, 5f82cb9; trailing punctuation is dropped, cfa5047; a long clause is cut at its last clause boundary and never inside a token, 56bb8ac)
 
 ## 1. Parser dry run over this repository's specs
 
-Run on 2026-10-22 from the worktree, `decisions-compile --dry-run` over each
+Run on 2026-10-22 from the worktree at 56bb8ac, `decisions-compile --dry-run`
+over each
 file in `docs/hyperpowers/specs/`. The spec predicted 12 parses among the 24
 specs that existed when it was written (4 prose-only Decisions sections, 8
 specs without one) plus its own.
@@ -20,7 +21,7 @@ specs without one) plus its own.
 | 2026-07-22-gate-reliability-hardening-design.md | 2 | 0 | docs/hyperpowers/specs/2026-07-22-gate-reliability-hardening-design.md: no decisions list (add "## Decisions" with one list item per decision) |
 | 2026-07-23-gate-resilience-telemetry-design.md | 2 | 0 | docs/hyperpowers/specs/2026-07-23-gate-resilience-telemetry-design.md: no decisions list (add "## Decisions" with one list item per decision) |
 | 2026-08-08-review-fidelity-efficiency-design.md | 2 | 0 | docs/hyperpowers/specs/2026-08-08-review-fidelity-efficiency-design.md: no decisions list (add "## Decisions" with one list item per decision) |
-| 2026-08-09-risk-tiering-prompt-hygiene-design.md | 0 | 6 | One spec, one release (6.6.0), four items; Tier assignment is plan-time, Codex-plan-gate-reviewed, escalate-only at; Tiering dials ONLY the per-task Codex gate; `verification-before-completion` is fully removed, its load-bearing content; Prompt hygiene = fixer template + SDD contract-test suite + the; Two live eval scenarios |
+| 2026-08-09-risk-tiering-prompt-hygiene-design.md | 0 | 6 | One spec, one release (6.6.0), four items; Tier assignment is plan-time, Codex-plan-gate-reviewed; Tiering dials ONLY the per-task Codex gate; `verification-before-completion` is fully removed; Prompt hygiene = fixer template + SDD contract-test suite + the; Two live eval scenarios |
 | 2026-08-17-upstream-sync-design.md | 0 | 7 | Scope; SDD merge depth; Codex gate meshing; Router × approach gate; Eval posture; Packaging; Merge strategy |
 | 2026-08-23-skills-read-efficiency-design.md | 2 | 0 | docs/hyperpowers/specs/2026-08-23-skills-read-efficiency-design.md: no decisions list (add "## Decisions" with one list item per decision) |
 | 2026-09-05-gate-churn-and-skill-hardening-design.md | 2 | 0 | docs/hyperpowers/specs/2026-09-05-gate-churn-and-skill-hardening-design.md: no decisions list (add "## Decisions" with one list item per decision) |
@@ -28,7 +29,7 @@ specs without one) plus its own.
 | 2026-09-16-brainstorming-trigger-calibration-design.md | 2 | 0 | docs/hyperpowers/specs/2026-09-16-brainstorming-trigger-calibration-design.md: no decisions list (add "## Decisions" with one list item per decision) |
 | 2026-09-17-brainstorming-trigger-rule-design.md | 0 | 4 | Scope; Boundary bar; Approach; Standing preference, verbatim |
 | 2026-09-17-first-edit-interlock-design.md | 0 | 5 | Bar; Arms; Mechanism; Scenarios; Standing preference, verbatim |
-| 2026-09-23-adoption-remediation-design.md | 0 | 9 | Model; Sample size; Criterion 1 for the ladder; Install; Phase 3's baseline *is* the ladder-without-hook measurement; The two new scenarios get their own two-arm runs in Phase 5, control at `main`; The interlock's spec, plan and evidence note stay committed, per this repo's; The release decision is the human partner's, at the end of Phase 5;  the plan; Evidence directory, named before the first run |
+| 2026-09-23-adoption-remediation-design.md | 0 | 9 | Model; Sample size; Criterion 1 for the ladder; Install; Phase 3's baseline *is* the ladder-without-hook measurement; The two new scenarios get their own two-arm runs in Phase 5; The interlock's spec, plan and evidence note stay committed; The release decision is the human partner's, at the end of Phase 5; Evidence directory, named before the first run |
 | 2026-10-03-review-calibration-and-sentinel-scope-design.md | 0 | 4 | Fix 1 reach: the Codex focus strings only; Fix 1 form: an added sentence; Fix 2 home: the evals authoring guide plus a hyperpowers pointer; Fix 3 scope: the table update |
 | 2026-10-05-release-hygiene-design.md | 0 | 4 | Scope; Leak-scan tool home (item 12); Task-less stubs (item 15); Fixture P3 (item 17) |
 | 2026-10-10-post-release-follow-ups-design.md | 0 | 9 | Decomposition; Here-strings; Image identity; Dashboard; Shared stub; Shim parser; gate-telemetry; Organization; Shim operands built from the shim's location |
@@ -58,27 +59,34 @@ message for both cases, so the split was read from the headings in the specs.
 
 The table script joins titles with `; `, so a title that itself contains a
 semicolon displays as two entries. Affected: codex-plugin-cc ("independent;
-document overlap"), adoption-remediation ("at the end of Phase 5; the plan"),
-and two in decision-records-design ("a slug; there is no global counter",
-"after the suite; the human review rides the finishing menu").
+document overlap") and two in decision-records-design ("a slug; there is no
+global counter", "after the suite; the human review rides the finishing
+menu").
 
-Title judgement. Every title names its decision except these, accepted as
-borderline. Plain items with no clause break are cut at a word boundary near
-80 characters. The comma that ended portable-sdd-dossiers items 2 and 3 was a
-compiler defect, fixed in this round (cfa5047, "decisions-compile drops the
-punctuation a plain-title cut leaves behind"); both now read without it. Of
-the clipped titles, risk-tiering's "Tier assignment is plan-time,
-Codex-plan-gate-reviewed, escalate-only at" and "Prompt hygiene = fixer
-template + SDD contract-test suite + the" are still recognisable from their
-words. Others are prose fragments, accepted as the 80-character rule's limit
-rather than as recognisable titles: "`verification-before-completion` is fully
-removed, its load-bearing content" and adoption-remediation's "...per this
-repo's". The record body carries the full text either way. Short author-chosen titles such as "Scope",
-"Verification" and "Standing preference, verbatim" are recognisable with the
-spec beside them. portable-sdd-dossiers item 4, "The four design sections were
-approved as presented in chat", is a status note rather than a decision; it is
-spec content, and the rule is that the spec is never edited to fit the
-parser, so it is accepted as is. The tree was clean after the run.
+Title judgement. Every title names its decision except one, accepted as the
+rule's limit. A plain item is cut at its last clause boundary inside 80
+characters, and three titles that earlier rules left as fragments now read
+whole: risk-tiering's "Tier assignment is plan-time, Codex-plan-gate-reviewed,
+escalate-only at" is "Tier assignment is plan-time, Codex-plan-gate-reviewed",
+"`verification-before-completion` is fully removed, its load-bearing content"
+is "`verification-before-completion` is fully removed", and
+adoption-remediation's "The interlock's spec, plan and evidence note stay
+committed, per this repo's" is "The interlock's spec, plan and evidence note
+stay committed". One legacy title remains a fragment, "Prompt hygiene = fixer
+template + SDD contract-test suite + the", because no clause boundary falls
+inside its first 80 characters; the human partner accepted it, at the Codex
+gate, as the 80-character rule's limit for a legacy plain item, and the record
+body carries the full text. The brainstorming skill now requires bold titles,
+so the plain path serves legacy material only. The comma that ended
+portable-sdd-dossiers items 2 and 3 was a compiler defect, fixed in cfa5047.
+Short author-chosen titles such as "Scope", "Verification" and "Standing
+preference, verbatim" are recognisable with the spec beside them.
+portable-sdd-dossiers item 4, "The four design sections were approved as
+presented in chat", is a status note rather than a decision; it is spec
+content, and the rule is that the spec is never edited to fit the parser, so
+the human partner accepted it as is, by a decision at the same gate. The
+plan's Task 12 acceptance criterion was amended by a dated correction to
+match. The tree was clean after the run.
 
 ## 2. Finishing-path rehearsal
 

@@ -275,6 +275,8 @@ Pushes happen only on the human partner's go, which running this block is.
 ```bash
 # in the hyperpowers main checkout, after the branch is merged: a clean tree first
 git status --short            # must print nothing
+sed -i '' 's/^## Unreleased$/## 6.17.0 (<date>)/' CHANGELOG.md   # <date>: the release day, YYYY-MM-DD
+git status --short            # now exactly " M CHANGELOG.md"
 bash scripts/bump-version.sh 6.17.0
 git add CHANGELOG.md package.json .claude-plugin/plugin.json .cursor-plugin/plugin.json .codex-plugin/plugin.json .kimi-plugin/plugin.json .claude-plugin/marketplace.json
 git diff --cached --stat      # only the CHANGELOG and the version manifests
@@ -285,5 +287,5 @@ git push origin main v6.17.0
 git -C .worktrees/plugin-install fetch origin --tags
 git -C .worktrees/plugin-install checkout --detach v6.17.0
 claude plugin update hyperpowers@hyperpowers
-claude plugin list | grep hyperpowers   # expect 6.17.0
+claude plugin list --json | jq -e '.[] | select(.id == "hyperpowers@hyperpowers" and .version == "6.17.0")' > /dev/null && echo "hyperpowers 6.17.0 installed"
 ```

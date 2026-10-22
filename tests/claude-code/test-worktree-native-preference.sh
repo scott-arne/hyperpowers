@@ -127,7 +127,10 @@ run_and_check() {
             echo ".worktrees/" >> .gitignore
         fi
 
-        output=$(run_claude "$scenario" 120)
+        # Same fixture-local cache root as the CHOICE phase: the session's
+        # hooks and scripts must never read or write the real one.
+        mkdir -p "$test_dir/cache"
+        output=$(XDG_CACHE_HOME="$test_dir/cache" run_claude "$scenario" 120) || true
 
         if [ "$RUNS" -eq 1 ]; then
             echo "Agent output:"

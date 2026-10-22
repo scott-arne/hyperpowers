@@ -115,14 +115,22 @@ existing_notes() {  # record -> body of its last "What implementation changed" s
   cat "$tmp/notes-body"
 }
 
-# write_if_changed FILE CONTENT-FILE: returns 0 when FILE changed, 1 when it
-# was already identical.
+# write_if_changed FILE CONTENT-FILE [new]: returns 0 when FILE changed, 1 when
+# it was already identical. With "new", FILE must not exist yet: the temporary
+# file is hard-linked into place, which fails if another writer got there
+# first, so two runs can never silently replace each other's record.
 write_if_changed() {
   local t
-  if [ -f "$1" ] && cmp -s "$1" "$2"; then return 1; fi
+  if [ "${3:-}" != new ] && [ -f "$1" ] && cmp -s "$1" "$2"; then return 1; fi
   mkdir -p "$(dirname "$1")" 2>/dev/null || die3 "$spec_rel: cannot create $(dirname "$1")"
   t="$1.tmp.$$"
-  if cp "$2" "$t" 2>/dev/null && mv -f "$t" "$1" 2>/dev/null; then return 0; fi
+  cp "$2" "$t" 2>/dev/null || { rm -f "$t"; die3 "$spec_rel: cannot write $1; run the same command again to complete the write"; }
+  if [ "${3:-}" = new ]; then
+    if ln "$t" "$1" 2>/dev/null; then rm -f "$t"; return 0; fi
+    rm -f "$t"
+    die3 "$spec_rel: $1 appeared while this run was writing (another compile in this checkout?); run the same command again"
+  fi
+  if mv -f "$t" "$1" 2>/dev/null; then return 0; fi
   rm -f "$t"
   die3 "$spec_rel: cannot write $1; run the same command again to complete the write"
 }
@@ -240,7 +248,7 @@ for ((n = 1; n <= count; n++)); do
       verb_lines+=("updated $records_rel/${files[n]} (decision $n: ${titles[n]})")
     fi
   else
-    write_if_changed "$target" "$tmp/render"
+    write_if_changed "$target" "$tmp/render" new
     wrote=$((wrote + 1))
     verb_lines+=("wrote $records_rel/${files[n]} (decision $n: ${titles[n]})")
   fi

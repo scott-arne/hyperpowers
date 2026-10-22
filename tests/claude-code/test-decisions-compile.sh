@@ -337,6 +337,29 @@ if [ "$RC" -eq 2 ]; then pass "a root-level spec exits 2"; else fail "root-level
 case "$ERR" in "root-design.md: the spec must live in a subdirectory of the repository"*) pass "the root-level message names the spec and the rule" ;; *) fail "root-level message (got: $ERR)" ;; esac
 if [ ! -e "$TEST_ROOT/decisions" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a root-level spec writes nothing"; else fail "root-level spec wrote something"; fi
 
+# --- 10. a hand-made file at a record's name is never overwritten -----------------
+repo="$TEST_ROOT/handmade"
+make_repo "$repo"
+write_spec "$repo" 2026-09-09-hand-design.md <<'EOF'
+# Hand
+
+## Decisions
+
+- **Taken name.** The record is deleted, then its name is reused by hand.
+EOF
+commit_all "$repo" "spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-09-09-hand-design.md
+hand="$repo/docs/hyperpowers/decisions/2026-09-09-taken-name.md"
+rm "$hand"
+printf '# Other\n\n- Status: accepted\n- Spec: docs/hyperpowers/specs/other.md (decision 1)\n- Recorded: 2026-09-01\n\n## Decision\n\nHand made.\n' > "$hand"
+cp "$hand" "$TEST_ROOT/hand.before"
+run_compile "$repo" docs/hyperpowers/specs/2026-09-09-hand-design.md
+if [ "$RC" -eq 0 ] && [ -f "$repo/docs/hyperpowers/decisions/2026-09-09-taken-name-1.md" ] && cmp -s "$hand" "$TEST_ROOT/hand.before"; then
+    pass "a new record never replaces a file that took its name; it gets a suffixed name"
+else
+    fail "hand-made file collision (rc $RC, err: $ERR, files: $(ls "$repo/docs/hyperpowers/decisions"))"
+fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

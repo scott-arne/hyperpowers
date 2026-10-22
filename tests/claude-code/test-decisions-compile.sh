@@ -895,6 +895,31 @@ else
     fail "alias target (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"
 fi
 
+# An interrupted run leaves a target naming a record that is not written yet;
+# the retry must accept it and finish.
+write_spec "$repo" 2026-09-15-fresh-design.md <<'EOF'
+# Fresh
+
+## Decisions
+
+- **Fresh reversal.** Text.
+  Supersedes: docs/hyperpowers/decisions/2026-07-01-beta-choice.md
+EOF
+beta="$repo/docs/hyperpowers/decisions/2026-07-01-beta-choice.md"
+sed 's|^- Status: .*|- Status: superseded by docs/hyperpowers/decisions/2026-09-15-fresh-reversal.md|' "$beta" > "$TEST_ROOT/beta.new" && cp "$TEST_ROOT/beta.new" "$beta"
+commit_all "$repo" "fresh spec, target already marked"
+run_compile "$repo" docs/hyperpowers/specs/2026-09-15-fresh-design.md
+fresh="$repo/docs/hyperpowers/decisions/2026-09-15-fresh-reversal.md"
+if [ "$RC" -eq 0 ] && grep -q '^- Supersedes: docs/hyperpowers/decisions/2026-07-01-beta-choice.md$' "$fresh" && [ "$(grep '^- Status' "$beta")" = "- Status: superseded by docs/hyperpowers/decisions/2026-09-15-fresh-reversal.md" ]; then
+    pass "a target already naming this run's unwritten record is accepted and kept"
+else
+    fail "unwritten superseder (rc $RC, err: $ERR, status: $(grep '^- Status' "$beta"))"
+fi
+commit_all "$repo" "fresh records"
+run_compile "$repo" docs/hyperpowers/specs/2026-09-15-fresh-design.md
+case "$OUT" in "wrote 0 records, updated 0, superseded 0,"*) out_ok=yes ;; *) out_ok=no ;; esac
+if [ "$RC" -eq 0 ] && [ "$out_ok" = yes ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a second run after the retry changes nothing"; else fail "fresh second run (rc $RC, out: $OUT, status: $(git -C "$repo" status --porcelain))"; fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

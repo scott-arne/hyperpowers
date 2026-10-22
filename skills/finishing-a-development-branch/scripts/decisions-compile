@@ -393,16 +393,27 @@ $p
     files[n]=$f
   fi
   planned="$planned${files[n]} "
+done
+
+# A target's status may already name a record this run is about to write (an
+# earlier run was interrupted after the targets were updated), so every planned
+# record counts as a legitimate superseder, written yet or not.
+mine=" "
+for ((n = 1; n <= count; n++)); do
+  mine="$mine$records_rel/${files[n]} "
+done
+for ((n = 1; n <= count; n++)); do
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     st=$(existing_field "$root/$p" Status)
     case "$st" in
       accepted) ;;
       "superseded by "*)
-        # Another record of this spec may already list itself (fan-in, or a
+        # Other records of this spec may already list themselves (fan-in, or a
         # swap of two decisions' targets); the reconciliation settles those.
         while IFS= read -r q; do
           [ -n "$q" ] || continue
+          case "$mine" in *" $q "*) continue ;; esac
           if [ -f "$root/$q" ]; then
             case "$(existing_field "$root/$q" Spec)" in "$spec_rel (decision "*) continue ;; esac
           fi
@@ -440,9 +451,7 @@ wrote=0; updated=0; superseded=0; undocumented=0; proposed=0
 # then leaves the targets updated and the old records intact, and the next run
 # reads those records' previous Supersedes lines and finishes the job.
 : > "$tmp/targets"
-mine=" "
 for ((n = 1; n <= count; n++)); do
-  mine="$mine$records_rel/${files[n]} "
   while IFS= read -r p; do
     [ -n "$p" ] && printf '%s\tnow\t%s\n' "$p" "$records_rel/${files[n]}" >> "$tmp/targets"
   done < <(printf '%s\n' "${sup_of[n]:-}")

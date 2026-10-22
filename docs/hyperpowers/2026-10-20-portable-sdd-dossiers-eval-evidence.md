@@ -23,13 +23,14 @@ them and `check-rehearsal.sh` reads the outcomes.
 
 Pass 0 (clone P, `--permission-mode acceptEdits`, Edit and Write deliberately
 left out of `--allowedTools`) answers what the spec assumes about writes under
-the state checkout. The session made 55 Bash calls, 4 Read, 2 Agent and 2 Write.
-Both Write calls addressed the state checkout —
-`plans/rehearsal-0797b45f/task-1-report.md` and `global-constraints.md` — and
+the state checkout. The session made 55 Bash calls, 4 Read, 2 Agent, 2 Write and
+1 Skill. Both Write calls addressed the state checkout
+(`plans/rehearsal-0797b45f/task-1-report.md` and `global-constraints.md`), and
 both came back `Claude requested permissions to write to <path>, but you haven't
-granted it yet.` Those two are the only denials in the transcript. Thirteen Bash
-calls wrote into the same checkout (the `noclobber` ledger creation, the heredoc
-appends, the report) and none were refused, so the ledger still reached
+granted it yet.` Those two are the only denials in the transcript. Of thirteen
+Bash calls that referenced the same checkout, nine wrote to it (the `noclobber`
+ledger creation, the heredoc appends, the report) and none were refused, so the
+ledger still reached
 `Task 1: complete (commits 3b7f456..84b5434, review clean; codex gate
 incomplete, recorded ungated)`, and both denied files exist, written through
 Bash instead. That is the footing the plain cache has today: Edit and Write under
@@ -38,6 +39,14 @@ not, and no ledger line depends on the tool that was denied. The session ended
 normally and stopped before Task 2. (`rehearsal/hostP-accept.jsonl`;
 `rehearsal/hostP-state-paths.txt` lists the 34 distinct state-checkout paths the
 session touched.)
+
+This pass measured one arm only. `Write` was left out of `--allowedTools`, so
+a Write to any path outside the working directory would have been denied,
+state checkout or not, and no write into the plain cache root was attempted
+for comparison. The spec's assumption (that the state checkout needs no
+permission prompt beyond what the plain cache needs today, in the default
+permission mode) is therefore consistent with what was observed, not
+established by it.
 
 Pass 1 (clone A) executed Task 1 only: the implementer committed
 `d0a847b feat: first file` on `main` and the controller stopped there. Then
@@ -52,7 +61,8 @@ task (`status=claimed task=2`), never wrote a `task-1-brief`, committed
 `fa2abc6 feat: second file`, ran the final review, and closed with
 `status=finished sha=a5f5134 last=5e31003fc8c13027af9e56050b31172a694dd020
 push=origin/hyperpowers/state`. Clone B's state key holds no `plans/` entry
-afterwards; clone A's and clone C's still do.
+afterwards (its transcript's `test ! -d` check printed `deleted`); the state of
+clone A's and clone C's keys was not recorded.
 
 Pass 3 (clone C, reset to the root commit so Task 1's commit is absent) stopped
 where it should. `sdd-state sync` printed
@@ -66,7 +76,9 @@ not create `~/.claude/plugins/data/codex-openai-codex/state/repo-*/jobs` on this
 host (EPERM, sandboxed and not), so every pass recorded its Codex gate as
 incomplete and logged the range in the ungated ledger instead of treating it as
 an approval. That is the documented behaviour for a gate that cannot run, and it
-left the state machinery under test untouched.
+left the state machinery under test untouched. The rehearsal therefore measures
+nothing about the Codex gate's behaviour on the new layout; the gate directories
+keyed by the common git directory are covered by the offline suites only.
 
 `check-rehearsal.sh` output, verbatim:
 
@@ -98,8 +110,8 @@ pre-checks and all five post-checks passed (`scenario-runs/quorum-show.txt`,
 `scenario-runs/<run>/verdict.json`).
 
 The two layout facts the run shows. Plan A's seeded ledger lives at
-`workspaces/<run>/home/.cache/hyperpowers/state/01d6a2e76034ff1d5434c16e9767250a7d1194e6/plans/planA-89f00a91/progress.md`
-— inside the state checkout, under `state/<key>/plans/`, in the run's own home —
+`scenario-runs/workspaces/<run>/home/.cache/hyperpowers/state/01d6a2e76034ff1d5434c16e9767250a7d1194e6/plans/planA-89f00a91/progress.md`
+(inside the state checkout, under `state/<key>/plans/`, in the run's own home),
 and the scenario's `find ../home/.cache -name progress.md` check reaches it
 there without change. Plan B's workspace `plans/planB-7af75392` existed during
 the run (the Gauntlet-Agent saw the controller create and use it) and is gone
@@ -130,15 +142,17 @@ Half of each check is that the session created nothing, and the phase passes no
 `--allowed-tools`, so a session denied its tools would pass that half without
 being able to fail it. It was not: one further session on the same invocation
 (`choice/tooling-probe.jsonl`, run after the phase and not counted in the three)
-made four Bash calls — `git rev-parse --git-dir --git-common-dir`,
+made four Bash calls (`git rev-parse --git-dir --git-common-dir`,
 `git rev-parse --show-superproject-working-tree`, `git branch --show-current`,
-and an `ls -a` of the fixture — each returning output with no permission denial
+and an `ls -a` of the fixture), each returning output with no permission denial
 anywhere in its transcript, and it still created no branch and no worktree. The
 sessions could act on the repository and chose to ask instead.
 
 ## Offline suites
 
 `offline set: 0 failed` from `bash tests/run-offline.sh` at hyperpowers commit
-`0b868bd` (Task 15; 42 suites, one per `bash` call, in an unsandboxed shell with
+`0b868bd` (Task 15; 40 shell suites plus the brainstorm-server `npm test` and
+the Pi node test, one entry per `bash` call, in an unsandboxed shell with
 `brainstorm-server`'s node_modules installed). The per-suite logs are copied to
-`offline/`.
+`offline/`. The summary line is quoted from the controller's run log; the
+archive holds the 42 entry logs, none of which records a failure.

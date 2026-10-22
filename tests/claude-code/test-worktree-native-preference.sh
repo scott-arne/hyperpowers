@@ -130,7 +130,14 @@ run_and_check() {
         # Same fixture-local cache root as the CHOICE phase: the session's
         # hooks and scripts must never read or write the real one.
         mkdir -p "$test_dir/cache"
-        output=$(XDG_CACHE_HOME="$test_dir/cache" run_claude "$scenario" 120) || true
+        # A session that failed or left no transcript is a failed run, never a
+        # pass by absence of `git worktree add`.
+        if ! output=$(XDG_CACHE_HOME="$test_dir/cache" run_claude "$scenario" 120) || [ -z "$output" ]; then
+            fail=$((fail + 1))
+            echo "  Run $i: FAIL (the session ended without a transcript)"
+            cleanup_test_project "$test_dir"
+            continue
+        fi
 
         if [ "$RUNS" -eq 1 ]; then
             echo "Agent output:"

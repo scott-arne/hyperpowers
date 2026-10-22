@@ -90,7 +90,40 @@ match. The tree was clean after the run.
 
 ## 2. Finishing-path rehearsal
 
-(Task 13 appends this section.)
+Two print-mode Claude Code sessions (model claude-opus-5-5, CC 2.1.302)
+against a fixture branch with a two-decision spec and a plan, the
+decision-records worktree loaded with `--plugin-dir`, an empty config dir.
+Artifacts: `evidence/2026-10-21-decision-records/task-13-runs/` in
+hyperpowers-evals (commit pending in hyperpowers-evals).
+
+| Run | Suite | Extractor at collection | Records staged | Plan deletion staged | Menu message carried the diff | Notes applied | Records commit after "3" | Suite end to menu | Answer to commit |
+|---|---|---|---|---|---|---|---|---|---|
+| fast | instant | finished (stop path not exercised) | yes | yes | yes | yes | e67f0d7 (fixture repo) | 31 s | 25 s |
+| slow | 150 s | finished | yes | yes | yes | yes | 38213d3 (fixture repo) | 31 s | 25 s |
+| fast2 (extra re-run of fast) | instant | finished, TaskStop sent a second too late | yes | yes | no, summarised | yes | 75e674c (fixture repo) | 28 s | 20 s |
+
+Intervals: suite end to menu is the suite's tool result (fast, fast2) or its
+completion event (slow, where the suite outran the Bash 120 s timeout and the
+tool result at 69 s before the menu was only the moved-to-background notice);
+answer to commit runs from the turn-2 start, read at one-second resolution, to
+the records commit's `%cI`. The fast runs leave the extractor too little to do
+for the stop to be reproducible: it wrote its notes within about seven seconds
+of dispatch, before the instant suite's result, in `fast`; in `fast2` the
+session found no notes file at collection, called TaskStop, and the extractor
+completed in the same second, so TaskStop answered "not running". The stop at
+collection is therefore attempted once and not demonstrated; no run shows a
+stopped unfinished extractor. A slower extractor than the suite needs a larger
+diff than this fixture has.
+
+Beyond the skill text: in `fast2` the menu message summarised the staged diff
+in four bullets instead of opening with it, a deviation from Step 4 (the
+diff was read in a tool result, not shown to the human partner). In `slow` the
+extractor reported three undocumented decisions, the menu put them to the
+human partner, and after the bare answer "3" the session committed the records
+without them and said so; Step 4 does not cover an unanswered proposal. Both
+sessions behaved as if the host user-level CLAUDE.md were loaded despite the
+empty config dir (turn 2 ran the host leak scan, and the hand-backs cite a
+CLAUDE.md rule), so the plugin text was not the only instruction source.
 
 ## 3. SDD-path rehearsal
 

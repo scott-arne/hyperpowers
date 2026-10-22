@@ -11,7 +11,7 @@ Plan: `docs/hyperpowers/plans/2026-10-20-portable-sdd-dossiers.md`.
 **Where the run artifacts live.** Every path below resolves under the evals
 repository's committed evidence tree,
 `evals/evidence/2026-10-20-portable-sdd-dossiers/` (hyperpowers-evals commit
-`f579e4a0f454a5a456ef3694655831eb4bf30234`). Nothing in this note cites the SDD
+`f291f9a0afd895f2b9a1d7046407f1d5f7c912a8`). Nothing in this note cites the SDD
 workspace.
 
 ## Two-clone rehearsal (`rehearsal/`)
@@ -59,7 +59,11 @@ granted it yet.`, one denial per path and none elsewhere; in `write-allowed`
 both returned `File created successfully`, with no denial naming either path.
 The two paths agree within each arm, so the state checkout asks for nothing the
 plain cache does not ask for today, in the default mode as in the allowed
-one; that is the spec's assumption, measured.
+one; that is the spec's assumption, measured for the Write tool. The arm does
+not measure Bash writes, a session carrying the operator's own allow rules
+(both sessions ran with a fresh `CLAUDE_CONFIG_DIR`), or a checkout
+`sdd-state` created (the state-side path is a bare `git init`); pass 0 covers
+the Bash appends under the operator's rules.
 
 Pass 1 (clone A) executed Task 1 only: the implementer committed
 `d0a847b feat: first file` on `main` and the controller stopped there. Then

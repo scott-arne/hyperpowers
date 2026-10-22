@@ -90,9 +90,11 @@ match. The tree was clean after the run.
 
 ## 2. Finishing-path rehearsal
 
-Two print-mode Claude Code sessions (model claude-opus-5-5, CC 2.1.302)
+Four print-mode Claude Code sessions (model claude-opus-5-5, CC 2.1.302):
+the two planned runs, an extra re-run of the fast one, and a padded run; each
 against a fixture branch with a two-decision spec and a plan, the
-decision-records worktree loaded with `--plugin-dir`, an empty config dir.
+decision-records worktree loaded with `--plugin-dir`, and an empty config
+dir, which in the `stop` run also carries a `claudeMdExcludes` list.
 Artifacts: `evidence/2026-10-21-decision-records/task-13-runs/` in
 hyperpowers-evals (commit b80b7ee4d).
 
@@ -100,7 +102,7 @@ hyperpowers-evals (commit b80b7ee4d).
 |---|---|---|---|---|---|---|---|---|---|
 | fast | instant | finished (stop path not exercised) | yes | yes | yes | yes | e67f0d7 (fixture repo) | 31 s | 25 s |
 | slow | 150 s | finished | yes | yes | yes | yes | 38213d3 (fixture repo) | 31 s | 25 s |
-| fast2 (extra re-run of fast) | instant | finished, TaskStop sent a second too late | yes | yes | no, summarised | yes | 75e674c (fixture repo) | 28 s | 20 s |
+| fast2 (extra re-run of fast) | instant | finished, TaskStop sent in the same second | yes | yes | no, summarised | yes | 75e674c (fixture repo) | 28 s | 20 s |
 | stop (ancestor CLAUDE.md excluded) | instant, 5,000-line diff | stopped unfinished (TaskStop seen) | yes | yes | yes | no (Nothing recorded.) | 237e440 (fixture repo) | 27 s | 15 s |
 
 Intervals: suite end to menu is the suite's tool result (fast, fast2) or its

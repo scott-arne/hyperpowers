@@ -2686,12 +2686,14 @@ git commit -m "feat(sdd): dry-run the decision compiler at setup, dispatch the e
 
 **Mirror:** the neighbouring bullets in each file.
 
+Correction (2026-10-22): the Codex gate reshaped the three texts (the records the index links are opened, a reversal is never bounded work, the `## Decisions` heading is the first level-two heading containing "decision", the correction phrase names number and title and the list is append-only once execution starts); the texts below are the skills' as built.
+
 - [ ] **Step 1: brainstorming, understanding the idea**
 
 After the bullet `- Check out the current project state first (files, docs, recent commits)`, add:
 
 ```markdown
-- Read the decisions index when it exists: `decisions/README.md` beside the specs directory this session writes to (`docs/hyperpowers/decisions/README.md` by default). Each current decision is a constraint on the design; a design that reverses one says so in its spec item with a `Supersedes:` line naming the record.
+- Read the decisions index when it exists: `decisions/README.md` beside the specs directory this session writes to (`docs/hyperpowers/decisions/README.md` by default). Open the current records it links for the area in hand, not only the index: each is a constraint on the design. A design that reverses one is architectural work and gets a spec, never the bounded path (bounded work has no spec and cannot supersede), and it says so in its spec item with a `Supersedes:` line naming the record.
 ```
 
 - [ ] **Step 2: brainstorming, documentation**
@@ -2699,7 +2701,7 @@ After the bullet `- Check out the current project state first (files, docs, rece
 After the sub-bullet `  - (User preferences for spec location override this default)` under "Write the validated design (spec) to ...", add:
 
 ```markdown
-- The spec carries a `## Decisions` section, required: one top-level list item per decision, each opening with a bold title and stating what was chosen, what was rejected and why, with an optional `Supersedes: <record path>` line inside the item. Only decisions go in that list; the finishing skill compiles it into one record per item.
+- The spec carries a `## Decisions` section, required: its heading is the first level-two heading in the spec whose text contains the word decision (the compiler takes the first such heading), and it holds one top-level list item per decision, each opening with a bold title and stating what was chosen, what was rejected and why, with an optional `Supersedes: <repository-relative record path>` (`docs/hyperpowers/decisions/<file>.md` by default: the record filename the index links, with its directory) line inside the item. Only decisions go in that list; the finishing skill compiles it into one record per item.
 ```
 
 - [ ] **Step 3: writing-plans**
@@ -2708,8 +2710,16 @@ After the paragraph that ends `names rather than imitating whatever now sits at 
 
 ```markdown
 A correction paragraph added to a plan during execution that alters one of
-the spec's decisions names it, `Correction (<date>), decision <N>:`; the
-decision records compiled at finish read those paragraphs.
+the spec's decisions names it by number and bold title, `Correction (<date>), decision <N> (<title>):`; the
+decision records compiled at finish read those paragraphs. Numbers hold because the list is append-only once execution starts (the finishing skill appends an accepted decision after the last item, never inserts one).
+```
+
+- [ ] **Step 3b: writing-plans, the plan header template (correction, 2026-10-22)**
+
+The rule must reach the sessions that write corrections, so the `## Plan Document Header` template's agentic-workers line carries it; it reads:
+
+```markdown
+> **For agentic workers:** REQUIRED SUB-SKILL: Use hyperpowers:subagent-driven-development (recommended) or hyperpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. A correction added during execution that alters one of the spec's decisions names it: `Correction (<date>), decision <N> (<title>):`.
 ```
 
 - [ ] **Step 4: Check**

@@ -127,12 +127,14 @@ The pre-registered rule was kept rather than relabeled once the decision was
 visible. By the spec, the failure goes back to design and the P failure opens
 the Stop-hook follow-up with these runs as its evidence.
 
-Five Corrections were made to the pinned analyzers, each recorded in the
+Six Corrections were made to the pinned analyzers, each recorded in the
 campaign README before the tally it affected: the uncapped transport void
 (1), the ledger mark written after a literal `printf` newline (2), the
 shell's own escape rules together with the rule that a written grader result
 stays a capped void (3), `echo -e` located in the interpreted segment (4),
-and watch and ledger paths resolved through `cd` and shell variables (5).
+watch and ledger paths resolved through `cd` and shell variables (5), and the
+control flow and segment binding those recognizers needed, which changed no
+row in either arm (6).
 Correction 5 is why F reads 10 of 10 rather than the first tally's 8: p8 and
 p10 had both watched their tracked background job to `exit=0`, p8 naming the
 exit file through a shell variable and p10 by name after a `cd`, and the

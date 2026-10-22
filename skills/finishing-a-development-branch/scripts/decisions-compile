@@ -84,8 +84,9 @@ else
   root=$(cd "$root" && pwd -P)
   spec_rel=${spec_abs#"$root"/}
   # The Outcome line is written into the spec, and undo deletes whatever HEAD
-  # lacks; an untracked spec would be left falsely marked implemented or lost.
-  [ "$(git -C "$root" ls-files -- "$spec_rel")" = "$spec_rel" ] || die2 "$spec_rel: spec is not tracked by git; commit it before the records compile"
+  # lacks; a spec that is untracked or only staged would be lost. Checked
+  # against HEAD, not the index, and safe on an unborn HEAD.
+  git -C "$root" cat-file -e "HEAD:$spec_rel" 2>/dev/null || die2 "$spec_rel: spec is not committed; commit it before the records compile"
   records_dir="$(dirname "$spec_dir")/decisions"
   records_rel=${records_dir#"$root"/}
   case "$records_dir" in

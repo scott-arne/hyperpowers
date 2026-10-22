@@ -249,8 +249,10 @@ write_spec "$repo" 2026-05-05-three-design.md <<'EOF'
 
 - **Same title.** A fourth whose suffixed name is taken too.
 EOF
-# Tracked, so the refusal under test is the collision and not the untracked spec.
+# Committed (the records are left staged), so the refusal under test is the
+# collision and not an uncommitted spec.
 git -C "$repo" add docs/hyperpowers/specs/2026-05-05-three-design.md
+git -C "$repo" commit -q -m "third spec" -- docs/hyperpowers/specs/2026-05-05-three-design.md
 run_compile "$repo" docs/hyperpowers/specs/2026-05-05-three-design.md
 if [ "$RC" -eq 2 ]; then pass "a third collision exits 2 asking for a distinct title"; else fail "third collision (rc $RC)"; fi
 case "$ERR" in *"distinct title"*) pass "collision message names the remedy" ;; *) fail "collision message (got: $ERR)" ;; esac
@@ -1400,7 +1402,16 @@ for mode_args in "" "--undo"; do
     # shellcheck disable=SC2086
     run_compile "$repo" $mode_args docs/hyperpowers/specs/2026-10-19-delta-design.md
     if [ "$RC" -eq 2 ] && [ "$(git -C "$repo" status --porcelain -uall)" = "$before_status" ] && [ ! -d "$repo/docs/hyperpowers/decisions" ]; then pass "an untracked spec exits 2 and writes nothing${mode_args:+ ($mode_args)}"; else fail "untracked spec ${mode_args:-compile} (rc $RC, err: $ERR)"; fi
-    case "$ERR" in *"docs/hyperpowers/specs/2026-10-19-delta-design.md: spec is not tracked by git; commit it before the records compile"*) pass "the untracked-spec message names the spec${mode_args:+ ($mode_args)}" ;; *) fail "untracked message (got: $ERR)" ;; esac
+    case "$ERR" in *"docs/hyperpowers/specs/2026-10-19-delta-design.md: spec is not committed; commit it before the records compile"*) pass "the untracked-spec message names the spec${mode_args:+ ($mode_args)}" ;; *) fail "untracked message (got: $ERR)" ;; esac
+done
+# A staged-only spec is not in HEAD either: undo would delete the only copy.
+git -C "$repo" add docs/hyperpowers/specs/2026-10-19-delta-design.md
+before_status=$(git -C "$repo" status --porcelain -uall)
+for mode_args in "" "--undo"; do
+    # shellcheck disable=SC2086
+    run_compile "$repo" $mode_args docs/hyperpowers/specs/2026-10-19-delta-design.md
+    if [ "$RC" -eq 2 ] && [ "$(git -C "$repo" status --porcelain -uall)" = "$before_status" ] && [ "$before_status" = "A  docs/hyperpowers/specs/2026-10-19-delta-design.md" ] && [ ! -d "$repo/docs/hyperpowers/decisions" ]; then pass "a staged-only spec exits 2 and writes nothing${mode_args:+ ($mode_args)}"; else fail "staged-only spec ${mode_args:-compile} (rc $RC, err: $ERR, status: $before_status)"; fi
+    case "$ERR" in *"delta-design.md: spec is not committed; commit it before the records compile"*) pass "the staged-only message says not committed${mode_args:+ ($mode_args)}" ;; *) fail "staged-only message (got: $ERR)" ;; esac
 done
 # Nothing staged: undo is a no-op.
 repo="$TEST_ROOT/undo4"

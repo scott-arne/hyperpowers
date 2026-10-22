@@ -28,12 +28,13 @@ Before changing anything in this repo:
 
 ## Planning and Spec Docs Are Tracked Here
 
-**This repo commits its `docs/hyperpowers/` plans, specs, and eval-evidence notes alongside the work they describe.** The skills are the product here, and the reasoning behind each one is part of it. `docs/hyperpowers/specs/` records why a skill is shaped the way it is, `docs/hyperpowers/plans/` records how it got there, and the dated eval-evidence notes record what was measured. Losing that leaves behavior-shaping prose with no argument attached, which is exactly what "Skill Changes Require Evaluation" below is trying to prevent.
+**This repo commits its `docs/hyperpowers/` specs, decision records, and eval-evidence notes alongside the work they describe, and its plans while the work is in flight.** The skills are the product here, and the reasoning behind each one is part of it. `docs/hyperpowers/specs/` records why a skill is shaped the way it is; `docs/hyperpowers/decisions/` holds one record per decision, compiled from each spec's `## Decisions` list when the work finishes, and its `README.md` is the first thing a design session reads; the dated eval-evidence notes record what was measured. Losing that leaves behavior-shaping prose with no argument attached, which is exactly what "Skill Changes Require Evaluation" below is trying to prevent.
 
 Practical consequences:
 
-- Commit new plans and specs alongside the work they describe, or in their own docs commit. They are not scratch.
-- `docs/hyperpowers/.gitignore` is an allowlist: only `specs/`, `plans/`, and the top-level evidence notes (`*.md`, `*.tsv`) are committed from that directory. Run artifacts, probes, and review output go to the evals repository (see "Eval harness" below) or the SDD workspace, never here.
+- Commit new specs and plans alongside the work they describe, or in their own docs commit. They are not scratch.
+- A plan leaves the tree at finish, in the same commit that adds its records (git history keeps it); a spec stays, frozen from that commit on, with the Outcome line the compiler owns. The finishing skill does both; do not hand-edit records or the index, re-run `decisions-compile`.
+- `docs/hyperpowers/.gitignore` is an allowlist: only `specs/`, `plans/`, `decisions/`, and the top-level evidence notes (`*.md`, `*.tsv`) are committed from that directory. Run artifacts, probes, and review output go to the evals repository (see "Eval harness" below) or the SDD workspace, never here.
 - **`evals/` is a different story.** It is gitignored here because it is a separate clone of [hyperpowers-evals](https://github.com/scott-arne/hyperpowers-evals/), not a submodule. Scenario and harness work gets committed *in that repo*, never in this one. See "Eval harness" below.
 
 ## What Stays Out of Core Skills

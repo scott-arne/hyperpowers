@@ -94,7 +94,7 @@ Two print-mode Claude Code sessions (model claude-opus-5-5, CC 2.1.302)
 against a fixture branch with a two-decision spec and a plan, the
 decision-records worktree loaded with `--plugin-dir`, an empty config dir.
 Artifacts: `evidence/2026-10-21-decision-records/task-13-runs/` in
-hyperpowers-evals (commit pending in hyperpowers-evals).
+hyperpowers-evals (commit b80b7ee4d).
 
 | Run | Suite | Extractor at collection | Records staged | Plan deletion staged | Menu message carried the diff | Notes applied | Records commit after "3" | Suite end to menu | Answer to commit |
 |---|---|---|---|---|---|---|---|---|---|

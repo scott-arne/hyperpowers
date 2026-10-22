@@ -708,6 +708,24 @@ if grep -q '\[Pipes \\| and \\\[brackets\\\] survive\]' "$repo/docs/hyperpowers/
 if [ "$(sed -n 1p "$repo/docs/hyperpowers/specs/2026-06-06-esc-design.md")" = "**Outcome:** implemented 2026-10-21; 1 decisions under docs/hyperpowers/decisions/." ]; then pass "a spec without a title gets the Outcome line first"; else fail "Outcome placement without a title (got: $(sed -n 1p "$repo/docs/hyperpowers/specs/2026-06-06-esc-design.md"))"; fi
 run_compile "$repo" docs/hyperpowers/specs/2026-06-06-esc-design.md --dry-run --dry-run
 if [ "$RC" -eq 2 ]; then pass "a repeated option is a usage error"; else fail "repeated --dry-run (got $RC)"; fi
+
+# --- 8b. a symlinked records directory is refused (correction 2026-10-22) ----
+repo="$TEST_ROOT/symlinked"
+make_repo "$repo"
+mkdir -p "$TEST_ROOT/outside"
+ln -s "$TEST_ROOT/outside" "$repo/docs/hyperpowers/decisions"
+write_spec "$repo" 2026-09-09-link-design.md <<'EOF'
+# Link
+
+## Decisions
+
+- **Would escape.** The records directory is a link to the outside.
+EOF
+commit_all "$repo" "spec and link"
+run_compile "$repo" docs/hyperpowers/specs/2026-09-09-link-design.md
+if [ "$RC" -eq 2 ]; then pass "a symlinked decisions directory exits 2"; else fail "symlinked decisions (rc $RC: $ERR)"; fi
+case "$ERR" in "docs/hyperpowers/specs/2026-09-09-link-design.md: docs/hyperpowers/decisions exists but is not a plain directory"*) pass "the symlink message names the spec and the rule" ;; *) fail "symlink message (got: $ERR)" ;; esac
+if [ -z "$(ls -A "$TEST_ROOT/outside")" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "nothing is written through the link"; else fail "something was written outside: $(ls -A "$TEST_ROOT/outside")"; fi
 ```
 
 - [ ] **Step 2: Run to see check 7 and 8 fail**
@@ -846,6 +864,19 @@ if [ ${#verb_lines[@]} -gt 0 ]; then printf '%s\n' "${verb_lines[@]}"; fi
 paths=$(emit_paths)
 if [ -n "$paths" ]; then echo "paths: $paths"; else echo "paths:"; fi
 ```
+
+(h) **Correction (2026-10-22), carried from Task 1's Codex gate at its cap.** The containment guard Task 1 added (`case "$records_dir" in "$root"/*)`) checks a string, so a `decisions` entry that is a symbolic link to a directory outside the repository passes it and the records land outside the repository. `spec_dir` is already physical (`pwd -P`), so the only way out is the `decisions` entry itself. Directly after that `case`, add:
+
+```bash
+# An existing decisions entry must be a plain directory: a symbolic link
+# would carry the records outside the repository that spec_dir's physical
+# path keeps them in.
+if [ -e "$records_dir" ] && { [ -L "$records_dir" ] || [ ! -d "$records_dir" ]; }; then
+  die2 "$spec_rel: $records_rel exists but is not a plain directory"
+fi
+```
+
+Task 1's finding 10 (gate round 3) is closed by this step; Task 1's ledger entry defers it here.
 
 - [ ] **Step 4: Run the suite, shellcheck, packaging**
 

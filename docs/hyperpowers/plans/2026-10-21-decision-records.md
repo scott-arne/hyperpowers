@@ -1448,7 +1448,7 @@ Expected: sections 1 to 18 pass (Task 3's rounds added 15 to 18); `--notes` is a
 
 and in the mode checks, the `reindex)` arm also refuses `[ -n "$notes" ]`.
 
-(c) After `render_record` in the helpers, add:
+(c) After `render_record` in the helpers, add the notes loader. Correction (2026-10-22): the gate's first round found the original pass recognised only column-zero `## ` lines (a preamble was dropped, an indented or wrong-level heading was copied into a record body with any proposal list under it) and that the optional-section `grep -v | grep -qv` checks returned 141 under `pipefail` on a long malformed section; the function below is one pass with explicit state over every ATX heading and optional-section line, counts the items itself, and both reads fail open:
 
 ```bash
 # --- notes ------------------------------------------------------------------
@@ -1459,7 +1459,7 @@ notes_valid=false
 load_notes() {
   local f=$1 n reason="" first
   [ -f "$f" ] || { echo "notes ignored: no such file: $f" >&2; return 0; }
-  first=$(head -n 1 "$f")
+  first=$(head -n 1 "$f" 2>/dev/null) || { echo "notes ignored: cannot read $f" >&2; return 0; }
   case "$first" in
     "# Decision notes: "*) ;;
     *) echo "notes ignored: first line is not \"# Decision notes: <spec path>\"" >&2; return 0 ;;
@@ -1467,22 +1467,47 @@ load_notes() {
   if [ "$(basename "${first#\# Decision notes: }")" != "$(basename "$spec_abs")" ]; then
     echo "notes ignored: first line names $(basename "${first#\# Decision notes: }"), not $(basename "$spec_abs")" >&2; return 0
   fi
-  rm -f "$tmp"/note-*.txt "$tmp/notes-sup" "$tmp/notes-undoc" "$tmp/notes-bad"
+  rm -f "$tmp"/note-*.txt "$tmp/notes-bad" "$tmp/notes-counts"
+  # One pass over the whole file with explicit state and no early exit, so a
+  # malformed line is found however much valid text follows it. Any ATX
+  # heading is structural; only three exact forms open a section.
   awk -v out="$tmp" -v max="$count" '
+    function bad(msg) { if (!reason) { reason = msg; print msg > (out "/notes-bad") } }
     NR == 1 { next }
-    /^## / {
-      if ($0 ~ /^## Decision [0-9]+$/) {
-        n = $3 + 0
-        if (n < 1 || n > max) { print "decision " n " is out of range 1.." max > (out "/notes-bad"); cur = ""; next }
-        if (seen[n]++) { print "duplicate section: " $0 > (out "/notes-bad"); cur = ""; next }
-        cur = out "/note-" n ".txt"; printf "" > cur; next
+    {
+      t = $0; sub(/^ ? ? ?/, "", t)
+      if (match(t, /^#+/) && RLENGTH <= 6 && (length(t) == RLENGTH || substr(t, RLENGTH + 1, 1) == " " || substr(t, RLENGTH + 1, 1) == "\t")) {
+        mode = ""
+        if ($0 ~ /^## Decision [0-9]+$/) {
+          n = $3 + 0
+          if (n < 1 || n > max) bad("decision " n " is out of range 1.." max)
+          else if (seen[n]++) bad("duplicate section: " $0)
+          else { mode = "dec"; cur = out "/note-" n ".txt"; printf "" > cur }
+        } else if ($0 == "## Supersessions" || $0 == "## Undocumented decisions") {
+          if (seen[$0]++) bad("duplicate section: " $0)
+          else mode = ($0 == "## Supersessions") ? "sup" : "undoc"
+        } else bad("unexpected heading: " $0)
+        next
       }
-      if ($0 == "## Supersessions") { cur = out "/notes-sup"; printf "" > cur; next }
-      if ($0 == "## Undocumented decisions") { cur = out "/notes-undoc"; printf "" > cur; next }
-      print "unexpected heading: " $0 > (out "/notes-bad"); cur = ""; next
+      if (mode == "dec") { print > cur; next }
+      if ($0 ~ /^[[:space:]]*$/) next
+      if (mode == "sup") {
+        if ($0 ~ /^- [0-9]+ supersedes ./) nsup++
+        else bad("a Supersessions line is not \"- <N> supersedes <path>\"")
+      } else if (mode == "undoc") {
+        if ($0 ~ /^- ./) nundoc++
+        else bad("an Undocumented decisions line is not a list item")
+      } else bad("text before the first section")
     }
-    cur != "" { print > cur }
-  ' "$f"
+    END {
+      if (("## Supersessions" in seen) && !nsup) bad("Supersessions has no \"- <N> supersedes <path>\" line")
+      if (("## Undocumented decisions" in seen) && !nundoc) bad("Undocumented decisions has no list item")
+      print nsup + 0, nundoc + 0 > (out "/notes-counts")
+    }
+  ' "$f" 2>/dev/null || {
+    rm -f "$tmp"/note-*.txt "$tmp/notes-bad" "$tmp/notes-counts"
+    echo "notes ignored: cannot read $f" >&2; return 0
+  }
   [ -f "$tmp/notes-bad" ] && reason=$(head -n 1 "$tmp/notes-bad")
   if [ -z "$reason" ]; then
     for ((n = 1; n <= count; n++)); do
@@ -1492,22 +1517,13 @@ load_notes() {
       [ -s "$tmp/note-$n.txt" ] || { reason="empty body for decision $n"; break; }
     done
   fi
-  if [ -z "$reason" ] && [ -f "$tmp/notes-sup" ]; then
-    if ! grep -q '^- [0-9][0-9]* supersedes .' "$tmp/notes-sup"; then reason="Supersessions has no \"- <N> supersedes <path>\" line"
-    elif grep -v '^[[:space:]]*$' "$tmp/notes-sup" | grep -qv '^- [0-9][0-9]* supersedes .'; then reason="a Supersessions line is not \"- <N> supersedes <path>\""; fi
-  fi
-  if [ -z "$reason" ] && [ -f "$tmp/notes-undoc" ]; then
-    if ! grep -q '^- .' "$tmp/notes-undoc"; then reason="Undocumented decisions has no list item"
-    elif grep -v '^[[:space:]]*$' "$tmp/notes-undoc" | grep -qv '^- .'; then reason="an Undocumented decisions line is not a list item"; fi
-  fi
   if [ -n "$reason" ]; then
     echo "notes ignored: $reason" >&2
-    rm -f "$tmp"/note-*.txt "$tmp/notes-sup" "$tmp/notes-undoc"
+    rm -f "$tmp"/note-*.txt
     return 0
   fi
   notes_valid=true
-  [ -f "$tmp/notes-sup" ] && proposed=$(grep -c '^- ' "$tmp/notes-sup")
-  [ -f "$tmp/notes-undoc" ] && undocumented=$(grep -c '^- ' "$tmp/notes-undoc")
+  read -r proposed undocumented < "$tmp/notes-counts"
   return 0
 }
 ```
@@ -1571,7 +1587,7 @@ git commit -m "feat(finishing): decisions-compile takes the extractor's notes, v
 Insert before the marker line:
 
 ```bash
-# --- 12. the plan, the pathspec commit, discovery, re-runs ------------------
+# --- 21. the plan, the pathspec commit, discovery, re-runs ------------------
 repo="$TEST_ROOT/plan"
 make_repo "$repo"
 write_spec "$repo" "2026-10-19-with space-design.md" <<'EOF'
@@ -1649,7 +1665,7 @@ run_compile "$repo" docs/hyperpowers/specs/2026-10-19-beta-design.md --plan docs
 if [ "$RC" -eq 0 ]; then pass "a re-run while the deletion is staged succeeds"; else fail "re-run with staged deletion (rc $RC: $ERR)"; fi
 case "$OUT" in *"docs/hyperpowers/plans/2026-10-19-beta.md"*) pass "the staged deletion stays in paths:" ;; *) fail "plan missing from paths: (got: $(printf '%s\n' "$OUT" | grep '^paths:'))" ;; esac
 
-# --- 13. git failure at each staging operation --------------------------------
+# --- 22. git failure at each staging operation --------------------------------
 mkdir -p "$TEST_ROOT/bin"
 REAL_GIT=$(command -v git)
 cat > "$TEST_ROOT/bin/git" <<'EOF'
@@ -1686,12 +1702,42 @@ EOF
         fail "retry after failed $failing (rc $RC, paths: $(tr '\0' ' ' < "$TEST_ROOT/gitfail.paths"))"
     fi
 done
+
+# --- 23. Setext headings in notes are headings ------------------------------
+# Correction (2026-10-22): Task 4's gate found at its cap that a line underlined
+# with --- or === is a Markdown heading the notes grammar forbids but the pass
+# did not recognise; the human partner carried the rule and this test into
+# Task 5.
+repo="$TEST_ROOT/setext"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-setext-design.md <<'EOF'
+# Setext
+
+## Decisions
+
+1. **First.** One.
+2. **Second.** Two.
+EOF
+commit_all "$repo" "spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-setext-design.md
+commit_all "$repo" "records"
+printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-setext-design.md\n\n## Decision 1\nChanged the parser.\n\nSupersessions\n---\n- 1 supersedes docs/hyperpowers/decisions/x.md\n' > "$TEST_ROOT/notes-setext.md"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-setext-design.md --notes "$TEST_ROOT/notes-setext.md"
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a Setext heading makes the notes malformed and the run proceeds unchanged"; else fail "setext notes (rc $RC, status: $(git -C "$repo" status --porcelain))"; fi
+case "$ERR" in "notes ignored: unexpected heading: Supersessions"*) pass "the Setext heading is reported as an unexpected heading" ;; *) fail "setext message (got: $ERR)" ;; esac
+if ! grep -rq 'supersedes docs/hyperpowers/decisions/x.md' "$repo/docs/hyperpowers/decisions"; then pass "no record carries the proposal under a Setext heading"; else fail "a proposal under a Setext heading reached a record"; fi
+printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-setext-design.md\n\n## Decision 1\nChanged the parser.\n\nDecision 2\n===\nSmuggled.\n' > "$TEST_ROOT/notes-setext2.md"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-setext-design.md --notes "$TEST_ROOT/notes-setext2.md"
+case "$ERR" in "notes ignored: unexpected heading: Decision 2"*) pass "an = underline is a heading too" ;; *) fail "setext = message (got: $ERR)" ;; esac
+printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-setext-design.md\n\n## Decision 1\nChanged the parser.\n\n---\n\nAnd the tests.\n' > "$TEST_ROOT/notes-rule.md"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-setext-design.md --notes "$TEST_ROOT/notes-rule.md"
+if [ "$RC" -eq 0 ] && [ -z "$ERR" ] && grep -q '^And the tests\.$' "$repo/docs/hyperpowers/decisions/2026-10-19-first.md"; then pass "a thematic break after a blank line is body text, not a heading"; else fail "thematic break (rc $RC, err: $ERR)"; fi
 ```
 
-- [ ] **Step 2: Run to see checks 12 and 13 fail**
+- [ ] **Step 2: Run to see sections 21, 22 and 23 fail**
 
 Run: `bash tests/claude-code/test-decisions-compile.sh`
-Expected: `--plan` is a usage error; 12 and 13 fail; everything earlier passes.
+Expected: `--plan` is a usage error, so 21 and 22 fail; 23 fails because a Setext underline is not yet recognised; sections 1 to 20 pass.
 
 - [ ] **Step 3: Add the plan and the recovery**
 
@@ -1759,6 +1805,17 @@ fi
 ```
 
 (f) In `emit_paths`, extend the pathspec to `-- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"}`. In the dry-run block, extend the first `git diff --cached` the same way and add `[ "$plan_state" = present ] && echo "$plan_rel"` inside the braces (after the `ls-files` line) so a present plan appears in the would-stage list.
+
+(g) Correction (2026-10-22): Task 4's gate found at its cap that `load_notes`' pass recognises ATX headings only, while a line underlined with `---` or `===` is a Markdown heading the grammar forbids; the human partner carried the rule here. In the awk pass, as the first statements of the main action block (before `t = $0`), treat an underline directly after a non-blank line as a heading, and remember the previous line:
+
+```awk
+      # A Setext underline (only = or -, up to three leading spaces) directly
+      # after a non-blank line makes that line a heading the grammar forbids.
+      if (prev != "" && $0 ~ /^ ? ? ?(=+|-+)[ \t]*$/) { bad("unexpected heading: " prev); prev = ""; next }
+      prev = ($0 ~ /^[[:space:]]*$/) ? "" : $0
+```
+
+and set `prev = ""` before the `next` that ends the structural-heading branch, so `---` directly after an ATX heading stays a thematic break. A blank line resets `prev`, so a thematic break after a blank line stays body text.
 
 - [ ] **Step 4: Run the suite, shellcheck, packaging**
 

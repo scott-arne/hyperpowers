@@ -66,6 +66,7 @@ assert_contains "$SDD" "Decision extractor:" "ledger records the extractor"
 assert_contains "$SDD" "Decisions: none (no spec)" "a plan without a spec skips the decision path"
 assert_contains "$SDD" "full-branch package (\`scripts/review-package PLAN_FILE MERGE_BASE HEAD\`" "extractor reads a full-branch package"
 assert_contains "$SDD" "Before deleting it, copy the ledger's" "hand-off captured before the workspace is deleted"
+assert_contains "$SDD" "replacing the earlier copies; compose the replacement dispatch from those" "re-dispatch recopies the regenerated inputs"
 assert_contains "$SDD" "DONE or DONE_WITH_CONCERNS" "concerns status does not bypass the verify rule"
 # implementer template
 assert_contains "$IMPL" "DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT" "four statuses"

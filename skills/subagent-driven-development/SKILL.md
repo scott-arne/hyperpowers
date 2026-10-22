@@ -649,8 +649,11 @@ fix altered one of the spec's decisions, settle that first (show your human
 partner the change you would write into the `## Decisions` item, write and
 commit it on the branch with their approval; without it the item stands and
 the change is raised again at the menu); re-run the dry run and replace the
-ledger's `Decisions listing:`; regenerate the full-branch package; then
-dispatch the extractor again and replace the `Decision extractor:` line.
+ledger's `Decisions listing:`; regenerate the full-branch package and copy
+it, with the current `<workspace>/progress.md`, into the scratch directory,
+replacing the earlier copies; compose the replacement dispatch from those
+copies; then dispatch the extractor again and replace the
+`Decision extractor:` line.
 
 **Codex Review Gate — final whole-branch (Claude Code only).** After the final code-reviewer
 subagent and its fix wave, and before hyperpowers:finishing-a-development-branch,

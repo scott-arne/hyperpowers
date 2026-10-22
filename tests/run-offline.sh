@@ -7,6 +7,8 @@ set -u
 cd "$(dirname "$0")/.." || exit 2
 OUT=${OUT:-$(mktemp -d "${TMPDIR:-/tmp}/offline-logs.XXXXXX")}
 [ -n "$OUT" ] && mkdir -p "$OUT" || { echo "run-offline: no log directory" >&2; exit 2; }
+# Absolute from here on: one step changes directory before it redirects.
+OUT=$(cd "$OUT" && pwd -P) || { echo "run-offline: cannot resolve $OUT" >&2; exit 2; }
 fails=0
 run() {
   local name

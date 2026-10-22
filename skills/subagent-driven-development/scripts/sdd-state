@@ -1245,7 +1245,11 @@ cmd_handoff() {
     if ! (cd "$CO" && HYPERPOWERS_SCAN_RANGE="$range" sh -c "$cmd" < "$patch" >&2); then rm -f "$patch"; hp_unlock; echo "status=scan-failed reason=scanner"; return 5; fi
     rm -f "$patch"
   fi
-  if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = handoff-after-scan ]; then while [ -e "$CO/.handoff-pause" ]; do sleep 0.1; done; fi
+  if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = handoff-after-scan ]; then
+    : > "$CO/.handoff-paused"
+    while [ -e "$CO/.handoff-pause" ]; do sleep 0.1; done
+    rm -f "$CO/.handoff-paused"
+  fi
   if ! err=$(git -C "$CO" push -q --force-with-lease="refs/heads/$BRANCH:$remote_tip" "$REMOTE" "$sha:refs/heads/$BRANCH" 2>&1); then
     hp_unlock
     printf '%s\n' "$err" >&2

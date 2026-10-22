@@ -1171,7 +1171,7 @@ co_a7="$STATE_ROOT/$(state_key "$PAIR_A")"
 git -C "$PAIR_A" config hyperpowers.prePushScan 'cat > /dev/null'
 : > "$co_a7/.handoff-pause"
 ( cd "$PAIR_A" && HYPERPOWERS_TEST_PAUSE_AT=handoff-after-scan bash "$SDD_STATE" handoff docs/plan.md --push > "$TEST_ROOT/p7.handoff" 2>/dev/null ) &
-sleep 1
+n=0; while [ ! -e "$co_a7/.handoff-paused" ] && [ "$n" -lt 300 ]; do sleep 0.1; n=$((n + 1)); done
 printf 'queued\n' > "$wsa/task-9-report.md"
 ( run_state "$PAIR_A" snapshot docs/plan.md > "$TEST_ROOT/p7.snap" 2>/dev/null ) &
 sleep 1; rm -f "$co_a7/.handoff-pause"; wait
@@ -1184,7 +1184,7 @@ remote_before=$(git -C "$PAIR_REMOTE" rev-parse refs/heads/hyperpowers/state)
 printf 'lease\n' > "$wsa/task-10-report.md"
 : > "$co_a7/.handoff-pause"
 ( cd "$PAIR_A" && HYPERPOWERS_TEST_PAUSE_AT=handoff-after-scan bash "$SDD_STATE" handoff docs/plan.md --push > "$TEST_ROOT/p7.lease" 2>/dev/null ) &
-sleep 1
+n=0; while [ ! -e "$co_a7/.handoff-paused" ] && [ "$n" -lt 300 ]; do sleep 0.1; n=$((n + 1)); done
 git -C "$PAIR_REMOTE" update-ref refs/heads/hyperpowers/state "$remote_before^"
 rm -f "$co_a7/.handoff-pause"; wait
 if [ "$(cut -d' ' -f1 "$TEST_ROOT/p7.lease")" = "status=push-failed" ] && [ "$(git -C "$PAIR_REMOTE" rev-parse refs/heads/hyperpowers/state)" = "$(git -C "$PAIR_REMOTE" rev-parse "$remote_before^")" ]; then pass "a remote that moved between the scan and the push is refused by the lease, nothing overwritten"; else fail "a remote that moved between the scan and the push is refused by the lease, nothing overwritten ($(cat "$TEST_ROOT/p7.lease"))"; fi

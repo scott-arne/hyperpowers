@@ -415,5 +415,18 @@ node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===4&&
 xall2="$(bash "$GT" --all --json)"
 node -e 'const a=JSON.parse(process.argv[1]).aggregate,b=JSON.parse(process.argv[2]).aggregate;process.exit(a.tasks===b.tasks&&a.fixBriefs===b.fixBriefs&&a.sharedWorkspaces===b.sharedWorkspaces?0:1)' "$xall" "$xall2" \
   && pass "a duplicate alias leaves the fleet tasks, fix briefs, and shared workspaces unchanged" || fail "a duplicate alias leaves the fleet tasks, fix briefs, and shared workspaces unchanged"
+# --- the state checkout layout (portable dossiers) ---
+LIB="$REPO_ROOT/skills/subagent-driven-development/scripts/sdd-common.sh"
+srepo="$work/state-repo"; git init -q "$srepo"; git -C "$srepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m one
+# shellcheck source=../../skills/subagent-driven-development/scripts/sdd-common.sh
+skey="$( ( . "$LIB"; hp_key "$srepo" ) )"
+st="$XDG_CACHE_HOME/hyperpowers/state/$skey/plans/plan-00000001"; mkdir -p "$st"
+echo brief > "$st/task-1-brief.md"; echo brief > "$st/task-2-brief.md"; echo fix > "$st/task-2-codex-fix-brief.md"
+: > "$XDG_CACHE_HOME/hyperpowers/state/$skey.backend"
+smd="$( (cd "$srepo" && bash "$GT") )"
+expect "$smd" "Fix-cycle rate: 1/2 tasks" "plan workspaces inside the state checkout are counted"
+sall="$(bash "$GT" --all --json)"
+node -e 'const j=JSON.parse(process.argv[1]);process.exit(j.repos.every(r=>/^[0-9a-f]+$/.test(r.key))?0:1)' "$sall" \
+  && pass "the fleet view skips the backend, lock and stamp files beside a checkout" || fail "the fleet view skips the backend, lock and stamp files beside a checkout"
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

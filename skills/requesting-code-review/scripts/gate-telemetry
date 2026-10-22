@@ -25,6 +25,10 @@
 # nothing is filtered and every counter spans the whole history.
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=../../subagent-driven-development/scripts/sdd-common.sh
+. "$SCRIPT_DIR/../../subagent-driven-development/scripts/sdd-common.sh"
+
 command -v node >/dev/null 2>&1 || { echo "gate-telemetry: node not found" >&2; exit 2; }
 json=0; all=0; since=""; until=""; repo="."
 while [ $# -gt 0 ]; do
@@ -42,19 +46,22 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-base="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers"
+base="$(hp_cache_root)"
 keys=()
 if [ "$all" -eq 1 ]; then
   seen=""
-  for d in "$base"/sdd/* "$base"/codex-review/* "$base"/ungated/*; do
+  # state/ holds a checkout per key plus its .backend, .lock, .fetched and
+  # .tmp-* siblings; only hex names are keys.
+  for d in "$base"/sdd/* "$base"/codex-review/* "$base"/ungated/* "$base"/state/*; do
     [ -d "$d" ] || continue
     k="$(basename "$d")"
+    case "$k" in *[!0-9a-f]*) continue ;; esac
     case " $seen " in *" $k "*) : ;; *) keys+=("$k"); seen="$seen $k" ;; esac
   done
 else
   git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || {
     echo "gate-telemetry: not a git repository (use --all for the fleet view)" >&2; exit 2; }
-  keys=("$(printf '%s' "$(git -C "$repo" rev-parse --absolute-git-dir)" | git -C "$repo" hash-object --stdin)")
+  keys=("$(hp_key "$repo")")
 fi
 
 # shellcheck disable=SC2016
@@ -136,6 +143,15 @@ node -e '
         const p = path.join(sdd, "plans", name);
         try { if (fs.statSync(p).isDirectory()) workspaces.push(p); } catch (e) { /* dangling pointer */ }
       }
+    }
+    // The state checkout of this release: one plan workspace per
+    // directory under state/<key>/plans/, beside the plain cache it replaced.
+    const st = path.join(base, "state", key, "plans");
+    let statePlans = [];
+    try { statePlans = fs.readdirSync(st); } catch (e) { statePlans = []; }
+    for (const name of statePlans) {
+      const p = path.join(st, name);
+      try { if (fs.statSync(p).isDirectory()) workspaces.push(p); } catch (e) { /* skip */ }
     }
     // SDD artifacts carry no timestamp of their own, so the window cuts them
     // by file mtime — the same basis the run walk uses, so both cohorts are

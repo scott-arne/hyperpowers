@@ -121,6 +121,13 @@ else
 fi
 
 echo ""
+echo "Test: every worktree of a clone shares the parent key directory"
+git -C "$repo_a" commit -q --allow-empty -m init
+git -C "$repo_a" worktree add -q "$TEST_ROOT/repo-a-wt" -b wt >/dev/null 2>&1
+dir_wt="$(run_review_dir "$TEST_ROOT/repo-a-wt")"
+if [ "$(dirname "$dir_wt")" = "$(dirname "$dir_a1")" ] && [ "$dir_wt" != "$dir_a1" ]; then pass "a linked worktree's gate dirs sit under the clone's key"; else fail "a linked worktree's gate dirs sit under the clone's key ($dir_wt vs $dir_a1)"; fi
+
+echo ""
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"
     exit 1

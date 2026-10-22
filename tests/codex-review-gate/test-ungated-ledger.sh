@@ -175,5 +175,19 @@ out="$(bash "$UL" append --class degraded-gate --gate task --base "$base_sha" --
 last="$(tail -1 "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl")"
 expect "$last" '"sweepable":true' "existing classes keep gate-derived sweepability"
 
+echo "ungated-ledger: common-directory key"
+git -C "$repo" worktree add -q "$work/wt" -b wt >/dev/null 2>&1
+before="$(wc -l < "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl" | tr -d ' ')"
+bash "$UL" append --class degraded-gate --gate spec --status not-ready --note 'from a worktree' "$work/wt" >/dev/null
+after="$(wc -l < "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl" | tr -d ' ')"
+[ "$after" -eq $((before + 1)) ] && pass "a linked worktree appends to the clone's ledger" || fail "a linked worktree appends to the clone's ledger ($before -> $after)"
+legacy_key="$(printf '%s' "$(git -C "$work/wt" rev-parse --absolute-git-dir)" | git -C "$work/wt" hash-object --stdin)"
+mkdir -p "$XDG_CACHE_HOME/hyperpowers/ungated/$legacy_key"
+printf '{"v":1,"id":"legacy-1","event":"ungated","class":"degraded-gate","gate":"task","ts":"2026-10-01T00:00:00Z","repo":"/tmp/r","base":"a","head":"b","status":"stale-broker","sweepable":true,"gateDir":null,"note":"legacy pending"}\n' > "$XDG_CACHE_HOME/hyperpowers/ungated/$legacy_key/ledger.jsonl"
+main_count="$(bash "$UL" pending --count "$repo" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).count)')"
+wt_count="$(bash "$UL" pending --count "$work/wt" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).count)')"
+[ "$wt_count" -eq $((main_count + 1)) ] && pass "pending from the worktree also reads its legacy ledger" || fail "pending from the worktree also reads its legacy ledger ($wt_count vs $main_count)"
+[ "$(wc -l < "$XDG_CACHE_HOME/hyperpowers/ungated/$legacy_key/ledger.jsonl" | tr -d ' ')" -eq 1 ] && pass "append never writes to the legacy key" || fail "append never writes to the legacy key"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

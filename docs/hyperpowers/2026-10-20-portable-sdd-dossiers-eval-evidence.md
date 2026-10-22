@@ -192,17 +192,19 @@ observed, and the latter stays open until its output arrives.
 
 The human partner was asked on 2026-10-22 to run these four commands on bergen,
 from a checkout of `portable-sdd-dossiers` inside a Claude Code session, and to
-paste the output. The branch was pushed to origin for that purpose (the ref is at
-`777a392`; the two later commits are documentation only). No output has arrived.
-A failing suite there is a plan conflict to surface to the human partner, not a
-value to guess.
+paste the output. The branch was pushed to origin for that purpose (the ref is
+at `777a392`; the commits after it are documentation only). No output has
+arrived, so each row below is awaiting that run (requested 2026-10-22; the
+branch is on origin at 777a392). A failing suite there is a plan conflict to
+surface to the human partner, not a value to guess. This host runs git 2.56;
+bergen's version is the first row.
 
 | Check | Answer |
 | --- | --- |
-| `git --version` (spec: 2.42 or newer; the fallback is implemented and tested regardless) | not observed: awaiting the human partner's run on bergen (requested 2026-10-22; the branch is on origin at 777a392) |
-| `CLAUDE_CODE_SESSION_ID` presence in a Bash call | not observed: awaiting the human partner's run on bergen (requested 2026-10-22; the branch is on origin at 777a392) |
-| `bash tests/sdd/test-sdd-common.sh \| tail -n 1` on ext4 | not observed: awaiting the human partner's run on bergen (requested 2026-10-22; the branch is on origin at 777a392) |
-| `bash tests/sdd/test-sdd-state.sh \| tail -n 1` on ext4 | not observed: awaiting the human partner's run on bergen (requested 2026-10-22; the branch is on origin at 777a392) |
+| `git --version` on bergen (spec: 2.42 or newer; the fallback is tested regardless) | not observed: awaiting the bergen run |
+| `CLAUDE_CODE_SESSION_ID` presence in a Bash call | not observed: awaiting the bergen run |
+| `bash tests/sdd/test-sdd-common.sh \| tail -n 1` on ext4 (the 400-append interleaving case is in this suite) | not observed: awaiting the bergen run |
+| `bash tests/sdd/test-sdd-state.sh \| tail -n 1` on ext4 | not observed: awaiting the bergen run |
 
 ### Remote acceptance of the branch name
 
@@ -231,23 +233,28 @@ above.
 
 The two-clone rehearsal's pass 0 ran in `acceptEdits` mode with Write and Edit
 not pre-allowed. It denied exactly two Write calls under the state checkout,
-eleven Bash writes to it went through, and the ledger reached `Task 1:
-complete`. The control arm (`rehearsal/control/`) showed the plain cache path and
-the state checkout path behave identically in the default permission mode (both
-denied) and with `Write` allowed (both written). That is measured for the Write
-tool only: not Bash writes, not the operator's own allow rules, and not a
-checkout that `sdd-state` created. The numbers and their limits are in the
+nine Bash writes to it went through, and the ledger reached `Task 1:
+complete`. The control arm (`rehearsal/control/`) showed the plain cache path
+and the state checkout path behave identically in the default permission mode
+(both denied) and with `Write` allowed (both written). That is measured for the
+Write tool only: not Bash writes, not the operator's own allow rules, and not a
+checkout that `sdd-state` created. The Edit tool was not exercised in either arm
+(not observed: no pass or control session issued an Edit under either root); the
+assumption is resolved for Write only. The numbers and their limits are in the
 "Two-clone rehearsal" section above.
 
 ### Open items
 
-Eight ungated events from this plan's task gates await the final whole branch
-gate, which the controller sweeps before the hand back. Release readiness is
+Eight ungated events from this plan's task gates await the final whole-branch
+gate, which the controller sweeps before the hand-back. Release readiness is
 conditional on that gate passing.
+The three slots marked not observed above (the four bergen checks counted as
+one, the work-repository dry run, and the Edit tool) are release inputs still
+open; the hand-back lists them.
 
 Two decisions the plan queued for the human partner are still open:
 
-1. The fetch stamp binding: remote plus branch, or the per key boolean.
+1. The fetch stamp binding: remote plus branch, or the per-key boolean.
 2. The import's behavior after verification: remove the source, or retain a
    backup.
 
@@ -262,7 +269,7 @@ becomes `## 6.17.0 (<date>)`, with the date of the release day, before the bump.
 # in the hyperpowers main checkout, after the branch is merged and the CHANGELOG heading is set to the version and date
 bash scripts/bump-version.sh 6.17.0
 git commit -am "chore(release): 6.17.0"
-git tag v6.17.0
+git tag -a v6.17.0 -m "Release v6.17.0"
 # install on each host: check out the tag in the plugin-install worktree, then
-claude plugin update hyperpowers
+claude plugin update hyperpowers@hyperpowers
 ```

@@ -146,11 +146,11 @@ node -e '
     }
     // The state checkout of this release: one plan workspace per
     // directory under state/<key>/plans/, beside the plain cache it replaced.
-    const st = path.join(base, "state", key, "plans");
+    const statePlansDir = path.join(base, "state", key, "plans");
     let statePlans = [];
-    try { statePlans = fs.readdirSync(st); } catch (e) { statePlans = []; }
+    try { statePlans = fs.readdirSync(statePlansDir); } catch (e) { statePlans = []; }
     for (const name of statePlans) {
-      const p = path.join(st, name);
+      const p = path.join(statePlansDir, name);
       try { if (fs.statSync(p).isDirectory()) workspaces.push(p); } catch (e) { /* skip */ }
     }
     // SDD artifacts carry no timestamp of their own, so the window cuts them

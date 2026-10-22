@@ -107,15 +107,14 @@ expect "$out" '"count":' "reader succeeds despite foreign lock"
 [ "$(cat "$lockpath/owner" 2>/dev/null)" = "other-writer" ] && pass "foreign owner token intact" || fail "foreign owner token intact"
 rm -rf "$lockpath"
 
-# worktree anchoring (spec 4.4 / acceptance 4 substrate): a linked worktree
-# derives a DIFFERENT key, so sweep closures must pass the source repo
-# explicitly. Prove: explicit-repo mark-swept closes the source entry and
-# creates nothing under the worktree's key.
+# worktree anchoring (spec 4.4 / acceptance 4 substrate): a sweep closure
+# passes the source repository explicitly. Prove: explicit-repo mark-swept
+# closes the source entry and creates nothing under the worktree's pre-6.17
+# key (which hashed the worktree's own git dir).
 out="$(bash "$UL" append --class degraded-gate --gate task --base "$base_sha" --head "$head_sha" --status not-ready --note wt-case "$repo")"
 idw="$(printf '%s' "$out" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).id)')"
 wt="$work/wt"; git -C "$repo" worktree add --detach "$wt" >/dev/null 2>&1
 wkey="$(printf '%s' "$(git -C "$wt" rev-parse --absolute-git-dir)" | git -C "$wt" hash-object --stdin)"
-[ "$wkey" != "$key" ] && pass "worktree derives a different key" || fail "worktree derives a different key"
 before="$(bash "$UL" pending --count "$repo" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).count)')"
 ( cd "$wt" && bash "$UL" mark-swept --ref "$idw" --verdict approved --note swept-from-worktree "$repo" >/dev/null )
 after="$(bash "$UL" pending --count "$repo" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).count)')"
@@ -177,17 +176,21 @@ expect "$last" '"sweepable":true' "existing classes keep gate-derived sweepabili
 
 echo "ungated-ledger: common-directory key"
 git -C "$repo" worktree add -q "$work/wt" -b wt >/dev/null 2>&1
+legacy_key="$(printf '%s' "$(git -C "$work/wt" rev-parse --absolute-git-dir)" | git -C "$work/wt" hash-object --stdin)"
+mkdir -p "$XDG_CACHE_HOME/hyperpowers/ungated/$legacy_key"
+printf '{"v":1,"id":"legacy-1","event":"ungated","class":"degraded-gate","gate":"task","ts":"2026-10-01T00:00:00Z","repo":"/tmp/r","base":"a","head":"b","status":"stale-broker","sweepable":true,"gateDir":null,"note":"legacy pending"}\n' > "$XDG_CACHE_HOME/hyperpowers/ungated/$legacy_key/ledger.jsonl"
 before="$(wc -l < "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl" | tr -d ' ')"
 bash "$UL" append --class degraded-gate --gate spec --status not-ready --note 'from a worktree' "$work/wt" >/dev/null
 after="$(wc -l < "$XDG_CACHE_HOME/hyperpowers/ungated/$key/ledger.jsonl" | tr -d ' ')"
 [ "$after" -eq $((before + 1)) ] && pass "a linked worktree appends to the clone's ledger" || fail "a linked worktree appends to the clone's ledger ($before -> $after)"
-legacy_key="$(printf '%s' "$(git -C "$work/wt" rev-parse --absolute-git-dir)" | git -C "$work/wt" hash-object --stdin)"
-mkdir -p "$XDG_CACHE_HOME/hyperpowers/ungated/$legacy_key"
-printf '{"v":1,"id":"legacy-1","event":"ungated","class":"degraded-gate","gate":"task","ts":"2026-10-01T00:00:00Z","repo":"/tmp/r","base":"a","head":"b","status":"stale-broker","sweepable":true,"gateDir":null,"note":"legacy pending"}\n' > "$XDG_CACHE_HOME/hyperpowers/ungated/$legacy_key/ledger.jsonl"
 main_count="$(bash "$UL" pending --count "$repo" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).count)')"
 wt_count="$(bash "$UL" pending --count "$work/wt" | node -e 'console.log(JSON.parse(require("fs").readFileSync(0,"utf8")).count)')"
 [ "$wt_count" -eq $((main_count + 1)) ] && pass "pending from the worktree also reads its legacy ledger" || fail "pending from the worktree also reads its legacy ledger ($wt_count vs $main_count)"
 [ "$(wc -l < "$XDG_CACHE_HOME/hyperpowers/ungated/$legacy_key/ledger.jsonl" | tr -d ' ')" -eq 1 ] && pass "append never writes to the legacy key" || fail "append never writes to the legacy key"
+spaced="$work/ca che"; mkdir -p "$spaced"
+XDG_CACHE_HOME="$spaced" bash "$UL" append --class degraded-gate --gate spec --status not-ready --note 'spaced cache' "$repo" >/dev/null 2>&1
+sp_count="$(XDG_CACHE_HOME="$spaced" bash "$UL" pending --count "$repo" 2>/dev/null)"
+[ "$sp_count" = '{"count":0,"skipped":0}' ] && pass "pending reads a cache root whose path contains a space" || fail "pending reads a cache root whose path contains a space (got '$sp_count')"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

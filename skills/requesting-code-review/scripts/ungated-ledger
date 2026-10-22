@@ -191,11 +191,10 @@ case "$sub" in
     printf '{"ok":true,"id":"%s"}\n' "$id"
     ;;
   pending)
-    files=""
-    [ -f "$ledger" ] && files="$ledger"
-    if [ -n "$legacy_ledger" ] && [ -f "$legacy_ledger" ]; then files="$files $legacy_ledger"; fi
-    [ -n "$files" ] || { if [ "$count_only" -eq 1 ]; then echo '{"count":0,"skipped":0}'; else echo '[]'; fi; exit 0; }
-    # shellcheck disable=SC2086
+    files=()
+    [ -f "$ledger" ] && files+=("$ledger")
+    if [ -n "$legacy_ledger" ] && [ -f "$legacy_ledger" ]; then files+=("$legacy_ledger"); fi
+    [ "${#files[@]}" -gt 0 ] || { if [ "$count_only" -eq 1 ]; then echo '{"count":0,"skipped":0}'; else echo '[]'; fi; exit 0; }
     node -e '
       const fs = require("fs");
       const mode = process.argv[1];
@@ -210,7 +209,7 @@ case "$sub" in
       } else {
         process.stdout.write(JSON.stringify(pending) + "\n");
       }
-    ' "$([ "$count_only" -eq 1 ] && echo count || echo list)" $files
+    ' "$([ "$count_only" -eq 1 ] && echo count || echo list)" "${files[@]}"
     ;;
   mark-swept)
     [ -n "$ref" ] || { echo "ungated-ledger: --ref is required" >&2; exit 2; }

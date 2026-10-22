@@ -72,7 +72,7 @@ digraph process {
         "Append completion to ledger, mark todo complete (where kept)" [shape=box];
     }
 
-    "Setup: worktree, workspace and ledger check, read plan and spec, pre-flight review" [shape=box];
+    "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" [shape=box];
     "More tasks remain?" [shape=diamond];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [shape=box];
     "Final findings? ONE fix dispatch, one scoped re-review, surface residuals" [shape=box];
@@ -80,7 +80,7 @@ digraph process {
     "Final review clean: delete this plan's workspace" [shape=box];
     "Use hyperpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
-    "Setup: worktree, workspace and ledger check, read plan and spec, pre-flight review" -> "Dispatch implementer subagent (./implementer-prompt.md)";
+    "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" -> "Dispatch implementer subagent (./implementer-prompt.md)";
     "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer asks questions?";
     "Implementer asks questions?" -> "Answer questions, provide context" [label="yes"];
     "Answer questions, provide context" -> "Implementer implements, tests, commits, self-reviews";
@@ -175,7 +175,8 @@ a ledger file, not only in todos.
   to the plan repository's toplevel; a line holding an absolute path matches
   when it lies inside this repository and reduces to the same relative path,
   or, when it names a path that does not exist on this host (a ledger
-  written on another machine), when it ends with that relative path. Tasks with a `Task <N>: complete` line are
+  written on another machine), when it ends with that relative path. Tasks
+  with a `Task <N>: complete` line are
   DONE — do not re-dispatch them; resume at the first task without one. A
   task whose last line is a fix round is mid-loop: resume the loop at the
   next round. A task whose last line is its implementer identity is a
@@ -187,15 +188,17 @@ a ledger file, not only in todos.
   file means this workspace is corrupt, not that you wandered into a
   sibling's: stop and surface it to your human partner rather than
   starting fresh on top of another plan's state.
-- Create the ledger with its identity as the first line:
+- When there is no ledger, create it with its identity as the first line:
   `# SDD ledger — plan: <repo-relative plan path>` (never an absolute path:
-  the ledger travels between hosts). Then append your session line:
+  the ledger travels between hosts). Whether you created it or found one,
+  append your session line:
   `session <sid>: mode <current-branch|new-branch|worktree> on <branch> at <toplevel> started <UTC time>`,
   where `<sid>` is `$CLAUDE_CODE_SESSION_ID` on Claude Code and, on a harness
   without one, a value you generate once as `$(date -u +%s)-$RANDOM$RANDOM`,
   and the mode is what using-git-worktrees reported. When your human partner
   assigned this session specific tasks, add `session <sid>: tasks <N,M,...>`.
-  Then run `scripts/sdd-state verify PLAN_FILE`: `ok` continues;
+  Then run `scripts/sdd-state verify PLAN_FILE` (on a found ledger this is
+  the check that this host holds the code it relies on): `ok` continues;
   `code-missing` names commits the ledger relies on that this checkout
   lacks, so stop and ask your human partner to pull the named branch;
   `wrong-repo` names the repository the ledger was handed off from;
@@ -207,7 +210,7 @@ a ledger file, not only in todos.
   the Finish step removes the plan's directory through
   `scripts/sdd-state finish PLAN_FILE`, and the branch history keeps it, so
   an evidence note can cite `git show <sha>:plans/<ws>/<file>`. Nothing
-  inside the checkout is reclaimed automatically; `scripts/sdd-state prune`
+  inside the checkout is reclaimed automatically; `scripts/sdd-state prune --repo <dir>`
   lists and removes idle plan directories only when asked. Snapshot the
   workspace (`scripts/sdd-state snapshot PLAN_FILE`) after the pre-flight
   scan table and after every `Task <N>: complete` line, so a hand-off or a
@@ -348,7 +351,8 @@ and fix-round diffs need it.
   your human partner assigned this session (`session <sid>: tasks ...`):
   work only those tasks, and report a held task in your list the same way.
 - Record the implementer's agent identity from the dispatch result in the
-  ledger's task entry (`Task <N>: implementer <agent-id-or-name> (session <sid>, worktree <path>, branch <name>)`) —
+  ledger's task entry
+  (`Task <N>: implementer <agent-id-or-name> (session <sid>, worktree <path>, branch <name>)`) —
   fix-loop rounds 1-3 resume this agent, and after compaction the ledger is
   the only place the identity survives once its agent has exited. An
   identity that was never written down forces a fresh takeover where a
@@ -715,7 +719,8 @@ When the final whole-branch review is clean and its fixes are merged:
    (that is a plan not finished, not a reason for `--force`); otherwise it
    removes the plan's directory, commits the removal to the state branch,
    and prints `last=<sha>`, the commit that still holds the dossier, and
-   `push=<remote>/<branch>`.
+   `push=<remote>/<branch>`; on the plain backend it prints `backend=plain`
+   instead, and there is nothing to push.
 3. **Verify deletion** with `test ! -d "<workspace>"` to confirm it is gone.
    The push command is `git -C <checkout> push <remote> <branch>`, the
    checkout being the parent of the `plans/` directory `sdd-dir` printed;
@@ -724,10 +729,11 @@ When the final whole-branch review is clean and its fixes are merged:
 A clean finish that leaves the workspace behind is an INCOMPLETE finish —
 "keeping it for reference" is not an option; the repo's commits are the
 durable record. Sibling directories belong to other plans; leave them
-alone. `scripts/sdd-state prune` is the only other remover, and it runs only
-when asked.
+alone. `scripts/sdd-state prune --repo <dir>` is the only other remover, and it
+runs only when asked.
 
-Use hyperpowers:finishing-a-development-branch.
+Use hyperpowers:finishing-a-development-branch, passing the mode from your
+session line.
 
 ## Common Rationalizations
 

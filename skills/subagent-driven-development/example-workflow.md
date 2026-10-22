@@ -39,8 +39,9 @@ Task reviewer: Spec ✅ - all requirements met, nothing extra.
 
 Task 2: Recovery modes (declared standard)
 
+[scripts/sdd-state claim docs/hyperpowers/plans/feature-plan.md 2 --session 1f3a9c → status=claimed task=2]
 [Run task-brief for Task 2; dispatch implementer with brief + report paths + context]
-[Ledger: Task 2: implementer subagent-7c42 — recorded for fix-round resumes]
+[Ledger: Task 2: implementer subagent-7c42 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes]
 
 Implementer: [No questions]
   - Added verify/repair modes
@@ -68,6 +69,7 @@ Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
 [Ledger: Task 2: fix round 1/5 (2 addressed, 0 declined, 0 open; commits d4e5f6a..b7c8d9e)]
 [Codex per-task gate over d4e5f6a..b7c8d9e — approved; that would have been round 2 of the same five]
 [Ledger: Task 2: complete (commits d4e5f6a..b7c8d9e, review clean)]
+[scripts/sdd-state snapshot docs/hyperpowers/plans/feature-plan.md → status=snapshot sha=5d4c3b2 files=3]
 
 ...
 

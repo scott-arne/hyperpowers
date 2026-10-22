@@ -157,7 +157,7 @@ assert_contains "$SDD_EXAMPLE_WORKFLOW" "Using hyperpowers:finishing-a-developme
   "example workflow runs through to the finishing handoff"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes" \
   "example workflow records the implementer identity in the ledger"
-assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 — recorded for fix-round resumes" \
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes" \
   "example workflow records the identity on the task that enters the fix loop"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Re-run the covering command myself: 8/8 — matches the report" \
   "example fix-loop task re-runs the covering command before review"

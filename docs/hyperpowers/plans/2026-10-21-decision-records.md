@@ -2574,32 +2574,40 @@ with
 
 - [ ] **Step 2: Setup**
 
-After the Setup paragraph that ends `without a spec, a conflict has no tiebreaker but your human partner.`, add:
+After the Setup paragraph that ends `without a spec, a conflict has no tiebreaker but your human partner.`, add the text below. Correction (2026-10-22): the Codex gate reshaped it: the dry run, the listing, the extractor and the spec hand-off are guarded on a resolved spec (a plan without one gets a ledger line and the test-only finishing path), the dry run is re-run after any repair until it exits 0, and every exit-2 cause is named:
 
 ```markdown
-Dry-run the decision compiler over that spec now:
+When the plan has a spec, dry-run the decision compiler over it now:
 `bash <finishing skill's directory>/scripts/decisions-compile <spec> --dry-run`
 (the finishing-a-development-branch skill, `../finishing-a-development-branch/`
 relative to this one). Exit 0 confirms the spec's `## Decisions` list parses;
-copy its numbered listing into the ledger under a `Decisions listing:` line
+its numbered listing goes into the ledger under a `Decisions listing:` line
 for the extractor's dispatch. Exit 2 for a missing list is the legacy-spec
 case: draft the list from the spec's own text, one item per decision it
 states, show it to your human partner, and write it into the spec once they
 approve it, committing that edit on the branch. Any other exit 2 names what
 to fix first (a spec that is not committed, or a `Supersedes:` problem) to
-resolve with them the same way. The session is at its start, so this costs
-no cycle time.
+resolve with them the same way. After any repair, run the dry run again
+until it exits 0, and only then write its numbered listing into the ledger.
+The session is at its start, so this costs no cycle time. When the plan has
+no spec (`none`, or unreachable, per the ledger line above), write
+`Decisions: none (no spec)` in the ledger and skip the listing, the
+extractor and the spec in the hand-off: finishing then takes its test-only
+path.
 ```
 
 - [ ] **Step 3: Final Review**
 
-After the paragraph that ends `with the evidence, as BLOCKED, when finishing-a-development-branch presents the options.` and before `**Codex Review Gate — final whole-branch (Claude Code only).**`, add:
+After the paragraph that ends `with the evidence, as BLOCKED, when finishing-a-development-branch presents the options.` and before `**Codex Review Gate — final whole-branch (Claude Code only).**`, add the text below. Correction (2026-10-22): the extractor reads a regenerated full-branch package, not a fix wave's scoped one; a Codex final-gate fix after the dispatch stops the extractor, settles any altered decision first, refreshes the listing and the package, and re-dispatches:
 
 ```markdown
-**Dispatch the decision extractor.** Once the fix wave and its re-review are
+**Dispatch the decision extractor.** When the ledger has a `Decisions listing:`
+line (and otherwise nothing), once the fix wave and its re-review are
 clean (or the final review returned no findings), take a scratch directory
-from `../requesting-code-review/scripts/codex-review-dir`, copy the latest
-review package and `<workspace>/progress.md` into it, and dispatch the
+from `../requesting-code-review/scripts/codex-review-dir`, regenerate the
+full-branch package (`scripts/review-package PLAN_FILE MERGE_BASE HEAD`, so a
+fix wave's commits are in it) and copy it and `<workspace>/progress.md` into
+it, and dispatch the
 extractor in the background, composed from
 `../finishing-a-development-branch/decision-notes-prompt.md` with those two
 copies, the plan, the spec, the `Decisions listing:` from the ledger, the
@@ -2609,21 +2617,30 @@ index (`decisions/README.md` beside the spec's directory) when it exists, and
 inside the workspace, so Finish may delete the workspace while it runs;
 finishing-a-development-branch collects it after the full suite and never
 waits for it, and neither do you. On a harness with no tracked background
-subagent, skip the dispatch and note it in the ledger.
+subagent, skip the dispatch and note it in the ledger. If a Codex final-gate
+fix changes code after the dispatch: stop the extractor (TaskStop); when the
+fix altered one of the spec's decisions, settle that first (show your human
+partner the change you would write into the `## Decisions` item, write and
+commit it on the branch with their approval; without it the item stands and
+the change is raised again at the menu); re-run the dry run and replace the
+ledger's `Decisions listing:`; regenerate the full-branch package and copy
+it, with the current `<workspace>/progress.md`, into the scratch directory,
+replacing the earlier copies; compose the replacement dispatch from those
+copies; then dispatch the extractor again and replace the
+`Decision extractor:` line.
 ```
 
 - [ ] **Step 4: Finish**
 
-After the line `Use hyperpowers:finishing-a-development-branch.`, add:
+After the line `Use hyperpowers:finishing-a-development-branch.`, add the text below. Correction (2026-10-22): the hand-off is conditional (task id and path when an extractor was dispatched, the ledger's reason when the dispatch was skipped, the test-only path when the plan has no spec), the ledger lines are copied into the hand-off before the workspace is deleted, and a Codex-altered decision is settled in Final Review before the re-dispatch:
 
 ```markdown
-Hand it the plan, the spec, and the extractor's task id and output path (read
-the ledger's `Decision extractor:` line before step 1 deletes the workspace).
-If a Codex-gate fix changed one of the spec's decisions, show your human
-partner the change you would write into that `## Decisions` item, and with
-their approval write it and commit it on the branch before the hand-off, so
-the records describe what ships; without their approval the item stands and
-the change is raised again at the menu.
+Hand it the plan and the spec, and the extractor's task id and output path
+when one was dispatched; when the dispatch was skipped, hand over the
+ledger's reason instead and say so, and finishing compiles without notes;
+when the plan has no spec, say that, and finishing runs its test-only path.
+A decision a Codex-gate fix altered was settled in Final Review before the
+re-dispatch.
 ```
 
 - [ ] **Step 5: The example**

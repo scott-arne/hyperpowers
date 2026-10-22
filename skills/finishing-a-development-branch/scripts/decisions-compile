@@ -471,7 +471,7 @@ stage_owned() {
 # emit_paths: the compiler-owned paths whose staged content differs from
 # HEAD, NUL-delimited into --paths-file and space-joined on stdout.
 emit_paths() {
-  git -C "$root" diff --cached --name-only -z -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"} > "$tmp/paths.z" || die3 "$spec_rel: git diff --cached failed"
+  git -C "$root" diff --cached --name-only --no-renames -z -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"} > "$tmp/paths.z" || die3 "$spec_rel: git diff --cached failed"
   if [ -n "$paths_file" ]; then
     # Atomic, so a reader never sees a half-written pathspec.
     if ! { cp "$tmp/paths.z" "$paths_file.tmp.$$" && mv -f "$paths_file.tmp.$$" "$paths_file"; }; then
@@ -498,13 +498,14 @@ fi
 # difference from HEAD goes back to HEAD, and a path HEAD does not have is
 # deleted. Anything else staged is left alone.
 if [ "$mode" = undo ]; then
-  git -C "$root" diff --cached --name-only -z -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"} > "$tmp/undo.z" || die3 "$spec_rel: git diff --cached failed"
+  git -C "$root" diff --cached --name-only --no-renames -z -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"} > "$tmp/undo.z" || die3 "$spec_rel: git diff --cached failed"
   while IFS= read -r -d '' p; do
     if git -C "$root" cat-file -e "HEAD:$p" 2>/dev/null; then
       git -C "$root" restore --staged --worktree -- "$p" || die3 "$spec_rel: git restore failed for $p"
     else
       git -C "$root" rm --cached --quiet -- "$p" || die3 "$spec_rel: git rm --cached failed for $p"
-      rm -f "$root/$p"
+      # A never-committed spec is the user's only copy; it is unstaged, not deleted.
+      if [ "$p" != "$spec_rel" ]; then rm -f "$root/$p"; fi
     fi
     echo "restored $p"
   done < "$tmp/undo.z"
@@ -649,7 +650,7 @@ if $dry_run; then
     echo "$v $records_rel/${files[n]} (decision $n: ${titles[n]})"
   done
   {
-    git -C "$root" diff --cached --name-only -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"}
+    git -C "$root" diff --cached --name-only --no-renames -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"}
     git -C "$root" ls-files --others --exclude-standard -- "$records_rel"
     [ "$plan_state" = present ] && echo "$plan_rel"
     for ((n = 1; n <= count; n++)); do echo "$records_rel/${files[n]}"; done

@@ -1380,6 +1380,35 @@ run_compile "$repo" docs/hyperpowers/specs/2026-10-19-beta-design.md
 run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-beta-design.md
 if [ "$RC" -eq 0 ] && [ ! -d "$repo/docs/hyperpowers/decisions" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "--undo removes an emptied records directory"; else fail "undo2 (rc $RC, status: $(git -C "$repo" status --porcelain), dir: $(ls "$repo/docs/hyperpowers/decisions" 2>/dev/null))"; fi
 
+# A never-committed spec is unstaged, not deleted. Its content stays as the
+# compiler left it (the Outcome line stays: there is no HEAD copy to restore).
+repo="$TEST_ROOT/undo3"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-delta-design.md <<'EOF'
+# Delta
+
+## Decisions
+
+- **Only one.** Text.
+EOF
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-delta-design.md
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-delta-design.md
+if [ "$RC" -eq 0 ] && [ -f "$repo/docs/hyperpowers/specs/2026-10-19-delta-design.md" ] && [ "$(git -C "$repo" status --porcelain -uall)" = "?? docs/hyperpowers/specs/2026-10-19-delta-design.md" ] && [ ! -d "$repo/docs/hyperpowers/decisions" ]; then pass "--undo keeps a never-committed spec as an untracked file and removes the records"; else fail "undo3 (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain | tr '\n' ';'))"; fi
+case "$OUT" in *"restored docs/hyperpowers/specs/2026-10-19-delta-design.md"*) pass "--undo still reports the spec" ;; *) fail "undo3 output (got: $OUT)" ;; esac
+# Nothing staged: undo is a no-op.
+repo="$TEST_ROOT/undo4"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-eps-design.md <<'EOF'
+# Eps
+
+## Decisions
+
+- **Only one.** Text.
+EOF
+commit_all "$repo" "spec"
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-eps-design.md
+if [ "$RC" -eq 0 ] && [ -z "$OUT" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "--undo with nothing staged prints nothing and changes nothing"; else fail "undo4 (rc $RC, out: $OUT, status: $(git -C "$repo" status --porcelain))"; fi
+
 # --- 25. a later day with an unchanged spec --------------------------------
 repo="$TEST_ROOT/gitfail-rm"
 commit_all "$repo" "records"

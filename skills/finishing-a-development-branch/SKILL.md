@@ -23,9 +23,19 @@ ride the branch before any merge or push, so they are staged here and
 committed in Step 4 once your human partner has seen them. Work with no spec
 has no records: for it, this step is the test run alone.
 
-1. **Find the plan and the spec.** First fix the fork point, in every case,
-   because the steps below diff and search from it (the base branch is the
-   one Step 3 confirms; your best guess serves here, nothing is merged yet):
+1. **Find the plan and the spec.** Start from the repository root:
+
+   ```bash
+   cd "$(git rev-parse --show-toplevel)"
+   ```
+
+   Run this step and Step 4 from the repository root; every path below is
+   repository-relative, as the compiler and the pathspec file expect. Then
+   fix the fork point, in every case, because the steps below diff and
+   search from it (the base branch is whatever this work forked from,
+   usually named in the plan, the conversation, or the branch's upstream;
+   when it is not already known, ask now, before anything below runs: "This
+   branch split from <your best guess> - is that correct?"):
 
    ```bash
    MERGE_BASE=$(git merge-base <base-branch> HEAD)
@@ -55,15 +65,18 @@ has no records: for it, this step is the test run alone.
    Exit 2 for a missing decisions list is the legacy-spec case: draft the
    `## Decisions` list from the spec's own text, one item per decision it
    states, show it to your human partner, and write it into the spec once
-   they approve it. Any other exit 2 names what to fix first (a spec that is
+   they approve it, and commit that edit on the branch before going on (a
+   docs commit of the spec alone; the compiler requires a committed spec,
+   and a skip restores the spec from HEAD). Any other exit 2 names what to fix first (a spec that is
    not committed, a plan that is not a tracked and clean markdown file under
    `plans/` whose Spec header names this spec, or a `Supersedes:` problem):
    resolve it with them before going on. Keep the numbered listing for the
    extractor.
 3. **Dispatch the extractor, then run the suite.** Skip the dispatch when the
-   branch has no spec, when the hand-off already names an extractor (a task id and an output path), when
-   the branch already carries this spec's records commit
-   (`git log "$MERGE_BASE"..HEAD --grep='^docs: record decisions for '`), or
+   branch has no spec, when the hand-off already names an extractor (a task
+   id and an output path), when the branch already carries this spec's
+   records commit (`git log "$MERGE_BASE"..HEAD --fixed-strings --grep="docs: record decisions for <spec filename without -design.md>"`,
+   the subject Step 4's commit uses for this spec), or
    when your harness has no tracked background subagent (then say so when
    you hand back). Otherwise compose the dispatch from
    [decision-notes-prompt.md](decision-notes-prompt.md) with the merge-base
@@ -82,7 +95,9 @@ has no records: for it, this step is the test run alone.
 
 5. **If tests pass** and the branch has a spec, collect the extractor without
    waiting: finished, its file is the `--notes`; unfinished, stop it
-   (TaskStop), compile without notes, and say so when you hand back. Run
+   (TaskStop), compile without notes, and say so when you hand back. The spec
+   must be clean before the compile (no uncommitted edits; commit or stash
+   them), because a skip restores it from HEAD. Run
    `bash <this skill's directory>/scripts/decisions-compile <spec> --plan <plan> --notes <file> --paths-file <dir>/records.paths`,
    omitting `--plan` when the branch has no plan and `--notes` when there is
    no notes file. A `notes ignored:` line on its stderr is repeated verbatim
@@ -110,14 +125,14 @@ This determines which menu to show and how cleanup works:
 
 ## Step 3: Determine Base Branch
 
-The base branch is whatever this work forked from — usually named in the
-plan, the conversation, or the branch's upstream. If it is not already
-known, ask: "This branch split from <your best guess> - is that correct?"
-Confirm before merging: merging into the wrong base is expensive to undo.
+The base branch is the one Step 1 confirmed; when Step 1 had no spec and did
+not ask, confirm it here the same way (ask "This branch split from <your
+best guess> - is that correct?"). Confirm before merging: merging into the wrong base is expensive to undo.
 
 ## Step 4: Present Options
 
-**When Step 1 staged records,** the message that presents the options opens
+**When Step 1 staged records,** the message that presents the options, from
+the repository root as in Step 1, opens
 with the complete staged diff over the pathspec file's paths (`git diff` has
 no pathspec-file option, so the NUL-delimited file is read into an array; a
 path with a space survives, and the variable makes the entries literal, as
@@ -138,12 +153,13 @@ only then the menu text exactly as written below. Your human partner answers
 once. Before executing their option: write each accepted proposal into the
 spec (an accepted undocumented decision is appended after the list's last
 item, never inserted, so the numbers the notes use stay with their records;
-an accepted supersession is a `Supersedes:` line on the item it belongs to)
-and re-run the compiler with the same arguments, and because the staged set
+an accepted supersession is a `Supersedes:` line on the item it belongs to),
+commit that spec edit first (a docs commit of the spec alone), then re-run
+the compiler with the same arguments, and because the staged set
 changed, show the new complete staged diff and ask only for its approval,
 not the dispositions again; record a dismissal in the hand-back in their
-words. A skip ends the records for this branch: run
-`bash <this skill's directory>/scripts/decisions-compile --undo <spec> --plan <plan>` (without `--plan` when there
+words. A skip ends the records for this branch: with the spec committed as
+above, run `bash <this skill's directory>/scripts/decisions-compile --undo <spec> --plan <plan>` (without `--plan` when there
 is none), record it in their words, make no commit, and run the option they
 chose. Otherwise commit:
 
@@ -151,7 +167,12 @@ chose. Otherwise commit:
 GIT_LITERAL_PATHSPECS=1 git commit --pathspec-from-file=<dir>/records.paths --pathspec-file-nul -m "docs: record decisions for <spec filename without -design.md>"
 ```
 
-and run the option they chose. A branch with no records shows the menu as it
+The option runs only after that commit succeeds. If it fails (a hook, an
+index conflict, anything), show the failure, stop, and run the same commit
+again once the cause is cleared; nothing is merged or pushed while the
+records and the plan's deletion are merely staged.
+
+Then run the option they chose. A branch with no records shows the menu as it
 always did.
 
 **Normal repo and named-branch worktree — present exactly these 3 options:**

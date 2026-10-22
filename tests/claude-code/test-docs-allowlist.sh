@@ -79,14 +79,14 @@ else
 fi
 
 # An existing file is reported and left alone, edits included.
-echo '!/decisions/' >> "$target"
+echo '!/sentinel/' >> "$target"
 out=$(cd "$repo" && bash "$ALLOWLIST")
 if [ "$out" = "exists $target" ]; then
     pass "second run prints 'exists <path>'"
 else
     fail "second run stdout (got: $out)"
 fi
-if grep -q '^!/decisions/$' "$target"; then
+if grep -q '^!/sentinel/$' "$target"; then
     pass "an existing .gitignore is left untouched"
 else
     fail "existing .gitignore was rewritten"

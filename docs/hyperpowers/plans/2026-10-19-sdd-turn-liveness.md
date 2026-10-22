@@ -5385,6 +5385,158 @@ Fill `<blob>` as before. Stage `analyze.py`, `test_analyze.py`, `README.md`; lea
 
 Then re-record. Re-run Step 2's tally command into `tally.txt`. Update the README "Results" section, the experiment entry and the hyperpowers note with the recomputed numbers (every number from the new `tally.txt`), and give the Limits list these entries in plain words: F's two misses before Correction 5 were recognizer artifacts, not run behavior; P's failure rests on one treatment run (p8) whose controller wrote a non-canonical Task 6 ledger line and whose last turn end came after the finishing question and the merge, with a note about untracked `__pycache__` files, adjudicated `neither`; the pre-registered rule was kept by the human partner rather than relabeled or widened after the decision was visible; by the spec, the failure goes back to design and the P failure opens the Stop-hook follow-up with these runs as its evidence. Post-check unchanged (no new runs). Leak scan; `bun run check`; commit evals `docs(evidence): the sdd-turn-liveness decision re-tallied under Correction 5`; hyperpowers `docs(hyperpowers): the SDD turn liveness scenario results under Correction 5`.
 
+- [ ] **Step 6: Correction 6, control flow and segment binding in the recognizers (Codex gate round 1)**
+
+Approved by the human partner on 2026-10-22 after this task's Codex gate. Correction 5's recognizers are fail-open in two ways: `_cwd_segments` applies a `cd` to every later segment whatever operator joins them, so `cd <ledger dir> || echo 'Task 6: complete' >> progress.md` (the write runs only when the `cd` failed) is credited; and `_names_file` accepts the file's basename anywhere in the command when any segment's cwd is the directory, so `echo long.out.exit; cd /tmp; echo exit=0` and `cd /tmp && cd /elsewhere && cat long.out.exit` match `/tmp/long.out`. No run in either arm has these shapes. One analyzer commit, a re-tally that must come out identical, and the Correction count in the three records.
+
+Tests first. In `test_analyze.py`, add to the positive tuple of `test_bash_ledger_writes_in_every_shell_spelling`, after the Correction 5 spellings:
+
+```text
+            # Correction 6: a cd joined by a semicolon still carries.
+            f"cd {folder}; echo 'Task 6: complete' >> progress.md",
+```
+
+and to the negative tuple after the Correction 5 negatives:
+
+```text
+            # Correction 6: the || branch runs only when the cd failed.
+            f"cd {folder} || echo 'Task 6: complete' >> progress.md",
+```
+
+Replace the negative tail of `test_long_job_watch_names_its_file_through_a_variable_or_a_cd` (from `records = long_job()` after the positive loop to the end of the method) with:
+
+```text
+        for n, watch in enumerate((
+            "cd /elsewhere && cat long.out.exit",
+            # Correction 6: the name must sit in a segment the cd put in the file's directory.
+            "echo long.out.exit; cd /tmp; echo exit=0",
+            "cd /tmp && cd /elsewhere && cat long.out.exit",
+        )):
+            records = long_job()
+            for rec in records:
+                for use in liveness.tool_uses(rec):
+                    if use.get("id") == "b4":
+                        use["input"]["command"] = watch
+            self.assertFalse(self.run_of(f"x{n}", records)["long_ok"], watch)
+```
+
+Add this test to the `Measure` class after `test_long_job_launch_names_its_output_through_a_variable`:
+
+```text
+    def test_split_ops_records_the_operators(self) -> None:
+        self.assertEqual(
+            analyze._split_ops("a; b && c || d | e\nf"),
+            [("", "a"), (";", " b "), ("&&", " c "), ("||", " d "), ("|", " e"), (";", "f")],
+        )
+        self.assertEqual(analyze._split_ops("a | b", pipes=False), [("", "a | b")])
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py -k every_shell_spelling -k names_its_file -k split_ops` — Expected: FAIL (the `||` ledger spelling is credited, the two watches match, `_split_ops` does not exist).
+
+Then `analyze.py`. Replace `_segments` (the whole function) with:
+
+```text
+def _split_ops(command: str, pipes: bool = True) -> list[tuple[str, str]]:
+    """Split a command at ``;``, ``&&``, ``||`` and newlines outside quotes, and at ``|`` when ``pipes``.
+
+    Each segment comes with the operator that introduced it: ``""`` for the
+    first, ``;`` for a semicolon or a newline, ``&&``, ``||``, or ``|``.
+    Comments are dropped, and a backslash keeps the next character (a quote
+    or a newline) inside the current segment.
+    """
+    out: list[tuple[str, str]] = []
+    current: list[str] = []
+    op = ""
+    quote = ""
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            if ch == "\\" and quote == '"':
+                current.append(command[i : i + 2])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch == "\\":
+            current.append(command[i : i + 2])
+            i += 2
+            continue
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "#" and (i == 0 or command[i - 1] in " \t\n;&|("):
+            end = command.find("\n", i)
+            i = len(command) if end < 0 else end
+            continue
+        elif ch in ";\n" or command.startswith(("&&", "||"), i) or (pipes and ch == "|"):
+            out.append((op, "".join(current)))
+            current = []
+            if command.startswith(("&&", "||"), i):
+                op = command[i : i + 2]
+                i += 2
+            else:
+                op = ";" if ch in ";\n" else "|"
+                i += 1
+            continue
+        current.append(ch)
+        i += 1
+    out.append((op, "".join(current)))
+    return out
+
+
+def _segments(command: str, pipes: bool = True) -> list[str]:
+    """The segments of ``_split_ops`` without their operators."""
+    return [segment for _, segment in _split_ops(command, pipes)]
+```
+
+Replace `_cwd_segments` with:
+
+```text
+def _cwd_segments(command: str, env: Mapping[str, str]) -> list[tuple[str, str | None]]:
+    """Each ``;``/``&&``/``||`` segment with the directory a preceding ``cd`` put it in.
+
+    None before any ``cd``. A ``cd`` joined by ``;`` or ``&&`` is taken to have
+    succeeded; a segment introduced by ``||`` runs only when the command before
+    it failed, so it gets no directory, and a ``cd`` inside it leaves the
+    directory unknown for what follows (Correction 6).
+    """
+    out: list[tuple[str, str | None]] = []
+    cwd: str | None = None
+    for op, segment in _split_ops(_strip_heredocs(command), pipes=False):
+        branch = op == "||"
+        out.append((segment, None if branch else cwd))
+        move = CD.match(segment)
+        if move:
+            cwd = None if branch else _expand(move.group(2), env)
+    return out
+```
+
+Replace `_names_file` with:
+
+```text
+def _names_file(command: str, path: str) -> bool:
+    """Whether a command refers to ``path``: literally, through a shell variable, or by name in a segment a ``cd`` put in its directory.
+
+    Treatment p8 watched its long soak through ``W=<dir>; ... "$W/soak-long.out.exit"``
+    and p10 through ``cd <dir> && ... soak-long.out.exit`` (README Correction 5);
+    the name counts only inside a segment whose directory is the file's
+    (Correction 6).
+    """
+    env = _assignments(command)
+    if path in _expand(command, env):
+        return True
+    parent, name = str(Path(path).parent), Path(path).name
+    return any(cwd == parent and name in _expand(segment, env) for segment, cwd in _cwd_segments(command, env))
+```
+
+Run the four suites — Expected: `OK`; ruff and mypy on `analyze.py`. Run `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py > <tmp>` and `diff <tmp> evidence/2026-10-19-sdd-turn-liveness/tally.txt` — Expected: identical apart from the trailing `exit=0` line `tally.txt` carries (no row changes in either arm). If any row differs, stop and report BLOCKED with the diff. Append to the README `## Corrections` list:
+
+```text
+6. 2026-10-22, after the Codex gate of the treatment task, before the decision of record is cited. Correction 5's recognizers were fail-open in two ways: a `cd` carried into every later segment whatever operator joined them, so a write on a `||` branch (which runs only when the `cd` failed) was credited, and a watch's file name counted anywhere in the command once any segment's directory matched. `_split_ops` now records the operator between segments, a `cd` does not carry into a `||` branch, and a file name counts only in a segment whose directory is the file's. Recomputed from the archives: no row changes in either arm; the decision stands, FAIL on P. Known remaining limit: the watch recognizer takes the file's name in the right segment plus `exit=` in the call's result as the read; a command that only names the file and prints `exit=0` would pass it, a shape no run has. Pin after the Correction: `analyze.py` `<blob>` (`liveness.py` and `tally.py` unchanged).
+```
+
+and change "Five Corrections were made" (the README Limits) to six. Fill `<blob>` as before. Stage `analyze.py`, `test_analyze.py`, `README.md`; leak scan; commit `fix(evidence): a cd does not carry into a || branch and a watch names its file in its own segment`. Then the counts elsewhere: `docs/experiments/2026-10-19-sdd-turn-liveness.md` ("five recorded Corrections" to six, and its Limits sentence on the Corrections if it gives a count); leak scan; commit `docs(evidence): the experiment entry counts six Corrections`. In the hyperpowers note, the sentence naming the Corrections now names six; leak scan; commit `docs(hyperpowers): the SDD turn liveness note counts six Corrections`. Then rewrite the task report's headline: the status block at the top states the final state (decision FAIL on P alone, F 10 of 10, the six evals commits and the three hyperpowers commits), with the first tally kept below as history. `bun run check` on the final tree, recorded.
+
 ---
 
 ### Task 13: The release candidate (or the hold)

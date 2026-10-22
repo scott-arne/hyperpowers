@@ -192,9 +192,17 @@ if [ -n "$plan" ]; then
       if [ -n "$plan_added" ]; then plan_text=$(git -C "$root" show "$plan_added:$plan_rel" 2>/dev/null || true); fi ;;
   esac
   plan_header=$(printf '%s\n' "$plan_text" | awk '!d && index($0, "**Spec:** ") == 1 { print substr($0, 11); d = 1 }' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-  if [ -z "$plan_header" ] || { [ "$plan_header" != "$spec_rel" ] && [ "${plan_header##*/}" != "${spec_rel##*/}" ]; }; then
-    die2 "$spec_rel: plan names a different spec: ${plan_header:-none}: $plan"
-  fi
+  # Plans write the header as a bare path, a backticked path or a link, often
+  # followed by prose; compare the path alone.
+  case "$plan_header" in
+    '`'*) plan_header=${plan_header#'`'}; plan_header=${plan_header%%'`'*} ;;
+    '['*) plan_header=${plan_header#'['}; plan_header=${plan_header%%']'*} ;;
+  esac
+  plan_spec_base=$(basename "$spec_rel")
+  case "$plan_header" in
+    "$spec_rel"|"$spec_rel "*|*"$plan_spec_base"|*"$plan_spec_base "*) ;;
+    *) die2 "$spec_rel: plan names a different spec: ${plan_header:-none}: $plan" ;;
+  esac
 fi
 
 tmp=$(mktemp -d)

@@ -1216,6 +1216,11 @@ printf '# Plan\n\n**Spec:** %s\n' "$zeta_spec" > "$plans_dir/good.md"
 printf '# Plan\n\n**Spec:** %s\n' "$zeta_spec" > "$plans_dir/staged.md"
 printf '# Plan\n\n**Spec:** docs/hyperpowers/specs/2026-10-19-other-design.md\n' > "$plans_dir/other-spec.md"
 printf '# Plan\n\n**Spec:** %s\n' "$zeta_spec" > "$plans_dir/a; plan b.md"
+bt=$(printf '\140')
+printf '# Plan\n\n**Spec:** %s%s%s\n' "$bt" "$zeta_spec" "$bt" > "$plans_dir/hdr-backtick.md"
+printf '# Plan\n\n**Spec:** [%s](../specs/2026-10-19-zeta-design.md) — read it before starting.\n' "$zeta_spec" > "$plans_dir/hdr-link.md"
+printf '# Plan\n\n**Spec:** %s — read it first\n' "$zeta_spec" > "$plans_dir/hdr-prose.md"
+printf '# Plan\n\n**Spec:** %sdocs/hyperpowers/specs/2026-10-19-other-design.md%s\n' "$bt" "$bt" > "$plans_dir/hdr-backtick-other.md"
 printf '# Claude\n' > "$repo/CLAUDE.md"
 mkdir -p "$plans_dir/dir.md"
 printf 'inner\n' > "$plans_dir/dir.md/inner.txt"
@@ -1251,6 +1256,12 @@ refuse_plan "the spec itself is not a plan" "plan overlaps a compiler-owned path
 refuse_plan "a path under the records directory is not a plan" "plan overlaps a compiler-owned path" docs/hyperpowers/decisions/x.md
 run_compile "$repo" "$zeta_spec" --plan docs/hyperpowers/plans/good.md
 if [ "$RC" -eq 0 ] && git -C "$repo" diff --cached --name-status | grep -q '^D.*plans/good.md$'; then pass "a plan whose Spec header names this spec passes the binding check"; else fail "bound plan (rc $RC, err: $ERR)"; fi
+refuse_plan "a backtick-wrapped header naming another spec is still refused" "plan names a different spec: docs/hyperpowers/specs/2026-10-19-other-design.md" docs/hyperpowers/plans/hdr-backtick-other.md
+for hdr in backtick link prose; do
+    run_compile "$repo" "$zeta_spec" --plan "docs/hyperpowers/plans/hdr-$hdr.md"
+    case "$OUT" in *$'\n'"removed docs/hyperpowers/plans/hdr-$hdr.md"*) removed_ok=1 ;; *) removed_ok=0 ;; esac
+    if [ "$RC" -eq 0 ] && [ "$removed_ok" = 1 ]; then pass "a $hdr-form Spec header binds to this spec"; else fail "$hdr header (rc $RC, err: $ERR)"; fi
+done
 
 # --- 22. git failure at each staging operation --------------------------------
 mkdir -p "$TEST_ROOT/bin"

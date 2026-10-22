@@ -155,7 +155,7 @@ fi
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "## Example Workflow" "example workflow carries its section header"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Using hyperpowers:finishing-a-development-branch." \
   "example workflow runs through to the finishing handoff"
-assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 — recorded for fix-round resumes" \
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes" \
   "example workflow records the implementer identity in the ledger"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 — recorded for fix-round resumes" \
   "example workflow records the identity on the task that enters the fix loop"
@@ -385,6 +385,30 @@ assert_contains "$REREVW" "a declined finding is confirmed from its file:line ev
   "the re-review prompt scopes the covering-tests requirement"
 assert_contains "$SDD" "That precondition covers the findings the round fixed; a round that declines every finding is defined below." \
   "the covering-tests precondition is scoped where it first appears"
+
+# SKILL.md — the state branch (portable dossiers, 2026-10-20)
+assert_contains "$SDD" "run \`scripts/sdd-state sync PLAN_FILE\`" "setup syncs the state branch first"
+assert_contains "$SDD" "hyperpowers/state/<key>/plans/<plan-slug>-<hash8>/" "workspace path names the state checkout"
+assert_not_contains "$SDD" "hyperpowers/sdd/<per-repo-key>/plans/<plan-slug>-<hash8>/" "the plain-cache workspace path is gone"
+assert_contains "$SDD" "# SDD ledger — plan: <repo-relative plan path>" "identity line is repo-relative"
+assert_contains "$SDD" "Compare repo-relative paths" "resume compares repo-relative paths"
+assert_contains "$SDD" "session <sid>: mode <current-branch|new-branch|worktree> on <branch> at <toplevel> started <UTC time>" "session line shape"
+assert_contains "$SDD" "\$(date -u +%s)-\$RANDOM\$RANDOM" "session id fallback needs only bash"
+assert_contains "$SDD" "Then run \`scripts/sdd-state verify PLAN_FILE\`" "verify runs after the session line"
+assert_contains "$SDD" "scripts/sdd-state claim PLAN_FILE N --session <sid>" "claim before dispatch"
+assert_contains "$SDD" "take over (\`--takeover\`) only on their explicit yes" "takeover needs an explicit yes"
+assert_contains "$SDD" "(session <sid>, worktree <path>, branch <name>)" "implementer identity carries session, worktree, branch"
+assert_contains "$SDD" "never with the Edit tool" "append discipline when another session may be live"
+assert_contains "$SDD" "scripts/sdd-state snapshot PLAN_FILE" "snapshot cadence named"
+assert_contains "$SDD" "\`remote-finished plans=<ws,...>\` (exit 3)" "the remote-finished outcome stops and asks"
+assert_contains "$SDD" "\`detached-head\`" "a detached checkout is handled at hand-off"
+assert_contains "$SDD" "scripts/sdd-state handoff PLAN_FILE --push" "hand-off command named"
+assert_contains "$SDD" "never on your own initiative" "the push is on request only"
+assert_contains "$SDD" "scripts/sdd-state finish PLAN_FILE" "finish uses the helper"
+assert_contains "$SDD" "git -C <checkout> push <remote> <branch>" "the push command is spelled out"
+assert_not_contains "$SDD" "with \`rm -rf <workspace>\`" "finish no longer rm -rfs the workspace by hand"
+assert_not_contains "$SDD" "The 14-day reclaim in \`scripts/sdd-dir\`" "no automatic reclaim is promised"
+assert_contains "$SDD" "a session that finished its assigned tasks while other sessions' tasks are open reports that and stops" "completion barrier"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

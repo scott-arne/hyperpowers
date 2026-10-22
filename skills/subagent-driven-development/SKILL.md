@@ -116,32 +116,66 @@ digraph process {
 
 ## Setup
 
-Ensure the work happens in an isolated workspace: use
-hyperpowers:using-git-worktrees to create one or verify the existing one.
-Never start implementation on a main/master branch without your human
-partner's explicit consent.
+Settle where the work happens first: use hyperpowers:using-git-worktrees,
+which detects an existing worktree or asks your human partner to choose
+between staying on the current branch, a new branch in place, and a
+worktree, and reports the mode. Never start implementation on a main/master
+branch unless your human partner chose "stay on the current branch" in that
+question; that answer is the consent, and the dossier no longer depends on
+the branch.
 
 Conversation memory does not survive compaction. In real sessions,
 controllers that lost their place have re-dispatched entire completed task
 sequences — the single most expensive failure observed. Track progress in
 a ledger file, not only in todos.
 
-- Each plan owns a workspace: at skill start, run this skill's
-  `scripts/sdd-dir PLAN_FILE` — it prints the plan's scratch directory
-  under the user cache
-  (`${XDG_CACHE_HOME:-~/.cache}/hyperpowers/sdd/<per-repo-key>/plans/<plan-slug>-<hash8>/`),
-  home to every artifact for THIS plan: ledger, briefs, reports, review
-  packages, tier-skip summary. The cache is off any protected path, so
+- Each plan owns a workspace: at skill start, run `scripts/sdd-state sync PLAN_FILE`
+  (it fetches the repository's state branch; outcomes below), then this
+  skill's `scripts/sdd-dir PLAN_FILE` — it prints the plan's workspace
+  inside the repository's state checkout under the user cache
+  (`${XDG_CACHE_HOME:-~/.cache}/hyperpowers/state/<key>/plans/<plan-slug>-<hash8>/`,
+  one checkout per clone, shared by every worktree of it), home to every
+  artifact for THIS plan: ledger, briefs, reports, review packages, claims,
+  tier-skip summary. The ledger, reports, notes and claims are committed to
+  the orphan branch `hyperpowers/state` by `scripts/sdd-state snapshot PLAN_FILE`
+  and travel between hosts with that branch; briefs and review packages are
+  ignored there and regenerate. The cache is off any protected path, so
   writing there never triggers a permission prompt, and it is outside the
-  working tree, so it can never be committed. Another plan's directory is
-  never yours to read or write.
+  working tree, so it can never be committed with the code. Another plan's
+  directory is never yours to read or write. When `sdd-dir` reports
+  `backend=plain` on stderr, the state branch is unavailable on this host
+  and the dossier will not travel from it: tell your human partner once and
+  continue.
+- `sdd-state sync` outcomes: `up-to-date`, `fast-forwarded`, `merged`,
+  `ahead`, `created`, `absent`, `no-remote`, `assumed-absent`, `plain`:
+  continue. `offline` (exit 1): continue on the local checkout and, as soon
+  as the ledger exists (the next bullet), append
+  `state: sync offline at <time>` to it. `offline-no-state` (exit 1), or
+  `needs-sync` from `sdd-dir`: stop; this host has no dossier and cannot
+  learn whether the remote holds one. Ask your human partner to get online,
+  or to confirm `scripts/sdd-state sync --assume-absent PLAN_FILE` when they
+  know no remote dossier exists. `diverged` (exit 3): stop and present both
+  tips and the printed `merge=` command as a question in the Deciding
+  Together shape; never merge on your own. `busy` (exit 3): retry `sync`
+  once after the other session's writes settle, then ask.
+  `foreign` (exit 2): the branch at the state name is not a hyperpowers
+  state branch; stop, relay the stderr remedy (set git config
+  `hyperpowers.stateBranch` to another name), and ask.
+  `remote-finished plans=<ws,...>` (exit 3): another host finished this
+  plan while this one wrote ledger lines that are not on the branch; stop,
+  show your human partner the lines this host added (the ledger's tail
+  beyond the last snapshot), and ask whether to snapshot them (then `sync`
+  again, which reports `diverged` for their merge) or to discard them.
 - Check for this plan's ledger at `<workspace>/progress.md` — this plan's
   workspace only, never a sibling's. The workspace is the plan's identity:
   `scripts/sdd-dir` maps a plan to ONE directory whatever path form you
   hand it, so a ledger sitting in YOUR workspace is this plan's progress
-  even when its first line records the path in another form (relative vs
-  absolute, or through a symlink). Resolve that line and compare the file
-  it points to, not the string. Tasks with a `Task <N>: complete` line are
+  even when its first line records the path in another form. Compare
+  repo-relative paths: reduce the plan you were handed to its path relative
+  to the plan repository's toplevel; a line holding an absolute path matches
+  when it lies inside this repository and reduces to the same relative path,
+  or, when it names a path that does not exist on this host (a ledger
+  written on another machine), when it ends with that relative path. Tasks with a `Task <N>: complete` line are
   DONE — do not re-dispatch them; resume at the first task without one. A
   task whose last line is a fix round is mid-loop: resume the loop at the
   next round. A task whose last line is its implementer identity is a
@@ -154,15 +188,41 @@ a ledger file, not only in todos.
   sibling's: stop and surface it to your human partner rather than
   starting fresh on top of another plan's state.
 - Create the ledger with its identity as the first line:
-  `# SDD ledger — plan: <plan file path>`.
+  `# SDD ledger — plan: <repo-relative plan path>` (never an absolute path:
+  the ledger travels between hosts). Then append your session line:
+  `session <sid>: mode <current-branch|new-branch|worktree> on <branch> at <toplevel> started <UTC time>`,
+  where `<sid>` is `$CLAUDE_CODE_SESSION_ID` on Claude Code and, on a harness
+  without one, a value you generate once as `$(date -u +%s)-$RANDOM$RANDOM`,
+  and the mode is what using-git-worktrees reported. When your human partner
+  assigned this session specific tasks, add `session <sid>: tasks <N,M,...>`.
+  Then run `scripts/sdd-state verify PLAN_FILE`: `ok` continues;
+  `code-missing` names commits the ledger relies on that this checkout
+  lacks, so stop and ask your human partner to pull the named branch;
+  `wrong-repo` names the repository the ledger was handed off from;
+  `plan-stale` names the plan repository branch to pull.
 - The ledger is your recovery map: the commits it names exist in git even
   when your context no longer remembers creating them. After compaction,
   trust the ledger and `git log` over your own recollection.
-- The workspace is scratch, not a deliverable. The Finish step deletes it
-  once the final whole-branch review is clean; `scripts/sdd-dir` also
-  reclaims sibling workspaces idle for 14+ days as a backstop for sessions
-  that never reach Finish. It never reclaims the workspace you are using —
-  every call refreshes it — so a resumed session always finds its ledger.
+- The workspace is scratch for the working tree and a record on the branch:
+  the Finish step removes the plan's directory through
+  `scripts/sdd-state finish PLAN_FILE`, and the branch history keeps it, so
+  an evidence note can cite `git show <sha>:plans/<ws>/<file>`. Nothing
+  inside the checkout is reclaimed automatically; `scripts/sdd-state prune`
+  lists and removes idle plan directories only when asked. Snapshot the
+  workspace (`scripts/sdd-state snapshot PLAN_FILE`) after the pre-flight
+  scan table and after every `Task <N>: complete` line, so a hand-off or a
+  crash loses at most the task in flight. When your human partner asks to
+  hand the run to another host, run `scripts/sdd-state handoff PLAN_FILE --push`
+  (the only time the state branch is pushed, never on your own initiative),
+  report its status line, relay `plan-not-committed` with the commands to
+  commit the plan, relay `code-dirty` with the listed paths as a question
+  (only an explicit yes passes `--code-dirty-ok`), relay `detached-head`
+  by asking for a branch name and creating it (`git switch -c <name>`)
+  before retrying, relay `shallow-source` (exit 12) as a request for a full
+  clone (or `git fetch --unshallow`) before retrying, since a shallow
+  code or plan repository cannot record a root, and list the branches
+  named in `code=` and, when present, `plan=` for your human partner to push
+  here and pull there. You push none of them unless asked.
 
 Read the plan once, note its context and Global Constraints, and create a
 todo per task where your harness surfaces todos — the ledger is the
@@ -276,12 +336,27 @@ and fix-round diffs need it.
 - If an earlier task deferred a finding in the area this task touches — a
   Minor in the ledger, or one your human partner decided — carry a pointer
   to that ledger entry in the dispatch.
+- Claim the task first: `scripts/sdd-state claim PLAN_FILE N --session <sid>`.
+  `claimed`, or `held` by your own session id (a resume after compaction):
+  proceed. `held` by another session: do not take the next task on your own
+  initiative; which tasks may run concurrently is not yet decided, and
+  skipping ahead would decide it by accident. Tell your human partner who
+  holds the task and since when, and ask whether to take it over; take over
+  (`--takeover`) only on their explicit yes to that question, recording the
+  takeover beside the original identity; if they say the other session is
+  still working, wait for their instruction. The exception is a task list
+  your human partner assigned this session (`session <sid>: tasks ...`):
+  work only those tasks, and report a held task in your list the same way.
 - Record the implementer's agent identity from the dispatch result in the
-  ledger's task entry (`Task <N>: implementer <agent-id-or-name>`) —
+  ledger's task entry (`Task <N>: implementer <agent-id-or-name> (session <sid>, worktree <path>, branch <name>)`) —
   fix-loop rounds 1-3 resume this agent, and after compaction the ledger is
   the only place the identity survives once its agent has exited. An
   identity that was never written down forces a fresh takeover where a
   resume was owed.
+- When another session may be live on this plan, append ledger lines with a
+  quoted heredoc (`cat >> <workspace>/progress.md <<'EOF'`), never with the
+  Edit tool, whose read-modify-write drops a line another session appended
+  in between.
 - Never dispatch multiple implementation subagents in parallel (conflicts).
 
 Template: [implementer-prompt.md](implementer-prompt.md)
@@ -594,6 +669,10 @@ the ledger's deferred-minor lines — and at `tier-skips.md`, if any task
 skipped its per-task gate — so it can triage which must be fixed before
 merge.
 
+Final review requires a `Task <N>: complete` line for every task of the
+plan; a session that finished its assigned tasks while other sessions' tasks
+are open reports that and stops rather than finishing the plan.
+
 If the final whole-branch review returns findings, dispatch ONE fix subagent
 with the complete findings list — not one fixer per finding. Compose the
 dispatch from [fix-subagent-prompt.md](fix-subagent-prompt.md).
@@ -628,16 +707,25 @@ looping.
 
 When the final whole-branch review is clean and its fixes are merged:
 
-1. **Delete this plan's workspace** with `rm -rf <workspace>` (the path
-   `scripts/sdd-dir <plan>` prints — the directory holding this plan's
-   ledger, briefs, reports, review packages, and tier-skip summary).
-2. **Verify deletion** with `test ! -d "<workspace>"` to confirm it is gone.
+1. **Read your session line** from the ledger (its `mode`): the next step
+   removes the ledger from the working tree, and
+   hyperpowers:finishing-a-development-branch takes the mode as its input.
+2. **Finish the workspace** with `scripts/sdd-state finish PLAN_FILE`: it
+   refuses with `open-claims` while any claimed task lacks a completion line
+   (that is a plan not finished, not a reason for `--force`); otherwise it
+   removes the plan's directory, commits the removal to the state branch,
+   and prints `last=<sha>`, the commit that still holds the dossier, and
+   `push=<remote>/<branch>`.
+3. **Verify deletion** with `test ! -d "<workspace>"` to confirm it is gone.
+   The push command is `git -C <checkout> push <remote> <branch>`, the
+   checkout being the parent of the `plans/` directory `sdd-dir` printed;
+   run it only if your human partner asks.
 
 A clean finish that leaves the workspace behind is an INCOMPLETE finish —
 "keeping it for reference" is not an option; the repo's commits are the
 durable record. Sibling directories belong to other plans; leave them
-alone. The 14-day reclaim in `scripts/sdd-dir` is only the backstop for
-sessions that never got here.
+alone. `scripts/sdd-state prune` is the only other remover, and it runs only
+when asked.
 
 Use hyperpowers:finishing-a-development-branch.
 

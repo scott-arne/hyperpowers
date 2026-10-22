@@ -97,9 +97,9 @@ fixture branch with a two-decision spec and a plan, the decision-records
 worktree loaded with `--plugin-dir`, and an empty config dir, which in the
 `stop`, `slow-clean` and `slow-clean2` runs also carries a `claudeMdExcludes`
 list. Artifacts: `evidence/2026-10-21-decision-records/task-13-runs/` in
-hyperpowers-evals (commit b80b7ee4d for the first four runs; commit pending in
-hyperpowers-evals for `slow-clean`, `slow-clean2`, the manifest `runs.md` and
-the launcher changes).
+hyperpowers-evals (commit b80b7ee4d for the first four runs; commit 8c9ea74e9 for
+`slow-clean`, `slow-clean2`, the manifest `runs.md` and the launcher
+changes).
 
 | Run | Suite | Extractor at collection | Records staged | Plan deletion staged | Menu message carried the diff | Notes applied | Records commit after "3" | Suite end to menu | Answer to commit |
 |---|---|---|---|---|---|---|---|---|---|

@@ -76,6 +76,7 @@ digraph process {
     "More tasks remain?" [shape=diamond];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [shape=box];
     "Final findings? ONE fix dispatch, one scoped re-review, surface residuals" [shape=box];
+    "Dispatch decision extractor (background)" [shape=box];
     "Codex final code gate\n(Claude Code; degrade if absent)" [shape=box];
     "Final review clean: delete this plan's workspace" [shape=box];
     "Use hyperpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
@@ -108,7 +109,8 @@ digraph process {
     "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
     "More tasks remain?" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="no"];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, surface residuals";
-    "Final findings? ONE fix dispatch, one scoped re-review, surface residuals" -> "Codex final code gate\n(Claude Code; degrade if absent)";
+    "Final findings? ONE fix dispatch, one scoped re-review, surface residuals" -> "Dispatch decision extractor (background)";
+    "Dispatch decision extractor (background)" -> "Codex final code gate\n(Claude Code; degrade if absent)";
     "Codex final code gate\n(Claude Code; degrade if absent)" -> "Final review clean: delete this plan's workspace";
     "Final review clean: delete this plan's workspace" -> "Use hyperpowers:finishing-a-development-branch";
 }
@@ -172,6 +174,19 @@ binding authority the plan argues from, and conflicts inside the plan
 resolve against it. A plan whose spec is `none` or unreachable gets a
 ledger line saying so — without a spec, a conflict has no tiebreaker but
 your human partner.
+
+Dry-run the decision compiler over that spec now:
+`bash <finishing skill's directory>/scripts/decisions-compile <spec> --dry-run`
+(the finishing-a-development-branch skill, `../finishing-a-development-branch/`
+relative to this one). Exit 0 confirms the spec's `## Decisions` list parses;
+copy its numbered listing into the ledger under a `Decisions listing:` line
+for the extractor's dispatch. Exit 2 for a missing list is the legacy-spec
+case: draft the list from the spec's own text, one item per decision it
+states, show it to your human partner, and write it into the spec once they
+approve it, committing that edit on the branch. Any other exit 2 names what
+to fix first (a spec that is not committed, or a `Supersedes:` problem) to
+resolve with them the same way. The session is at its start, so this costs
+no cycle time.
 
 Before dispatching Task 1, scan the plan once for conflicts, writing down
 what you checked as you check it:
@@ -607,6 +622,21 @@ finding that conflicts with the plan's text — goes to your human partner
 with the evidence, as BLOCKED, when finishing-a-development-branch presents
 the options.
 
+**Dispatch the decision extractor.** Once the fix wave and its re-review are
+clean (or the final review returned no findings), take a scratch directory
+from `../requesting-code-review/scripts/codex-review-dir`, copy the latest
+review package and `<workspace>/progress.md` into it, and dispatch the
+extractor in the background, composed from
+`../finishing-a-development-branch/decision-notes-prompt.md` with those two
+copies, the plan, the spec, the `Decisions listing:` from the ledger, the
+index (`decisions/README.md` beside the spec's directory) when it exists, and
+`<dir>/decision-notes.md` as its output path. Record it in the ledger:
+`Decision extractor: <task id> -> <dir>/decision-notes.md`. It reads nothing
+inside the workspace, so Finish may delete the workspace while it runs;
+finishing-a-development-branch collects it after the full suite and never
+waits for it, and neither do you. On a harness with no tracked background
+subagent, skip the dispatch and note it in the ledger.
+
 **Codex Review Gate — final whole-branch (Claude Code only).** After the final code-reviewer
 subagent and its fix wave, and before hyperpowers:finishing-a-development-branch,
 run the gate using the final whole-branch code recipe with `--base <branch
@@ -640,6 +670,13 @@ alone. The 14-day reclaim in `scripts/sdd-dir` is only the backstop for
 sessions that never got here.
 
 Use hyperpowers:finishing-a-development-branch.
+Hand it the plan, the spec, and the extractor's task id and output path (read
+the ledger's `Decision extractor:` line before step 1 deletes the workspace).
+If a Codex-gate fix changed one of the spec's decisions, show your human
+partner the change you would write into that `## Decisions` item, and with
+their approval write it and commit it on the branch before the hand-off, so
+the records describe what ships; without their approval the item stands and
+the change is raised again at the menu.
 
 ## Common Rationalizations
 

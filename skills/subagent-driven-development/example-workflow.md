@@ -70,9 +70,11 @@ Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
 [After all tasks]
 [Run review-package PLAN_FILE MERGE_BASE HEAD; dispatch final code-reviewer, most capable model, with tier-skips.md]
 Final reviewer: All requirements met. Deferred minors triaged: none block merge.
+[Dispatch the decision extractor in the background: review package and ledger copied to a codex-review-dir scratch dir]
+[Ledger: Decision extractor: task-9f2a -> <dir>/decision-notes.md]
 [Codex final code gate over the branch range, tier-skips.md among the dossier adjudications — approved]
 
 [Delete this plan's workspace — the record now lives in git]
 
-Done! Using hyperpowers:finishing-a-development-branch.
+Done! Using hyperpowers:finishing-a-development-branch — plan, spec, and extractor task-9f2a with its notes path handed over.
 ```

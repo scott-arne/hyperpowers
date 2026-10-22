@@ -71,7 +71,7 @@ digraph process {
         "Codex task code gate\n(Claude Code; degrade if absent)" [shape=box];
         "Codex gate blocking findings?" [shape=diamond];
         "Append completion to ledger, mark todo complete (where kept)" [shape=box];
-        "Snapshot the workspace (scripts/sdd-state snapshot)" [shape=box];
+        "Snapshot the workspace (scripts/sdd-state snapshot); error or none stops" [shape=box];
     }
 
     "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" [shape=box];
@@ -107,8 +107,8 @@ digraph process {
     "Codex task code gate\n(Claude Code; degrade if absent)" -> "Codex gate blocking findings?";
     "Codex gate blocking findings?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="yes - same five-round cap"];
     "Codex gate blocking findings?" -> "Append completion to ledger, mark todo complete (where kept)" [label="no"];
-    "Append completion to ledger, mark todo complete (where kept)" -> "Snapshot the workspace (scripts/sdd-state snapshot)";
-    "Snapshot the workspace (scripts/sdd-state snapshot)" -> "More tasks remain?";
+    "Append completion to ledger, mark todo complete (where kept)" -> "Snapshot the workspace (scripts/sdd-state snapshot); error or none stops";
+    "Snapshot the workspace (scripts/sdd-state snapshot); error or none stops" -> "More tasks remain?";
     "More tasks remain?" -> "Claim the task (scripts/sdd-state claim): done means skip it; held by another session means ask" [label="yes"];
     "More tasks remain?" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="no"];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, surface residuals";
@@ -197,10 +197,14 @@ a ledger file, not only in todos.
   file means this workspace is corrupt, not that you wandered into a
   sibling's: stop and surface it to your human partner rather than
   starting fresh on top of another plan's state.
-- When there is no ledger, create it with its identity as the first line:
+- When there is no ledger, create it with its identity as the first line,
   `# SDD ledger — plan: <repo-relative plan path>` (never an absolute path:
-  the ledger travels between hosts). Whether you created it or found one,
-  append your session line:
+  the ledger travels between hosts), through a no-clobber write so two
+  sessions that both saw no ledger cannot overwrite each other:
+  `( set -o noclobber; printf '# SDD ledger — plan: %s\n' <repo-relative plan path> > <workspace>/progress.md )`.
+  When that write fails because the file now exists, another session
+  created it first: continue as if you had found it. Whether you created
+  it or found one, append your session line (with `>>`, never a rewrite):
   `session <sid>: mode <current-branch|new-branch|worktree> on <branch> at <toplevel> started <UTC time>`,
   where `<sid>` is `$CLAUDE_CODE_SESSION_ID` on Claude Code and, on a harness
   without one, a value you generate once as `$(date -u +%s)-$RANDOM$RANDOM`,
@@ -225,7 +229,13 @@ a ledger file, not only in todos.
   lists and removes idle plan directories only when asked. Snapshot the
   workspace (`scripts/sdd-state snapshot PLAN_FILE`) after the pre-flight
   scan table and after every `Task <N>: complete` line, so a hand-off or a
-  crash loses at most the task in flight. When your human partner asks to
+  crash loses at most the task in flight. The snapshot is the completion's
+  durable record, so its outcome decides whether you go on: `snapshot` (or
+  `plain`, where no state branch exists) continues; `none` means the line
+  you just wrote is not in the workspace the helper sees, and `error` (exit
+  2) means the commit or the ref update failed; both stop until the
+  snapshot succeeds, before the next task and before the final review.
+  When your human partner asks to
   hand the run to another host, run `scripts/sdd-state handoff PLAN_FILE --push`
   (the only time the state branch is pushed, never on your own initiative),
   report its status line, relay `plan-not-committed` with the commands to

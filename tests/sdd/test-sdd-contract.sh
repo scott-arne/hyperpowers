@@ -419,5 +419,8 @@ assert_contains "$SDD" "read its completion line, mark the task done, and never 
 assert_contains "$SDD" "The scan only reads" "the ledger scan acts only after verify"
 assert_contains "$SDD" "Snapshot the workspace (scripts/sdd-state snapshot)" "the process graph snapshots after completion"
 
+assert_contains "$SDD" "set -o noclobber" "ledger creation is exclusive"
+assert_contains "$SDD" "both stop until the snapshot succeeds" "a failed snapshot stops the loop"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

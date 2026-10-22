@@ -154,7 +154,7 @@ once. Before executing their option: write each accepted proposal into the
 spec (an accepted undocumented decision is appended after the list's last
 item, never inserted, so the numbers the notes use stay with their records;
 an accepted supersession is a `Supersedes:` line on the item it belongs to),
-commit that spec edit first (a docs commit of the spec alone), then re-run
+commit that spec edit first (`git commit -- <spec> -m "docs: <spec filename without -design.md> accepts a decision from the finish"`, a pathspec commit, so the staged records stay staged), then re-run
 the compiler with the same arguments, and because the staged set
 changed, show the new complete staged diff and ask only for its approval,
 not the dispositions again; record a dismissal in the hand-back in their

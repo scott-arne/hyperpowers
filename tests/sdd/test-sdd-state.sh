@@ -1100,5 +1100,97 @@ git -C "$plainhost" config user.name t; git -C "$plainhost" config user.email t@
 out=$(run_state "$plainhost" verify docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 9 ] && [ "$out" = "status=code-missing missing=$(git -C "$PAIR_A" rev-parse --short=7 "$head2_a") branch=main" ]; then pass "under the plain backend verify materializes the dossier before judging it, and checks its ranges"; else fail "under the plain backend verify materializes the dossier before judging it, and checks its ranges (rc=$rc: $out)"; fi
 
+echo ""
+echo "=== handoff ==="
+make_pair p10
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa=$(run_sdd_dir "$PAIR_A" docs/plan.md)
+printf 'work\n' > "$PAIR_A/work.txt"; git -C "$PAIR_A" add work.txt; git -C "$PAIR_A" commit -qm "task 1"
+head_a=$(git -C "$PAIR_A" rev-parse HEAD)
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits %s..%s, review clean)\n' "$(git -C "$PAIR_A" rev-parse --short=7 HEAD~1)" "$(git -C "$PAIR_A" rev-parse --short=7 HEAD)" > "$wsa/progress.md"
+: > "$PAIR_A/docs/untracked.md"
+out=$(run_state "$PAIR_A" handoff docs/untracked.md); rc=$?
+if [ "$rc" -eq 8 ] && [ "$out" = "status=plan-not-committed file=docs/untracked.md" ]; then pass "handoff refuses an untracked plan"; else fail "handoff refuses an untracked plan (rc=$rc: $out)"; fi
+rm -f "$PAIR_A/docs/untracked.md"
+printf 'edit\n' >> "$PAIR_A/docs/plan.md"
+out=$(run_state "$PAIR_A" handoff docs/plan.md); rc=$?
+if [ "$rc" -eq 8 ]; then pass "handoff refuses a modified plan"; else fail "handoff refuses a modified plan (rc=$rc: $out)"; fi
+out=$(run_state "$PAIR_A" handoff docs/plan.md --plan-untracked-ok); rc=$?
+if [ "$rc" -eq 10 ] && [ "${out%% *}" = "status=code-dirty" ]; then pass "--plan-untracked-ok waives the plan check and the dirty tree is caught next"; else fail "--plan-untracked-ok waives the plan check and the dirty tree is caught next (rc=$rc: $out)"; fi
+git -C "$PAIR_A" checkout -q -- docs/plan.md
+: > "$PAIR_A/stray.txt"
+out=$(run_state "$PAIR_A" handoff docs/plan.md); rc=$?
+if [ "$rc" -eq 10 ] && [ "$out" = "status=code-dirty paths=stray.txt" ]; then pass "an untracked file is a dirty code tree"; else fail "an untracked file is a dirty code tree (rc=$rc: $out)"; fi
+out=$(run_state "$PAIR_A" handoff docs/plan.md --code-dirty-ok); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=snapshot" ]; then pass "--code-dirty-ok waives the dirty check"; else fail "--code-dirty-ok waives the dirty check (rc=$rc: $out)"; fi
+rm -f "$PAIR_A/stray.txt"
+out=$(run_state "$PAIR_A" handoff docs/plan.md); rc=$?
+case "$out" in "status=snapshot sha="???????" code=main@"???????" push=origin/hyperpowers/state") pass "handoff without --push snapshots and names the push target" ;; *) fail "handoff without --push snapshots and names the push target (rc=$rc: $out)" ;; esac
+if grep -Eq "^handoff: code root=[0-9a-f]{40} main@$head_a at [0-9TZ:-]+ from " "$wsa/progress.md"; then pass "the ledger records the code repository's root, branch and head"; else fail "the ledger records the code repository's root, branch and head"; fi
+if ! git -C "$PAIR_REMOTE" rev-parse -q --verify refs/heads/hyperpowers/state >/dev/null 2>&1; then pass "nothing was pushed without --push"; else fail "nothing was pushed without --push"; fi
+
+# The first push is scanned over the whole history, root commit included.
+git -C "$PAIR_A" config hyperpowers.prePushScan '! grep -q SECRETTOKEN'
+printf 'SECRETTOKEN\n' > "$wsa/task-2-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+rm -f "$wsa/task-2-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+out=$(run_state "$PAIR_A" handoff docs/plan.md --push 2>/dev/null); rc=$?
+if [ "$rc" -eq 5 ] && [ "$out" = "status=scan-failed reason=scanner" ] && ! git -C "$PAIR_REMOTE" rev-parse -q --verify refs/heads/hyperpowers/state >/dev/null 2>&1; then pass "content added and deleted before the first push still blocks it"; else fail "content added and deleted before the first push still blocks it (rc=$rc: $out)"; fi
+git -C "$PAIR_A" config hyperpowers.prePushScan 'cat > /dev/null'
+out=$(run_state "$PAIR_A" handoff docs/plan.md --push); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=pushed" ] && [ "$(git -C "$PAIR_REMOTE" rev-parse refs/heads/hyperpowers/state)" = "$(git -C "$PAIR_A" rev-parse hyperpowers/state)" ]; then pass "a passing scanner lets --push publish the state branch"; else fail "a passing scanner lets --push publish the state branch (rc=$rc: $out)"; fi
+git -C "$PAIR_A" config hyperpowers.prePushScan '! grep -q SECRETTOKEN'
+printf 'SECRETTOKEN again\n' > "$wsa/task-3-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+rm -f "$wsa/task-3-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+out=$(run_state "$PAIR_A" handoff docs/plan.md --push 2>/dev/null); rc=$?
+if [ "$rc" -eq 5 ]; then pass "content added and deleted since the last push blocks a later push"; else fail "content added and deleted since the last push blocks a later push (rc=$rc: $out)"; fi
+git -C "$PAIR_A" config --unset hyperpowers.prePushScan
+
+# A snapshot queued during a hand-off lands after the push; the push carries
+# exactly the scanned commit.
+co_a7="$STATE_ROOT/$(state_key "$PAIR_A")"
+git -C "$PAIR_A" config hyperpowers.prePushScan 'cat > /dev/null'
+: > "$co_a7/.handoff-pause"
+( cd "$PAIR_A" && HYPERPOWERS_TEST_PAUSE_AT=handoff-after-scan bash "$SDD_STATE" handoff docs/plan.md --push > "$TEST_ROOT/p7.handoff" 2>/dev/null ) &
+sleep 1
+printf 'queued\n' > "$wsa/task-9-report.md"
+( run_state "$PAIR_A" snapshot docs/plan.md > "$TEST_ROOT/p7.snap" 2>/dev/null ) &
+sleep 1; rm -f "$co_a7/.handoff-pause"; wait
+pushed_sha=$(sed -n 's/^status=pushed sha=\([0-9a-f]*\).*/\1/p' "$TEST_ROOT/p7.handoff")
+if [ -n "$pushed_sha" ] && [ "$(git -C "$PAIR_REMOTE" rev-parse --short=7 refs/heads/hyperpowers/state)" = "$pushed_sha" ] && [ "$(git -C "$PAIR_A" rev-parse --short=7 hyperpowers/state)" != "$pushed_sha" ] && grep -q '^status=snapshot' "$TEST_ROOT/p7.snap"; then pass "a snapshot queued during a hand-off waits; the push carries the scanned commit only"; else fail "a snapshot queued during a hand-off waits ($(cat "$TEST_ROOT/p7.handoff") / $(cat "$TEST_ROOT/p7.snap"))"; fi
+git -C "$PAIR_A" config --unset hyperpowers.prePushScan
+git -C "$PAIR_A" checkout -q --detach
+out=$(run_state "$PAIR_A" handoff docs/plan.md); rc=$?
+if [ "$rc" -eq 11 ] && [ "$out" = "status=detached-head repo=code" ]; then pass "a detached code checkout cannot hand off"; else fail "a detached code checkout cannot hand off (rc=$rc: $out)"; fi
+git -C "$PAIR_A" checkout -q main
+
+# Arrival on the second host after a real hand-off.
+out=$(run_state "$PAIR_B" sync docs/plan.md)
+if [ "${out%% *}" = "status=created" ]; then pass "the second host receives the handed-off dossier"; else fail "the second host receives the handed-off dossier ($out)"; fi
+out=$(run_state "$PAIR_B" verify docs/plan.md); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% *}" = "status=code-missing" ]; then pass "arrival before the code pull is code-missing"; else fail "arrival before the code pull is code-missing (rc=$rc: $out)"; fi
+git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
+if [ "$(run_state "$PAIR_B" verify docs/plan.md)" = "status=ok tasks=1" ]; then pass "arrival after the code pull verifies"; else fail "arrival after the code pull verifies"; fi
+if [ "$(run_state "$rp" handoff docs/plan.md 2>/dev/null)" = "status=plain" ]; then pass "handoff under the plain backend reports plain"; else fail "handoff under the plain backend reports plain"; fi
+rc=0; run_state "$rp" handoff docs/plan.md >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 7 ]; then pass "handoff under the plain backend exits 7"; else fail "handoff under the plain backend exits 7 (rc=$rc)"; fi
+
+# Cross-repository: plan in P, code in C; a clean destination pulls both.
+make_pair p10plan; P_A=$PAIR_A; P_B=$PAIR_B
+make_pair p10code; C_A=$PAIR_A; C_B=$PAIR_B
+mkdir -p "$P_A/docs"; : > "$P_A/docs/plan.md"; git -C "$P_A" add docs; git -C "$P_A" commit -qm plan; git -C "$P_A" push -q origin main 2>/dev/null
+( cd "$C_A" && bash "$SDD_STATE" sync "$P_A/docs/plan.md" >/dev/null )
+wsp=$(cd "$C_A" && bash "$SDD_DIR" "$P_A/docs/plan.md")
+printf 'code\n' > "$C_A/code.txt"; git -C "$C_A" add code.txt; git -C "$C_A" commit -qm "task 1"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits %s..%s, review clean)\n' "$(git -C "$C_A" rev-parse --short=7 HEAD~1)" "$(git -C "$C_A" rev-parse --short=7 HEAD)" > "$wsp/progress.md"
+out=$(cd "$C_A" && bash "$SDD_STATE" handoff "$P_A/docs/plan.md" --push); rc=$?
+if [ "$rc" -eq 0 ] && case "$out" in "status=pushed sha="???????" code=main@"???????" plan=main@"???????) true;; *) false;; esac && grep -q '^handoff: plan root=' "$wsp/progress.md"; then pass "a cross-repository handoff records and names the plan branch"; else fail "a cross-repository handoff records and names the plan branch (rc=$rc: $out)"; fi
+git -C "$C_A" push -q origin main 2>/dev/null
+git -C "$P_B" pull -q origin main 2>/dev/null; git -C "$C_B" pull -q origin main 2>/dev/null
+( cd "$C_B" && bash "$SDD_STATE" sync "$P_B/docs/plan.md" >/dev/null )
+out=$(cd "$C_B" && bash "$SDD_STATE" verify "$P_B/docs/plan.md"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=ok tasks=1" ]; then pass "clean clones of both repositories verify after pulling the named branches"; else fail "clean clones of both repositories verify after pulling the named branches (rc=$rc: $out)"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

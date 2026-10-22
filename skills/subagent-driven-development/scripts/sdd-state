@@ -1136,6 +1136,89 @@ cmd_verify() {
   return "$rc"
 }
 
+# --- handoff -----------------------------------------------------------------
+# Snapshot for another host. Refuses an uncommitted plan file (the
+# destination could not start) and a dirty code tree (work would stay
+# behind unnoticed); records the code repository's identity, and the plan
+# repository's when it differs; pushes only with --push, after the
+# configured scan over every commit the push would publish.
+cmd_handoff() {
+  local plan="" push=0 plan_ok=0 dirty_ok=0 code="" rel dirty code_root code_branch code_sha plan_root plan_sha plan_branch extra="" ledger out rc sha cmd range patch err pushto
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --push) push=1; shift ;;
+      --plan-untracked-ok) plan_ok=1; shift ;;
+      --code-dirty-ok) dirty_ok=1; shift ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] || usage
+  resolve_plan "$plan"
+  rel=$(hp_plan_rel "$plan")
+  if [ "$plan_ok" -eq 0 ]; then
+    if ! git -C "$REPO" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 || ! git -C "$REPO" diff --quiet HEAD -- "$rel" 2>/dev/null; then
+      echo "status=plan-not-committed file=$(enc "$rel")"; return 8
+    fi
+  fi
+  if [ -z "$code" ]; then
+    code=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "sdd-state: not inside a code repository; pass --code-repo DIR" >&2; exit 2; }
+  fi
+  code=$(hp_physical_dir "$code") || { echo "sdd-state: no such directory: $code" >&2; exit 2; }
+  if [ "$dirty_ok" -eq 0 ]; then
+    dirty=$(git -C "$code" status --porcelain 2>/dev/null | head -n 3 | sed 's/^...//; s/ /%20/g' | tr '\n' ',')
+    if [ -n "$dirty" ]; then echo "status=code-dirty paths=${dirty%,}"; return 10; fi
+  fi
+  if [ "$BACKEND" != branch ]; then echo "status=plain"; return 7; fi
+  # A detached checkout has no branch the other host could pull.
+  code_branch=$(git -C "$code" branch --show-current 2>/dev/null)
+  [ -n "$code_branch" ] || { echo "status=detached-head repo=code"; return 11; }
+  if [ "$code" != "$REPO" ]; then
+    plan_branch=$(git -C "$REPO" branch --show-current 2>/dev/null)
+    [ -n "$plan_branch" ] || { echo "status=detached-head repo=plan"; return 11; }
+  fi
+  code_root=$(root_of "$code"); code_sha=$(git -C "$code" rev-parse HEAD)
+  mkdir -p "$WSDIR"
+  ledger=$(ledger_path)
+  [ -f "$ledger" ] || printf '%s%s\n' "$IDENTITY_PREFIX" "$rel" > "$ledger"
+  printf 'handoff: code root=%s %s@%s at %s from %s\n' "$code_root" "$code_branch" "$code_sha" "$(hp_utc_now)" "$(hostname)" >> "$ledger"
+  if [ "$code" != "$REPO" ]; then
+    plan_root=$(root_of "$REPO"); plan_sha=$(git -C "$REPO" rev-parse HEAD)
+    printf 'handoff: plan root=%s %s@%s\n' "$plan_root" "$plan_branch" "$plan_sha" >> "$ledger"
+    extra=" plan=$plan_branch@${plan_sha:0:7}"
+  fi
+  # The lock is held from here through the scan and the push, so what is
+  # pushed is exactly what was scanned.
+  hp_lock "$PLAN_DIR" || return 2
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  out=$(hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: handoff $(hp_utc_now)" "plans/$WS"); rc=$?
+  [ "$rc" -eq 0 ] || { hp_unlock; echo "status=error"; return 2; }
+  sha=$(git -C "$CO" rev-parse "refs/heads/$BRANCH")
+  if hp_has_remote "$PLAN_DIR"; then pushto="$REMOTE/$BRANCH"; else pushto=none; fi
+  if [ "$push" -eq 0 ] || [ "$pushto" = none ]; then
+    hp_unlock
+    echo "status=snapshot sha=${sha:0:7} code=$code_branch@${code_sha:0:7}$extra push=$pushto"; return 0
+  fi
+  cmd=$(git -C "$PLAN_DIR" config --get hyperpowers.prePushScan 2>/dev/null || true)
+  if [ -n "$cmd" ]; then
+    # Every commit the push publishes, the root commit's own patch included.
+    if git -C "$CO" rev-parse -q --verify "refs/remotes/$REMOTE/$BRANCH^{commit}" >/dev/null 2>&1; then range="$REMOTE/$BRANCH..HEAD"; else range=HEAD; fi
+    patch=$(mktemp "${TMPDIR:-/tmp}/sdd-scan.XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
+    if ! git -C "$CO" log --root -p --format= --no-color "$range" -- . > "$patch" 2>/dev/null; then rm -f "$patch"; hp_unlock; echo "status=scan-failed reason=git"; return 5; fi
+    if ! (cd "$CO" && HYPERPOWERS_SCAN_RANGE="$range" sh -c "$cmd" < "$patch" >&2); then rm -f "$patch"; hp_unlock; echo "status=scan-failed reason=scanner"; return 5; fi
+    rm -f "$patch"
+  fi
+  if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = handoff-after-scan ]; then while [ -e "$CO/.handoff-pause" ]; do sleep 0.1; done; fi
+  if ! err=$(git -C "$CO" push -q "$REMOTE" "$sha:refs/heads/$BRANCH" 2>&1); then
+    hp_unlock
+    printf '%s\n' "$err" >&2
+    echo "status=push-failed sha=${sha:0:7}"; return 1
+  fi
+  hp_unlock
+  echo "status=pushed sha=${sha:0:7} code=$code_branch@${code_sha:0:7}$extra"
+}
+
 # --- dispatch ----------------------------------------------------------------
 sub=${1:-}
 [ -n "$sub" ] || usage
@@ -1148,5 +1231,6 @@ case "$sub" in
   prune) cmd_prune "$@" ;;
   sync) cmd_sync "$@" ;;
   verify) cmd_verify "$@" ;;
+  handoff) cmd_handoff "$@" ;;
   *) usage ;;
 esac

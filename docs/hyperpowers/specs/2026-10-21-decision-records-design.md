@@ -236,10 +236,15 @@ and the whitespace after it; every continuation line loses that many leading
 columns when it has them, and is otherwise left as written. Nothing else in
 the item changes.
 
-**Title.** When the item opens with bold text (`**...**`), the title is that
-text with one trailing `.` or `:` removed. Otherwise the title is the item's
-first clause: the text up to the first `. ` or `: ` on its first line, or the
-whole first line, cut to 80 characters.
+**Title.** The title comes from the item's first paragraph: its lines up to
+the first blank line, excluding any `Supersedes:` line, joined with single
+spaces. When that paragraph opens with bold text (`**...**`), the title is
+that text with one trailing `.` or `:` removed, matched across the joined
+paragraph, so a bold title that wraps to a second line is whole. Otherwise
+the title is the paragraph's first clause: the text up to the first `. ` or
+`: `, or the whole paragraph, cut to 80 characters at a word boundary. A
+title never begins with `**`. (Corrected 2026-10-22: the dry run over this
+repository's specs found wrapped bold titles and first-line fragments.)
 
 **Supersedes in a spec item.** A line inside the item, after any list marker
 and whitespace, of the form `Supersedes: <path>[, <path>]`. This line is the

@@ -2813,6 +2813,8 @@ git commit -m "docs: plans leave the tree at finish, decisions live under docs/h
 
 - [ ] **Step 1: Run the dry run over every spec and tabulate**
 
+Correction (2026-10-22): the first run reported BLOCKED as this step provides for. `title_of` read an item's first line only, so a bold title that wrapped to line 2 kept a raw `**` and was cut at 80 characters, and a plain item without a clause stop on line 1 gave a mid-phrase fragment. The compiler now reads the item's first paragraph joined across lines, Supersedes lines excluded, with bold matched across the join and a plain clause cut at a word boundary (commit 5f82cb9, section 28 of its suite), and the spec's Title paragraph in Design section 1 says so. Two more specs parse than the prediction counted, because their lists sit under headings the heading rule admits, such as `## 2. Locked decisions (from brainstorming)`; the split is 15 exit 0 and 10 exit 2, and the evidence note records it.
+
 ```bash
 cd <the worktree>
 {

@@ -682,6 +682,122 @@ git -C "$repo" add -A docs/hyperpowers/decisions
 if [ "$(git -C "$repo" write-tree)" = "$tree_before" ] || [ -z "$(git -C "$repo" status --porcelain -- docs/hyperpowers/decisions)" ]; then pass "the records directory is byte-identical after the refused run"; else fail "records changed by a refused run"; fi
 git -C "$repo" checkout -q -- docs/hyperpowers/specs/2026-09-02-self-design.md
 
+# An interrupted run can leave the targets reconciled while the records still
+# carry their old Supersedes lines; the re-run must finish the job. The state
+# is built by hand: decision 1 moves from the hook record to the twenty-run bar.
+write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
+# New
+
+## Decisions
+
+1. **Skill text, not a hook.** Measured no gain from the hook.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+2. **Still no hook.** A second reversal of the same record.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+EOF
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+commit_all "$repo" "fan-in again"
+write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
+# New
+
+## Decisions
+
+1. **Skill text, not a hook.** Measured no gain from the hook.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-twenty-run-bar.md
+2. **Still no hook.** A second reversal of the same record.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+EOF
+commit_all "$repo" "decision 1 retargeted"
+twenty="$repo/docs/hyperpowers/decisions/2026-07-01-twenty-run-bar.md"
+sed 's|^- Status: .*|- Status: superseded by docs/hyperpowers/decisions/2026-08-01-still-no-hook.md|' "$old" > "$TEST_ROOT/old.new" && cp "$TEST_ROOT/old.new" "$old"
+sed 's|^- Status: .*|- Status: superseded by docs/hyperpowers/decisions/2026-08-01-skill-text-not-a-hook.md|' "$twenty" > "$TEST_ROOT/twenty.new" && cp "$TEST_ROOT/twenty.new" "$twenty"
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+rec1="$repo/docs/hyperpowers/decisions/2026-08-01-skill-text-not-a-hook.md"
+if [ "$RC" -eq 0 ] && grep -q '^- Supersedes: docs/hyperpowers/decisions/2026-07-01-twenty-run-bar.md$' "$rec1"; then pass "the interrupted-run state: the record takes its new Supersedes line"; else fail "interrupted-run state (rc $RC, err: $ERR, got: $(grep '^- Supersedes' "$rec1"))"; fi
+if [ "$(grep '^- Status' "$old")" = "- Status: superseded by docs/hyperpowers/decisions/2026-08-01-still-no-hook.md" ]; then pass "the old target is superseded by decision 2 only"; else fail "old target status (got: $(grep '^- Status' "$old"))"; fi
+if [ "$(grep '^- Status' "$twenty")" = "- Status: superseded by docs/hyperpowers/decisions/2026-08-01-skill-text-not-a-hook.md" ]; then pass "the new target is superseded by decision 1"; else fail "new target status (got: $(grep '^- Status' "$twenty"))"; fi
+commit_all "$repo" "interrupted state completed"
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+case "$OUT" in "wrote 0 records, updated 0, superseded 0,"*) out_ok=yes ;; *) out_ok=no ;; esac
+if [ "$RC" -eq 0 ] && [ "$out_ok" = yes ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a second run reports nothing changed"; else fail "second run (rc $RC, out: $OUT, status: $(git -C "$repo" status --porcelain))"; fi
+
+# Incremental fan-in: a third decision joins two that already supersede the
+# hook record.
+write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
+# New
+
+## Decisions
+
+1. **Skill text, not a hook.** Measured no gain from the hook.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+2. **Still no hook.** A second reversal of the same record.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+EOF
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+commit_all "$repo" "two superseders"
+write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
+# New
+
+## Decisions
+
+1. **Skill text, not a hook.** Measured no gain from the hook.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+2. **Still no hook.** A second reversal of the same record.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+3. **Third reversal.** A third.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+EOF
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+if [ "$RC" -eq 0 ] && [ "$(grep '^- Status' "$old")" = "- Status: superseded by docs/hyperpowers/decisions/2026-08-01-skill-text-not-a-hook.md, docs/hyperpowers/decisions/2026-08-01-still-no-hook.md, docs/hyperpowers/decisions/2026-08-01-third-reversal.md" ]; then
+    pass "a later decision of the same spec joins an existing fan-in, sorted"
+else
+    fail "incremental fan-in (rc $RC, err: $ERR, got: $(grep '^- Status' "$old"))"
+fi
+commit_all "$repo" "three superseders"
+
+# A swap of two decisions' targets, before the freeze.
+srepo="$TEST_ROOT/swap"
+make_repo "$srepo"
+write_spec "$srepo" 2026-07-01-targets-design.md <<'EOF'
+# Targets
+
+## Decisions
+
+- **Alpha choice.** A.
+- **Beta choice.** B.
+EOF
+commit_all "$srepo" "targets spec"
+run_compile "$srepo" docs/hyperpowers/specs/2026-07-01-targets-design.md
+commit_all "$srepo" "targets records"
+write_spec "$srepo" 2026-08-01-swap-design.md <<'EOF'
+# Swap
+
+## Decisions
+
+1. **Replace A.** Text.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-alpha-choice.md
+2. **Replace B.** Text.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-beta-choice.md
+EOF
+run_compile "$srepo" docs/hyperpowers/specs/2026-08-01-swap-design.md
+commit_all "$srepo" "swap records"
+write_spec "$srepo" 2026-08-01-swap-design.md <<'EOF'
+# Swap
+
+## Decisions
+
+1. **Replace A.** Text.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-beta-choice.md
+2. **Replace B.** Text.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-alpha-choice.md
+EOF
+run_compile "$srepo" docs/hyperpowers/specs/2026-08-01-swap-design.md
+if [ "$RC" -eq 0 ] && [ "$(grep '^- Status' "$srepo/docs/hyperpowers/decisions/2026-07-01-alpha-choice.md")" = "- Status: superseded by docs/hyperpowers/decisions/2026-08-01-replace-b.md" ] && [ "$(grep '^- Status' "$srepo/docs/hyperpowers/decisions/2026-07-01-beta-choice.md")" = "- Status: superseded by docs/hyperpowers/decisions/2026-08-01-replace-a.md" ]; then
+    pass "swapping two decisions' Supersedes lines swaps the targets' statuses"
+else
+    fail "swap (rc $RC, err: $ERR)"
+fi
+
 # --- 16. --reindex ------------------------------------------------------------
 rm "$idx"
 run_compile "$repo" --reindex docs/hyperpowers/decisions
@@ -700,6 +816,9 @@ run_compile "$repo" --reindex docs/hyperpowers/decisions --dry-run
 if [ "$RC" -eq 2 ]; then pass "--reindex with another option is a usage error"; else fail "--reindex --dry-run (got $RC)"; fi
 run_compile "$repo" --reindex docs/hyperpowers/decisions docs/hyperpowers/specs/2026-08-01-new-design.md
 if [ "$RC" -eq 2 ]; then pass "--reindex with a spec is a usage error"; else fail "--reindex with spec (got $RC)"; fi
+run_compile "$repo" --reindex docs/hyperpowers/specs
+if [ "$RC" -eq 2 ] && [ ! -e "$repo/docs/hyperpowers/specs/README.md" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "--reindex refuses a directory not named decisions"; else fail "--reindex of specs (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
+case "$ERR" in "docs/hyperpowers/specs: not a records directory (its name must be decisions)") pass "the refusal names the directory rule" ;; *) fail "--reindex specs message (got: $ERR)" ;; esac
 
 # --- 17. a symlinked spec is refused -----------------------------------------
 # Correction (2026-10-22): Task 2's gate found at its cap that a spec which is
@@ -725,6 +844,55 @@ if [ -L "$repo/docs/hyperpowers/specs/2026-09-01-link-design.md" ] && [ "$(cksum
     pass "the link, its target and the tree are unchanged"
 else
     fail "a symlinked spec changed the tree (status: $(git -C "$repo" status --porcelain))"
+fi
+
+# --- 18. Supersedes targets are canonical, regular records -------------------
+repo="$TEST_ROOT/canon"
+make_repo "$repo"
+write_spec "$repo" 2026-07-01-old-design.md <<'EOF'
+# Old
+
+## Decisions
+
+- **Alpha choice.** A.
+- **Beta choice.** B.
+EOF
+commit_all "$repo" "old spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-07-01-old-design.md
+commit_all "$repo" "old records"
+write_spec "$repo" 2026-08-01-dot-design.md <<'EOF'
+# Dot
+
+## Decisions
+
+- **Reverses alpha.** Text.
+  Supersedes: docs/hyperpowers/decisions/./2026-07-01-alpha-choice.md
+EOF
+commit_all "$repo" "dot spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-dot-design.md
+case "$ERR" in *"is not a record in docs/hyperpowers/decisions"*) msg_ok=yes ;; *) msg_ok=no ;; esac
+if [ "$RC" -eq 2 ] && [ "$msg_ok" = yes ] && [ -z "$(git -C "$repo" status --porcelain)" ] && [ "$(find "$repo/docs/hyperpowers/decisions" -type f | wc -l | tr -d ' ')" = 3 ]; then
+    pass "a non-canonical Supersedes spelling exits 2 and writes nothing"
+else
+    fail "dot spelling (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"
+fi
+ln -s 2026-07-01-alpha-choice.md "$repo/docs/hyperpowers/decisions/2026-07-01-alias.md"
+write_spec "$repo" 2026-08-01-dot-design.md <<'EOF'
+# Dot
+
+## Decisions
+
+- **Reverses the alias.** Text.
+  Supersedes: docs/hyperpowers/decisions/2026-07-01-alias.md
+EOF
+commit_all "$repo" "alias and spec"
+before=$(cksum < "$repo/docs/hyperpowers/decisions/2026-07-01-alpha-choice.md")
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-dot-design.md
+case "$ERR" in *"symbolic link"*) msg_ok=yes ;; *) msg_ok=no ;; esac
+if [ "$RC" -eq 2 ] && [ "$msg_ok" = yes ] && [ -L "$repo/docs/hyperpowers/decisions/2026-07-01-alias.md" ] && [ "$(cksum < "$repo/docs/hyperpowers/decisions/2026-07-01-alpha-choice.md")" = "$before" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then
+    pass "a symbolic link as a Supersedes target exits 2 and leaves link and referent alone"
+else
+    fail "alias target (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"
 fi
 
 # >>> later tasks append their checks above this line <<<

@@ -54,6 +54,7 @@ die3() { echo "$1" >&2; exit 3; }
 if [ "$mode" = reindex ]; then
   [ -d "$reindex_dir" ] || die2 "$reindex_dir: no such records directory"
   records_dir=$(cd "$reindex_dir" && pwd -P)
+  [ "$(basename "$records_dir")" = decisions ] || die2 "$reindex_dir: not a records directory (its name must be decisions)"
   root=$(git -C "$records_dir" rev-parse --show-toplevel 2>/dev/null) || die2 "$reindex_dir: not inside a git repository"
   root=$(cd "$root" && pwd -P)
   case "$records_dir" in
@@ -360,8 +361,11 @@ for ((n = 1; n <= count; n++)); do
     case "$(printf '\n%s\n' "${sup_of[n]}")" in *"
 $p
 "*) continue ;; esac
+    # Exactly one spelling per record, so deduplication and the reconciliation
+    # compare paths as plain strings.
+    [ "$p" = "$records_rel/${p##*/}" ] || die2 "$spec_rel: decision $n: Supersedes path is not a record in $records_rel: $p"
+    [ ! -L "$root/$p" ] || die2 "$spec_rel: decision $n: Supersedes path is a symbolic link, not a record: $p"
     [ -f "$root/$p" ] || die2 "$spec_rel: decision $n: Supersedes path does not exist: $p"
-    [ "$(cd "$(dirname "$root/$p")" && pwd -P)" = "$records_dir" ] || die2 "$spec_rel: decision $n: Supersedes path is not a record in $records_rel: $p"
     case "$(existing_field "$root/$p" Spec)" in "$spec_rel (decision "*) die2 "$spec_rel: decision $n: cannot supersede a record of this spec: $p" ;; esac
     sup_of[n]="${sup_of[n]:+${sup_of[n]}
 }$p"
@@ -395,10 +399,16 @@ $p
     case "$st" in
       accepted) ;;
       "superseded by "*)
-        case ", ${st#superseded by }, " in
-          *", $records_rel/${files[n]}, "*) ;;
-          *) die2 "$spec_rel: decision $n: $p is already superseded by ${st#superseded by }" ;;
-        esac ;;
+        # Another record of this spec may already list itself (fan-in, or a
+        # swap of two decisions' targets); the reconciliation settles those.
+        while IFS= read -r q; do
+          [ -n "$q" ] || continue
+          if [ -f "$root/$q" ]; then
+            case "$(existing_field "$root/$q" Spec)" in "$spec_rel (decision "*) continue ;; esac
+          fi
+          die2 "$spec_rel: decision $n: $p is already superseded by an unrelated record: $q"
+        done < <(printf '%s\n' "${st#superseded by }" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        ;;
       *) die2 "$spec_rel: decision $n: $p has status \"$st\"" ;;
     esac
   done < <(printf '%s\n' "${sup_of[n]}")
@@ -424,23 +434,11 @@ fi
 
 # --- 4. records ---------------------------------------------------------------
 wrote=0; updated=0; superseded=0; undocumented=0; proposed=0
-mkdir -p "$records_dir"
-for ((n = 1; n <= count; n++)); do
-  target="$records_dir/${files[n]}"
-  render_record "$n" > "$tmp/render"
-  if [ "${existing[n]}" = 1 ]; then
-    if write_if_changed "$target" "$tmp/render"; then
-      updated=$((updated + 1))
-      verb_lines+=("updated $records_rel/${files[n]} (decision $n: ${titles[n]})")
-    fi
-  else
-    write_if_changed "$target" "$tmp/render" new
-    wrote=$((wrote + 1))
-    verb_lines+=("wrote $records_rel/${files[n]} (decision $n: ${titles[n]})")
-  fi
-done
 
 # --- 4a. superseded targets ----------------------------------------------------
+# Targets are reconciled before the records are rewritten: an interrupted run
+# then leaves the targets updated and the old records intact, and the next run
+# reads those records' previous Supersedes lines and finishes the job.
 : > "$tmp/targets"
 mine=" "
 for ((n = 1; n <= count; n++)); do
@@ -480,6 +478,22 @@ if [ -s "$tmp/targets" ]; then
     fi
   done < "$tmp/target-list"
 fi
+
+mkdir -p "$records_dir"
+for ((n = 1; n <= count; n++)); do
+  target="$records_dir/${files[n]}"
+  render_record "$n" > "$tmp/render"
+  if [ "${existing[n]}" = 1 ]; then
+    if write_if_changed "$target" "$tmp/render"; then
+      updated=$((updated + 1))
+      verb_lines+=("updated $records_rel/${files[n]} (decision $n: ${titles[n]})")
+    fi
+  else
+    write_if_changed "$target" "$tmp/render" new
+    wrote=$((wrote + 1))
+    verb_lines+=("wrote $records_rel/${files[n]} (decision $n: ${titles[n]})")
+  fi
+done
 
 # --- 4b. the index and the spec ----------------------------------------------
 render_index "$records_dir" > "$tmp/index"

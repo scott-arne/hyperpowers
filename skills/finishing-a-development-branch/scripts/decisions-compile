@@ -9,7 +9,9 @@
 #
 # Usage: decisions-compile SPEC [--dry-run]
 # Exit 2: an input problem (no spec, no decisions list, an unresolvable
-# filename collision); nothing has been written.
+# filename collision); nothing has been written. Exit 3: a write failure
+# after validation; the files written so far are idempotent, so running the
+# same command again completes the write.
 set -euo pipefail
 # Slugs, sorting and character classes must not depend on the host locale.
 export LC_ALL=C
@@ -42,6 +44,10 @@ root=$(cd "$root" && pwd -P)
 spec_rel=${spec_abs#"$root"/}
 records_dir="$(dirname "$spec_dir")/decisions"
 records_rel=${records_dir#"$root"/}
+case "$records_dir" in
+  "$root"/*) ;;
+  *) die2 "$spec_rel: the spec must live in a subdirectory of the repository (its records go to the sibling decisions/ of that directory)" ;;
+esac
 index_rel="$records_rel/README.md"
 today=${DECISIONS_COMPILE_DATE:-$(date +%F)}
 spec_base=$(basename "$spec_abs")
@@ -84,15 +90,27 @@ slug_of() {  # title -> filename slug, at most 60 characters, cut at a hyphen
 
 identity_of() { printf -- '- Spec: %s (decision %s)\n' "$spec_rel" "$1"; }
 
-find_existing() {  # identity line -> the record carrying it, or nothing
+# Header fields are read only above the first "## " heading, so a decision
+# body that quotes another record's metadata cannot be mistaken for it.
+existing_field() { awk -v k="- $2: " 'index($0, "## ") == 1 { exit } index($0, k) == 1 { print substr($0, length(k) + 1); exit }' "$1"; }
+
+find_existing() {  # N -> the record carrying decision N's identity, or nothing
+  local want f matches=()
   [ -d "$records_dir" ] || return 0
-  grep -lxF -e "$1" "$records_dir"/*.md 2>/dev/null | head -n 1 || true
+  want="$spec_rel (decision $1)"
+  for f in "$records_dir"/*.md; do
+    [ -f "$f" ] || continue
+    if [ "$(existing_field "$f" Spec)" = "$want" ]; then matches+=("$f"); fi
+  done
+  if [ ${#matches[@]} -gt 1 ]; then
+    die2 "$spec_rel: decision $1: two records carry the same identity: ${matches[0]#"$root"/} ${matches[1]#"$root"/}"
+  fi
+  if [ ${#matches[@]} -eq 1 ]; then printf '%s\n' "${matches[0]}"; fi
+  return 0
 }
 
-existing_field() { sed -n "s/^- $2: //p" "$1" | head -n 1; }
-
-existing_notes() {  # record -> body of its "What implementation changed" section
-  awk 'f { print } /^## What implementation changed$/ { f = 1 }' "$1" | awk 'NR == 1 && /^$/ { next } { print }' > "$tmp/notes-body"
+existing_notes() {  # record -> body of its last "What implementation changed" section
+  awk '{ lines[NR] = $0 } /^## What implementation changed$/ { last = NR } END { if (last) for (i = last + 1; i <= NR; i++) print lines[i] }' "$1" | awk 'NR == 1 && /^$/ { next } { print }' > "$tmp/notes-body"
   trim_blank "$tmp/notes-body"
   cat "$tmp/notes-body"
 }
@@ -100,10 +118,13 @@ existing_notes() {  # record -> body of its "What implementation changed" sectio
 # write_if_changed FILE CONTENT-FILE: returns 0 when FILE changed, 1 when it
 # was already identical.
 write_if_changed() {
+  local t
   if [ -f "$1" ] && cmp -s "$1" "$2"; then return 1; fi
-  mkdir -p "$(dirname "$1")"
-  cp "$2" "$1"
-  return 0
+  mkdir -p "$(dirname "$1")" 2>/dev/null || die3 "$spec_rel: cannot create $(dirname "$1")"
+  t="$1.tmp.$$"
+  if cp "$2" "$t" 2>/dev/null && mv -f "$t" "$1" 2>/dev/null; then return 0; fi
+  rm -f "$t"
+  die3 "$spec_rel: cannot write $1; run the same command again to complete the write"
 }
 
 render_record() {  # N -> the record text
@@ -178,7 +199,7 @@ for ((n = 1; n <= count; n++)); do
   titles[n]=$(title_of "$item")
   slug=$(slug_of "${titles[n]}")
   [ -n "$slug" ] || slug="decision-$n"
-  ex=$(find_existing "$(identity_of "$n")")
+  ex=$(find_existing "$n")
   if [ -n "$ex" ]; then
     files[n]=$(basename "$ex")
     existing[n]=1
@@ -219,7 +240,7 @@ for ((n = 1; n <= count; n++)); do
       verb_lines+=("updated $records_rel/${files[n]} (decision $n: ${titles[n]})")
     fi
   else
-    write_if_changed "$target" "$tmp/render" || true
+    write_if_changed "$target" "$tmp/render"
     wrote=$((wrote + 1))
     verb_lines+=("wrote $records_rel/${files[n]} (decision $n: ${titles[n]})")
   fi

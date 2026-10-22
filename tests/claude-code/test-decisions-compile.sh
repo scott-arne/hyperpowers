@@ -15,9 +15,13 @@ COMPILE="$REPO_ROOT/skills/finishing-a-development-branch/scripts/decisions-comp
 
 failures=0
 # Physical path: the compiler reports physical paths, and macOS puts mktemp
-# output behind a symlink.
-TEST_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
-cleanup() { rm -rf "$TEST_ROOT"; }
+# output behind a symlink. Each step fails fast and the trap is installed
+# last, so a failed mktemp can never leave cleanup pointed at the checkout.
+TEST_ROOT=$(mktemp -d) || { echo "mktemp failed" >&2; exit 1; }
+[ -n "$TEST_ROOT" ] && [ -d "$TEST_ROOT" ] || { echo "no temporary directory" >&2; exit 1; }
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || exit 1
+case "$TEST_ROOT" in ""|/|"$REPO_ROOT"|"$REPO_ROOT"/*) echo "refusing temporary root $TEST_ROOT" >&2; exit 1 ;; esac
+cleanup() { case "$TEST_ROOT" in ""|/|"$REPO_ROOT"|"$REPO_ROOT"/*) return ;; esac; rm -rf "$TEST_ROOT"; }
 trap cleanup EXIT
 
 pass() { echo "  [PASS] $1"; }
@@ -275,6 +279,63 @@ run_compile "$repo" docs/hyperpowers/specs/missing.md
 if [ "$RC" -eq 2 ]; then pass "a missing spec exits 2"; else fail "missing spec exit (got $RC)"; fi
 run_compile "$repo" docs/hyperpowers/specs/2026-06-06-loc-design.md docs/hyperpowers/specs/2026-06-06-loc-design.md
 if [ "$RC" -eq 2 ]; then pass "two positional arguments are a usage error"; else fail "two specs (got $RC)"; fi
+
+# --- 7. a quoted identity line in a body selects nothing ----------------------
+repo="$TEST_ROOT/quote"
+make_repo "$repo"
+write_spec "$repo" 2026-07-07-quote-design.md <<'EOF'
+# Quote
+
+## Decisions
+
+1. **First one.** Plain.
+2. **Second one.** It quotes a record header:
+   - Spec: docs/hyperpowers/specs/2026-07-07-quote-design.md (decision 1)
+EOF
+commit_all "$repo" "spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-07-07-quote-design.md
+commit_all "$repo" "records"
+run_compile "$repo" docs/hyperpowers/specs/2026-07-07-quote-design.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ] && [ "$(head -n 1 "$repo/docs/hyperpowers/decisions/2026-07-07-first-one.md")" = "# First one" ] && [ "$(head -n 1 "$repo/docs/hyperpowers/decisions/2026-07-07-second-one.md")" = "# Second one" ]; then
+    pass "a decision body quoting another record's Spec line cannot select or overwrite it"
+else
+    fail "quoted identity (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"
+fi
+
+# --- 8. a failed write exits 3 with the spec's path ---------------------------
+repo="$TEST_ROOT/unwritable"
+make_repo "$repo"
+write_spec "$repo" 2026-08-08-fail-design.md <<'EOF'
+# Fail
+
+## Decisions
+
+- **Cannot land.** The records directory refuses writes.
+EOF
+commit_all "$repo" "spec"
+mkdir -p "$repo/docs/hyperpowers/decisions"
+chmod 555 "$repo/docs/hyperpowers/decisions"
+run_compile "$repo" docs/hyperpowers/specs/2026-08-08-fail-design.md
+chmod 755 "$repo/docs/hyperpowers/decisions"
+if [ "$RC" -eq 3 ]; then pass "an unwritable records directory exits 3"; else fail "write failure exit (got $RC: $ERR)"; fi
+case "$ERR" in "docs/hyperpowers/specs/2026-08-08-fail-design.md: "*) pass "the write failure line begins with the spec's path" ;; *) fail "write failure message (got: $ERR)" ;; esac
+if [ -z "$(find "$repo/docs/hyperpowers/decisions" -type f)" ]; then pass "a failed write leaves no partial or temporary file"; else fail "files left behind: $(ls "$repo/docs/hyperpowers/decisions")"; fi
+
+# --- 9. a spec at the repository root is refused ----------------------------------
+repo="$TEST_ROOT/rootspec"
+make_repo "$repo"
+cat > "$repo/root-design.md" <<'EOF'
+# Root
+
+## Decisions
+
+- **At the root.** Its records would land outside the repository.
+EOF
+commit_all "$repo" "spec"
+run_compile "$repo" root-design.md
+if [ "$RC" -eq 2 ]; then pass "a root-level spec exits 2"; else fail "root-level spec exit (got $RC)"; fi
+case "$ERR" in "root-design.md: the spec must live in a subdirectory of the repository"*) pass "the root-level message names the spec and the rule" ;; *) fail "root-level message (got: $ERR)" ;; esac
+if [ ! -e "$TEST_ROOT/decisions" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a root-level spec writes nothing"; else fail "root-level spec wrote something"; fi
 
 # >>> later tasks append their checks above this line <<<
 

@@ -1158,7 +1158,11 @@ if [ -s "$tmp/targets" ]; then
     if [ -s "$tmp/set.sorted" ]; then new="superseded by $(paste -sd, - < "$tmp/set.sorted" | sed 's/,/, /g')"; else new=accepted; fi
     if [ "$st" != "$new" ]; then
       awk -v s="$new" '!r && /^- Status: / { print "- Status: " s; r = 1; next } { print }' "$root/$p" > "$tmp/target"
-      cp "$tmp/target" "$root/$p"
+      # Correction (2026-10-22): through write_if_changed (temporary file, then
+      # rename), never cp onto a record; Task 1's gate found the in-place copy
+      # could truncate a durable record. It returns 1 only for "unchanged",
+      # which cannot happen here, and exits 3 on a failed write.
+      write_if_changed "$root/$p" "$tmp/target" || true
       superseded=$((superseded + 1))
       verb_lines+=("updated $p ($new)")
     fi
@@ -1795,6 +1799,17 @@ expected="docs/hyperpowers/.gitignore docs/hyperpowers/decisions/d.md docs/hyper
 ```
 
 and the pass message to `"git add -A stages only the ignore file, specs/, plans/ and decisions/"`.
+
+**Correction (2026-10-22).** The same file's temporary root, `TEST_ROOT="$(cd "$(mktemp -d)" && pwd -P)"`, falls back to the checkout when `mktemp` fails (`cd ""` succeeds in place), and its EXIT trap would then delete the checkout; Task 1's Codex gate found the pattern in the compiler suite. Replace that line and the `cleanup` definition with the fail-fast form Task 1's fix uses:
+
+```bash
+TEST_ROOT=$(mktemp -d) || { echo "mktemp failed" >&2; exit 1; }
+[ -n "$TEST_ROOT" ] && [ -d "$TEST_ROOT" ] || { echo "no temporary directory" >&2; exit 1; }
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || exit 1
+case "$TEST_ROOT" in ""|/|"$REPO_ROOT"|"$REPO_ROOT"/*) echo "refusing temporary root $TEST_ROOT" >&2; exit 1 ;; esac
+cleanup() { case "$TEST_ROOT" in ""|/|"$REPO_ROOT"|"$REPO_ROOT"/*) return ;; esac; rm -rf "$TEST_ROOT"; }
+trap cleanup EXIT
+```
 
 - [ ] **Step 2: Run it to see it fail**
 

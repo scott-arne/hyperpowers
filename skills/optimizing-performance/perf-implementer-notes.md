@@ -9,7 +9,7 @@ You received these because your task is a **performance optimization**. Follow t
 
 ## Use the shared baseline — do not re-measure it
 
-- Read `baseline.json` and the correctness reference from the SDD scratch dir (the path `scripts/sdd-dir` prints, under the user cache — **not** `.git/`, not the working tree). The coordinator hands you this path.
+- Read `baseline.json` and the correctness reference from the SDD scratch dir (the path `scripts/sdd-dir` prints, under the user cache — **not** `.git/`, not the working tree). The coordinator hands you this path. That directory is keyed by the clone's common git directory, so every worktree of the clone shares it.
 - The baseline is **fixed and shared**. Do **not** re-measure the baseline yourself — re-measuring per attempt makes attempts incomparable. Measure only your optimized variant and compare against the recorded baseline numbers.
 
 ## Measure the optimized variant honestly

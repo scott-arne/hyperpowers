@@ -37,6 +37,21 @@ GIT_COMMON=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P)
 WORKTREE_PATH=$(git rev-parse --show-toplevel)
 ```
 
+The skill that called you may pass the session's mode (`current-branch`,
+`new-branch`, or `worktree`), read from the SDD ledger's `session` line
+before the workspace was finished. A passed mode decides the menu; the
+table below applies only when no mode was passed. The repository's default
+branch is `git symbolic-ref --short refs/remotes/origin/HEAD` with the
+`origin/` prefix removed when that ref exists, otherwise the `init.defaultBranch`
+config value, otherwise whichever of `main` and `master` exists:
+
+```bash
+DEFAULT_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+[ -n "$DEFAULT_BRANCH" ] || DEFAULT_BRANCH=$(git config --get init.defaultBranch)
+[ -n "$DEFAULT_BRANCH" ] || { git show-ref --verify -q refs/heads/main && DEFAULT_BRANCH=main; }
+[ -n "$DEFAULT_BRANCH" ] || DEFAULT_BRANCH=master
+```
+
 This determines which menu to show and how cleanup works:
 
 | State | Menu | Cleanup |
@@ -44,6 +59,8 @@ This determines which menu to show and how cleanup works:
 | `GIT_DIR == GIT_COMMON` (normal repo) | Standard 3 options | No worktree to clean up |
 | `GIT_DIR != GIT_COMMON`, named branch | Standard 3 options | Provenance-based (see Step 6) |
 | `GIT_DIR != GIT_COMMON`, detached HEAD | Reduced 2 options (no merge) | Externally managed — leave in place |
+| mode `current-branch` passed, current branch is `$DEFAULT_BRANCH` | Reduced 2 options (push, keep) | Nothing to clean up |
+| mode `current-branch` passed, any other branch | Standard 3 options | Nothing to clean up |
 
 ## Step 3: Determine Base Branch
 
@@ -66,6 +83,17 @@ Implementation complete. What would you like to do?
 Which option?
 ```
 
+**Mode `current-branch` on the default branch — present exactly these 2 options:**
+
+```
+Implementation complete on <branch>. What would you like to do?
+
+1. Push <branch>
+2. Keep as-is (I'll handle it later)
+
+Which option?
+```
+
 **Detached HEAD — present exactly these 2 options:**
 
 ```
@@ -84,6 +112,12 @@ discard the work" below). Wait for their answer; the integration decision
 is theirs.
 
 ## Step 5: Execute Choice
+
+### Mode current-branch on the default branch
+
+The two-option menu above maps to: option 1 runs `git push <remote> <branch>`
+(no merge, no pull request) and reports the branch pushed; option 2 is
+"Keep as-is" below. Options 1 and 2 of the standard menu do not apply.
 
 ### Option 1: Merge Locally
 
@@ -209,6 +243,7 @@ place. If your platform provides a workspace-exit tool, use it.
 | 1. Merge locally | yes | - | - | yes |
 | 2. Create PR | - | yes | yes | - |
 | 3. Keep as-is | - | - | yes | - |
+| Push current branch (mode current-branch) | - | yes | - | - |
 | Discard (explicit request only) | - | - | - | yes (force) |
 
 ## Common Rationalizations

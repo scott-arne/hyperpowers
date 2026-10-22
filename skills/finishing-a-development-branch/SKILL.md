@@ -155,10 +155,11 @@ dismiss it); then one line offering to skip the records for this branch; and
 only then the menu text exactly as written below. Your human partner answers
 once. An answer that names an option but leaves any proposal without a
 disposition is incomplete: ask for the missing dispositions and wait; nothing
-is written or committed until every proposal has one. Before executing their option: write each accepted proposal into the
-spec (an accepted undocumented decision is appended after the list's last
-item, never inserted, so the numbers the notes use stay with their records;
-an accepted supersession is a `Supersedes:` line on the item it belongs to),
+is written or committed until every proposal has one. Before executing their
+option: write each accepted proposal into the spec (an accepted undocumented
+decision is appended after the list's last item, never inserted, so the
+numbers the notes use stay with their records; an accepted supersession is a
+`Supersedes:` line on the item it belongs to),
 commit that spec edit first (`git commit -m "docs: <spec filename without -design.md> accepts a decision from the finish" -- <spec>`, a pathspec commit, so the staged records stay staged), then re-run
 the compiler with the same arguments, and because the staged set
 changed, show the new complete staged diff and ask only for its approval,

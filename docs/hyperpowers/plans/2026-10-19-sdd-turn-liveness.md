@@ -5232,6 +5232,125 @@ Expected: a `decision:` line reading PASS or FAIL. UNADJUDICATED means Step 1's 
 Evals: stage per `evidence/README.md` (runs, logs, `tally.txt`, README, the experiment entry), post-check, leak scan, `bun run check`, commit `test(evidence): the sdd-turn-liveness treatment arm and the pre-registered decision`.
 Hyperpowers: leak scan, commit `docs(hyperpowers): the SDD turn liveness scenario results`.
 
+- [ ] **Step 5: Correction 5, paths resolved through `cd` and shell variables; the decision re-tallied**
+
+Approved by the human partner on 2026-10-22 after the first treatment tally. The analyzer paired a long-job watch to its launch by the literal output path (`out_file in command`) and read a Bash ledger write only when its expanded target was an absolute SDD path. Treatment p8 watched through `W=<dir>; … "$W/soak-long.out.exit"` and treatment p10 through `cd <dir> && … soak-long.out.exit`; p10 also wrote its Task 1-5 marks after `cd <ledger dir>`. All three were missed, so both runs read `long_ok` false and p10 read plan-incomplete, although each watched a tracked background launch to `exit=0` 720 s later with no turn end between. The same decision kept the pre-registered rule for p8: its `Task 6: soak_long OK (…) ; complete (…)` line is not the canonical mark, so p8 stays plan-incomplete and its end-of-run closing stays the treatment's one premature stop; the decision therefore stays FAIL on P. Three commits: the Correction, the re-tallied evals record, the hyperpowers note.
+
+Tests first. In `test_analyze.py`, `test_bash_ledger_writes_in_every_shell_spelling`, add to the positive tuple after the Correction 4 spelling:
+
+```text
+            # Correction 5: the ledger named relative to a cd into its directory.
+            f"cd {folder} && printf '%s\\n' 'Task 6: complete (abc123)' >> progress.md",
+            f"cd {folder} && cat >> progress.md <<'EOF'\nTask 6: complete (abc123)\nEOF",
+            f"D={folder}; cd \"$D\" && echo 'Task 6: complete' >> progress.md",
+```
+
+and to the negative tuple after the Correction 3 spellings:
+
+```text
+            # Correction 5: a relative ledger name with no cd, or after a cd elsewhere, is not the ledger.
+            "echo 'Task 6: complete' >> progress.md",
+            "cd /elsewhere && echo 'Task 6: complete' >> progress.md",
+```
+
+Add this test to the `Measure` class after `test_long_job_watch_must_read_its_own_exit_file`:
+
+```text
+    def test_long_job_watch_names_its_file_through_a_variable_or_a_cd(self) -> None:
+        # The launch writes /tmp/long.out (LONG_CMD); treatment p8 and p10 watched this way.
+        for n, watch in enumerate((
+            'W=/tmp; for i in $(seq 1 58); do [ -f "$W/long.out.exit" ] && break; sleep 10; done; cat "$W/long.out.exit"; tail -5 "$W/long.out"',
+            "cd /tmp && for i in $(seq 1 58); do [ -f long.out.exit ] && break; sleep 10; done; cat long.out.exit; tail -5 long.out",
+        )):
+            records = long_job()
+            for rec in records:
+                for use in liveness.tool_uses(rec):
+                    if use.get("id") == "b4":
+                        use["input"]["command"] = watch
+            self.assertTrue(self.run_of(f"w{n}", records)["long_ok"], watch)
+        records = long_job()
+        for rec in records:
+            for use in liveness.tool_uses(rec):
+                if use.get("id") == "b4":
+                    use["input"]["command"] = "cd /elsewhere && cat long.out.exit"
+        self.assertFalse(self.run_of("w9", records)["long_ok"])
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py -k every_shell_spelling -k names_its_file` — Expected: FAIL (the three `cd` ledger spellings and the two watches read as misses).
+
+Then `analyze.py`. Add after the `VAR_REF` line:
+
+```text
+CD = re.compile(r"^\s*cd\s+(['\"]?)([^\s'\"]+)\1\s*$")
+```
+
+Insert immediately before `def _writes_ledger(command: str, env: Mapping[str, str]) -> bool:`:
+
+```text
+def _cwd_segments(command: str, env: Mapping[str, str]) -> list[tuple[str, str | None]]:
+    """Each ``;``/``&&`` segment with the directory a preceding ``cd`` put it in (None before any ``cd``)."""
+    out: list[tuple[str, str | None]] = []
+    cwd: str | None = None
+    for segment in _segments(_strip_heredocs(command), pipes=False):
+        out.append((segment, cwd))
+        move = CD.match(segment)
+        if move:
+            cwd = _expand(move.group(2), env)
+    return out
+
+
+def _names_file(command: str, path: str) -> bool:
+    """Whether a command refers to ``path``: literally, through a shell variable, or by name after a ``cd`` into its directory.
+
+    Treatment p8 watched its long soak through ``W=<dir>; … "$W/soak-long.out.exit"``
+    and p10 through ``cd <dir> && … soak-long.out.exit`` (README Correction 5).
+    """
+    env = _assignments(command)
+    expanded = _expand(command, env)
+    if path in expanded:
+        return True
+    parent, name = str(Path(path).parent), Path(path).name
+    return name in expanded and any(cwd == parent for _, cwd in _cwd_segments(command, env))
+
+
+```
+
+Change `_writes_ledger`'s signature to `def _writes_ledger(command: str, env: Mapping[str, str], cwd: str | None = None) -> bool:`, add to its docstring the sentence "A relative target is joined to the directory a preceding ``cd`` chose (``cwd``), the way treatment p10 wrote its marks (Correction 5).", and replace its loop body's first line `path = _expand(match.group(2), env)` with:
+
+```text
+        path = _expand(match.group(2), env)
+        if cwd and not path.startswith(("/", "$")):
+            path = f"{cwd.rstrip('/')}/{path}"
+```
+
+In `_ledger_marks`' Bash branch replace the block from `env = _assignments(command)` through `written.append(_interpret_escapes(segment))` with:
+
+```text
+        env = _assignments(command)
+        located = _cwd_segments(command, env)
+        written: list[str] = []
+        for match in HEREDOC.finditer(command):
+            pipeline = _heredoc_command(command, match)
+            cwd = next((c for s, c in located if s.strip() == pipeline.strip()), None)
+            if _writes_ledger(pipeline, env, cwd):
+                written.append(match.group(3))
+        for segment, cwd in located:
+            if _writes_ledger(segment, env, cwd):
+                written.append(_interpret_escapes(segment))
+```
+
+In the long-job loop replace `if out_file in str(later.inp.get("command", "")) and "exit=" in later.result:` with `if _names_file(str(later.inp.get("command", "")), out_file) and "exit=" in later.result:`.
+
+Run the four suites — Expected: `OK`; ruff and mypy on `analyze.py`; `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` — Expected: control unchanged (10 counted, 8 successes, premature 1); treatment p8 and p10 `long=True`, F 10 of 10, p10 `plan_complete` true, p8 still plan-incomplete with `premature=1`, decision FAIL with P the only failing criterion. Append to the README `## Corrections` list:
+
+```text
+5. 2026-10-22, after the treatment arm's first tally and before the decision of record. The analyzer paired a long-job watch to its launch by the literal output path and read a Bash ledger write only when its target was an absolute SDD path, so a watch that names the exit file through a shell variable (`W=<dir>; … "$W/soak-long.out.exit"`, treatment p8) or by name after `cd <dir>` (treatment p10), and ledger marks written after `cd <ledger dir>` (treatment p10, Tasks 1-5), were missed: both runs read `long_ok` false and p10 read plan-incomplete, although each watched a tracked background launch to `exit=0` 720 s later with no turn end between. `_names_file` and `_cwd_segments` now resolve shell-variable assignments and `cd` prefixes for both recognizers. Recomputed from the archives: control unchanged; treatment F 10 of 10 and p10 plan-complete; the decision is unchanged, FAIL on P: p8's last ledger line reads `Task 6: soak_long OK (…) ; complete (…)`, not the canonical `Task 6: complete`, so p8 stays plan-incomplete and its end-of-run closing stays the treatment's premature stop, by the human partner's decision to keep the pre-registered rule. Pin after the Correction: `analyze.py` `<blob>` (`liveness.py` and `tally.py` unchanged).
+```
+
+Fill `<blob>` as before. Stage `analyze.py`, `test_analyze.py`, `README.md`; leak scan; commit `fix(evidence): watch and ledger paths resolve through cd and shell variables`.
+
+Then re-record. Re-run Step 2's tally command into `tally.txt`. Update the README "Results" section, the experiment entry and the hyperpowers note with the recomputed numbers (every number from the new `tally.txt`), and give the Limits list these entries in plain words: F's two misses before Correction 5 were recognizer artifacts, not run behavior; P's failure rests on one treatment run (p8) whose controller wrote a non-canonical Task 6 ledger line and whose last turn end came after the finishing question and the merge, with a note about untracked `__pycache__` files, adjudicated `neither`; the pre-registered rule was kept by the human partner rather than relabeled or widened after the decision was visible; by the spec, the failure goes back to design and the P failure opens the Stop-hook follow-up with these runs as its evidence. Post-check unchanged (no new runs). Leak scan; `bun run check`; commit evals `docs(evidence): the sdd-turn-liveness decision re-tallied under Correction 5`; hyperpowers `docs(hyperpowers): the SDD turn liveness scenario results under Correction 5`.
+
 ---
 
 ### Task 13: The release candidate (or the hold)

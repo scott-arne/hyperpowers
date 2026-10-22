@@ -300,12 +300,10 @@ emit_paths() {
 if [ "$mode" = reindex ]; then
   render_index "$records_dir" > "$tmp/index"
   if [ -f "$records_dir/README.md" ]; then v=updated; else v=wrote; fi
-  if write_if_changed "$records_dir/README.md" "$tmp/index"; then
-    git -C "$root" add -- "$index_rel" || die3 "$records_rel: git add failed"
-    echo "$v $index_rel"
-  else
-    echo "unchanged $index_rel"
-  fi
+  if write_if_changed "$records_dir/README.md" "$tmp/index"; then changed=true; else changed=false; fi
+  # Staged even when unchanged, so a retry after a failed add completes it.
+  git -C "$root" add -- "$index_rel" || die3 "$records_rel: git add failed; run the same command again to complete the staging"
+  if $changed; then echo "$v $index_rel"; else echo "unchanged $index_rel"; fi
   exit 0
 fi
 

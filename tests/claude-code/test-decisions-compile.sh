@@ -687,6 +687,15 @@ rm "$idx"
 run_compile "$repo" --reindex docs/hyperpowers/decisions
 if [ "$RC" -eq 0 ] && [ -f "$idx" ] && [ "$(git -C "$repo" status --porcelain | grep -vc README.md)" = 0 ]; then pass "--reindex rewrites only README.md"; else fail "--reindex (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
 case "$OUT" in "wrote docs/hyperpowers/decisions/README.md"*) pass "--reindex reports the index it wrote" ;; *) fail "--reindex output (got: $OUT)" ;; esac
+commit_all "$repo" "index"
+run_compile "$repo" --reindex docs/hyperpowers/decisions
+case "$OUT" in "unchanged docs/hyperpowers/decisions/README.md"*) if [ "$RC" -eq 0 ]; then pass "a second --reindex on a clean tree reports unchanged"; else fail "second --reindex rc $RC"; fi ;; *) fail "second --reindex output (got: $OUT)" ;; esac
+# A written-but-unstaged index, as left by a failed git add, must be staged on retry.
+git -C "$repo" rm --cached -q docs/hyperpowers/decisions/README.md
+if [ -n "$(git -C "$repo" status --porcelain)" ]; then pass "fixture: the index is written but unstaged"; else fail "fixture: status is clean after rm --cached"; fi
+run_compile "$repo" --reindex docs/hyperpowers/decisions
+case "$OUT" in "unchanged docs/hyperpowers/decisions/README.md"*) out_ok=yes ;; *) out_ok=no ;; esac
+if [ "$RC" -eq 0 ] && [ "$out_ok" = yes ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "--reindex re-stages an unchanged index"; else fail "--reindex retry (rc $RC, out: $OUT, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
 run_compile "$repo" --reindex docs/hyperpowers/decisions --dry-run
 if [ "$RC" -eq 2 ]; then pass "--reindex with another option is a usage error"; else fail "--reindex --dry-run (got $RC)"; fi
 run_compile "$repo" --reindex docs/hyperpowers/decisions docs/hyperpowers/specs/2026-08-01-new-design.md

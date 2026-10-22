@@ -67,7 +67,7 @@ independently testable deliverable.
 ```markdown
 # [Feature Name] Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use hyperpowers:subagent-driven-development (recommended) or hyperpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use hyperpowers:subagent-driven-development (recommended) or hyperpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. A correction added during execution that alters one of the spec's decisions names it: `Correction (<date>), decision <N> (<title>):`.
 
 **Spec:** [path to the spec/design doc this plan implements — SDD reads it as binding authority; write "none" only if no spec exists]
 
@@ -175,8 +175,8 @@ moved that range by the time it is read, re-locate it by the construct it
 names rather than imitating whatever now sits at those lines.
 
 A correction paragraph added to a plan during execution that alters one of
-the spec's decisions names it, `Correction (<date>), decision <N>:`; the
-decision records compiled at finish read those paragraphs.
+the spec's decisions names it by number and bold title, `Correction (<date>), decision <N> (<title>):`; the
+decision records compiled at finish read those paragraphs. Numbers hold because the list is append-only once execution starts (the finishing skill appends an accepted decision after the last item, never inserts one).
 
 ## No Placeholders
 

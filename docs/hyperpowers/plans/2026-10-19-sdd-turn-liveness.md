@@ -5057,6 +5057,126 @@ In `README.md`, append to the `## Corrections` list:
 
 Fill `<blob>` with `git hash-object` of the final `analyze.py` and confirm after the commit with `git rev-parse HEAD:evidence/2026-10-19-sdd-turn-liveness/analyze.py`. Stage `analyze.py`, `test_analyze.py`, `README.md`; leak scan; commit `fix(evidence): a ledger mark after a literal printf newline is read`. Append the recomputed per-row table and the control success count to this task's report.
 
+- [ ] **Step 6: Correction 3, the archive contract, and the recorded suite run (Codex gate round 1)**
+
+Approved by the human partner on 2026-10-22 after this task's Codex gate. Three findings against text approved earlier in the task: (1) `void_kind` names a no-result record from the Gauntlet summary's wording, so a written `investigate` whose text carried the phrase and a transport code would escape the cap, although quorum marks a synthesized no-result record structurally (`gauntlet.run_id` is null; every written result carries its run id); (2) Step 5's pattern credits a literal `\n`, `\r` or `\t` wherever it sits, so plain `echo 'x\nTask 6: complete'`, a `printf '%s'` argument, an even run of backslashes and a heredoc body all read as a mark the shell never wrote; (3) `evidence/README.md` step 4 requires a `result.json` per archived run, which a run whose Gauntlet wrote none cannot have, and the arm was committed with that post-check exiting 1. Two commits, then the suite run on the final tree.
+
+First the tests. In `test_analyze.py`, `test_bash_ledger_writes_in_every_shell_spelling`: add to the positive tuple, after Step 5's printf case:
+
+```text
+            # Correction 3: the forms whose escapes the shell interprets.
+            f"printf \"soak OK\\nTask 6: complete (abc123)\\n\" >> {LEDGER}",
+            f"echo -e 'soak OK\\nTask 6: complete' >> {LEDGER}",
+            f"printf $'soak OK\\nTask 6: complete\\n' >> {LEDGER}",
+            f"printf 'soak OK\\\\\\nTask 6: complete\\n' >> {LEDGER}",
+```
+
+and to the negative tuple, after the `# Task 6: complete` comment case:
+
+```text
+            # Correction 3: a literal backslash the shell never interprets marks nothing.
+            f"echo 'soak OK\\nTask 6: complete' >> {LEDGER}",
+            f"printf '%s\\n' 'soak OK\\nTask 6: complete' >> {LEDGER}",
+            f"printf 'soak OK\\\\nTask 6: complete\\n' >> {LEDGER}",
+            f"cat >> {LEDGER} <<'EOF'\nsoak OK\\nTask 6: complete\nEOF",
+```
+
+(In the source these are f-strings: `\\n` is a literal backslash-n in the command text, `\\\\n` two backslashes and n, `\\\\\\n` three.) In `test_void_kinds_fail_closed`, after the `judged` assertion:
+
+```text
+        written = {**lost, "gauntlet": {**lost["gauntlet"], "run_id": "sdd-turn-liveness_x_r1"}}
+        self.assertEqual(analyze.void_kind(written), "void-other")
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py -k every_shell_spelling -k void_kinds` — Expected: FAIL (the plain-echo, `%s`, even-run and heredoc spellings read as marks; `written` reads `void-transport`).
+
+Then `analyze.py`. Add after the `UNICODE_QUOTES` line:
+
+```text
+PRINTF_FORMAT = re.compile(r"\bprintf\s+(?:-v\s+\w+\s+)?(?:--\s+)?('[^']*'|\"(?:\\.|[^\"\\])*\")")
+ECHO_E = re.compile(r"\becho\s+((?:-[a-zA-Z]+\s+)+)")
+ANSI_C = re.compile(r"\$'((?:\\.|[^'\\])*)'")
+ESCAPE = re.compile(r"(?<!\\)((?:\\\\)*)\\([nrt])")
+ESCAPES = {"n": "\n", "r": "\r", "t": "\t"}
+```
+
+Replace the `MARK` line and its three comment lines from Step 5 with the original line:
+
+```text
+MARK = re.compile(r"\bTask (\d+): complete\b")
+```
+
+Insert immediately before `def _ledger_marks(call: Call) -> set[int]:`:
+
+```text
+def _unescape(text: str, double_quoted: bool = False) -> str:
+    """The text as printf or echo -e emits it.
+
+    An odd run of backslashes before n, r or t ends in that character; an
+    even run stays literal. Bash halves backslash pairs inside double quotes
+    before the command sees them.
+    """
+    if double_quoted:
+        text = text.replace("\\\\", "\\")
+    return ESCAPE.sub(lambda m: m.group(1) + ESCAPES[m.group(2)], text)
+
+
+def _requote(quoted: str) -> str:
+    return quoted[0] + _unescape(quoted[1:-1], quoted[0] == '"') + quoted[0]
+
+
+def _interpret_escapes(segment: str) -> str:
+    """The segment with the escapes the shell interprets written out.
+
+    Three forms turn a literal ``\n`` into a newline: a printf format string,
+    the arguments of ``echo -e``, and ``$'...'`` quoting. Everywhere else (plain
+    echo, a printf ``%s`` argument, a heredoc body) the two characters reach the
+    ledger as they are and mark nothing. Correction 3 (Codex gate, Task 11): the
+    earlier pattern credited every literal escape.
+    """
+    out = segment
+    for match in PRINTF_FORMAT.finditer(segment):
+        out = out.replace(match.group(1), _requote(match.group(1)), 1)
+    echo = ECHO_E.search(segment)
+    if echo and "e" in echo.group(1) and "E" not in echo.group(1):
+        head, tail = out[: echo.end()], out[echo.end():]
+        out = head + QUOTED.sub(lambda m: _requote(m.group(0)), tail)
+    return ANSI_C.sub(lambda m: "$'" + _unescape(m.group(1)) + "'", out)
+
+
+```
+
+In `_ledger_marks`' Bash branch replace `written.append(segment)` with `written.append(_interpret_escapes(segment))` (heredoc bodies stay literal). In `void_kind`, replace the condition line of the no-result branch:
+
+```text
+    if gauntlet.get("status") == "investigate" and "without writing a result" in str(gauntlet.get("summary") or ""):
+```
+
+with:
+
+```text
+    # Quorum synthesizes the gauntlet record with run_id None when the
+    # Gauntlet-Agent exits without a result; a written result carries its run
+    # id and stays a capped void whatever its text says (Correction 3).
+    if (
+        gauntlet.get("status") == "investigate"
+        and gauntlet.get("run_id") is None
+        and "without writing a result" in str(gauntlet.get("summary") or "")
+    ):
+```
+
+Run the four suites — Expected: `OK`; ruff and mypy on `analyze.py`; `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` — Expected: every control field unchanged from Step 5 (r5 and r6 wrote their marks in `printf` format strings; p6-p10 keep `run_id` null), successes 8 of 10. Append to the README `## Corrections` list:
+
+```text
+3. 2026-10-22, before any treatment tally (Task 11's Codex gate). Two analyzer changes in one commit. `analyze.void_kind` names `void-grader` or `void-transport` only for the record quorum synthesizes when the Gauntlet-Agent exits without a result (`gauntlet.run_id` null); a written result stays `void-other`, capped, whatever its text says. Ledger marks: `MARK` returns to `\bTask (\d+): complete\b`, and the Bash branch of `_ledger_marks` first writes out the escapes the shell interprets, in a `printf` format string, the arguments of `echo -e` and `$'…'` quoting, an odd run of backslashes producing the character and an even run staying literal; Correction 2's pattern had credited every literal `\n`, `\r` or `\t`, including plain `echo`, a `printf '%s'` argument, an even run and a heredoc body. Recomputed from the archive: no control field changes (r5 and r6 wrote their marks in `printf` format strings). Pin after the Correction: `analyze.py` `<blob>` (`liveness.py` and `tally.py` unchanged).
+```
+
+Fill `<blob>` as before. Stage `analyze.py`, `test_analyze.py`, `README.md`; leak scan; commit `fix(evidence): ledger marks follow the shell's escape rules and a written grader result stays capped`.
+
+Second commit, the archive contract. In `evidence/README.md` "Before committing a run", replace step 4's first sentence ("Post-check the staged tree across both layouts: every run has at least one transcript and one `result.json`, and there are no gitlinks.") with: "Post-check the staged tree across both layouts: every run has at least one transcript; a run whose Gauntlet wrote a result has one `result.json`, and a run whose Gauntlet wrote none (`gauntlet.run_id` is null in its `verdict.json`: a setup or transport void) has that `verdict.json`, the Gauntlet's `run.jsonl` event stream and, when the Gauntlet left one, its `gauntlet-stderr.log` instead; and there are no gitlinks." Re-run the post-check you ran in Step 4 with that rule (the five transport voids pass on `verdict.json` + `run.jsonl` + `gauntlet-stderr.log`; the eleven graded runs on `result.json`) and paste its output, exit 0, into this task's report. Leak scan; commit `docs(evidence): the archive post-check accepts a run whose Gauntlet wrote no result`.
+
+Finally `bun run check` on the final tree; record its counts in the report (the two tilde-expansion EPERM failures are the sandbox baseline).
+
 ---
 
 ### Task 12: The treatment arm, the decision and the evidence notes

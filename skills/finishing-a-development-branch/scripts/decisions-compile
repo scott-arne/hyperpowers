@@ -136,9 +136,22 @@ if [ -n "$plan" ]; then
     "$root"/*) plan_rel=${plan_abs#"$root"/} ;;
     *) die2 "$spec_rel: plan is outside the repository: $plan" ;;
   esac
+  # The missing part of the path was never normalised, so a . or .. there
+  # could point outside the repository while still matching "$root"/*.
+  case "/$plan_rel/" in
+    */./*|*/../*) die2 "$spec_rel: plan path must be canonical (no . or .. components): $plan" ;;
+  esac
   if [ -e "$plan_abs" ] || git -C "$root" ls-files --error-unmatch -- "$plan_rel" >/dev/null 2>&1; then
     # In the tree, or deleted in the tree but still in the index: git rm
-    # stages the deletion in both cases.
+    # stages the deletion in both cases. A plan in the tree must be tracked
+    # and clean, because git rm refuses otherwise and the retry would fail the
+    # same way after the records were written.
+    if [ -e "$plan_abs" ]; then
+      git -C "$root" ls-files --error-unmatch -- "$plan_rel" >/dev/null 2>&1 || die2 "$spec_rel: plan is not tracked by git; commit it before the records compile: $plan"
+      if ! git -C "$root" diff --quiet -- "$plan_rel" || ! git -C "$root" diff --cached --quiet -- "$plan_rel"; then
+        die2 "$spec_rel: plan has uncommitted changes; commit or discard them before the records compile: $plan"
+      fi
+    fi
     plan_state=present
   elif [ -n "$(git -C "$root" diff --cached --name-only --diff-filter=D -- "$plan_rel")" ]; then
     plan_state=staged-deletion

@@ -1111,6 +1111,9 @@ if grep -q '2026-10-19-with space-design.md' "$TEST_ROOT/approval.txt" && ! grep
 ( cd "$repo" && GIT_LITERAL_PATHSPECS=1 git commit -q --pathspec-from-file="$TEST_ROOT/plan.paths" --pathspec-file-nul -m "docs: record decisions for 2026-10-19-with space" )
 if git -C "$repo" show --format= --name-only HEAD | grep -q '2026-10-19-with space-design.md' && [ "$(git -C "$repo" diff --cached --name-only)" = "other.txt" ]; then pass "the pathspec commit takes the spaced spec and leaves the unrelated staged file staged"; else fail "pathspec commit (committed: $(git -C "$repo" show --format= --name-only HEAD | tr '\n' ' '); staged: $(git -C "$repo" diff --cached --name-only))"; fi
 git -C "$repo" reset -q other.txt && rm "$repo/other.txt"
+rec_before=$(grep '^- Recorded' "$rec")
+run_compile "$repo" "docs/hyperpowers/specs/2026-10-19-with space-design.md"
+if [ "$RC" -eq 0 ] && [ "$(grep '^- Recorded' "$rec")" = "$rec_before" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a re-run without --plan keeps the Recorded plan part byte-identical and changes nothing"; else fail "re-run without --plan (rc $RC, before: $rec_before, after: $(grep '^- Recorded' "$rec"), status: $(git -C "$repo" status --porcelain))"; fi
 # Discovery after the committed removal, as finishing Step 1 does it.
 found=$(git -C "$repo" log --diff-filter=A --name-only --format= "$(git -C "$repo" rev-list --max-parents=0 HEAD)"..HEAD -- '*/plans/*.md')
 if [ "$found" = "docs/hyperpowers/plans/2026-10-19-with-space.md" ]; then pass "history discovery finds the removed plan"; else fail "discovery (got: $found)"; fi
@@ -1157,6 +1160,44 @@ run_compile "$repo" docs/hyperpowers/specs/2026-10-19-beta-design.md --plan docs
 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-beta-design.md --plan docs/hyperpowers/plans/2026-10-19-beta.md
 if [ "$RC" -eq 0 ]; then pass "a re-run while the deletion is staged succeeds"; else fail "re-run with staged deletion (rc $RC: $ERR)"; fi
 case "$OUT" in *"docs/hyperpowers/plans/2026-10-19-beta.md"*) pass "the staged deletion stays in paths:" ;; *) fail "plan missing from paths: (got: $(printf '%s\n' "$OUT" | grep '^paths:'))" ;; esac
+
+# A plan the compiler cannot remove, or cannot place, is refused before any
+# write: git rm would refuse it on every retry, and a path with . or ..
+# components is not canonical.
+repo="$TEST_ROOT/planguard"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-eps-design.md <<'EOF'
+# Eps
+
+## Decisions
+
+- **Eps one.** Text.
+EOF
+printf '# Plan\n' > "$repo/docs/hyperpowers/plans/2026-10-19-eps.md"
+commit_all "$repo" "spec and plan"
+mkdir -p "$TEST_ROOT/elsewhere"
+printf '# Plan\n' > "$TEST_ROOT/elsewhere/plan.md"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-eps-design.md --plan "$TEST_ROOT/elsewhere/plan.md"
+case "$ERR" in *"plan is outside the repository"*) outside_msg=1 ;; *) outside_msg=0 ;; esac
+if [ "$RC" -eq 2 ] && [ "$outside_msg" = 1 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a plan outside the repository exits 2 with nothing written"; else fail "outside plan (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
+rm -rf "$repo/docs/hyperpowers/plans"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-eps-design.md --plan docs/hyperpowers/plans/../plans/2026-10-19-eps.md
+case "$ERR" in *"plan path must be canonical"*) dots_msg=1 ;; *) dots_msg=0 ;; esac
+if [ "$RC" -eq 2 ] && [ "$dots_msg" = 1 ] && [ "$(git -C "$repo" status --porcelain)" = " D docs/hyperpowers/plans/2026-10-19-eps.md" ]; then pass "a plan path with .. components under a pruned directory exits 2 with nothing written"; else fail "dotted plan (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-eps-design.md --plan docs/hyperpowers/plans/../../../../etc/x.md
+case "$ERR" in *"plan path must be canonical"*) dots_msg=1 ;; *) dots_msg=0 ;; esac
+if [ "$RC" -eq 2 ] && [ "$dots_msg" = 1 ]; then pass "an escaping .. path under a pruned directory gets the canonical-path message"; else fail "escaping plan (rc $RC, err: $ERR)"; fi
+mkdir -p "$repo/docs/hyperpowers/plans"
+git -C "$repo" checkout -q -- docs/hyperpowers/plans/2026-10-19-eps.md
+printf '# Plan edited\n' > "$repo/docs/hyperpowers/plans/2026-10-19-eps.md"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-eps-design.md --plan docs/hyperpowers/plans/2026-10-19-eps.md
+case "$ERR" in *"plan has uncommitted changes"*) dirty_msg=1 ;; *) dirty_msg=0 ;; esac
+if [ "$RC" -eq 2 ] && [ "$dirty_msg" = 1 ] && [ "$(git -C "$repo" status --porcelain)" = " M docs/hyperpowers/plans/2026-10-19-eps.md" ]; then pass "a modified plan exits 2 before any write"; else fail "modified plan (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
+printf '# Plan\n' > "$repo/docs/hyperpowers/plans/2026-10-19-eps.md"
+printf '# New\n' > "$repo/docs/hyperpowers/plans/2026-10-19-fresh.md"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-eps-design.md --plan docs/hyperpowers/plans/2026-10-19-fresh.md
+case "$ERR" in *"plan is not tracked by git"*) untracked_msg=1 ;; *) untracked_msg=0 ;; esac
+if [ "$RC" -eq 2 ] && [ "$untracked_msg" = 1 ] && [ "$(git -C "$repo" status --porcelain)" = "?? docs/hyperpowers/plans/2026-10-19-fresh.md" ]; then pass "an untracked plan exits 2 before any write"; else fail "untracked plan (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
 
 # --- 22. git failure at each staging operation --------------------------------
 mkdir -p "$TEST_ROOT/bin"

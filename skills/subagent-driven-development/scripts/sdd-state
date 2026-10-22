@@ -1201,6 +1201,14 @@ cmd_handoff() {
   # the scan and the push follow with nothing else interleaving.
   hp_lock "$PLAN_DIR" || return 2
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  # The dossier must be real files inside the checkout: a plans directory,
+  # workspace or ledger that is a symbolic link (one a fetched branch could
+  # carry) would send the writes below outside it. -L is true for a
+  # dangling link too, which the -f test below would otherwise create
+  # through.
+  if [ -L "$CO/plans" ] || [ -L "$WSDIR" ] || [ -L "$WSDIR/progress.md" ]; then
+    hp_unlock; echo "sdd-state: $WSDIR or its ledger is a symbolic link; refusing to write through it" >&2; echo "status=error"; return 2
+  fi
   mkdir -p "$WSDIR" || { hp_unlock; echo "status=error"; return 2; }
   ledger=$(ledger_path)
   if [ ! -f "$ledger" ]; then printf '%s%s\n' "$IDENTITY_PREFIX" "$rel" > "$ledger" || { hp_unlock; echo "status=error"; return 2; }; fi

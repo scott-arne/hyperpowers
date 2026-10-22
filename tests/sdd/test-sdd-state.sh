@@ -1231,6 +1231,18 @@ if [ "$(run_state "$rp" handoff docs/plan.md 2>/dev/null)" = "status=plain" ]; t
 rc=0; run_state "$rp" handoff docs/plan.md >/dev/null 2>&1 || rc=$?
 if [ "$rc" -eq 7 ]; then pass "handoff under the plain backend exits 7"; else fail "handoff under the plain backend exits 7 (rc=$rc)"; fi
 
+# A ledger or workspace that is a symbolic link is refused, and the link's
+# target is never written.
+outside="$TEST_ROOT/outside"; mkdir -p "$outside/ws"; printf 'untouched\n' > "$outside/sentinel"; printf 'untouched\n' > "$outside/ws/progress.md"
+mv "$wsa/progress.md" "$wsa/progress.md.real"; ln -s "$outside/sentinel" "$wsa/progress.md"
+out=$(run_state "$PAIR_A" handoff docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(cat "$outside/sentinel")" = "untouched" ]; then pass "a ledger that is a symbolic link is refused and its target is untouched"; else fail "a ledger that is a symbolic link is refused and its target is untouched (rc=$rc: $out)"; fi
+rm -f "$wsa/progress.md"; mv "$wsa/progress.md.real" "$wsa/progress.md"
+mv "$wsa" "$wsa.real"; ln -s "$outside/ws" "$wsa"
+out=$(run_state "$PAIR_A" handoff docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(cat "$outside/ws/progress.md")" = "untouched" ] && [ ! -e "$outside/ws/task-1-report.md" ]; then pass "a workspace that is a symbolic link is refused and its target is untouched"; else fail "a workspace that is a symbolic link is refused and its target is untouched (rc=$rc: $out)"; fi
+rm -f "$wsa"; mv "$wsa.real" "$wsa"
+
 # Cross-repository: plan in P, code in C; a clean destination pulls both.
 make_pair p10plan; P_A=$PAIR_A; P_B=$PAIR_B
 make_pair p10code; C_A=$PAIR_A; C_B=$PAIR_B

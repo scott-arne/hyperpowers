@@ -983,6 +983,37 @@ for f in dup range head heading empty-optional; do
     if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "invalid notes ($f) are ignored and the run proceeds unchanged"; else fail "invalid notes $f (rc $RC, status: $(git -C "$repo" status --porcelain))"; fi
     case "$ERR" in "notes ignored: "*) pass "invalid notes ($f) reported as notes ignored" ;; *) fail "notes ignored message for $f (got: $ERR)" ;; esac
 done
+# Structure is any ATX heading, not only column-zero level-two lines, and the
+# optional sections are checked in one pass however long they run.
+for f in preamble indented wronglevel dupsup longsup; do
+    {
+        printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-alpha-design.md\n\n'
+        case "$f" in
+            preamble) printf 'Some stray preamble.\n\n## Decision 1\nText.\n' ;;
+            indented) printf '   ## Decision 1\nText.\n' ;;
+            wronglevel) printf '## Decision 1\nText.\n\n### Supersessions\n- 1 supersedes docs/hyperpowers/decisions/x.md\n' ;;
+            dupsup) printf '## Decision 1\nText.\n\n## Supersessions\n- 1 supersedes docs/hyperpowers/decisions/x.md\n\n## Supersessions\n- 1 supersedes docs/hyperpowers/decisions/y.md\n' ;;
+            longsup)
+                printf '## Decision 1\nText.\n\n## Supersessions\nnot a proposal\n'
+                for ((i = 0; i < 3000; i++)); do printf -- '- 1 supersedes docs/hyperpowers/decisions/x.md\n'; done
+                ;;
+        esac
+    } > "$TEST_ROOT/notes-$f.md"
+    run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --notes "$TEST_ROOT/notes-$f.md"
+    if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "malformed notes ($f) are ignored and the records stay byte-identical"; else fail "malformed notes $f (rc $RC, status: $(git -C "$repo" status --porcelain))"; fi
+    case "$ERR" in "notes ignored: "*) pass "malformed notes ($f) reported as notes ignored" ;; *) fail "notes ignored message for $f (got: $ERR)" ;; esac
+    if grep -rq 'supersedes docs/hyperpowers/decisions/x.md' "$repo/docs/hyperpowers/decisions"; then fail "a proposal reached a record ($f)"; else pass "no proposal text reached a record ($f)"; fi
+done
+# An unreadable notes file fails open like every other notes defect.
+printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-alpha-design.md\n\n## Decision 1\nText.\n' > "$TEST_ROOT/notes-unreadable.md"
+chmod 000 "$TEST_ROOT/notes-unreadable.md"
+if [ ! -r "$TEST_ROOT/notes-unreadable.md" ]; then
+    run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --notes "$TEST_ROOT/notes-unreadable.md"
+    case "$ERR" in "notes ignored: cannot read"*) if [ "$RC" -eq 0 ]; then pass "an unreadable notes file is ignored and the run exits 0"; else fail "unreadable notes rc $RC"; fi ;; *) fail "unreadable notes message (rc $RC, got: $ERR)" ;; esac
+else
+    pass "unreadable-notes check skipped: the file stayed readable after chmod 000"
+fi
+chmod 644 "$TEST_ROOT/notes-unreadable.md"
 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --notes "$TEST_ROOT/does-not-exist.md"
 if [ "$RC" -eq 0 ]; then pass "a missing notes file is not an error"; else fail "missing notes file (rc $RC)"; fi
 # An accepted undocumented decision is appended after the last item, so the

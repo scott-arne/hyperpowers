@@ -230,7 +230,7 @@ notes_valid=false
 load_notes() {
   local f=$1 n reason="" first
   [ -f "$f" ] || { echo "notes ignored: no such file: $f" >&2; return 0; }
-  first=$(head -n 1 "$f")
+  first=$(head -n 1 "$f" 2>/dev/null) || { echo "notes ignored: cannot read $f" >&2; return 0; }
   case "$first" in
     "# Decision notes: "*) ;;
     *) echo "notes ignored: first line is not \"# Decision notes: <spec path>\"" >&2; return 0 ;;
@@ -238,22 +238,47 @@ load_notes() {
   if [ "$(basename "${first#\# Decision notes: }")" != "$(basename "$spec_abs")" ]; then
     echo "notes ignored: first line names $(basename "${first#\# Decision notes: }"), not $(basename "$spec_abs")" >&2; return 0
   fi
-  rm -f "$tmp"/note-*.txt "$tmp/notes-sup" "$tmp/notes-undoc" "$tmp/notes-bad"
+  rm -f "$tmp"/note-*.txt "$tmp/notes-bad" "$tmp/notes-counts"
+  # One pass over the whole file with explicit state and no early exit, so a
+  # malformed line is found however much valid text follows it. Any ATX
+  # heading is structural; only three exact forms open a section.
   awk -v out="$tmp" -v max="$count" '
+    function bad(msg) { if (!reason) { reason = msg; print msg > (out "/notes-bad") } }
     NR == 1 { next }
-    /^## / {
-      if ($0 ~ /^## Decision [0-9]+$/) {
-        n = $3 + 0
-        if (n < 1 || n > max) { print "decision " n " is out of range 1.." max > (out "/notes-bad"); cur = ""; next }
-        if (seen[n]++) { print "duplicate section: " $0 > (out "/notes-bad"); cur = ""; next }
-        cur = out "/note-" n ".txt"; printf "" > cur; next
+    {
+      t = $0; sub(/^ ? ? ?/, "", t)
+      if (match(t, /^#+/) && RLENGTH <= 6 && (length(t) == RLENGTH || substr(t, RLENGTH + 1, 1) == " ")) {
+        mode = ""
+        if ($0 ~ /^## Decision [0-9]+$/) {
+          n = $3 + 0
+          if (n < 1 || n > max) bad("decision " n " is out of range 1.." max)
+          else if (seen[n]++) bad("duplicate section: " $0)
+          else { mode = "dec"; cur = out "/note-" n ".txt"; printf "" > cur }
+        } else if ($0 == "## Supersessions" || $0 == "## Undocumented decisions") {
+          if (seen[$0]++) bad("duplicate section: " $0)
+          else mode = ($0 == "## Supersessions") ? "sup" : "undoc"
+        } else bad("unexpected heading: " $0)
+        next
       }
-      if ($0 == "## Supersessions") { cur = out "/notes-sup"; printf "" > cur; next }
-      if ($0 == "## Undocumented decisions") { cur = out "/notes-undoc"; printf "" > cur; next }
-      print "unexpected heading: " $0 > (out "/notes-bad"); cur = ""; next
+      if (mode == "dec") { print > cur; next }
+      if ($0 ~ /^[[:space:]]*$/) next
+      if (mode == "sup") {
+        if ($0 ~ /^- [0-9]+ supersedes ./) nsup++
+        else bad("a Supersessions line is not \"- <N> supersedes <path>\"")
+      } else if (mode == "undoc") {
+        if ($0 ~ /^- ./) nundoc++
+        else bad("an Undocumented decisions line is not a list item")
+      } else bad("text before the first section")
     }
-    cur != "" { print > cur }
-  ' "$f"
+    END {
+      if (("## Supersessions" in seen) && !nsup) bad("Supersessions has no \"- <N> supersedes <path>\" line")
+      if (("## Undocumented decisions" in seen) && !nundoc) bad("Undocumented decisions has no list item")
+      print nsup + 0, nundoc + 0 > (out "/notes-counts")
+    }
+  ' "$f" 2>/dev/null || {
+    rm -f "$tmp"/note-*.txt "$tmp/notes-bad" "$tmp/notes-counts"
+    echo "notes ignored: cannot read $f" >&2; return 0
+  }
   [ -f "$tmp/notes-bad" ] && reason=$(head -n 1 "$tmp/notes-bad")
   if [ -z "$reason" ]; then
     for ((n = 1; n <= count; n++)); do
@@ -263,22 +288,13 @@ load_notes() {
       [ -s "$tmp/note-$n.txt" ] || { reason="empty body for decision $n"; break; }
     done
   fi
-  if [ -z "$reason" ] && [ -f "$tmp/notes-sup" ]; then
-    if ! grep -q '^- [0-9][0-9]* supersedes .' "$tmp/notes-sup"; then reason="Supersessions has no \"- <N> supersedes <path>\" line"
-    elif grep -v '^[[:space:]]*$' "$tmp/notes-sup" | grep -qv '^- [0-9][0-9]* supersedes .'; then reason="a Supersessions line is not \"- <N> supersedes <path>\""; fi
-  fi
-  if [ -z "$reason" ] && [ -f "$tmp/notes-undoc" ]; then
-    if ! grep -q '^- .' "$tmp/notes-undoc"; then reason="Undocumented decisions has no list item"
-    elif grep -v '^[[:space:]]*$' "$tmp/notes-undoc" | grep -qv '^- .'; then reason="an Undocumented decisions line is not a list item"; fi
-  fi
   if [ -n "$reason" ]; then
     echo "notes ignored: $reason" >&2
-    rm -f "$tmp"/note-*.txt "$tmp/notes-sup" "$tmp/notes-undoc"
+    rm -f "$tmp"/note-*.txt
     return 0
   fi
   notes_valid=true
-  [ -f "$tmp/notes-sup" ] && proposed=$(grep -c '^- ' "$tmp/notes-sup")
-  [ -f "$tmp/notes-undoc" ] && undocumented=$(grep -c '^- ' "$tmp/notes-undoc")
+  read -r proposed undocumented < "$tmp/notes-counts"
   return 0
 }
 

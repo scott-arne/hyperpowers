@@ -36,7 +36,7 @@ specs without one) plus its own.
 | 2026-10-13-agent-write-isolation-gate-ledger.md | 0 | 7 | Threat model: adversarial capability; Both environments; Mechanism: privilege separation; Failure is fatal; No host fallback; Verification; One plan across the three repositories |
 | 2026-10-14-agent-write-isolation-relocation-design.md | 0 | 5 | Threat model: careless; Move the workspace, not the record; No digest seal; Verification; One repository |
 | 2026-10-19-sdd-turn-liveness-design.md | 0 | 3 | Scope: turn-ending rules plus foreground waits; Evidence: a controlled scenario, then a field rerun; Mechanism: skill text |
-| 2026-10-20-portable-sdd-dossiers-design.md | 0 | 4 | Git is the transport; The parallel model to serve first is one controller session per parallel task,; The dossier's durable home is a dedicated state branch of the same repository,; The four design sections were approved as presented in chat |
+| 2026-10-20-portable-sdd-dossiers-design.md | 0 | 4 | Git is the transport; The parallel model to serve first is one controller session per parallel task; The dossier's durable home is a dedicated state branch of the same repository; The four design sections were approved as presented in chat |
 | 2026-10-21-decision-records-design.md | 0 | 12 | One file per decision; Records are extracted at finish only, and the spec's Decisions section is required; The plan is removed from the tree at finish; The spec stays, frozen from the records commit on, with one Outcome line; The same rule applies in this repository; Skeleton plus delta; The delta runs inside existing waits and is never waited for; Names carry a date and a slug;  there is no global counter; The records directory derives from the spec's location; Records are mandatory for a branch that has a spec, and the compiler is the only writer; Evidence bar: offline tests, a parser dry run over real specs, and the first live SDD run; The serial cost is the compiler and one commit, after the suite;  the human review rides the finishing menu |
 
 Result: 15 parsed, 10 exit 2. The prediction was 13 parses and 12 exit 2.
@@ -64,10 +64,16 @@ and two in decision-records-design ("a slug; there is no global counter",
 
 Title judgement. Every title names its decision except these, accepted as
 borderline. Plain items with no clause break are cut at a word boundary near
-80 characters and read as clipped phrases (risk-tiering items 2, 4, 5;
-adoption-remediation's "per this repo's"; portable-sdd-dossiers items 2 and 3
-ending in a comma); each is still recognisable from its words and the record
-body carries the full text. Short author-chosen titles such as "Scope",
+80 characters. The comma that ended portable-sdd-dossiers items 2 and 3 was a
+compiler defect, fixed in this round (cfa5047, "decisions-compile drops the
+punctuation a plain-title cut leaves behind"); both now read without it. Of
+the clipped titles, risk-tiering's "Tier assignment is plan-time,
+Codex-plan-gate-reviewed, escalate-only at" and "Prompt hygiene = fixer
+template + SDD contract-test suite + the" are still recognisable from their
+words. Others are prose fragments, accepted as the 80-character rule's limit
+rather than as recognisable titles: "`verification-before-completion` is fully
+removed, its load-bearing content" and adoption-remediation's "...per this
+repo's". The record body carries the full text either way. Short author-chosen titles such as "Scope",
 "Verification" and "Standing preference, verbatim" are recognisable with the
 spec beside them. portable-sdd-dossiers item 4, "The four design sections were
 approved as presented in chat", is a status note rather than a decision; it is

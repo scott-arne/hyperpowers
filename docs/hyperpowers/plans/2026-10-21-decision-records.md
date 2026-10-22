@@ -2815,6 +2815,8 @@ git commit -m "docs: plans leave the tree at finish, decisions live under docs/h
 
 Correction (2026-10-22): the first run reported BLOCKED as this step provides for. `title_of` read an item's first line only, so a bold title that wrapped to line 2 kept a raw `**` and was cut at 80 characters, and a plain item without a clause stop on line 1 gave a mid-phrase fragment. The compiler now reads the item's first paragraph joined across lines, Supersedes lines excluded, with bold matched across the join and a plain clause cut at a word boundary (commit 5f82cb9, section 28 of its suite), and the spec's Title paragraph in Design section 1 says so. Two more specs parse than the prediction counted, because their lists sit under headings the heading rule admits, such as `## 2. Locked decisions (from brainstorming)`; the split is 15 exit 0 and 10 exit 2, and the evidence note records it.
 
+Correction (2026-10-22, the human partner's decisions at the Codex gate): the 80-character word-boundary cut left prose fragments on legacy plain items, so a clause longer than 80 characters is now cut at the last `, ` or `; ` inside its first 80 characters that leaves at least 20, else at the last space, else not at all (commit 56bb8ac, section 30 of the suite; the spec's Title paragraph says so). The acceptance rule above is amended: a legacy plain title that this cut still leaves as a fragment, and a status-note item that is spec content, do not block the task; the note records each with its reason. The spec is still never edited to fit the parser.
+
 ```bash
 cd <the worktree>
 {

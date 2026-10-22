@@ -911,7 +911,7 @@ git commit -m "feat(finishing): decisions-compile writes the index and the spec'
 Insert before the marker line:
 
 ```bash
-# --- 9. supersession ---------------------------------------------------------
+# --- 15. supersession --------------------------------------------------------
 repo="$TEST_ROOT/supersede"
 make_repo "$repo"
 write_spec "$repo" 2026-07-01-old-design.md <<'EOF'
@@ -1022,7 +1022,7 @@ git -C "$repo" add -A docs/hyperpowers/decisions
 if [ "$(git -C "$repo" write-tree)" = "$tree_before" ] || [ -z "$(git -C "$repo" status --porcelain -- docs/hyperpowers/decisions)" ]; then pass "the records directory is byte-identical after the refused run"; else fail "records changed by a refused run"; fi
 git -C "$repo" checkout -q -- docs/hyperpowers/specs/2026-09-02-self-design.md
 
-# --- 10. --reindex ------------------------------------------------------------
+# --- 16. --reindex ------------------------------------------------------------
 rm "$idx"
 run_compile "$repo" --reindex docs/hyperpowers/decisions
 if [ "$RC" -eq 0 ] && [ -f "$idx" ] && [ -z "$(git -C "$repo" status --porcelain | grep -v README.md)" ]; then pass "--reindex rewrites only README.md"; else fail "--reindex (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
@@ -1031,12 +1031,38 @@ run_compile "$repo" --reindex docs/hyperpowers/decisions --dry-run
 if [ "$RC" -eq 2 ]; then pass "--reindex with another option is a usage error"; else fail "--reindex --dry-run (got $RC)"; fi
 run_compile "$repo" --reindex docs/hyperpowers/decisions docs/hyperpowers/specs/2026-08-01-new-design.md
 if [ "$RC" -eq 2 ]; then pass "--reindex with a spec is a usage error"; else fail "--reindex with spec (got $RC)"; fi
+
+# --- 17. a symlinked spec is refused -----------------------------------------
+# Correction (2026-10-22): Task 2's gate found at its cap that a spec which is
+# itself a symbolic link passes -f and is replaced by a regular file when the
+# Outcome line is written, leaving its target without the line; the human
+# partner carried the guard and this test into Task 3.
+repo="$TEST_ROOT/linkspec"
+make_repo "$repo"
+write_spec "$repo" 2026-09-01-real-design.md <<'EOF'
+# Real
+
+## Decisions
+
+- **One decision.** A decision.
+EOF
+ln -s 2026-09-01-real-design.md "$repo/docs/hyperpowers/specs/2026-09-01-link-design.md"
+commit_all "$repo" "spec and link"
+before=$(cksum < "$repo/docs/hyperpowers/specs/2026-09-01-real-design.md")
+run_compile "$repo" docs/hyperpowers/specs/2026-09-01-link-design.md
+if [ "$RC" -eq 2 ]; then pass "a symlinked spec exits 2"; else fail "symlinked spec (got $RC: $ERR)"; fi
+case "$ERR" in "docs/hyperpowers/specs/2026-09-01-link-design.md: "*) pass "the symlinked-spec message begins with the spec path" ;; *) fail "symlinked-spec message (got: $ERR)" ;; esac
+if [ -L "$repo/docs/hyperpowers/specs/2026-09-01-link-design.md" ] && [ "$(cksum < "$repo/docs/hyperpowers/specs/2026-09-01-real-design.md")" = "$before" ] && [ ! -e "$repo/docs/hyperpowers/decisions" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then
+    pass "the link, its target and the tree are unchanged"
+else
+    fail "a symlinked spec changed the tree (status: $(git -C "$repo" status --porcelain))"
+fi
 ```
 
-- [ ] **Step 2: Run to see checks 9 and 10 fail**
+- [ ] **Step 2: Run to see sections 15, 16 and 17 fail**
 
 Run: `bash tests/claude-code/test-decisions-compile.sh`
-Expected: checks 1 to 8 pass; 9 fails (no Supersedes handling) and 10 fails (`--reindex` is a usage error).
+Expected: sections 1 to 14 pass (Task 2's rounds added 11 to 14); 15 fails (no Supersedes handling), 16 fails (`--reindex` is a usage error) and 17 fails (the link is accepted).
 
 - [ ] **Step 3: Add supersession and reindex**
 
@@ -1057,7 +1083,7 @@ case "$mode" in
 esac
 ```
 
-(c) Replace the `# --- paths ---` block (through the `spec_date` `esac`) with a version that serves both modes; the `--paths-file` preflight and `today`, `tmp`, `trap` follow it unchanged:
+(c) Replace the `# --- paths ---` block (through the `spec_date` `esac`) with a version that serves both modes; the `--paths-file` preflight and `tmp`, `trap` follow it unchanged. Correction (2026-10-22): the block keeps the guards Task 2's gate rounds added (the containment check, the plain records directory, the regular index file) and adds the symlinked-spec guard Task 2's gate found at its cap, which the human partner carried into this task; a reindex of the repository root is refused the same way a root-level spec is:
 
 ```bash
 # --- paths ------------------------------------------------------------------
@@ -1066,13 +1092,19 @@ if [ "$mode" = reindex ]; then
   records_dir=$(cd "$reindex_dir" && pwd -P)
   root=$(git -C "$records_dir" rev-parse --show-toplevel 2>/dev/null) || die2 "$reindex_dir: not inside a git repository"
   root=$(cd "$root" && pwd -P)
+  case "$records_dir" in
+    "$root"/*) ;;
+    *) die2 "$reindex_dir: the records directory must be a subdirectory of the repository" ;;
+  esac
   records_rel=${records_dir#"$root"/}
-  index_rel="$records_rel/README.md"
   spec_rel="$records_rel"
   spec_abs=""
   count=0
 else
   [ -f "$spec" ] || die2 "$spec: no such spec file"
+  # A link at the spec path would be replaced by the Outcome write, leaving
+  # its target without the line.
+  [ ! -L "$spec" ] || die2 "$spec: the spec must be a regular file, not a symbolic link"
   spec_dir=$(cd "$(dirname "$spec")" && pwd -P)
   spec_abs="$spec_dir/$(basename "$spec")"
   root=$(git -C "$spec_dir" rev-parse --show-toplevel 2>/dev/null) || die2 "$spec: not inside a git repository"
@@ -1080,7 +1112,22 @@ else
   spec_rel=${spec_abs#"$root"/}
   records_dir="$(dirname "$spec_dir")/decisions"
   records_rel=${records_dir#"$root"/}
-  index_rel="$records_rel/README.md"
+  case "$records_dir" in
+    "$root"/*) ;;
+    *) die2 "$spec_rel: the spec must live in a subdirectory of the repository (its records go to the sibling decisions/ of that directory)" ;;
+  esac
+  # An existing decisions entry must be a plain directory: a symbolic link
+  # would carry the records outside the repository that spec_dir's physical
+  # path keeps them in.
+  if [ -L "$records_dir" ] || { [ -e "$records_dir" ] && [ ! -d "$records_dir" ]; }; then
+    die2 "$spec_rel: $records_rel exists but is not a plain directory"
+  fi
+fi
+index_rel="$records_rel/README.md"
+# A directory or a link at the index path would receive the index by rename
+# instead of being replaced.
+if [ -L "$records_dir/README.md" ] || { [ -e "$records_dir/README.md" ] && [ ! -f "$records_dir/README.md" ]; }; then
+  die2 "$spec_rel: $index_rel exists but is not a regular file"
 fi
 today=${DECISIONS_COMPILE_DATE:-$(date +%F)}
 spec_base=$(basename "${spec_abs:-x}")
@@ -1464,9 +1511,9 @@ if grep -q '^- Recorded: 2026-10-21; plan docs/hyperpowers/plans/2026-10-19-with
 if tr '\0' '\n' < "$TEST_ROOT/plan.paths" | grep -q '^docs/hyperpowers/specs/2026-10-19-with space-design.md$'; then pass "the paths file carries a path with a space intact"; else fail "paths file lost the spaced path"; fi
 approval=()
 while IFS= read -r -d '' pth; do approval+=("$pth"); done < "$TEST_ROOT/plan.paths"
-( cd "$repo" && git diff --cached --name-only -- "${approval[@]}" > "$TEST_ROOT/approval.txt" )
+( cd "$repo" && GIT_LITERAL_PATHSPECS=1 git diff --cached --name-only -- "${approval[@]}" > "$TEST_ROOT/approval.txt" )
 if grep -q '2026-10-19-with space-design.md' "$TEST_ROOT/approval.txt" && ! grep -q other.txt "$TEST_ROOT/approval.txt"; then pass "the approval diff from the pathspec file covers the spaced path and not the unrelated file"; else fail "approval diff (got: $(tr '\n' ' ' < "$TEST_ROOT/approval.txt"))"; fi
-( cd "$repo" && git commit -q --pathspec-from-file="$TEST_ROOT/plan.paths" --pathspec-file-nul -m "docs: record decisions for 2026-10-19-with space" )
+( cd "$repo" && GIT_LITERAL_PATHSPECS=1 git commit -q --pathspec-from-file="$TEST_ROOT/plan.paths" --pathspec-file-nul -m "docs: record decisions for 2026-10-19-with space" )
 if git -C "$repo" show --format= --name-only HEAD | grep -q '2026-10-19-with space-design.md' && [ "$(git -C "$repo" diff --cached --name-only)" = "other.txt" ]; then pass "the pathspec commit takes the spaced spec and leaves the unrelated staged file staged"; else fail "pathspec commit (committed: $(git -C "$repo" show --format= --name-only HEAD | tr '\n' ' '); staged: $(git -C "$repo" diff --cached --name-only))"; fi
 git -C "$repo" reset -q other.txt && rm "$repo/other.txt"
 # Discovery after the committed removal, as finishing Step 1 does it.
@@ -2082,11 +2129,13 @@ Insert directly after the line `## Step 4: Present Options` and its blank line, 
 **When Step 1 staged records,** the message that presents the options opens
 with the complete staged diff over the pathspec file's paths (`git diff` has
 no pathspec-file option, so the NUL-delimited file is read into an array; a
-path with a space survives):
+path with a space survives, and the variable makes the entries literal, as
+the compiler's own git calls are, so a bracket or star in a spec name
+matches only itself):
 
 ```bash
 paths=(); while IFS= read -r -d '' p; do paths+=("$p"); done < <dir>/records.paths
-git diff --cached -- "${paths[@]}"
+GIT_LITERAL_PATHSPECS=1 git diff --cached -- "${paths[@]}"
 ```
 
 then the extractor's proposals from its notes file, each with the question
@@ -2108,7 +2157,7 @@ is none), record it in their words, make no commit, and run the option they
 chose. Otherwise commit:
 
 ```bash
-git commit --pathspec-from-file=<dir>/records.paths --pathspec-file-nul -m "docs: record decisions for <spec filename without -design.md>"
+GIT_LITERAL_PATHSPECS=1 git commit --pathspec-from-file=<dir>/records.paths --pathspec-file-nul -m "docs: record decisions for <spec filename without -design.md>"
 ```
 
 and run the option they chose. A branch with no records shows the menu as it

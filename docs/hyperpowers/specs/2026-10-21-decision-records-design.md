@@ -427,11 +427,13 @@ one line to stderr beginning with the spec path.
 controller commits with the pathspec file:
 
 ```bash
-git commit --pathspec-from-file=<paths file> --pathspec-file-nul -m "docs: record decisions for <spec filename without -design.md>"
+GIT_LITERAL_PATHSPECS=1 git commit --pathspec-from-file=<paths file> --pathspec-file-nul -m "docs: record decisions for <spec filename without -design.md>"
 ```
 
 A pathspec commit records those paths and leaves any other staged change
-staged, so a dirty index is not swept into the records commit. An empty
+staged, so a dirty index is not swept into the records commit. The entries
+are literal pathspecs, as the compiler's own git calls treat them, so a
+bracket, star or question mark in a spec name matches only itself. An empty
 pathspec file means nothing to commit. There is one records commit per
 branch: every disposition is applied, and the compiler re-run, before it.
 A skip before the commit is `decisions-compile --undo <spec> --plan <plan>`;
@@ -597,7 +599,7 @@ Step 1 becomes **Record decisions and verify tests**:
 
 **Step 4** (the options menu) gains a preface when Step 1 staged records:
 the message that presents the options opens with the complete staged diff
-(`git diff --cached -- <paths>`), then the extractor's proposals, each with
+(`GIT_LITERAL_PATHSPECS=1 git diff --cached -- <paths>`), then the extractor's proposals, each with
 the question it needs (an undocumented decision: add it to the spec's
 Decisions list, or dismiss; a proposed supersession: add a `Supersedes:`
 line to the item that reverses the record, or dismiss), then a line

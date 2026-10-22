@@ -23,13 +23,19 @@ ride the branch before any merge or push, so they are staged here and
 committed in Step 4 once your human partner has seen them. Work with no spec
 has no records: for it, this step is the test run alone.
 
-1. **Find the plan and the spec.** The subagent-driven-development hand-off
-   names both. Otherwise read the branch's history, not its tree, so a plan
-   an earlier records commit removed is still found (the base branch is the
+1. **Find the plan and the spec.** First fix the fork point, in every case,
+   because the steps below diff and search from it (the base branch is the
    one Step 3 confirms; your best guess serves here, nothing is merged yet):
 
    ```bash
    MERGE_BASE=$(git merge-base <base-branch> HEAD)
+   ```
+
+   The subagent-driven-development hand-off names both. Otherwise read the
+   branch's history, not its tree, so a plan an earlier records commit
+   removed is still found:
+
+   ```bash
    git log --diff-filter=A --name-only --format= "$MERGE_BASE"..HEAD -- '*/plans/*.md'
    ```
 
@@ -39,7 +45,8 @@ has no records: for it, this step is the test run alone.
    the same way. No plan: when the branch's history added or changed a spec
    (`git log --diff-filter=AM --name-only --format= "$MERGE_BASE"..HEAD -- '*/specs/*.md'`),
    ask whether records are wanted for it, and if so there is a spec and no
-   plan; when it did neither, the work is bounded, skip to step 3.
+   plan; when it did neither, the work is bounded: there is no spec, skip
+   the extractor and go to the test run in item 3.
 2. **Take a scratch directory and dry-run the compiler.** The directory
    comes from `../requesting-code-review/scripts/codex-review-dir` (one per
    finish; the extractor's output and the pathspec file `records.paths` live
@@ -54,7 +61,7 @@ has no records: for it, this step is the test run alone.
    resolve it with them before going on. Keep the numbered listing for the
    extractor.
 3. **Dispatch the extractor, then run the suite.** Skip the dispatch when the
-   hand-off already names an extractor (a task id and an output path), when
+   branch has no spec, when the hand-off already names an extractor (a task id and an output path), when
    the branch already carries this spec's records commit
    (`git log "$MERGE_BASE"..HEAD --grep='^docs: record decisions for '`), or
    when your harness has no tracked background subagent (then say so when
@@ -136,7 +143,7 @@ and re-run the compiler with the same arguments, and because the staged set
 changed, show the new complete staged diff and ask only for its approval,
 not the dispositions again; record a dismissal in the hand-back in their
 words. A skip ends the records for this branch: run
-`decisions-compile --undo <spec> --plan <plan>` (without `--plan` when there
+`bash <this skill's directory>/scripts/decisions-compile --undo <spec> --plan <plan>` (without `--plan` when there
 is none), record it in their words, make no commit, and run the option they
 chose. Otherwise commit:
 

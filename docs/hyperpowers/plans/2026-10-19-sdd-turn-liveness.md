@@ -21,6 +21,7 @@
 7. **A command Claude Code moves to the background on its own is a tracked launch.** Spec Design §2 defines "live" by the two launch results "Async agent launched" and "Command running in background with ID". Claude Code also moves a foreground Bash call that outlives its timeout to the background by itself; the result then starts "Command did not complete within its <N>s timeout and was moved to the background", and the job's end arrives as a completion notice naming the same tool-use id, like any tracked job (about 800 such results on this host). The shared module counts that result as a shell launch, so a stop while such a job runs is a live-work turn end (W2), not a premature stop (P). F is unaffected: a four-minute soak run with the two-minute default timeout still fails it on its timeout and its elapsed time. Approved by the human partner on 2026-10-20, during Task 3's review; applied as Task 4's first step because Task 3 had closed.
 8. **An agent resumed with `SendMessage` is a tracked launch.** Spec Design §2 defines "live" by the two launch results, while the spec's Problem section, the investigation this work answers, describes a premature stop as a turn end "with no subagent or background command running". When the controller resumes a finished agent with `SendMessage`, Claude Code runs it in the background and returns a successful result whose message says "Resuming agent …" or "… resumed … in the background with your message"; the agent's end arrives as a completion notice naming the `SendMessage` tool-use id, like any tracked job (3257 such results on this host; SDD's fix rounds 1-3 resume the implementer this way). The shared module counts that result as an agent launch, so a stop while a resumed agent works is a live-work turn end (W2 in the scenario), not a premature stop (P). Task 7's review found that waits on resumed agents made up about 41% of the premature stops in the three sessions it probed. Approved by the human partner on 2026-10-21, during Task 7's review; applied as Task 7's first step, and the field baseline is re-recorded under it.
 9. **The scenario session runs without Claude Code's fork mode, and with the task tools on, as the field does.** Spec Design §2 pins the Coding-Agent's environment by its provenance fields but not by Claude Code's subagent mode. Claude Code 2.1.302 runs subagents in fork mode by default in an interactive terminal (quorum's sessions): the Agent tool then has no `run_in_background` parameter and every dispatch runs in the background. Print and SDK sessions, which include the human partner's Zed sessions (`entrypoint: sdk-ts`), run without fork mode and honor `run_in_background: false`. Task 9's smoke found every dispatch backgrounded in both arms for that reason, so neither arm could keep a turn open while a subagent ran. The scenario's `checks.sh` therefore sets `CLAUDE_CODE_FORK_SUBAGENT=0` (documented) and `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` through a `# claude-env:` directive whose keys the harness allowlists; the launcher still drops every other inherited Claude variable. Approved by the human partner on 2026-10-21, during Task 9 (the task-tools opt-in, then the fork-mode spike); applied in Task 9 Steps 3b and 3c.
+10. **A Gauntlet lost to a host transport failure is an instrument void, outside the cap.** Spec Design §2 and the Global Constraints count every non-pass, non-fail outcome other than a setup failure toward the cap of three replacements per arm, "API or harness failure" included, because a discarded run is usually a re-roll of behavior that was observed. On 2026-10-22 at about 04:39Z the host lost name resolution for its proxy for a few minutes; the Gauntlet-Agent of all five second-wave control rows (p6-p10) exited with `ECONNRESET` or `getaddrinfo ENOTFOUND` before writing a result, 11 to 15 minutes into runs that take 50 to 75, and quorum recorded each as `investigate` with the summary "gauntlet exited (status 1) without writing a result". No behavior was observed to completion and nothing was re-rolled, yet the five rows exhausted the cap and stopped the arm at four valid runs. A `void-grader` whose Gauntlet record carries no result and whose recorded stderr names a transport error (`ECONNRESET`, `ENOTFOUND`, `ETIMEDOUT`, `ECONNREFUSED`) is therefore `void-transport`: relaunched as an `r<n>` row like a setup void, outside the cap, in both arms alike. A Gauntlet `investigate` with a written result, p5's kind, stays a capped void. Recorded as Correction 1 in the campaign README and applied in Task 11 Step 0 before any relaunch. Approved by the human partner on 2026-10-21 (local), during Task 11.
 
 ## Global Constraints
 
@@ -30,7 +31,7 @@
 - Harness path set, identical in `measure-launch.sh` and `tally.py` (the evals_clean set): `src coding-agents package.json bun.lock bunfig.toml tsconfig.json container scripts/evals-container scenarios fixtures`. The clean-harness settings (the `claudeMdExcludes` list, the `AGENTS.md` exclusion, the launch-environment cleaning) are harness code inside that set, so harness-path identity with the pin is what pins them.
 - Arms: control root `/Users/johnss51/.cache/hyperpowers/sdd-turn-liveness/hp-control` (detached worktree at `v6.16.1`); treatment root `/Users/johnss51/.cache/hyperpowers/sdd-turn-liveness/hp-treatment` (detached worktree at the hyperpowers commit Task 1 makes). Both are created with `git -C /Users/johnss51/Development/agents/hyperpowers worktree add --detach <path> <commit>` and never edited.
 - Campaign pin (spec Design §2), one value per key in `manifest.tsv`: `harness` (evals commit), `control`, `treatment` (root commits), `control_root`, `treatment_root`, `model claude-opus-5-5` (the Coding-Agent, through `ANTHROPIC_MODEL`), `cc` (Claude Code version), `cc_path` (the resolved `claude` binary), `provider vertex`, `subagent_models claude-opus-5-5,claude-sonnet-5-5,claude-haiku-4-5-20251001`, `codex absent`, `task_tools on` (`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, matching the field sessions). Every launch also exports `DISABLE_AUTOUPDATER=1`. A run's recorded models must be non-empty, include the pinned Coding-Agent model and lie inside the allowed set (deviation 4). Codex absence is affirmative: the scenario's two pre-checks passed (the agent's config directory exists, and its plugin registry is either absent, which means no plugin is installed, or readable without a `codex@openai-codex` entry; no `plugins/cache/openai-codex` directory exists), and no main-session command invoked the companion.
-- Void rules: harness setup failure, relaunched, no cap; every other non-pass, non-fail outcome (grader exit without a result, API or harness failure, anything unrecognized), replaced, at most three such replacements per arm combined; a run with a provenance mismatch, voided, replaced, and counted toward the same cap (the agent ran, so discarding it is the kind of re-roll the cap limits); a Claude Code version change (in a run, or caught by a launcher's preflight) restarts both arms under a new pin. Replacement rows are added to `manifest.tsv` as `r<n>` rows and launched through `launch-all.sh` like any other row.
+- Void rules: harness setup failure, relaunched, no cap; a Gauntlet lost to a transport failure before it wrote a result (`void-transport`: the recorded stderr names `ECONNRESET`, `ENOTFOUND`, `ETIMEDOUT` or `ECONNREFUSED`), relaunched, no cap (deviation 10); every other non-pass, non-fail outcome (grader exit without a result, API or harness failure, anything unrecognized), replaced, at most three such replacements per arm combined; a run with a provenance mismatch, voided, replaced, and counted toward the same cap (the agent ran, so discarding it is the kind of re-roll the cap limits); a Claude Code version change (in a run, or caught by a launcher's preflight) restarts both arms under a new pin. Replacement rows are added to `manifest.tsv` as `r<n>` rows and launched through `launch-all.sh` like any other row.
 - Decision-rule thresholds, verbatim from the spec: W1 pooled foreground share ≥ 0.9; W2 at most one live-work turn end across treatment's ten runs; F both slow-command measures pass in at least nine of ten treatment runs; U no untracked launches; P (if control has at least one premature stop) treatment's total lower than control's and at least nine treatment runs with none, else unmeasured; R at least seven successful treatment runs and no more than one fewer than control.
 - Watch budget values, verbatim: three times the stated runtime, or 60 minutes when none is stated, capped at 7200000 ms; foreground calls at most 600000 ms; launch form `<command> > <out> 2>&1; echo "exit=$?" > <out>.exit` (amended 2026-10-20 after Task 1's Codex gate: a marker in the output file could be spoofed by the command's own output; the human partner chose the separate file).
 - Commit messages follow each repository's `type(scope): sentence` style (`fix(sdd): …`, `test(evidence): …`, `docs(evidence): …`); no attribution lines of any kind. Before every commit the staged diff passes `git diff --cached | python3 ~/.claude/scripts/realval-scan.py` with `hits: 0`. No committed file carries transcript text from this host's sessions, the proxy host, the `NO_PROXY` list or the GCP project id.
@@ -4906,6 +4907,102 @@ Hyperpowers: `git add docs/hyperpowers/2026-10-19-sdd-turn-liveness-eval-evidenc
 
 `Assumption: premature stops reproduce in a short, fresh session, validate via this arm's premature total, before Task 12. A total of 0 is not a plan conflict: P becomes unmeasured, as the spec's rule says.`
 
+- [ ] **Step 0: The transport void (plan deviation 10, README Correction 1)**
+
+Deviation 10 was approved during this task, after the second wave's five rows were lost to a host network failure (its text has the facts). It lands as its own commit before any relaunch, because the README's Analyzer pins make every analyzer change a Correction "recorded before the tally it affects".
+
+In `test_analyze.py`, extend `test_void_kinds_fail_closed` (class `Measure`) with these assertions, placed after the existing `void-grader` assertion:
+
+```text
+        lost = {
+            "final": "indeterminate",
+            "gauntlet": {
+                "status": "investigate",
+                "summary": "gauntlet exited (status 1) without writing a result",
+                "reasoning": 'gauntlet stderr (tail): {"error":{"message":"getaddrinfo ENOTFOUND proxy.example"}}',
+            },
+        }
+        self.assertEqual(analyze.void_kind(lost), "void-transport")
+        reset = {**lost, "gauntlet": {**lost["gauntlet"], "reasoning": 'gauntlet stderr (tail): {"error":{"message":"ECONNRESET: The socket connection was closed unexpectedly."}}'}}
+        self.assertEqual(analyze.void_kind(reset), "void-transport")
+        judged = {**lost, "gauntlet": {**lost["gauntlet"], "reasoning": "the agent never answered"}}
+        self.assertEqual(analyze.void_kind(judged), "void-grader")
+```
+
+In `test_tally.py`, add this test to the `Evaluate` class after `test_setup_void_is_not_counted` (four transport voids and a PASS prove they sit outside the cap of three):
+
+```text
+    def test_transport_void_is_not_counted(self) -> None:
+        lost = {
+            "status": "investigate",
+            "summary": "gauntlet exited (status 1) without writing a result",
+            "reasoning": 'gauntlet stderr (tail): {"error":{"message":"ECONNRESET: The socket connection was closed unexpectedly."}}',
+        }
+        for n in range(4):
+            make_run(self.c.results, f"control-t{n}", [], plugin_dir=ROOTS["control"], final="indeterminate", gauntlet=lost)
+            self.c.launch("control", f"r{n + 1}", [f"control-t{n}"])
+        self.c.arm("control", 10, control_records, STOPS)
+        self.c.arm("treatment", 10, treatment_records)
+        rows, d = self.c.evaluate()
+        self.assertEqual({r["status"] for r in rows if r["run_id"].startswith("control-t")}, {"void-transport"})
+        self.assertEqual(d["decision"], "PASS")
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py evidence/2026-10-19-sdd-turn-liveness/test_tally.py` — Expected: both new assertions FAIL (`void-grader` where `void-transport` is expected; `INCOMPLETE` where `PASS` is expected).
+
+In `analyze.py`, add a module constant beside the other module constants (after `LONG_MIN_ELAPSED_S`):
+
+```text
+TRANSPORT_ERRORS = ("ECONNRESET", "ENOTFOUND", "ETIMEDOUT", "ECONNREFUSED")
+```
+
+and replace the `void-grader` branch of `void_kind` with:
+
+```text
+    if gauntlet.get("status") == "investigate" and "without writing a result" in str(gauntlet.get("summary") or ""):
+        # The Gauntlet-Agent died before grading. When its recorded stderr names
+        # a transport error the host lost its network and no behavior was
+        # observed to completion, so the attempt is outside the cap (plan
+        # deviation 10); any other grader exit stays a capped void.
+        if any(code in str(gauntlet.get("reasoning") or "") for code in TRANSPORT_ERRORS):
+            return "void-transport"
+        return "void-grader"
+```
+
+In `tally.py`, add after `VOID_CAP = 3`:
+
+```text
+UNCAPPED_VOIDS = ("void-setup", "void-transport")
+```
+
+and replace, in `evaluate`:
+
+```text
+            elif m["void"] == "void-setup":
+                row["status"] = "void-setup"
+```
+
+with:
+
+```text
+            elif m["void"] in UNCAPPED_VOIDS:
+                # No agent behavior was observed to completion: a setup failure
+                # started none, a transport failure lost the grader (deviation 10).
+                row["status"] = m["void"]
+```
+
+If either module's docstring enumerates the void statuses, add `void-transport` beside `void-setup` there. Run the four suites: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_liveness.py evidence/2026-10-19-sdd-turn-liveness/test_analyze.py evidence/2026-10-19-sdd-turn-liveness/test_tally.py evidence/2026-10-19-sdd-turn-liveness/test_field.py` — Expected: `OK`. Ruff and mypy on `analyze.py` and `tally.py`.
+
+In `README.md`, add to the "Void rules" list, after its first item: `- A Gauntlet lost to a transport failure before it wrote a result is \`void-transport\`: relaunched, no cap (Correction 1, plan deviation 10).` and insert a `## Corrections` section immediately before `## Results`:
+
+```text
+## Corrections
+
+1. 2026-10-22, before the control arm's first relaunch (plan deviation 10). `analyze.void_kind` names a new void, `void-transport`: a Gauntlet exit without a result whose recorded stderr names a transport error (`ECONNRESET`, `ENOTFOUND`, `ETIMEDOUT`, `ECONNREFUSED`); `tally.evaluate` relaunches it outside the cap, like `void-setup`. Reason: at about 04:39Z the host lost name resolution for its proxy for a few minutes, the Gauntlet-Agent of all five second-wave control rows (p6-p10) exited with `ECONNRESET` or `getaddrinfo ENOTFOUND` 11 to 15 minutes into the runs, and the five rows exhausted the cap of three with no agent behavior observed to completion and nothing re-rolled. The rule is symmetric across arms; a Gauntlet `investigate` with a written result stays a capped void. Pins after the Correction: `analyze.py` `<blob>`, `tally.py` `<blob>` (`liveness.py` unchanged).
+```
+
+Fill each `<blob>` with `git hash-object` of the final file before committing and confirm after the commit with `git rev-parse HEAD:evidence/2026-10-19-sdd-turn-liveness/<f>`. Stage `analyze.py`, `tally.py`, `test_analyze.py`, `test_tally.py`, `README.md`; leak scan; commit `fix(evidence): a grader lost to a transport failure is an uncapped void`. Then run `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py`: the five outage rows read `void-transport`, the cap reason is gone, and the control arm wants six more valid runs. Relaunch the five transport-void rows as `r1`-`r5` by Step 2's procedure (one view `manifest-control-r1.tsv`, log `logs/campaign-control-r1.out`, concurrency 5) before any capped replacement; p5 stays the arm's first capped void.
+
 - [ ] **Step 1: Launch the ten control rows**
 
 From the evals worktree, with `ANTHROPIC_MODEL=claude-opus-5-5 CLAUDE_CODE_ENABLE_TODO_TOOLS=1` exported, write a launch view holding the pins and only the control rows (`awk -F '\t' 'NF == 2 || $1 == "control"' evidence/2026-10-19-sdd-turn-liveness/manifest.tsv > evidence/2026-10-19-sdd-turn-liveness/manifest-control.tsv`), then launch detached (unsandboxed):
@@ -4915,7 +5012,7 @@ Watch with `wait-done.sh … logs/campaign-control.out 9` in foreground calls of
 
 - [ ] **Step 2: Replace voids under the rules**
 
-Run `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` (it prints every row; the decision reads INCOMPLETE until the treatment arm exists). For each control row with status `void-setup`, `void-grader`, `void-other`, `no-verdict`, `launch-failed`, `void-provenance`, `preflight-refused` or `no-run` (fix the refusal's cause first; the log names it), append one replacement row `control sdd-turn-liveness 1 r<n> default` to `manifest.tsv`, write a launch view of the pins plus only the new rows (`manifest-control-r<k>.tsv`), and launch it the same detached way into `logs/campaign-control-r<k>.out`, watched with `wait-done.sh`. Stop at the cap of three capped voids: every status above counts toward it except `void-setup` and `preflight-refused`. A `restart` row, or a log with `preflight=cc`, stops the campaign: report to the human partner.
+Run `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` (it prints every row; the decision reads INCOMPLETE until the treatment arm exists). For each control row with status `void-setup`, `void-transport`, `void-grader`, `void-other`, `no-verdict`, `launch-failed`, `void-provenance`, `preflight-refused` or `no-run` (fix the refusal's cause first; the log names it), append one replacement row `control sdd-turn-liveness 1 r<n> default` to `manifest.tsv`, write a launch view of the pins plus only the new rows (`manifest-control-r<k>.tsv`), and launch it the same detached way into `logs/campaign-control-r<k>.out`, watched with `wait-done.sh`. Stop at the cap of three capped voids: every status above counts toward it except `void-setup`, `void-transport` and `preflight-refused`. A `restart` row, or a log with `preflight=cc`, stops the campaign: report to the human partner.
 
 - [ ] **Step 3: Adjudicate and archive**
 

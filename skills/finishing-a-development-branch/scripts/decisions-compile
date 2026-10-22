@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+# decisions-compile: lift a spec's Decisions list into one record per
+# decision under the decisions/ sibling of the spec's directory.
+#
+# The spec is the only source of a record's title and decision text; a
+# re-run refreshes them and keeps the record's filename and Recorded date.
+# Nothing is written before every input has been validated, and nothing is
+# ever committed. Design: docs/hyperpowers/specs/2026-10-21-decision-records-design.md.
+#
+# Usage: decisions-compile SPEC [--dry-run]
+# Exit 2: an input problem (no spec, no decisions list, an unresolvable
+# filename collision); nothing has been written.
+set -euo pipefail
+# Slugs, sorting and character classes must not depend on the host locale.
+export LC_ALL=C
+
+usage() {
+  echo "usage: decisions-compile SPEC [--dry-run]" >&2
+  exit 2
+}
+
+spec=""
+dry_run=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run) if $dry_run; then usage; fi; dry_run=true; shift ;;
+    -*) usage ;;
+    *) [ -z "$spec" ] || usage; spec=$1; shift ;;
+  esac
+done
+[ -n "$spec" ] || usage
+
+die2() { echo "$1" >&2; exit 2; }
+die3() { echo "$1" >&2; exit 3; }
+
+# --- paths ------------------------------------------------------------------
+[ -f "$spec" ] || die2 "$spec: no such spec file"
+spec_dir=$(cd "$(dirname "$spec")" && pwd -P)
+spec_abs="$spec_dir/$(basename "$spec")"
+root=$(git -C "$spec_dir" rev-parse --show-toplevel 2>/dev/null) || die2 "$spec: not inside a git repository"
+root=$(cd "$root" && pwd -P)
+spec_rel=${spec_abs#"$root"/}
+records_dir="$(dirname "$spec_dir")/decisions"
+records_rel=${records_dir#"$root"/}
+index_rel="$records_rel/README.md"
+today=${DECISIONS_COMPILE_DATE:-$(date +%F)}
+spec_base=$(basename "$spec_abs")
+case "$spec_base" in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*) spec_date=${spec_base:0:10} ;;
+  *) spec_date=$today ;;
+esac
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+# --- helpers ----------------------------------------------------------------
+trim_blank() {  # drop trailing blank lines of a file, in place, BSD and GNU alike
+  awk '{ lines[NR] = $0 } END { n = NR; while (n > 0 && lines[n] ~ /^[[:space:]]*$/) n--; for (i = 1; i <= n; i++) print lines[i] }' "$1" > "$1.t" && mv "$1.t" "$1"
+}
+
+title_of() {  # item file -> title (bold text, or the first clause of line 1)
+  local first t
+  first=$(head -n 1 "$1")
+  if [[ $first =~ ^\*\*([^*]+)\*\* ]]; then
+    t=${BASH_REMATCH[1]}
+    case "$t" in *.|*:) t=${t%?} ;; esac
+    printf '%s\n' "$t"
+  else
+    printf '%s\n' "$first" | awk '{ s = $0; i = index(s, ". "); j = index(s, ": "); k = i; if (j > 0 && (k == 0 || j < k)) k = j; if (k > 0) s = substr(s, 1, k - 1); print substr(s, 1, 80) }'
+  fi
+}
+
+slug_of() {  # title -> filename slug, at most 60 characters, cut at a hyphen
+  local s next
+  s=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+  if [ ${#s} -gt 60 ]; then
+    next=${s:60:1}
+    s=${s:0:60}
+    if [ "$next" != "-" ]; then case "$s" in *-*) s=${s%-*} ;; esac; fi
+    s=${s%-}
+  fi
+  printf '%s\n' "$s"
+}
+
+identity_of() { printf -- '- Spec: %s (decision %s)\n' "$spec_rel" "$1"; }
+
+find_existing() {  # identity line -> the record carrying it, or nothing
+  [ -d "$records_dir" ] || return 0
+  grep -lxF -e "$1" "$records_dir"/*.md 2>/dev/null | head -n 1 || true
+}
+
+existing_field() { sed -n "s/^- $2: //p" "$1" | head -n 1; }
+
+existing_notes() {  # record -> body of its "What implementation changed" section
+  awk 'f { print } /^## What implementation changed$/ { f = 1 }' "$1" | awk 'NR == 1 && /^$/ { next } { print }' > "$tmp/notes-body"
+  trim_blank "$tmp/notes-body"
+  cat "$tmp/notes-body"
+}
+
+# write_if_changed FILE CONTENT-FILE: returns 0 when FILE changed, 1 when it
+# was already identical.
+write_if_changed() {
+  if [ -f "$1" ] && cmp -s "$1" "$2"; then return 1; fi
+  mkdir -p "$(dirname "$1")"
+  cp "$2" "$1"
+  return 0
+}
+
+render_record() {  # N -> the record text
+  local n=$1 target status rec_date recorded notes_body
+  target="$records_dir/${files[n]}"
+  if [ "${existing[n]}" = 1 ]; then
+    status=$(existing_field "$target" Status)
+    rec_date=$(existing_field "$target" Recorded | cut -c1-10)
+    notes_body=$(existing_notes "$target")
+  fi
+  [ -n "${status:-}" ] || status=accepted
+  [ -n "${rec_date:-}" ] || rec_date=$today
+  [ -n "${notes_body:-}" ] || notes_body="Nothing recorded."
+  recorded=$rec_date
+  if [ "$notes_body" != "Nothing recorded." ]; then
+    recorded="$recorded; notes from the branch diff by a subagent at finish"
+  fi
+  printf '# %s\n\n- Status: %s\n' "${titles[n]}" "$status"
+  identity_of "$n"
+  printf -- '- Recorded: %s\n' "$recorded"
+  printf '\n## Decision\n\n'
+  cat "$tmp/item-$n.txt"
+  printf '\n## What implementation changed\n\n%s\n' "$notes_body"
+}
+
+# --- 1. the Decisions list --------------------------------------------------
+# The first level-two heading whose text contains "decision" opens the
+# section; the next level-two heading closes it for good. A top-level list
+# marker starts an item; everything until the next marker or the closing
+# heading belongs to that item. A continuation line loses the marker's width
+# of leading spaces when it has at least that many, and is otherwise kept as
+# written. A fence (``` or ~~~, up to three spaces of indentation, closed by
+# the same character) neither opens nor closes anything and starts no item;
+# its lines are ordinary item text.
+awk -v out="$tmp" '
+  function fence_mark(s,   m) {
+    if (match(s, /^ ? ? ?(```+|~~~+)/)) { m = substr(s, RSTART, RLENGTH); sub(/^ */, "", m); return substr(m, 1, 1) }
+    return ""
+  }
+  {
+    fm = fence_mark($0)
+    if (!fence && fm != "") { fence = 1; fch = fm; code = 1 }
+    else if (fence && fm != "" && fm == fch) { fence = 0; code = 1 }
+    else code = fence
+  }
+  !code && /^## / {
+    if (insec == 1) { insec = 2 }
+    else if (insec == 0 && tolower($0) ~ /decision/) { insec = 1; next }
+  }
+  insec != 1 { next }
+  !code && match($0, /^([0-9]+[.)]|[-*]) +/) {
+    n++; cur = out "/item-" n ".txt"; width = RLENGTH
+    print substr($0, RLENGTH + 1) > cur
+    next
+  }
+  n > 0 {
+    i = 0
+    while (i < width && substr($0, i + 1, 1) == " ") i++
+    if (i == width) print substr($0, width + 1) > cur
+    else print > cur
+  }
+' "$spec_abs"
+count=$(find "$tmp" -name 'item-*.txt' | wc -l | tr -d ' ')
+[ "$count" -gt 0 ] || die2 "$spec_rel: no decisions list (add \"## Decisions\" with one list item per decision)"
+
+# --- 2. titles, slugs, filenames (nothing written yet) ----------------------
+declare -a titles files existing
+planned=" "
+for ((n = 1; n <= count; n++)); do
+  item="$tmp/item-$n.txt"
+  trim_blank "$item"
+  titles[n]=$(title_of "$item")
+  slug=$(slug_of "${titles[n]}")
+  [ -n "$slug" ] || slug="decision-$n"
+  ex=$(find_existing "$(identity_of "$n")")
+  if [ -n "$ex" ]; then
+    files[n]=$(basename "$ex")
+    existing[n]=1
+  else
+    existing[n]=0
+    f="$spec_date-$slug.md"
+    if [ -e "$records_dir/$f" ] || [[ $planned == *" $f "* ]]; then
+      f="$spec_date-$slug-$n.md"
+      if [ -e "$records_dir/$f" ] || [[ $planned == *" $f "* ]]; then
+        die2 "$spec_rel: decision $n: filename $f is taken by another record; give the decision a distinct title"
+      fi
+    fi
+    files[n]=$f
+  fi
+  planned="$planned${files[n]} "
+done
+
+# --- 3. dry run ---------------------------------------------------------------
+verb_lines=()
+if $dry_run; then
+  echo "dry run: $count decisions, index $index_rel"
+  for ((n = 1; n <= count; n++)); do
+    if [ "${existing[n]}" = 1 ]; then v="would update"; else v="would write"; fi
+    echo "$v $records_rel/${files[n]} (decision $n: ${titles[n]})"
+  done
+  exit 0
+fi
+
+# --- 4. records ---------------------------------------------------------------
+wrote=0; updated=0; superseded=0; undocumented=0; proposed=0
+mkdir -p "$records_dir"
+for ((n = 1; n <= count; n++)); do
+  target="$records_dir/${files[n]}"
+  render_record "$n" > "$tmp/render"
+  if [ "${existing[n]}" = 1 ]; then
+    if write_if_changed "$target" "$tmp/render"; then
+      updated=$((updated + 1))
+      verb_lines+=("updated $records_rel/${files[n]} (decision $n: ${titles[n]})")
+    fi
+  else
+    write_if_changed "$target" "$tmp/render" || true
+    wrote=$((wrote + 1))
+    verb_lines+=("wrote $records_rel/${files[n]} (decision $n: ${titles[n]})")
+  fi
+done
+
+# --- 5. report --------------------------------------------------------------
+echo "wrote $wrote records, updated $updated, superseded $superseded, undocumented $undocumented, proposed supersessions $proposed, index $index_rel"
+if [ ${#verb_lines[@]} -gt 0 ]; then printf '%s\n' "${verb_lines[@]}"; fi

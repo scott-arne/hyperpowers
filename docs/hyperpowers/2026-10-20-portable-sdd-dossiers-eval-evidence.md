@@ -40,13 +40,26 @@ normally and stopped before Task 2. (`rehearsal/hostP-accept.jsonl`;
 `rehearsal/hostP-state-paths.txt` lists the 34 distinct state-checkout paths the
 session touched.)
 
-This pass measured one arm only. `Write` was left out of `--allowedTools`, so
-a Write to any path outside the working directory would have been denied,
-state checkout or not, and no write into the plain cache root was attempted
-for comparison. The spec's assumption (that the state checkout needs no
-permission prompt beyond what the plain cache needs today, in the default
-permission mode) is therefore consistent with what was observed, not
-established by it.
+A control arm settles what pass 0 alone could not (`rehearsal/control/`,
+`run-control.sh`): two sessions, one in the default permission mode and one
+with `Write` allowed, each asked to Write the same file under a plain-cache
+path and under a state-checkout path with no other tool. The outcomes
+(`rehearsal/control/outcomes.txt`):
+
+```
+default-mode plainkey absent
+default-mode statekey absent
+write-allowed plainkey written
+write-allowed statekey written
+```
+
+Each session made exactly one Write call per path. In `default-mode` both
+came back `Claude requested permissions to write to <path>, but you haven't
+granted it yet.`, one denial per path and none elsewhere; in `write-allowed`
+both returned `File created successfully`, with no denial naming either path.
+The two paths agree within each arm, so the state checkout asks for nothing the
+plain cache does not ask for today, in the default mode as in the allowed
+one; that is the spec's assumption, measured.
 
 Pass 1 (clone A) executed Task 1 only: the implementer committed
 `d0a847b feat: first file` on `main` and the controller stopped there. Then
@@ -71,11 +84,12 @@ printed `status=code-missing missing=d0a847b branch=main`. The session claimed
 nothing, dispatched nothing, and asked the human partner to pull `main` before
 it would continue.
 
-One environment artifact runs through all four passes: the Codex companion could
+One environment artifact runs through the three passes that reached a gate (P,
+A and B; C stopped at `code-missing` before any gate): the Codex companion could
 not create `~/.claude/plugins/data/codex-openai-codex/state/repo-*/jobs` on this
-host (EPERM, sandboxed and not), so every pass recorded its Codex gate as
-incomplete and logged the range in the ungated ledger instead of treating it as
-an approval. That is the documented behaviour for a gate that cannot run, and it
+host (EPERM, sandboxed and not), so each of those passes recorded its Codex gate
+as incomplete and logged the range in the ungated ledger instead of treating it
+as an approval. That is the documented behaviour for a gate that cannot run, and it
 left the state machinery under test untouched. The rehearsal therefore measures
 nothing about the Codex gate's behaviour on the new layout; the gate directories
 keyed by the common git directory are covered by the offline suites only.
@@ -107,10 +121,10 @@ Run `sdd-plan-scoped-scratch-claude-auto-20261022T165919Z-9490`, coding agent
 `claude-auto`, against the plugin worktree at `e5218e9`:
 `final pass`, reason `Gauntlet-Agent passed; 5 post-check(s) passed`. All seven
 pre-checks and all five post-checks passed (`scenario-runs/quorum-show.txt`,
-`scenario-runs/<run>/verdict.json`).
+`scenario-runs/sdd-plan-scoped-scratch-claude-auto-20261022T165919Z-9490/verdict.json`).
 
 The two layout facts the run shows. Plan A's seeded ledger lives at
-`scenario-runs/workspaces/<run>/home/.cache/hyperpowers/state/01d6a2e76034ff1d5434c16e9767250a7d1194e6/plans/planA-89f00a91/progress.md`
+`scenario-runs/workspaces/sdd-plan-scoped-scratch-claude-auto-20261022T165919Z-9490/home/.cache/hyperpowers/state/01d6a2e76034ff1d5434c16e9767250a7d1194e6/plans/planA-89f00a91/progress.md`
 (inside the state checkout, under `state/<key>/plans/`, in the run's own home),
 and the scenario's `find ../home/.cache -name progress.md` check reaches it
 there without change. Plan B's workspace `plans/planB-7af75392` existed during
@@ -147,6 +161,13 @@ made four Bash calls (`git rev-parse --git-dir --git-common-dir`,
 and an `ls -a` of the fixture), each returning output with no permission denial
 anywhere in its transcript, and it still created no branch and no worktree. The
 sessions could act on the repository and chose to ask instead.
+
+What this phase cannot see: `claude -p` returns the session's final text, so
+the check reads the options and the repository state afterwards, not the tool
+calls in between. A session that attempted a branch and undid it before
+answering would leave identical refs and pass. Asserting on the tool stream
+needs the suite's shared `run_claude` to record `stream-json`, a change to
+the test helper outside this plan; it is listed as a follow-up.
 
 ## Offline suites
 

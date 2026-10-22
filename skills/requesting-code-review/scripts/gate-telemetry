@@ -2,6 +2,8 @@
 # gate-telemetry [--json] [--all] [--since ISO-8601] [--until ISO-8601] [repo-dir] — read-only aggregation over
 # the hyperpowers scratch roots (spec 4.5): sdd/<key>, codex-review/<key>,
 # ungated/<key>. Markdown to stdout by default; --json for snapshots.
+# Sweeps are correlated across every key's ledger, and repository mode also
+# reads the pre-6.17 key's ledger.
 # Nothing is written anywhere. Unparseable/old-format artifacts are counted
 # and reported, never silently dropped. Exit 0; exit 2 usage/not-a-repo.
 # --since drops observations older than the timestamp, so a post-release
@@ -48,6 +50,7 @@ done
 
 base="$(hp_cache_root)"
 keys=()
+legacy=""
 if [ "$all" -eq 1 ]; then
   seen=""
   # state/ holds a checkout per key plus its .backend, .lock, .fetched and
@@ -62,10 +65,14 @@ else
   git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || {
     echo "gate-telemetry: not a git repository (use --all for the fleet view)" >&2; exit 2; }
   keys=("$(hp_key "$repo")")
+  # A linked worktree's pre-6.17 ledger sits under the hash of its own git
+  # dir; repository mode reads it beside the clone's, as pending does.
+  legacy="$(hp_legacy_key "$repo")"
+  [ "$legacy" != "${keys[0]}" ] || legacy=""
 fi
 
 # shellcheck disable=SC2016
-node -e '
+HP_LEGACY_KEY="$legacy" node -e '
   const fs = require("fs"), path = require("path");
   const [base, jsonOut, since, until, ...keys] = process.argv.slice(1);
   // --since and --until bound the cohort. Date.parse accepts many non-ISO
@@ -92,6 +99,25 @@ node -e '
   const inWindow = (ms) => Number.isFinite(ms) &&
     (!Number.isFinite(sinceMs) || ms >= sinceMs) &&
     (!Number.isFinite(untilMs) || ms < untilMs);
+  // A sweep closes its event wherever the event was recorded: the ledger of
+  // every key is read once for swept references, so a pre-6.17 worktree event
+  // swept under the clone key is closed in the legacy row as well as in
+  // repository mode. The window applies to sweeps as it does to events.
+  const sweptEverywhere = new Set();
+  let ungatedKeys = [];
+  try { ungatedKeys = fs.readdirSync(path.join(base, "ungated")); } catch (e) { ungatedKeys = []; }
+  for (const k of ungatedKeys) {
+    const f = path.join(base, "ungated", k, "ledger.jsonl");
+    if (!fs.existsSync(f)) continue;
+    for (const l of fs.readFileSync(f, "utf8").split("\n")) {
+      if (!l.trim()) continue;
+      let e; try { e = JSON.parse(l); } catch (err) { continue; }
+      if (!e || e.event !== "swept") continue;
+      if (windowed) { const t = Date.parse(e.ts); if (!Number.isFinite(t) || !inWindow(t)) continue; }
+      sweptEverywhere.add(e.ref);
+    }
+  }
+  const legacyKey = process.env.HP_LEGACY_KEY || "";
   const windowLabel = "[" + (since || "-") + ", " + (until || "-") + ")";
   // Churn metrics (2026-09-05 spec): the round distribution was already in
   // byGate.rounds; only the summary was missing, so every churn question had
@@ -211,10 +237,12 @@ node -e '
       } catch (e) { r.skipped++; }
     }
     // Ungated ledger
-    const lf = path.join(base, "ungated", key, "ledger.jsonl");
-    if (fs.existsSync(lf)) {
+    const ledgerFiles = [path.join(base, "ungated", key, "ledger.jsonl")];
+    if (legacyKey && legacyKey !== key) ledgerFiles.push(path.join(base, "ungated", legacyKey, "ledger.jsonl"));
+    const presentLedgers = ledgerFiles.filter((f) => fs.existsSync(f));
+    if (presentLedgers.length) {
       const all = [];
-      for (const l of fs.readFileSync(lf, "utf8").split("\n")) {
+      for (const f of presentLedgers) for (const l of fs.readFileSync(f, "utf8").split("\n")) {
         if (!l.trim()) continue;
         try { all.push(JSON.parse(l)); } catch (e) { r.skipped++; }
       }
@@ -247,7 +275,7 @@ node -e '
           } else {
             if (e.class === "degraded-gate" && e.status) r.degrades[e.status] = (r.degrades[e.status] || 0) + 1;
             if (e.sweepable === false) r.unsweepableClass++;
-            else if (!sweptRefs.has(e.id)) {
+            else if (!sweptRefs.has(e.id) && !sweptEverywhere.has(e.id)) {
               r.pending++;
               const t = Date.parse(e.ts);
               if (!Number.isNaN(t) && (oldestTs === null || t < oldestTs)) oldestTs = t;

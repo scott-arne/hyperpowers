@@ -188,9 +188,9 @@ wt_count="$(bash "$UL" pending --count "$work/wt" | node -e 'console.log(JSON.pa
 [ "$wt_count" -eq $((main_count + 1)) ] && pass "pending from the worktree also reads its legacy ledger" || fail "pending from the worktree also reads its legacy ledger ($wt_count vs $main_count)"
 [ "$(wc -l < "$XDG_CACHE_HOME/hyperpowers/ungated/$legacy_key/ledger.jsonl" | tr -d ' ')" -eq 1 ] && pass "append never writes to the legacy key" || fail "append never writes to the legacy key"
 spaced="$work/ca che"; mkdir -p "$spaced"
-XDG_CACHE_HOME="$spaced" bash "$UL" append --class degraded-gate --gate spec --status not-ready --note 'spaced cache' "$repo" >/dev/null 2>&1
+XDG_CACHE_HOME="$spaced" bash "$UL" append --class degraded-gate --gate task --base "$base_sha" --head "$head_sha" --status not-ready --note 'spaced cache' "$repo" >/dev/null 2>&1
 sp_count="$(XDG_CACHE_HOME="$spaced" bash "$UL" pending --count "$repo" 2>/dev/null)"
-[ "$sp_count" = '{"count":0,"skipped":0}' ] && pass "pending reads a cache root whose path contains a space" || fail "pending reads a cache root whose path contains a space (got '$sp_count')"
+[ "$sp_count" = '{"count":1,"skipped":0}' ] && pass "pending reads a cache root whose path contains a space" || fail "pending reads a cache root whose path contains a space (got '$sp_count')"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

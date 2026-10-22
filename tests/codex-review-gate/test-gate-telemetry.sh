@@ -429,5 +429,20 @@ expect "$smd" "Fix-cycle rate: 1/2 tasks" "plan workspaces inside the state chec
 sall="$(bash "$GT" --all --json)"
 node -e 'const j=JSON.parse(process.argv[1]);process.exit(j.repos.every(r=>/^[0-9a-f]+$/.test(r.key))?0:1)' "$sall" \
   && pass "the fleet view skips the backend, lock and stamp files beside a checkout" || fail "the fleet view skips the backend, lock and stamp files beside a checkout"
+# A pre-6.17 worktree event swept under the clone's key is closed in both views.
+lw="$work/legacy-wt"; git -C "$srepo" worktree add -q "$lw" -b lw >/dev/null 2>&1
+# shellcheck source=../../skills/subagent-driven-development/scripts/sdd-common.sh
+lkey="$( ( . "$LIB"; hp_legacy_key "$lw" ) )"
+mkdir -p "$XDG_CACHE_HOME/hyperpowers/ungated/$lkey"
+printf '{"v":1,"id":"legacy-wt-1","event":"ungated","class":"degraded-gate","gate":"task","ts":"2026-10-01T00:00:00Z","repo":"/tmp/r","base":"a","head":"b","status":"stale-broker","sweepable":true,"gateDir":null,"note":"legacy pending"}\n' > "$XDG_CACHE_HOME/hyperpowers/ungated/$lkey/ledger.jsonl"
+rj="$( (cd "$lw" && bash "$GT" --json) )"
+node -e 'const j=JSON.parse(process.argv[1]);process.exit(j.repos[0].pending===1?0:1)' "$rj" && pass "repository telemetry from a worktree counts its legacy ledger's event" || fail "repository telemetry from a worktree counts its legacy ledger's event ($rj)"
+fj="$(bash "$GT" --all --json)"
+node -e 'const j=JSON.parse(process.argv[1]);const row=j.repos.find(r=>r.key===process.argv[2]);process.exit(row&&row.pending===1?0:1)' "$fj" "$lkey" && pass "the fleet view lists the legacy row pending before the sweep" || fail "the fleet view lists the legacy row pending before the sweep"
+( cd "$lw" && bash "$UL" mark-swept --ref legacy-wt-1 --verdict approved --note migrated "$lw" >/dev/null )
+rj="$( (cd "$lw" && bash "$GT" --json) )"
+node -e 'const j=JSON.parse(process.argv[1]);process.exit(j.repos[0].pending===0&&(j.repos[0].swept.approved||0)>=1?0:1)' "$rj" && pass "a legacy event swept under the clone key is closed in repository telemetry" || fail "a legacy event swept under the clone key is closed in repository telemetry ($rj)"
+fj="$(bash "$GT" --all --json)"
+node -e 'const j=JSON.parse(process.argv[1]);const row=j.repos.find(r=>r.key===process.argv[2]);const c=j.repos.find(r=>r.key===process.argv[3]);process.exit(row&&row.pending===0&&c&&(c.swept.approved||0)>=1?0:1)' "$fj" "$lkey" "$skey" && pass "after the sweep the fleet view shows the legacy row closed and the clone row carrying the sweep" || fail "after the sweep the fleet view shows the legacy row closed and the clone row carrying the sweep"
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

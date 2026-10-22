@@ -38,17 +38,23 @@ WORKTREE_PATH=$(git rev-parse --show-toplevel)
 ```
 
 The skill that called you may pass the session's mode (`current-branch`,
-`new-branch`, or `worktree`), read from the SDD ledger's `session` line
-before the workspace was finished. A passed mode decides the menu; the
-table below applies only when no mode was passed. The repository's default
-branch is `git symbolic-ref --short refs/remotes/origin/HEAD` with the
-`origin/` prefix removed when that ref exists, otherwise the `init.defaultBranch`
-config value, otherwise whichever of `main` and `master` exists:
+`new-branch`, or `worktree`): subagent-driven-development reads it from the
+ledger's `session` line before the workspace is finished, executing-plans
+carries it from the branch question. A passed `new-branch` or `worktree`
+changes nothing here: the environment rows below govern them as they do
+today. A passed `current-branch` selects one of the two `current-branch`
+rows, skips Step 3 and Step 6, and the environment rows do not apply to it.
+The repository's default branch is the branch `refs/remotes/origin/HEAD`
+points at when that ref exists, otherwise whichever of `main` and `master`
+exists as a local branch, otherwise the `init.defaultBranch` config value,
+otherwise `master`:
 
 ```bash
+CURRENT_BRANCH=$(git branch --show-current)
 DEFAULT_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
-[ -n "$DEFAULT_BRANCH" ] || DEFAULT_BRANCH=$(git config --get init.defaultBranch)
 [ -n "$DEFAULT_BRANCH" ] || { git show-ref --verify -q refs/heads/main && DEFAULT_BRANCH=main; }
+[ -n "$DEFAULT_BRANCH" ] || { git show-ref --verify -q refs/heads/master && DEFAULT_BRANCH=master; }
+[ -n "$DEFAULT_BRANCH" ] || DEFAULT_BRANCH=$(git config --get init.defaultBranch)
 [ -n "$DEFAULT_BRANCH" ] || DEFAULT_BRANCH=master
 ```
 
@@ -59,10 +65,13 @@ This determines which menu to show and how cleanup works:
 | `GIT_DIR == GIT_COMMON` (normal repo) | Standard 3 options | No worktree to clean up |
 | `GIT_DIR != GIT_COMMON`, named branch | Standard 3 options | Provenance-based (see Step 6) |
 | `GIT_DIR != GIT_COMMON`, detached HEAD | Reduced 2 options (no merge) | Externally managed — leave in place |
-| mode `current-branch` passed, current branch is `$DEFAULT_BRANCH` | Reduced 2 options (push, keep) | Nothing to clean up |
-| mode `current-branch` passed, any other branch | Standard 3 options | Nothing to clean up |
+| mode `current-branch` passed, `$CURRENT_BRANCH` is `$DEFAULT_BRANCH` | Reduced 2 options (push, keep) | None: no branch and no worktree were created |
+| mode `current-branch` passed, any other branch | Standard 3 options | Option 1 deletes the merged branch as usual; no worktree to remove |
 
 ## Step 3: Determine Base Branch
+
+Skip this step when mode `current-branch` was passed: there is no merge and
+no base to confirm.
 
 The base branch is whatever this work forked from — usually named in the
 plan, the conversation, or the branch's upstream. If it is not already
@@ -115,9 +124,12 @@ is theirs.
 
 ### Mode current-branch on the default branch
 
-The two-option menu above maps to: option 1 runs `git push <remote> <branch>`
-(no merge, no pull request) and reports the branch pushed; option 2 is
-"Keep as-is" below. Options 1 and 2 of the standard menu do not apply.
+The two-option menu above maps to: option 1 pushes the branch to its
+upstream when it has one (`git push`), otherwise to `origin`
+(`git push -u origin <branch>`), with no merge and no pull request, and
+reports the branch pushed; option 2 is "Option 3: Keep As-Is" below, whose
+report names no worktree in this mode. Options 1 and 2 of the standard
+menu do not apply, and Step 6 does not run: nothing was created.
 
 ### Option 1: Merge Locally
 
@@ -194,7 +206,7 @@ git branch -D <feature-branch>
 
 ## Step 6: Cleanup Workspace
 
-**Runs for Option 1 and confirmed discards.** Options 2 and 3 always
+**Runs for the standard menu's Option 1 and confirmed discards; never for mode `current-branch`.** Options 2 and 3 always
 preserve the worktree. Both callers have already changed directory to the
 main repo root — worktree removal must run from outside the worktree —
 and use the `GIT_DIR`/`GIT_COMMON`/`WORKTREE_PATH` values captured in
@@ -243,7 +255,7 @@ place. If your platform provides a workspace-exit tool, use it.
 | 1. Merge locally | yes | - | - | yes |
 | 2. Create PR | - | yes | yes | - |
 | 3. Keep as-is | - | - | yes | - |
-| Push current branch (mode current-branch) | - | yes | - | - |
+| Push current branch (mode current-branch) | - | yes | n/a | - |
 | Discard (explicit request only) | - | - | - | yes (force) |
 
 ## Common Rationalizations

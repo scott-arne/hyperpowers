@@ -143,8 +143,29 @@ number is recomputed from the archive.
 
 ## Release
 
-Filled in by plan Task 13, which prepares the 6.17.0 release candidate or
-records the hold.
+Release held. The decision of record is FAIL, so 6.17.0 is held. The arms ran
+on 2026-10-22 and the hold is recorded on 2026-10-22.
+
+Five criteria passed. W1 passed with a foreground share of 1.0. W2 passed with
+0 live-work turn ends in the treatment arm. F passed with 10 treatment runs
+that followed the foreground-wait rule. U passed with 0 untracked launches in
+the treatment arm. R passed with 8 successful control runs and 9 successful
+treatment runs.
+
+P failed. The pre-registered rule requires the treatment arm's premature-stop
+total to be lower than the control arm's when control has at least one, and
+both arms have one: premature_control is 1 and premature_treatment is 1, with
+9 clean treatment runs. The failure rests on one treatment run, p8
+(`sdd-turn-liveness-claude-auto-20261022T184730Z-c05c`), whose controller wrote
+a non-canonical Task 6 ledger line and whose last turn end came after the
+finishing question and the merge. It was adjudicated `neither`. The
+pre-registered rule is kept rather than relabeled after the decision was
+visible; the campaign README's Results and Limits carry the detail.
+
+By the spec a failure goes back to design, and a P failure opens the Stop-hook
+follow-up with these runs as its evidence. The skill text change itself is not
+released, and the installed plugin stays at 6.16.1, until that follow-up or a
+redesign passes the rule.
 
 ## Zed checks
 

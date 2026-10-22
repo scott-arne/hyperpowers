@@ -209,6 +209,7 @@ is the whole process.
 **Understanding the idea:**
 
 - Check out the current project state first (files, docs, recent commits)
+- Read the decisions index when it exists: `decisions/README.md` beside the specs directory this session writes to (`docs/hyperpowers/decisions/README.md` by default). Each current decision is a constraint on the design; a design that reverses one says so in its spec item with a `Supersedes:` line naming the record.
 - Before asking detailed questions, assess scope: if the request describes multiple independent subsystems (e.g., "build a platform with chat, file storage, billing, and analytics"), flag this immediately. Don't spend questions refining details of a project that needs to be decomposed first.
 - If the project is too large for a single spec, help the user decompose into sub-projects: what are the independent pieces, how do they relate, what order should they be built? Then brainstorm the first sub-project through the normal design flow. Each sub-project gets its own spec → plan → implementation cycle.
 - For appropriately-scoped projects, ask questions one at a time to refine the idea
@@ -296,6 +297,7 @@ Before opening the companion for the first time, read the detailed guide:
 
 - Write the validated design (spec) to `docs/hyperpowers/specs/YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
+- The spec carries a `## Decisions` section, required: one top-level list item per decision, each opening with a bold title and stating what was chosen, what was rejected and why, with an optional `Supersedes: <record path>` line inside the item. Only decisions go in that list; the finishing skill compiles it into one record per item.
 - The first time a spec or plan lands in a repository, run `scripts/docs-allowlist` from the writing-plans skill's directory (`../writing-plans/` relative to this one). It writes `docs/hyperpowers/.gitignore` so that only `specs/` and `plans/` are ever committed from that directory, and leaves an existing file alone. Commit it with the spec. If it prints `ignored-by`, the repository's own ignore rule excludes the whole directory: tell your human partner and ask whether to remove that rule before committing.
 - Use elements-of-style:writing-clearly-and-concisely skill if available
 - Commit the design document to git

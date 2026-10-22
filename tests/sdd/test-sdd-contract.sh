@@ -11,6 +11,7 @@ REVW="$REPO_ROOT/skills/subagent-driven-development/task-reviewer-prompt.md"
 FIXP="$REPO_ROOT/skills/subagent-driven-development/fix-subagent-prompt.md"
 REREVW="$REPO_ROOT/skills/subagent-driven-development/re-review-prompt.md"
 WPLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
+FIN="$REPO_ROOT/skills/finishing-a-development-branch/SKILL.md"
 
 FAILURES=0
 
@@ -421,6 +422,12 @@ assert_contains "$SDD" "Snapshot the workspace (scripts/sdd-state snapshot)" "th
 
 assert_contains "$SDD" "set -o noclobber" "ledger creation is exclusive"
 assert_contains "$SDD" "both stop until the snapshot succeeds" "a failed snapshot stops the loop"
+
+# finishing-a-development-branch — the session mode (portable dossiers, 2026-10-20)
+assert_contains "$FIN" "A passed \`new-branch\` or \`worktree\` changes nothing here" "new-branch and worktree keep the environment rows"
+assert_contains "$FIN" "Skip this step when mode \`current-branch\` was passed and \`\$CURRENT_BRANCH\` is \`\$DEFAULT_BRANCH\`" "only the default-branch case skips the base step"
+assert_contains "$FIN" "ask your human partner which is the default before choosing a row" "a main-and-master tie asks"
+assert_contains "$FIN" "git push <remote> <branch>:<branch>" "the push names one remote and one refspec"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

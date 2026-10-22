@@ -43,19 +43,32 @@ ledger's `session` line before the workspace is finished, executing-plans
 carries it from the branch question. A passed `new-branch` or `worktree`
 changes nothing here: the environment rows below govern them as they do
 today. A passed `current-branch` selects one of the two `current-branch`
-rows, skips Step 3 and Step 6, and the environment rows do not apply to it.
+rows and the environment rows do not apply to it; on the default branch it
+also skips Step 3 and Step 6, on any other branch Step 3 and Step 6 run as
+for the standard menu.
 The repository's default branch is the branch `refs/remotes/origin/HEAD`
-points at when that ref exists, otherwise whichever of `main` and `master`
-exists as a local branch, otherwise the `init.defaultBranch` config value,
-otherwise `master`:
+points at when that ref exists; otherwise whichever one of `main` and
+`master` exists as a local branch; when both exist, the one
+`init.defaultBranch` names, and when it names neither, ask your human
+partner which is the default before choosing a row; when neither exists,
+the `init.defaultBranch` value, otherwise `master`:
 
 ```bash
 CURRENT_BRANCH=$(git branch --show-current)
 DEFAULT_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
-[ -n "$DEFAULT_BRANCH" ] || { git show-ref --verify -q refs/heads/main && DEFAULT_BRANCH=main; }
-[ -n "$DEFAULT_BRANCH" ] || { git show-ref --verify -q refs/heads/master && DEFAULT_BRANCH=master; }
-[ -n "$DEFAULT_BRANCH" ] || DEFAULT_BRANCH=$(git config --get init.defaultBranch)
-[ -n "$DEFAULT_BRANCH" ] || DEFAULT_BRANCH=master
+if [ -z "$DEFAULT_BRANCH" ]; then
+  HAVE_MAIN=$(git show-ref --verify -q refs/heads/main && echo yes)
+  HAVE_MASTER=$(git show-ref --verify -q refs/heads/master && echo yes)
+  CONFIGURED=$(git config --get init.defaultBranch)
+  if [ "$HAVE_MAIN" = yes ] && [ "$HAVE_MASTER" = yes ]; then
+    case "$CONFIGURED" in main|master) DEFAULT_BRANCH=$CONFIGURED ;; *) DEFAULT_BRANCH="" ;; esac
+  elif [ "$HAVE_MAIN" = yes ]; then DEFAULT_BRANCH=main
+  elif [ "$HAVE_MASTER" = yes ]; then DEFAULT_BRANCH=master
+  else DEFAULT_BRANCH=${CONFIGURED:-master}
+  fi
+fi
+# An empty DEFAULT_BRANCH here means both branches exist and the config
+# names neither: ask before choosing a row.
 ```
 
 This determines which menu to show and how cleanup works:
@@ -70,8 +83,10 @@ This determines which menu to show and how cleanup works:
 
 ## Step 3: Determine Base Branch
 
-Skip this step when mode `current-branch` was passed: there is no merge and
-no base to confirm.
+Skip this step when mode `current-branch` was passed and `$CURRENT_BRANCH`
+is `$DEFAULT_BRANCH`: there is no merge and no base to confirm. A
+`current-branch` session on any other branch needs its base like any
+feature branch.
 
 The base branch is whatever this work forked from — usually named in the
 plan, the conversation, or the branch's upstream. If it is not already
@@ -124,12 +139,15 @@ is theirs.
 
 ### Mode current-branch on the default branch
 
-The two-option menu above maps to: option 1 pushes the branch to its
-upstream when it has one (`git push`), otherwise to `origin`
-(`git push -u origin <branch>`), with no merge and no pull request, and
-reports the branch pushed; option 2 is "Option 3: Keep As-Is" below, whose
-report names no worktree in this mode. Options 1 and 2 of the standard
-menu do not apply, and Step 6 does not run: nothing was created.
+The two-option menu above maps to: option 1 pushes exactly this branch,
+`git push <remote> <branch>:<branch>` (add `-u` when the branch has no
+upstream yet), where `<remote>` is the first of `git config
+branch.<branch>.pushRemote`, `git config remote.pushDefault`, `git config
+branch.<branch>.remote`, and `origin` that is set; no merge and no pull
+request; report the branch pushed and the remote. Option 2 is "Option 3:
+Keep As-Is" below, whose report names no worktree in this mode. Options 1
+and 2 of the standard menu do not apply, and Step 6 does not run: nothing
+was created.
 
 ### Option 1: Merge Locally
 
@@ -206,7 +224,7 @@ git branch -D <feature-branch>
 
 ## Step 6: Cleanup Workspace
 
-**Runs for the standard menu's Option 1 and confirmed discards; never for mode `current-branch`.** Options 2 and 3 always
+**Runs for the standard menu's Option 1 and confirmed discards; never after the push-or-keep menu of mode `current-branch` on the default branch.** Options 2 and 3 always
 preserve the worktree. Both callers have already changed directory to the
 main repo root — worktree removal must run from outside the worktree —
 and use the `GIT_DIR`/`GIT_COMMON`/`WORKTREE_PATH` values captured in

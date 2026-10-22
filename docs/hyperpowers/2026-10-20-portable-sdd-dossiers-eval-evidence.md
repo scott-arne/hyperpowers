@@ -181,3 +181,88 @@ the Pi node test, one entry per `bash` call, in an unsandboxed shell with
 `brainstorm-server`'s node_modules installed). The per-suite logs are copied to
 `offline/`. The summary line is quoted from the controller's run log; the
 archive holds the 42 entry logs, none of which records a failure.
+
+## Release readiness
+
+Each row resolves one of the spec's Assumptions or one check the human partner
+was asked to run. A slot holds an observation or a stated reason it was not
+observed, and the latter stays open until its output arrives.
+
+### Checks on bergen
+
+The human partner was asked on 2026-10-22 to run these four commands on bergen,
+from a checkout of `portable-sdd-dossiers` inside a Claude Code session, and to
+paste the output. The branch was pushed to origin for that purpose (the ref is at
+`777a392`; the two later commits are documentation only). No output has arrived.
+A failing suite there is a plan conflict to surface to the human partner, not a
+value to guess.
+
+| Check | Answer |
+| --- | --- |
+| `git --version` (spec: 2.42 or newer; the fallback is implemented and tested regardless) | not observed: awaiting the human partner's run on bergen (requested 2026-10-22; the branch is on origin at 777a392) |
+| `CLAUDE_CODE_SESSION_ID` presence in a Bash call | not observed: awaiting the human partner's run on bergen (requested 2026-10-22; the branch is on origin at 777a392) |
+| `bash tests/sdd/test-sdd-common.sh \| tail -n 1` on ext4 | not observed: awaiting the human partner's run on bergen (requested 2026-10-22; the branch is on origin at 777a392) |
+| `bash tests/sdd/test-sdd-state.sh \| tail -n 1` on ext4 | not observed: awaiting the human partner's run on bergen (requested 2026-10-22; the branch is on origin at 777a392) |
+
+### Remote acceptance of the branch name
+
+| Remote | Answer |
+| --- | --- |
+| `git@github.com:scott-arne/hyperpowers.git` | observed 2026-10-22 from the plugin worktree: `git push --dry-run origin HEAD:refs/heads/hyperpowers/state` printed `* [new branch]      HEAD -> hyperpowers/state` with no policy rejection; nothing was pushed |
+| one work repository of the human partner's choice | not observed: the repository was not yet named |
+
+A rejection in a work repository means that repository sets
+`hyperpowers.stateBranch` to a name its remote accepts, and the release note
+says so.
+
+### Session id across compaction
+
+Observed stable. In the controller session (transcript id
+`ec562ba3-23b9-4cc9-abad-014f867d8ff8`), `printf '%s' "${CLAUDE_CODE_SESSION_ID:-unset}"`
+in a Bash call returned that same id in two samples taken hours apart on
+2026-10-22, with several compactions and two session restarts between the
+session's start on 2026-10-21 and the second sample. The claim identity
+therefore survives compaction, and the SDD text's fallback (treat every claim as
+foreign after compaction) was not needed on this host. The laptop is the only
+host this covers; bergen's presence of the variable is the second bergen row
+above.
+
+### Permission footing
+
+The two-clone rehearsal's pass 0 ran in `acceptEdits` mode with Write and Edit
+not pre-allowed. It denied exactly two Write calls under the state checkout,
+eleven Bash writes to it went through, and the ledger reached `Task 1:
+complete`. The control arm (`rehearsal/control/`) showed the plain cache path and
+the state checkout path behave identically in the default permission mode (both
+denied) and with `Write` allowed (both written). That is measured for the Write
+tool only: not Bash writes, not the operator's own allow rules, and not a
+checkout that `sdd-state` created. The numbers and their limits are in the
+"Two-clone rehearsal" section above.
+
+### Open items
+
+Eight ungated events from this plan's task gates await the final whole branch
+gate, which the controller sweeps before the hand back. Release readiness is
+conditional on that gate passing.
+
+Two decisions the plan queued for the human partner are still open:
+
+1. The fetch stamp binding: remote plus branch, or the per key boolean.
+2. The import's behavior after verification: remove the source, or retain a
+   backup.
+
+### Release commands
+
+The human partner runs these once this release is sequenced against the
+`sdd-turn-liveness` plan. The version is `6.17.0` (the human partner chose it:
+this plan ships first). At release time the CHANGELOG's `## Unreleased` heading
+becomes `## 6.17.0 (<date>)`, with the date of the release day, before the bump.
+
+```bash
+# in the hyperpowers main checkout, after the branch is merged and the CHANGELOG heading is set to the version and date
+bash scripts/bump-version.sh 6.17.0
+git commit -am "chore(release): 6.17.0"
+git tag v6.17.0
+# install on each host: check out the tag in the plugin-install worktree, then
+claude plugin update hyperpowers
+```

@@ -47,15 +47,25 @@ Use the using-git-worktrees skill to settle where the work happens. Do NOT imple
 Report the exact question you would ask me with its numbered options, then stop.'
 
 run_choice_check() {
-    local i test_dir output scan branch_before branch_after p1 p2 p3 passes=0 fails=0 start_dir
+    local i test_dir output scan branch_before branch_after p1 p2 p3 passes=0 fails=0 start_dir refs_before refs_after trees_before trees_after p4 state_same
     start_dir=$(pwd)
     for i in $(seq 1 "$RUNS"); do
         test_dir=$(create_test_project)
         cd "$test_dir" || { cleanup_test_project "$test_dir"; return 1; }
         git init -q && git commit -q --allow-empty -m "init"
         branch_before=$(git branch --show-current)
-        output=$(run_claude "$CHOICE_SCENARIO" 120)
+        refs_before=$(git for-each-ref --format='%(refname) %(objectname)' refs/heads)
+        trees_before=$(git worktree list --porcelain)
+        # The session gets a cache root inside the fixture, so the plugin's
+        # hooks and scripts never read or write the real one, and the fixture
+        # cleanup removes it. A timed-out or failed session is a failed run,
+        # not the end of the phase: run_claude returns its exit status and
+        # leaves stdout empty.
+        mkdir -p "$test_dir/cache"
+        output=$(XDG_CACHE_HOME="$test_dir/cache" run_claude "$CHOICE_SCENARIO" 120) || true
         branch_after=$(git branch --show-current)
+        refs_after=$(git for-each-ref --format='%(refname) %(objectname)' refs/heads)
+        trees_after=$(git worktree list --porcelain)
         scan="$test_dir/choice-output.txt"
         printf '%s\n' "$output" > "$scan"
         # Each option is pinned to its own numbered line: the skill announces
@@ -66,13 +76,23 @@ run_choice_check() {
         p1=$(grep -niE '^[[:space:]>*_-]*1[.)].*current branch' "$scan" | head -n 1 | cut -d: -f1) || true
         p2=$(grep -niE '^[[:space:]>*_-]*2[.)].*(new branch|branch in place)' "$scan" | head -n 1 | cut -d: -f1) || true
         p3=$(grep -niE '^[[:space:]>*_-]*3[.)].*worktree' "$scan" | head -n 1 | cut -d: -f1) || true
-        cd "$start_dir" || return 1
-        if [ -n "$p1" ] && [ -n "$p2" ] && [ -n "$p3" ] && [ "$p1" -lt "$p2" ] && [ "$p2" -lt "$p3" ] \
-           && [ "$branch_before" = "$branch_after" ] && [ "$(git -C "$test_dir" worktree list | wc -l | tr -d ' ')" = 1 ] && [ ! -d "$test_dir/.worktrees" ]; then
+        cd "$start_dir" || { cleanup_test_project "$test_dir"; return 1; }
+        # The line after option 3 must not be a fourth option, and the branch
+        # refs and worktree registrations must be identical before and after:
+        # a branch created and left behind would pass a name-only comparison.
+        p4=""
+        if [ -n "$p3" ]; then
+            p4=$(sed -n "$((p3 + 1))p" "$scan" | grep -ciE '^[[:space:]>*_-]*4[.)]') || true
+            [ "$p4" != "0" ] || p4=""
+        fi
+        state_same=no
+        [ "$branch_before" = "$branch_after" ] && [ "$refs_before" = "$refs_after" ] && [ "$trees_before" = "$trees_after" ] && state_same=yes
+        if [ -n "$p1" ] && [ -n "$p2" ] && [ -n "$p3" ] && [ "$p1" -lt "$p2" ] && [ "$p2" -lt "$p3" ] && [ -z "$p4" ] \
+           && [ "$state_same" = yes ] && [ ! -d "$test_dir/.worktrees" ]; then
             echo "  [PASS] CHOICE run $i: the three options in order, nothing created"
             passes=$((passes + 1))
         else
-            echo "  [FAIL] CHOICE run $i: options at lines '$p1' '$p2' '$p3', branch $branch_before -> $branch_after"
+            echo "  [FAIL] CHOICE run $i: options at lines '$p1' '$p2' '$p3' (fourth option: ${p4:-no}), repository state unchanged: $state_same, branch $branch_before -> $branch_after"
             tail -20 "$scan"
             fails=$((fails + 1))
         fi

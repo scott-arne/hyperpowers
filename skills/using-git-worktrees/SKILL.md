@@ -7,11 +7,11 @@ description: Use when starting feature work that needs isolation from current wo
 
 ## Overview
 
-Ensure work happens in an isolated workspace. Prefer your platform's native worktree tools. Fall back to manual git worktrees only when no native tool is available.
+Settle where the work happens: detect an existing isolated workspace, otherwise ask your human partner to choose between the current branch, a new branch in place, and an isolated worktree, and report the mode. When the answer is a worktree, prefer your platform's native worktree tools and fall back to manual git worktrees only when no native tool is available.
 
 **Core principle:** Detect existing isolation first. Then use native tools. Then fall back to git. Never fight the harness.
 
-**Announce at start:** "I'm using the using-git-worktrees skill to set up an isolated workspace."
+**Announce at start:** "I'm using the using-git-worktrees skill to settle where the work happens."
 
 ## Step 0: Detect Existing Isolation
 
@@ -109,7 +109,7 @@ git worktree add "$path" -b "$BRANCH_NAME"
 cd "$path"
 ```
 
-**Sandbox fallback:** If `git worktree add` fails with a permission error (sandbox denial), tell the user the sandbox blocked worktree creation and you're working in the current directory instead. Then run setup and baseline tests in place.
+**Sandbox fallback:** If `git worktree add` fails with a permission error (sandbox denial), tell your human partner the sandbox blocked worktree creation and ask the Step 0 question again with options 1 and 2 only. Their answer is the mode you report (`current-branch` or `new-branch`); a denied worktree is never reported as `worktree`. Then run setup and baseline tests in place.
 
 ## Step 2: Project Setup
 

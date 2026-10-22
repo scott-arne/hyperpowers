@@ -18,7 +18,7 @@ Load plan, review critically, execute all tasks, report when complete.
 ## The Process
 
 ### Step 1: Load and Review Plan
-1. Ensure an isolated workspace: use hyperpowers:using-git-worktrees to create one or verify the existing one
+1. Settle where the work happens: use hyperpowers:using-git-worktrees, which detects an existing worktree or asks your human partner to choose between the current branch, a new branch in place, and a worktree, and reports the mode
 2. Read plan file
 3. Review critically - identify any questions or concerns about the plan
 4. If concerns: Raise them with your human partner before starting

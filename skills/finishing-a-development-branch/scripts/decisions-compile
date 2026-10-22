@@ -141,17 +141,37 @@ if [ -n "$plan" ]; then
   case "/$plan_rel/" in
     */./*|*/../*) die2 "$spec_rel: plan path must be canonical (no . or .. components): $plan" ;;
   esac
-  if [ -e "$plan_abs" ] || git -C "$root" ls-files --error-unmatch -- "$plan_rel" >/dev/null 2>&1; then
+  # The plan is deleted and named in every record, so it must not be a path
+  # the compiler owns, must have the shape finishing's discovery glob
+  # (*/plans/*.md) finds, and must survive the Recorded line, which is split
+  # on the last "; plan ".
+  if [ "$plan_rel" = "$spec_rel" ] || [ "$plan_rel" = "$index_rel" ]; then
+    die2 "$spec_rel: plan overlaps a compiler-owned path: $plan"
+  fi
+  case "$plan_rel" in
+    "$records_rel"/*) die2 "$spec_rel: plan overlaps a compiler-owned path: $plan" ;;
+  esac
+  case "/$plan_rel" in
+    */plans/*.md) ;;
+    *) die2 "$spec_rel: plan must be a markdown file under a plans/ directory: $plan" ;;
+  esac
+  case "$plan_rel" in
+    *"; plan "*|*$'\n'*|*$'\r'*) die2 "$spec_rel: plan path contains a newline or the reserved text \"; plan \": $plan" ;;
+  esac
+  # Exactly one index entry equal to the path: a plain ls-files test also
+  # matches a tracked directory's descendants.
+  plan_in_index() { [ "$(git -C "$root" ls-files -z -- "$plan_rel" | tr '\0' '\n')" = "$plan_rel" ]; }
+  if [ -e "$plan_abs" ] || [ -L "$plan_abs" ] || plan_in_index; then
     # In the tree, or deleted in the tree but still in the index: git rm
-    # stages the deletion in both cases. A plan in the tree must be tracked
-    # and clean, because git rm refuses otherwise and the retry would fail the
-    # same way after the records were written.
-    if [ -e "$plan_abs" ]; then
-      git -C "$root" ls-files --error-unmatch -- "$plan_rel" >/dev/null 2>&1 || die2 "$spec_rel: plan is not tracked by git; commit it before the records compile: $plan"
-      if ! git -C "$root" diff --quiet -- "$plan_rel" || ! git -C "$root" diff --cached --quiet -- "$plan_rel"; then
-        die2 "$spec_rel: plan has uncommitted changes; commit or discard them before the records compile: $plan"
-      fi
+    # stages the deletion in both cases. The plan must be a tracked regular
+    # file with no uncommitted changes, because git rm refuses otherwise and
+    # the retry would fail the same way after the records were written.
+    if [ -e "$plan_abs" ] || [ -L "$plan_abs" ]; then
+      { [ ! -L "$plan_abs" ] && [ -f "$plan_abs" ]; } || die2 "$spec_rel: plan is not a regular file: $plan"
+      plan_in_index || die2 "$spec_rel: plan is not tracked by git; commit it before the records compile: $plan"
+      git -C "$root" diff --quiet -- "$plan_rel" || die2 "$spec_rel: plan has uncommitted changes; commit or discard them before the records compile: $plan"
     fi
+    git -C "$root" diff --cached --quiet -- "$plan_rel" || die2 "$spec_rel: plan has uncommitted changes; commit or discard them before the records compile: $plan"
     plan_state=present
   elif [ -n "$(git -C "$root" diff --cached --name-only --diff-filter=D -- "$plan_rel")" ]; then
     plan_state=staged-deletion
@@ -159,6 +179,21 @@ if [ -n "$plan" ]; then
     plan_state=removed
   else
     die2 "$spec_rel: no such plan (not in the tree or index, no staged deletion, never removed in history): $plan"
+  fi
+  # The state decides where the plan's text comes from. Not read through a
+  # pipe that exits early, so git is never killed by SIGPIPE under pipefail.
+  case "$plan_state" in
+    present)
+      if [ -e "$plan_abs" ]; then plan_text=$(cat "$plan_abs"); else plan_text=$(git -C "$root" show ":$plan_rel" 2>/dev/null || true); fi ;;
+    staged-deletion) plan_text=$(git -C "$root" show "HEAD:$plan_rel" 2>/dev/null || true) ;;
+    *)
+      plan_added=$(git -C "$root" log --diff-filter=A --format=%H -1 -- "$plan_rel")
+      plan_text=""
+      if [ -n "$plan_added" ]; then plan_text=$(git -C "$root" show "$plan_added:$plan_rel" 2>/dev/null || true); fi ;;
+  esac
+  plan_header=$(printf '%s\n' "$plan_text" | awk '!d && index($0, "**Spec:** ") == 1 { print substr($0, 11); d = 1 }' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  if [ -z "$plan_header" ] || { [ "$plan_header" != "$spec_rel" ] && [ "${plan_header##*/}" != "${spec_rel##*/}" ]; }; then
+    die2 "$spec_rel: plan names a different spec: ${plan_header:-none}: $plan"
   fi
 fi
 

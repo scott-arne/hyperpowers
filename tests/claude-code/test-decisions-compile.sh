@@ -1134,11 +1134,11 @@ write_spec "$repo" 2026-10-19-delta-design.md <<'EOF'
 
 - **Delta one.** Text.
 EOF
-printf '# Plan v1\n' > "$repo/docs/hyperpowers/plans/2026-10-19-delta.md"
+printf '# Plan v1\n\n**Spec:** docs/hyperpowers/specs/2026-10-19-delta-design.md\n' > "$repo/docs/hyperpowers/plans/2026-10-19-delta.md"
 commit_all "$repo" "spec and plan"
 git -C "$repo" rm -q docs/hyperpowers/plans/2026-10-19-delta.md && git -C "$repo" commit -q -m "remove plan"
 mkdir -p "$repo/docs/hyperpowers/plans"
-printf '# Plan v2\n' > "$repo/docs/hyperpowers/plans/2026-10-19-delta.md"
+printf '# Plan v2\n\n**Spec:** docs/hyperpowers/specs/2026-10-19-delta-design.md\n' > "$repo/docs/hyperpowers/plans/2026-10-19-delta.md"
 commit_all "$repo" "re-add plan"
 rm "$repo/docs/hyperpowers/plans/2026-10-19-delta.md"
 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-delta-design.md --plan docs/hyperpowers/plans/2026-10-19-delta.md
@@ -1154,7 +1154,7 @@ write_spec "$repo" 2026-10-19-beta-design.md <<'EOF'
 
 - **Only one.** Text.
 EOF
-printf '# Plan\n' > "$repo/docs/hyperpowers/plans/2026-10-19-beta.md"
+printf '# Plan\n\n**Spec:** docs/hyperpowers/specs/2026-10-19-beta-design.md\n' > "$repo/docs/hyperpowers/plans/2026-10-19-beta.md"
 commit_all "$repo" "spec and plan"
 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-beta-design.md --plan docs/hyperpowers/plans/2026-10-19-beta.md
 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-beta-design.md --plan docs/hyperpowers/plans/2026-10-19-beta.md
@@ -1173,7 +1173,7 @@ write_spec "$repo" 2026-10-19-eps-design.md <<'EOF'
 
 - **Eps one.** Text.
 EOF
-printf '# Plan\n' > "$repo/docs/hyperpowers/plans/2026-10-19-eps.md"
+printf '# Plan\n\n**Spec:** docs/hyperpowers/specs/2026-10-19-eps-design.md\n' > "$repo/docs/hyperpowers/plans/2026-10-19-eps.md"
 commit_all "$repo" "spec and plan"
 mkdir -p "$TEST_ROOT/elsewhere"
 printf '# Plan\n' > "$TEST_ROOT/elsewhere/plan.md"
@@ -1193,11 +1193,64 @@ printf '# Plan edited\n' > "$repo/docs/hyperpowers/plans/2026-10-19-eps.md"
 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-eps-design.md --plan docs/hyperpowers/plans/2026-10-19-eps.md
 case "$ERR" in *"plan has uncommitted changes"*) dirty_msg=1 ;; *) dirty_msg=0 ;; esac
 if [ "$RC" -eq 2 ] && [ "$dirty_msg" = 1 ] && [ "$(git -C "$repo" status --porcelain)" = " M docs/hyperpowers/plans/2026-10-19-eps.md" ]; then pass "a modified plan exits 2 before any write"; else fail "modified plan (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
-printf '# Plan\n' > "$repo/docs/hyperpowers/plans/2026-10-19-eps.md"
+printf '# Plan\n\n**Spec:** docs/hyperpowers/specs/2026-10-19-eps-design.md\n' > "$repo/docs/hyperpowers/plans/2026-10-19-eps.md"
 printf '# New\n' > "$repo/docs/hyperpowers/plans/2026-10-19-fresh.md"
 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-eps-design.md --plan docs/hyperpowers/plans/2026-10-19-fresh.md
 case "$ERR" in *"plan is not tracked by git"*) untracked_msg=1 ;; *) untracked_msg=0 ;; esac
 if [ "$RC" -eq 2 ] && [ "$untracked_msg" = 1 ] && [ "$(git -C "$repo" status --porcelain)" = "?? docs/hyperpowers/plans/2026-10-19-fresh.md" ]; then pass "an untracked plan exits 2 before any write"; else fail "untracked plan (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
+
+# A path that is not a plain tracked plan of this spec is refused before any
+# write, whatever git would accept.
+repo="$TEST_ROOT/planshape"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-zeta-design.md <<'EOF'
+# Zeta
+
+## Decisions
+
+- **Zeta one.** Text.
+EOF
+zeta_spec=docs/hyperpowers/specs/2026-10-19-zeta-design.md
+plans_dir="$repo/docs/hyperpowers/plans"
+printf '# Plan\n\n**Spec:** %s\n' "$zeta_spec" > "$plans_dir/good.md"
+printf '# Plan\n\n**Spec:** %s\n' "$zeta_spec" > "$plans_dir/staged.md"
+printf '# Plan\n\n**Spec:** docs/hyperpowers/specs/2026-10-19-other-design.md\n' > "$plans_dir/other-spec.md"
+printf '# Plan\n\n**Spec:** %s\n' "$zeta_spec" > "$plans_dir/a; plan b.md"
+printf '# Claude\n' > "$repo/CLAUDE.md"
+mkdir -p "$plans_dir/dir.md"
+printf 'inner\n' > "$plans_dir/dir.md/inner.txt"
+ln -s good.md "$plans_dir/link.md"
+commit_all "$repo" "spec and plans"
+run_compile "$repo" "$zeta_spec"
+commit_all "$repo" "records"
+# refuse_plan LABEL MESSAGE-FRAGMENT PLAN: exit 2, the fragment on stderr, and
+# git status exactly as it was before the run.
+refuse_plan() {
+    local before after
+    before=$(git -C "$repo" status --porcelain)
+    run_compile "$repo" "$zeta_spec" --plan "$3"
+    after=$(git -C "$repo" status --porcelain)
+    case "$ERR" in "$zeta_spec: "*"$2"*) msg_ok=1 ;; *) msg_ok=0 ;; esac
+    if [ "$RC" -eq 2 ] && [ "$msg_ok" = 1 ] && [ "$before" = "$after" ]; then pass "$1"; else fail "$1 (rc $RC, err: $ERR, status before: $before, after: $after)"; fi
+}
+printf '# Plan edited\n' > "$plans_dir/staged.md"
+git -C "$repo" add docs/hyperpowers/plans/staged.md
+rm "$plans_dir/staged.md"
+if [ "$(git -C "$repo" status --porcelain)" = "MD docs/hyperpowers/plans/staged.md" ]; then pass "fixture: staged edit with the working copy deleted is MD"; else fail "fixture MD (got: $(git -C "$repo" status --porcelain))"; fi
+refuse_plan "a staged edit with the working-tree copy deleted is refused as uncommitted" "plan has uncommitted changes" docs/hyperpowers/plans/staged.md
+git -C "$repo" reset -q -- docs/hyperpowers/plans/staged.md
+git -C "$repo" checkout -q -- docs/hyperpowers/plans/staged.md
+refuse_plan "a tracked directory as the plan is refused for its shape" "plan must be a markdown file under a plans/ directory" docs/hyperpowers/plans
+refuse_plan "a tracked directory named dir.md is not a regular file" "plan is not a regular file" docs/hyperpowers/plans/dir.md
+refuse_plan "a tracked file outside plans/ is refused for its shape" "plan must be a markdown file under a plans/ directory" CLAUDE.md
+refuse_plan "a symbolic link at the plan path is not a regular file" "plan is not a regular file" docs/hyperpowers/plans/link.md
+if [ -L "$plans_dir/link.md" ] && [ -f "$plans_dir/good.md" ]; then pass "the link and its target are intact"; else fail "link or target damaged"; fi
+refuse_plan "a plan whose Spec header names another spec is refused" "plan names a different spec: docs/hyperpowers/specs/2026-10-19-other-design.md" docs/hyperpowers/plans/other-spec.md
+refuse_plan "a plan path with the reserved text is refused" "plan path contains a newline or the reserved text" "docs/hyperpowers/plans/a; plan b.md"
+refuse_plan "the spec itself is not a plan" "plan overlaps a compiler-owned path" "$zeta_spec"
+refuse_plan "a path under the records directory is not a plan" "plan overlaps a compiler-owned path" docs/hyperpowers/decisions/x.md
+run_compile "$repo" "$zeta_spec" --plan docs/hyperpowers/plans/good.md
+if [ "$RC" -eq 0 ] && git -C "$repo" diff --cached --name-status | grep -q '^D.*plans/good.md$'; then pass "a plan whose Spec header names this spec passes the binding check"; else fail "bound plan (rc $RC, err: $ERR)"; fi
 
 # --- 22. git failure at each staging operation --------------------------------
 mkdir -p "$TEST_ROOT/bin"
@@ -1222,7 +1275,7 @@ for failing in add rm; do
 
 - **Gamma one.** Text.
 EOF
-    printf '# Plan\n' > "$repo/docs/hyperpowers/plans/2026-10-19-gamma.md"
+    printf '# Plan\n\n**Spec:** docs/hyperpowers/specs/2026-10-19-gamma-design.md\n' > "$repo/docs/hyperpowers/plans/2026-10-19-gamma.md"
     commit_all "$repo" "spec and plan"
     PATH="$TEST_ROOT/bin:$PATH" FAKE_GIT_FAIL="$failing" REAL_GIT="$REAL_GIT" run_compile "$repo" docs/hyperpowers/specs/2026-10-19-gamma-design.md --plan docs/hyperpowers/plans/2026-10-19-gamma.md
     if [ "$RC" -eq 3 ]; then pass "a failing git $failing exits 3"; else fail "git $failing failure exit (got $RC: $ERR)"; fi

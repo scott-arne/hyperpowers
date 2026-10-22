@@ -2041,7 +2041,14 @@ case "$mode" in
 esac
 ```
 
-(c) After the `# --- reindex ---` block, add:
+(c) After the `# --- reindex ---` block, add the undo block. Correction (2026-10-22): the task review and the Codex gate reshaped it: the working-tree file is deleted before its index entry, with a checked exit 3, so a failed deletion is retried; the three `git diff --cached --name-only` listings (here, in `emit_paths` and in the dry run) take `--no-renames`, so a plan deletion is never folded into a similar record addition; and because undo deletes every path HEAD lacks, the paths block now requires the spec to exist in HEAD before any write (an untracked or staged-only spec would otherwise be left falsely marked implemented or lost):
+
+```bash
+  # The Outcome line is written into the spec, and undo deletes whatever HEAD
+  # lacks; a spec that is untracked or only staged would be lost. Checked
+  # against HEAD, not the index, and safe on an unborn HEAD.
+  git -C "$root" cat-file -e "HEAD:$spec_rel" 2>/dev/null || die2 "$spec_rel: spec is not committed; commit it before the records compile"
+```
 
 ```bash
 # --- undo -------------------------------------------------------------------
@@ -2049,13 +2056,74 @@ esac
 # difference from HEAD goes back to HEAD, and a path HEAD does not have is
 # deleted. Anything else staged is left alone.
 if [ "$mode" = undo ]; then
-  git -C "$root" diff --cached --name-only -z -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"} > "$tmp/undo.z" || die3 "$spec_rel: git diff --cached failed"
+  git -C "$root" diff --cached --name-only --no-renames -z -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"} > "$tmp/undo.z" || die3 "$spec_rel: git diff --cached failed"
+  undo_blob() { git -C "$root" show "$1" > "$2" 2>/dev/null; }
+  is_my_record() {  # a record copy -> 0 when its identity names this spec
+    case "$(existing_field "$1" Spec)" in "$spec_rel (decision "*) return 0 ;; esac
+    return 1
+  }
+  drop_status() {  # a record copy -> the same text without its first Status line
+    awk '!r && index($0, "- Status: ") == 1 { r = 1; next } { print }' "$1" > "$2"
+  }
+  names_my_record() {  # a Status value -> 0 when it lists a record of this spec
+    local st=$1 q
+    case "$st" in "superseded by "*) ;; *) return 1 ;; esac
+    printf '%s\n' "${st#superseded by }" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | awk 'length' > "$tmp/undo-named"
+    while IFS= read -r q; do
+      if undo_blob ":$q" "$tmp/undo-q" || undo_blob "HEAD:$q" "$tmp/undo-q"; then
+        if is_my_record "$tmp/undo-q"; then return 0; fi
+      fi
+    done < "$tmp/undo-named"
+    return 1
+  }
+  # The records directory is shared, so a staged path under it is not
+  # necessarily this compile's work. A second spec compiled before the commit
+  # would be restored or deleted here while its own staged Outcome line stayed
+  # behind, pointing at records that are gone. Every staged record must be
+  # attributable to this spec first: either it carries this spec's identity,
+  # or it is a target this compile superseded, whose staged change is the
+  # Status line alone and whose Status names a record of this spec.
+  while IFS= read -r -d '' p; do
+    case "$p" in "$records_rel"/*) ;; *) continue ;; esac
+    if [ "$p" = "$index_rel" ]; then continue; fi
+    have_idx=false; have_head=false
+    if undo_blob ":$p" "$tmp/undo-idx"; then have_idx=true; fi
+    if undo_blob "HEAD:$p" "$tmp/undo-head"; then have_head=true; fi
+    # A staged deletion has no index copy; its identity comes from HEAD.
+    ident=""
+    if $have_idx; then ident="$tmp/undo-idx"; elif $have_head; then ident="$tmp/undo-head"; fi
+    owned=false
+    if [ -n "$ident" ] && is_my_record "$ident"; then
+      owned=true
+    elif $have_idx && $have_head; then
+      drop_status "$tmp/undo-idx" "$tmp/undo-idx.body"
+      drop_status "$tmp/undo-head" "$tmp/undo-head.body"
+      if cmp -s "$tmp/undo-idx.body" "$tmp/undo-head.body"; then
+        if names_my_record "$(existing_field "$tmp/undo-idx" Status)" || names_my_record "$(existing_field "$tmp/undo-head" Status)"; then owned=true; fi
+      fi
+    fi
+    $owned || die2 "$spec_rel: --undo refused: $p is staged but belongs to another compile; commit or undo it first"
+  done < "$tmp/undo.z"
+  # An edit made after the compile is not this compile's text, and the restore
+  # below would discard it without a trace.
+  while IFS= read -r -d '' p; do
+    if [ ! -e "$root/$p" ]; then continue; fi
+    # A path whose deletion is staged and that exists again is untracked
+    # relative to the index, so git diff says nothing about it while the
+    # restore below would overwrite it with HEAD's copy.
+    if [ -z "$(git -C "$root" ls-files -z -- "$p" | tr '\0' '\n')" ]; then
+      die2 "$spec_rel: --undo refused: $p was recreated after the compile; move it aside or stage it first"
+    fi
+    git -C "$root" diff --quiet -- "$p" || die2 "$spec_rel: --undo refused: $p was edited after the compile; commit or stash the edit first"
+  done < "$tmp/undo.z"
   while IFS= read -r -d '' p; do
     if git -C "$root" cat-file -e "HEAD:$p" 2>/dev/null; then
       git -C "$root" restore --staged --worktree -- "$p" || die3 "$spec_rel: git restore failed for $p"
     else
+      # The file goes first, so a failed deletion leaves the staged entry for
+      # the retry to find.
+      rm -f "$root/$p" 2>/dev/null || die3 "$spec_rel: cannot delete $p; run the same command again to complete the undo"
       git -C "$root" rm --cached --quiet -- "$p" || die3 "$spec_rel: git rm --cached failed for $p"
-      rm -f "$root/$p"
     fi
     echo "restored $p"
   done < "$tmp/undo.z"
@@ -2063,6 +2131,8 @@ if [ "$mode" = undo ]; then
   exit 0
 fi
 ```
+
+The suite's section 24 also carries, from those rounds, an untracked and a staged-only spec refused with nothing written, undo on a tracked spec restoring it byte for byte, undo with nothing staged printing nothing, a failed deletion exiting 3 and succeeding on retry, and a plan whose content matches its record so that rename detection would have folded the deletion; section 5's third-collision fixture commits its spec.
 
 Undo needs the plan resolved but not validated against the three states (a plan whose deletion is staged is exactly the undo case, and one that exists is fine too); the Task 5 validation already accepts both, and a plan that exists nowhere exits 2, which is right for undo as well.
 

@@ -1079,6 +1079,153 @@ else
 fi
 case "$ERR" in *"names a Supersedes path that is a symbolic link: docs/hyperpowers/decisions/alias.md") pass "the persisted-link message names the path" ;; *) fail "persisted-link message (got: $ERR)" ;; esac
 
+# --- 21. the plan, the pathspec commit, discovery, re-runs ------------------
+repo="$TEST_ROOT/plan"
+make_repo "$repo"
+write_spec "$repo" "2026-10-19-with space-design.md" <<'EOF'
+# Spaced
+
+## Decisions
+
+- **One decision.** Text.
+EOF
+commit_all "$repo" "spec"
+printf '# Plan\n\n**Spec:** docs/hyperpowers/specs/2026-10-19-with space-design.md\n\n## Task 1\n' > "$repo/docs/hyperpowers/plans/2026-10-19-with-space.md"
+commit_all "$repo" "plan"
+plan_sha=$(git -C "$repo" rev-parse HEAD)
+printf 'unrelated\n' > "$repo/other.txt"
+git -C "$repo" add other.txt
+run_compile "$repo" "docs/hyperpowers/specs/2026-10-19-with space-design.md" --plan docs/hyperpowers/plans/2026-10-19-nope.md
+if [ "$RC" -eq 2 ] && [ "$(git -C "$repo" status --porcelain)" = "A  other.txt" ]; then pass "a plan that exists nowhere exits 2 before any write"; else fail "missing plan (rc $RC, status: $(git -C "$repo" status --porcelain | tr '\n' ';'))"; fi
+run_compile "$repo" "docs/hyperpowers/specs/2026-10-19-with space-design.md" --plan docs/hyperpowers/plans/2026-10-19-with-space.md --paths-file "$TEST_ROOT/plan.paths"
+if [ "$RC" -eq 0 ]; then pass "compile with --plan exits 0"; else fail "--plan exit (got $RC: $ERR)"; fi
+case "$OUT" in *$'\n'"removed docs/hyperpowers/plans/2026-10-19-with-space.md"*) pass "removed <plan> line" ;; *) fail "removed line missing (got: $OUT)" ;; esac
+if git -C "$repo" diff --cached --name-status | grep -q '^D.*2026-10-19-with-space.md$'; then pass "the plan's deletion is staged"; else fail "plan deletion not staged"; fi
+rec="$repo/docs/hyperpowers/decisions/2026-10-19-one-decision.md"
+if grep -q '^- Recorded: 2026-10-21; plan docs/hyperpowers/plans/2026-10-19-with-space.md removed at finish$' "$rec"; then pass "Recorded carries the plan part"; else fail "Recorded plan part (got: $(grep '^- Recorded' "$rec"))"; fi
+if tr '\0' '\n' < "$TEST_ROOT/plan.paths" | grep -q '^docs/hyperpowers/specs/2026-10-19-with space-design.md$'; then pass "the paths file carries a path with a space intact"; else fail "paths file lost the spaced path"; fi
+approval=()
+while IFS= read -r -d '' pth; do approval+=("$pth"); done < "$TEST_ROOT/plan.paths"
+( cd "$repo" && GIT_LITERAL_PATHSPECS=1 git diff --cached --name-only -- "${approval[@]}" > "$TEST_ROOT/approval.txt" )
+if grep -q '2026-10-19-with space-design.md' "$TEST_ROOT/approval.txt" && ! grep -q other.txt "$TEST_ROOT/approval.txt"; then pass "the approval diff from the pathspec file covers the spaced path and not the unrelated file"; else fail "approval diff (got: $(tr '\n' ' ' < "$TEST_ROOT/approval.txt"))"; fi
+( cd "$repo" && GIT_LITERAL_PATHSPECS=1 git commit -q --pathspec-from-file="$TEST_ROOT/plan.paths" --pathspec-file-nul -m "docs: record decisions for 2026-10-19-with space" )
+if git -C "$repo" show --format= --name-only HEAD | grep -q '2026-10-19-with space-design.md' && [ "$(git -C "$repo" diff --cached --name-only)" = "other.txt" ]; then pass "the pathspec commit takes the spaced spec and leaves the unrelated staged file staged"; else fail "pathspec commit (committed: $(git -C "$repo" show --format= --name-only HEAD | tr '\n' ' '); staged: $(git -C "$repo" diff --cached --name-only))"; fi
+git -C "$repo" reset -q other.txt && rm "$repo/other.txt"
+# Discovery after the committed removal, as finishing Step 1 does it.
+found=$(git -C "$repo" log --diff-filter=A --name-only --format= "$(git -C "$repo" rev-list --max-parents=0 HEAD)"..HEAD -- '*/plans/*.md')
+if [ "$found" = "docs/hyperpowers/plans/2026-10-19-with-space.md" ]; then pass "history discovery finds the removed plan"; else fail "discovery (got: $found)"; fi
+header=$(git -C "$repo" show "$plan_sha:docs/hyperpowers/plans/2026-10-19-with-space.md" | sed -n 's/^\*\*Spec:\*\* //p')
+if [ "$header" = "docs/hyperpowers/specs/2026-10-19-with space-design.md" ]; then pass "the Spec header is read from the adding commit"; else fail "Spec header (got: $header)"; fi
+run_compile "$repo" "docs/hyperpowers/specs/2026-10-19-with space-design.md" --plan docs/hyperpowers/plans/2026-10-19-with-space.md --paths-file "$TEST_ROOT/plan2.paths"
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ] && [ ! -s "$TEST_ROOT/plan2.paths" ]; then pass "a re-run after the committed removal changes nothing and the pathspec file is empty"; else fail "re-run after committed removal (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
+case "$OUT" in *$'\n'"paths:" ) pass "paths: is empty after the committed removal" ;; *"paths:"*) if [ "$(printf '%s\n' "$OUT" | grep '^paths:')" = "paths:" ]; then pass "paths: is empty after the committed removal"; else fail "paths after committed removal (got: $(printf '%s\n' "$OUT" | grep '^paths:'))"; fi ;; *) fail "paths: line missing" ;; esac
+
+# A plan removed, re-added and then deleted in the tree without staging is
+# still in the index: its deletion must be staged, not mistaken for history.
+repo="$TEST_ROOT/plan3"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-delta-design.md <<'EOF'
+# Delta
+
+## Decisions
+
+- **Delta one.** Text.
+EOF
+printf '# Plan v1\n' > "$repo/docs/hyperpowers/plans/2026-10-19-delta.md"
+commit_all "$repo" "spec and plan"
+git -C "$repo" rm -q docs/hyperpowers/plans/2026-10-19-delta.md && git -C "$repo" commit -q -m "remove plan"
+mkdir -p "$repo/docs/hyperpowers/plans"
+printf '# Plan v2\n' > "$repo/docs/hyperpowers/plans/2026-10-19-delta.md"
+commit_all "$repo" "re-add plan"
+rm "$repo/docs/hyperpowers/plans/2026-10-19-delta.md"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-delta-design.md --plan docs/hyperpowers/plans/2026-10-19-delta.md
+if [ "$RC" -eq 0 ] && git -C "$repo" diff --cached --name-status | grep -q '^D.*2026-10-19-delta.md$'; then pass "an index-tracked plan deleted in the tree gets its deletion staged"; else fail "unstaged deletion of a re-added plan (rc $RC, staged: $(git -C "$repo" diff --cached --name-status | tr '\n' ' '))"; fi
+
+# A staged (uncommitted) deletion survives a re-run and stays in paths:.
+repo="$TEST_ROOT/plan2"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-beta-design.md <<'EOF'
+# Beta
+
+## Decisions
+
+- **Only one.** Text.
+EOF
+printf '# Plan\n' > "$repo/docs/hyperpowers/plans/2026-10-19-beta.md"
+commit_all "$repo" "spec and plan"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-beta-design.md --plan docs/hyperpowers/plans/2026-10-19-beta.md
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-beta-design.md --plan docs/hyperpowers/plans/2026-10-19-beta.md
+if [ "$RC" -eq 0 ]; then pass "a re-run while the deletion is staged succeeds"; else fail "re-run with staged deletion (rc $RC: $ERR)"; fi
+case "$OUT" in *"docs/hyperpowers/plans/2026-10-19-beta.md"*) pass "the staged deletion stays in paths:" ;; *) fail "plan missing from paths: (got: $(printf '%s\n' "$OUT" | grep '^paths:'))" ;; esac
+
+# --- 22. git failure at each staging operation --------------------------------
+mkdir -p "$TEST_ROOT/bin"
+REAL_GIT=$(command -v git)
+cat > "$TEST_ROOT/bin/git" <<'EOF'
+#!/usr/bin/env bash
+# A git that refuses the one subcommand named in FAKE_GIT_FAIL and passes
+# everything else to the real git, so a failure can be placed at one step.
+for a in "$@"; do
+    if [ "$a" = "${FAKE_GIT_FAIL:-}" ]; then echo "fake git: refusing $a" >&2; exit 128; fi
+done
+exec "$REAL_GIT" "$@"
+EOF
+chmod +x "$TEST_ROOT/bin/git"
+for failing in add rm; do
+    repo="$TEST_ROOT/gitfail-$failing"
+    make_repo "$repo"
+    write_spec "$repo" 2026-10-19-gamma-design.md <<'EOF'
+# Gamma
+
+## Decisions
+
+- **Gamma one.** Text.
+EOF
+    printf '# Plan\n' > "$repo/docs/hyperpowers/plans/2026-10-19-gamma.md"
+    commit_all "$repo" "spec and plan"
+    PATH="$TEST_ROOT/bin:$PATH" FAKE_GIT_FAIL="$failing" REAL_GIT="$REAL_GIT" run_compile "$repo" docs/hyperpowers/specs/2026-10-19-gamma-design.md --plan docs/hyperpowers/plans/2026-10-19-gamma.md
+    if [ "$RC" -eq 3 ]; then pass "a failing git $failing exits 3"; else fail "git $failing failure exit (got $RC: $ERR)"; fi
+    if [ -f "$repo/docs/hyperpowers/decisions/2026-10-19-gamma-one.md" ] && [ -f "$repo/docs/hyperpowers/decisions/README.md" ]; then pass "files are written before the failed $failing"; else fail "files missing after failed $failing"; fi
+    if [ -f "$repo/docs/hyperpowers/plans/2026-10-19-gamma.md" ]; then pass "the plan is still present after a failed $failing"; else fail "plan removed despite failed $failing"; fi
+    run_compile "$repo" docs/hyperpowers/specs/2026-10-19-gamma-design.md --plan docs/hyperpowers/plans/2026-10-19-gamma.md --paths-file "$TEST_ROOT/gitfail.paths"
+    expected="docs/hyperpowers/decisions/2026-10-19-gamma-one.md docs/hyperpowers/decisions/README.md docs/hyperpowers/plans/2026-10-19-gamma.md docs/hyperpowers/specs/2026-10-19-gamma-design.md"
+    if [ "$RC" -eq 0 ] && [ "$(tr '\0' '\n' < "$TEST_ROOT/gitfail.paths" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')" = "$expected" ]; then
+        pass "the retry completes the staging and the pathspec file carries everything ($failing)"
+    else
+        fail "retry after failed $failing (rc $RC, paths: $(tr '\0' ' ' < "$TEST_ROOT/gitfail.paths"))"
+    fi
+done
+
+# --- 23. Setext headings in notes are headings ------------------------------
+# Correction (2026-10-22): Task 4's gate found at its cap that a line underlined
+# with --- or === is a Markdown heading the notes grammar forbids but the pass
+# did not recognise; the human partner carried the rule and this test into
+# Task 5.
+repo="$TEST_ROOT/setext"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-setext-design.md <<'EOF'
+# Setext
+
+## Decisions
+
+1. **First.** One.
+2. **Second.** Two.
+EOF
+commit_all "$repo" "spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-setext-design.md
+commit_all "$repo" "records"
+printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-setext-design.md\n\n## Decision 1\nChanged the parser.\n\nSupersessions\n---\n- 1 supersedes docs/hyperpowers/decisions/x.md\n' > "$TEST_ROOT/notes-setext.md"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-setext-design.md --notes "$TEST_ROOT/notes-setext.md"
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a Setext heading makes the notes malformed and the run proceeds unchanged"; else fail "setext notes (rc $RC, status: $(git -C "$repo" status --porcelain))"; fi
+case "$ERR" in "notes ignored: unexpected heading: Supersessions"*) pass "the Setext heading is reported as an unexpected heading" ;; *) fail "setext message (got: $ERR)" ;; esac
+if ! grep -rq 'supersedes docs/hyperpowers/decisions/x.md' "$repo/docs/hyperpowers/decisions"; then pass "no record carries the proposal under a Setext heading"; else fail "a proposal under a Setext heading reached a record"; fi
+printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-setext-design.md\n\n## Decision 1\nChanged the parser.\n\nDecision 2\n===\nSmuggled.\n' > "$TEST_ROOT/notes-setext2.md"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-setext-design.md --notes "$TEST_ROOT/notes-setext2.md"
+case "$ERR" in "notes ignored: unexpected heading: Decision 2"*) pass "an = underline is a heading too" ;; *) fail "setext = message (got: $ERR)" ;; esac
+printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-setext-design.md\n\n## Decision 1\nChanged the parser.\n\n---\n\nAnd the tests.\n' > "$TEST_ROOT/notes-rule.md"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-setext-design.md --notes "$TEST_ROOT/notes-rule.md"
+if [ "$RC" -eq 0 ] && [ -z "$ERR" ] && grep -q '^And the tests\.$' "$repo/docs/hyperpowers/decisions/2026-10-19-first.md"; then pass "a thematic break after a blank line is body text, not a heading"; else fail "thematic break (rc $RC, err: $ERR)"; fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

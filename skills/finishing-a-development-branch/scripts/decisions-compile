@@ -7,7 +7,7 @@
 # Nothing is written before every input has been validated, and nothing is
 # ever committed. Design: docs/hyperpowers/specs/2026-10-21-decision-records-design.md.
 #
-# Usage: decisions-compile SPEC [--notes FILE] [--paths-file FILE] [--dry-run]
+# Usage: decisions-compile SPEC [--plan PLAN] [--notes FILE] [--paths-file FILE] [--dry-run]
 #        decisions-compile --reindex RECORDS_DIR
 # Exit 2: an input problem (no spec, no decisions list, an unresolvable
 # filename collision); nothing has been written. Exit 3: a write failure
@@ -23,7 +23,7 @@ export LC_ALL=C
 export GIT_LITERAL_PATHSPECS=1
 
 usage() {
-  echo "usage: decisions-compile SPEC [--notes FILE] [--paths-file FILE] [--dry-run]" >&2
+  echo "usage: decisions-compile SPEC [--plan PLAN] [--notes FILE] [--paths-file FILE] [--dry-run]" >&2
   echo "       decisions-compile --reindex RECORDS_DIR" >&2
   exit 2
 }
@@ -32,12 +32,14 @@ spec=""
 dry_run=false
 paths_file=""
 notes=""
+plan=""
 reindex_dir=""
 mode=compile
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) if $dry_run; then usage; fi; dry_run=true; shift ;;
     --notes) [ $# -ge 2 ] || usage; [ -z "$notes" ] || usage; notes=$2; shift 2 ;;
+    --plan) [ $# -ge 2 ] || usage; [ -z "$plan" ] || usage; plan=$2; shift 2 ;;
     --paths-file) [ $# -ge 2 ] || usage; [ -z "$paths_file" ] || usage; paths_file=$2; shift 2 ;;
     --reindex) [ $# -ge 2 ] || usage; [ "$mode" = compile ] || usage; mode=reindex; reindex_dir=$2; shift 2 ;;
     -*) usage ;;
@@ -45,7 +47,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$mode" in
-  reindex) if [ -n "$spec" ] || [ -n "$paths_file" ] || [ -n "$notes" ] || $dry_run; then usage; fi ;;
+  reindex) if [ -n "$spec" ] || [ -n "$paths_file" ] || [ -n "$notes" ] || [ -n "$plan" ] || $dry_run; then usage; fi ;;
   *) [ -n "$spec" ] || usage ;;
 esac
 
@@ -113,6 +115,37 @@ if [ -n "$paths_file" ]; then
   esac
   if [ -e "$paths_file" ] || [ -L "$paths_file" ]; then
     { [ -f "$paths_file" ] && [ ! -L "$paths_file" ]; } || die2 "$spec_rel: --paths-file exists but is not a regular file: $paths_file"
+  fi
+fi
+
+plan_rel=""
+plan_state=""
+if [ -n "$plan" ]; then
+  # A committed removal leaves no plan and often no plans directory (git
+  # prunes it when it empties), so resolve the nearest existing ancestor and
+  # re-append the missing components.
+  plan_dir=$(dirname "$plan")
+  plan_missing=""
+  while [ ! -d "$plan_dir" ] && [ "$plan_dir" != / ] && [ "$plan_dir" != . ]; do
+    plan_missing="/$(basename "$plan_dir")$plan_missing"
+    plan_dir=$(dirname "$plan_dir")
+  done
+  plan_abs_dir="$(cd "$plan_dir" && pwd -P)$plan_missing"
+  plan_abs="$plan_abs_dir/$(basename "$plan")"
+  case "$plan_abs" in
+    "$root"/*) plan_rel=${plan_abs#"$root"/} ;;
+    *) die2 "$spec_rel: plan is outside the repository: $plan" ;;
+  esac
+  if [ -e "$plan_abs" ] || git -C "$root" ls-files --error-unmatch -- "$plan_rel" >/dev/null 2>&1; then
+    # In the tree, or deleted in the tree but still in the index: git rm
+    # stages the deletion in both cases.
+    plan_state=present
+  elif [ -n "$(git -C "$root" diff --cached --name-only --diff-filter=D -- "$plan_rel")" ]; then
+    plan_state=staged-deletion
+  elif ! git -C "$root" cat-file -e "HEAD:$plan_rel" 2>/dev/null && [ -n "$(git -C "$root" log --diff-filter=D --format=%h -1 -- "$plan_rel")" ]; then
+    plan_state=removed
+  else
+    die2 "$spec_rel: no such plan (not in the tree or index, no staged deletion, never removed in history): $plan"
   fi
 fi
 
@@ -211,6 +244,12 @@ render_record() {  # N -> the record text
   if [ "$notes_body" != "Nothing recorded." ]; then
     recorded="$recorded; notes from the branch diff by a subagent at finish"
   fi
+  if [ -n "$plan_rel" ]; then
+    recorded="$recorded; plan $plan_rel removed at finish"
+  elif [ "${existing[n]}" = 1 ]; then
+    rec_full=$(existing_field "$target" Recorded)
+    case "$rec_full" in *"; plan "*) recorded="$recorded; plan ${rec_full##*; plan }" ;; esac
+  fi
   printf '# %s\n\n- Status: %s\n' "${titles[n]}" "$status"
   identity_of "$n"
   printf -- '- Recorded: %s\n' "$recorded"
@@ -246,6 +285,10 @@ load_notes() {
     function bad(msg) { if (!reason) { reason = msg; print msg > (out "/notes-bad") } }
     NR == 1 { next }
     {
+      # A Setext underline (only = or -, up to three leading spaces) directly
+      # after a non-blank line makes that line a heading the grammar forbids.
+      if (prev != "" && $0 ~ /^ ? ? ?(=+|-+)[ \t]*$/) { bad("unexpected heading: " prev); prev = ""; next }
+      prev = ($0 ~ /^[[:space:]]*$/) ? "" : $0
       t = $0; sub(/^ ? ? ?/, "", t)
       if (match(t, /^#+/) && RLENGTH <= 6 && (length(t) == RLENGTH || substr(t, RLENGTH + 1, 1) == " " || substr(t, RLENGTH + 1, 1) == "\t")) {
         mode = ""
@@ -258,6 +301,7 @@ load_notes() {
           if (seen[$0]++) bad("duplicate section: " $0)
           else mode = ($0 == "## Supersessions") ? "sup" : "undoc"
         } else bad("unexpected heading: " $0)
+        prev = ""
         next
       }
       if (mode == "dec") { print > cur; next }
@@ -365,7 +409,7 @@ stage_owned() {
 # emit_paths: the compiler-owned paths whose staged content differs from
 # HEAD, NUL-delimited into --paths-file and space-joined on stdout.
 emit_paths() {
-  git -C "$root" diff --cached --name-only -z -- "$records_rel" "$spec_rel" > "$tmp/paths.z" || die3 "$spec_rel: git diff --cached failed"
+  git -C "$root" diff --cached --name-only -z -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"} > "$tmp/paths.z" || die3 "$spec_rel: git diff --cached failed"
   if [ -n "$paths_file" ]; then
     # Atomic, so a reader never sees a half-written pathspec.
     if ! { cp "$tmp/paths.z" "$paths_file.tmp.$$" && mv -f "$paths_file.tmp.$$" "$paths_file"; }; then
@@ -524,8 +568,9 @@ if $dry_run; then
     echo "$v $records_rel/${files[n]} (decision $n: ${titles[n]})"
   done
   {
-    git -C "$root" diff --cached --name-only -- "$records_rel" "$spec_rel"
+    git -C "$root" diff --cached --name-only -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"}
     git -C "$root" ls-files --others --exclude-standard -- "$records_rel"
+    [ "$plan_state" = present ] && echo "$plan_rel"
     for ((n = 1; n <= count; n++)); do echo "$records_rel/${files[n]}"; done
     echo "$index_rel"; echo "$spec_rel"
   } | sort -u > "$tmp/would-stage"
@@ -603,6 +648,14 @@ if write_if_changed "$spec_abs" "$tmp/spec"; then verb_lines+=("updated $spec_re
 
 # --- 4c. stage ----------------------------------------------------------------
 stage_owned
+
+# The plan is removed last. Present: git rm. Absent with its deletion staged:
+# nothing to do, and it stays in paths:. Removed by an earlier commit:
+# nothing to do, and it is not in paths:.
+if [ "$plan_state" = present ]; then
+  git -C "$root" rm --quiet -- "$plan_rel" || die3 "$spec_rel: git rm failed for $plan_rel; run the same command again to complete the staging"
+  verb_lines+=("removed $plan_rel")
+fi
 
 # --- 5. report --------------------------------------------------------------
 echo "wrote $wrote records, updated $updated, superseded $superseded, undocumented $undocumented, proposed supersessions $proposed, index $index_rel"

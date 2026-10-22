@@ -571,6 +571,153 @@ else
 fi
 rm "$repo/docs/hyperpowers/decisions/README.md"
 
+# --- 15. supersession --------------------------------------------------------
+repo="$TEST_ROOT/supersede"
+make_repo "$repo"
+write_spec "$repo" 2026-07-01-old-design.md <<'EOF'
+# Old
+
+## Decisions
+
+- **Hook-based interlock.** A hook gates the first edit.
+- **Twenty-run bar.** Forty sessions per scenario.
+EOF
+commit_all "$repo" "old spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-07-01-old-design.md
+commit_all "$repo" "old records"
+write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
+# New
+
+## Decisions
+
+1. **Skill text, not a hook.** Measured no gain from the hook.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+2. **Still no hook.** A second reversal of the same record.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md, docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+EOF
+commit_all "$repo" "new spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+if [ "$RC" -eq 0 ]; then pass "supersession compile exits 0"; else fail "supersession exit (got $RC: $ERR)"; fi
+old="$repo/docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md"
+if grep -q '^- Status: superseded by docs/hyperpowers/decisions/2026-08-01-skill-text-not-a-hook.md, docs/hyperpowers/decisions/2026-08-01-still-no-hook.md$' "$old"; then
+    pass "two new decisions superseding one record list both, sorted, in one status line"
+else
+    fail "fan-in status (got: $(grep '^- Status' "$old"))"
+fi
+case "$OUT" in *"superseded 1,"*) pass "summary counts one superseded target" ;; *) fail "superseded count (got: $(printf '%s\n' "$OUT" | head -n 1))" ;; esac
+case "$OUT" in *"updated docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md (superseded by "*) pass "the target's verb line" ;; *) fail "target verb line missing" ;; esac
+if grep -q '^- Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md$' "$repo/docs/hyperpowers/decisions/2026-08-01-skill-text-not-a-hook.md"; then
+    pass "the new record carries its Supersedes line (duplicates collapsed)"
+else
+    fail "Supersedes line (got: $(grep '^- Supersedes' "$repo/docs/hyperpowers/decisions/2026-08-01-skill-text-not-a-hook.md"))"
+fi
+idx="$repo/docs/hyperpowers/decisions/README.md"
+if grep -q '^3 current, 1 superseded\.$' "$idx" && grep -q '^## Superseded' "$idx" && [ "$(grep -c '^| 2026-0[78]-01 | \[' "$idx")" = "4" ]; then
+    pass "index: three current rows, one superseded row, both tables"
+else
+    fail "index after supersession:"; sed 's/^/        /' "$idx"
+fi
+commit_all "$repo" "new records"
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a re-run with Supersedes lines changes nothing"; else fail "supersession re-run (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
+# Before the freeze a Supersedes line can be removed or retargeted; the old
+# target must follow.
+write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
+# New
+
+## Decisions
+
+1. **Skill text, not a hook.** Measured no gain from the hook.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-twenty-run-bar.md
+2. **Still no hook.** A second reversal, no longer superseding anything.
+EOF
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+if grep -q '^- Status: accepted$' "$old"; then pass "a target nothing names any more returns to accepted"; else fail "stale supersession left on the old target: $(grep '^- Status' "$old")"; fi
+if grep -q '^- Status: superseded by docs/hyperpowers/decisions/2026-08-01-skill-text-not-a-hook.md$' "$repo/docs/hyperpowers/decisions/2026-07-01-twenty-run-bar.md"; then pass "a retargeted Supersedes line supersedes the new target"; else fail "retarget (got: $(grep '^- Status' "$repo/docs/hyperpowers/decisions/2026-07-01-twenty-run-bar.md"))"; fi
+if ! grep -q '^- Supersedes:' "$repo/docs/hyperpowers/decisions/2026-08-01-still-no-hook.md"; then pass "the record whose line was removed loses its Supersedes line"; else fail "Supersedes line not removed from record 2"; fi
+case "$OUT" in *"superseded 2,"*) pass "both status changes are counted" ;; *) fail "reconciliation count (got: $(printf '%s\n' "$OUT" | head -n 1))" ;; esac
+commit_all "$repo" "retargeted"
+for bad in "docs/hyperpowers/decisions/2026-07-01-nope.md" "docs/hyperpowers/decisions/2026-07-01-twenty-run-bar.md"; do
+    write_spec "$repo" 2026-09-01-bad-design.md <<EOF
+# Bad
+
+## Decisions
+
+- **Reverses something.** Text.
+  Supersedes: $bad
+EOF
+    run_compile "$repo" docs/hyperpowers/specs/2026-09-01-bad-design.md
+    if [ "$RC" -eq 2 ] && [ "$(git -C "$repo" status --porcelain | grep -vc 'bad-design')" = 0 ]; then
+        pass "Supersedes violation exits 2 and writes nothing ($bad: missing, or already superseded by an unrelated record)"
+    else
+        fail "violation $bad (rc $RC, err: $ERR)"
+    fi
+done
+rm -f "$repo/docs/hyperpowers/specs/2026-09-01-bad-design.md"
+write_spec "$repo" 2026-09-02-self-design.md <<'EOF'
+# Self
+
+## Decisions
+
+- **First.** Text.
+- **Second.** Text.
+EOF
+commit_all "$repo" "self spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-09-02-self-design.md
+commit_all "$repo" "self records"
+tree_before=$(git -C "$repo" write-tree)
+write_spec "$repo" 2026-09-02-self-design.md <<'EOF'
+# Self
+
+## Decisions
+
+- **First.** Text.
+- **Second.** Text.
+  Supersedes: docs/hyperpowers/decisions/2026-09-02-first.md
+EOF
+run_compile "$repo" docs/hyperpowers/specs/2026-09-02-self-design.md
+if [ "$RC" -eq 2 ]; then pass "a record of the same spec cannot be superseded"; else fail "same-spec supersession (rc $RC)"; fi
+case "$ERR" in *"cannot supersede a record of this spec"*) pass "the same-spec rule is the one that fired" ;; *) fail "same-spec message (got: $ERR)" ;; esac
+git -C "$repo" add -A docs/hyperpowers/decisions
+if [ "$(git -C "$repo" write-tree)" = "$tree_before" ] || [ -z "$(git -C "$repo" status --porcelain -- docs/hyperpowers/decisions)" ]; then pass "the records directory is byte-identical after the refused run"; else fail "records changed by a refused run"; fi
+git -C "$repo" checkout -q -- docs/hyperpowers/specs/2026-09-02-self-design.md
+
+# --- 16. --reindex ------------------------------------------------------------
+rm "$idx"
+run_compile "$repo" --reindex docs/hyperpowers/decisions
+if [ "$RC" -eq 0 ] && [ -f "$idx" ] && [ "$(git -C "$repo" status --porcelain | grep -vc README.md)" = 0 ]; then pass "--reindex rewrites only README.md"; else fail "--reindex (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
+case "$OUT" in "wrote docs/hyperpowers/decisions/README.md"*) pass "--reindex reports the index it wrote" ;; *) fail "--reindex output (got: $OUT)" ;; esac
+run_compile "$repo" --reindex docs/hyperpowers/decisions --dry-run
+if [ "$RC" -eq 2 ]; then pass "--reindex with another option is a usage error"; else fail "--reindex --dry-run (got $RC)"; fi
+run_compile "$repo" --reindex docs/hyperpowers/decisions docs/hyperpowers/specs/2026-08-01-new-design.md
+if [ "$RC" -eq 2 ]; then pass "--reindex with a spec is a usage error"; else fail "--reindex with spec (got $RC)"; fi
+
+# --- 17. a symlinked spec is refused -----------------------------------------
+# Correction (2026-10-22): Task 2's gate found at its cap that a spec which is
+# itself a symbolic link passes -f and is replaced by a regular file when the
+# Outcome line is written, leaving its target without the line; the human
+# partner carried the guard and this test into Task 3.
+repo="$TEST_ROOT/linkspec"
+make_repo "$repo"
+write_spec "$repo" 2026-09-01-real-design.md <<'EOF'
+# Real
+
+## Decisions
+
+- **One decision.** A decision.
+EOF
+ln -s 2026-09-01-real-design.md "$repo/docs/hyperpowers/specs/2026-09-01-link-design.md"
+commit_all "$repo" "spec and link"
+before=$(cksum < "$repo/docs/hyperpowers/specs/2026-09-01-real-design.md")
+run_compile "$repo" docs/hyperpowers/specs/2026-09-01-link-design.md
+if [ "$RC" -eq 2 ]; then pass "a symlinked spec exits 2"; else fail "symlinked spec (got $RC: $ERR)"; fi
+case "$ERR" in "docs/hyperpowers/specs/2026-09-01-link-design.md: "*) pass "the symlinked-spec message begins with the spec path" ;; *) fail "symlinked-spec message (got: $ERR)" ;; esac
+if [ -L "$repo/docs/hyperpowers/specs/2026-09-01-link-design.md" ] && [ "$(cksum < "$repo/docs/hyperpowers/specs/2026-09-01-real-design.md")" = "$before" ] && [ ! -e "$repo/docs/hyperpowers/decisions" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then
+    pass "the link, its target and the tree are unchanged"
+else
+    fail "a symlinked spec changed the tree (status: $(git -C "$repo" status --porcelain))"
+fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

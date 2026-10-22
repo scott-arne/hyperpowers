@@ -8,6 +8,7 @@
 # ever committed. Design: docs/hyperpowers/specs/2026-10-21-decision-records-design.md.
 #
 # Usage: decisions-compile SPEC [--paths-file FILE] [--dry-run]
+#        decisions-compile --reindex RECORDS_DIR
 # Exit 2: an input problem (no spec, no decisions list, an unresolvable
 # filename collision); nothing has been written. Exit 3: a write failure
 # after validation; the files written so far are idempotent, so running the
@@ -23,43 +24,68 @@ export GIT_LITERAL_PATHSPECS=1
 
 usage() {
   echo "usage: decisions-compile SPEC [--paths-file FILE] [--dry-run]" >&2
+  echo "       decisions-compile --reindex RECORDS_DIR" >&2
   exit 2
 }
 
 spec=""
 dry_run=false
 paths_file=""
+reindex_dir=""
+mode=compile
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) if $dry_run; then usage; fi; dry_run=true; shift ;;
     --paths-file) [ $# -ge 2 ] || usage; [ -z "$paths_file" ] || usage; paths_file=$2; shift 2 ;;
+    --reindex) [ $# -ge 2 ] || usage; [ "$mode" = compile ] || usage; mode=reindex; reindex_dir=$2; shift 2 ;;
     -*) usage ;;
     *) [ -z "$spec" ] || usage; spec=$1; shift ;;
   esac
 done
-[ -n "$spec" ] || usage
+case "$mode" in
+  reindex) if [ -n "$spec" ] || [ -n "$paths_file" ] || $dry_run; then usage; fi ;;
+  *) [ -n "$spec" ] || usage ;;
+esac
 
 die2() { echo "$1" >&2; exit 2; }
 die3() { echo "$1" >&2; exit 3; }
 
 # --- paths ------------------------------------------------------------------
-[ -f "$spec" ] || die2 "$spec: no such spec file"
-spec_dir=$(cd "$(dirname "$spec")" && pwd -P)
-spec_abs="$spec_dir/$(basename "$spec")"
-root=$(git -C "$spec_dir" rev-parse --show-toplevel 2>/dev/null) || die2 "$spec: not inside a git repository"
-root=$(cd "$root" && pwd -P)
-spec_rel=${spec_abs#"$root"/}
-records_dir="$(dirname "$spec_dir")/decisions"
-records_rel=${records_dir#"$root"/}
-case "$records_dir" in
-  "$root"/*) ;;
-  *) die2 "$spec_rel: the spec must live in a subdirectory of the repository (its records go to the sibling decisions/ of that directory)" ;;
-esac
-# An existing decisions entry must be a plain directory: a symbolic link
-# would carry the records outside the repository that spec_dir's physical
-# path keeps them in.
-if [ -L "$records_dir" ] || { [ -e "$records_dir" ] && [ ! -d "$records_dir" ]; }; then
-  die2 "$spec_rel: $records_rel exists but is not a plain directory"
+if [ "$mode" = reindex ]; then
+  [ -d "$reindex_dir" ] || die2 "$reindex_dir: no such records directory"
+  records_dir=$(cd "$reindex_dir" && pwd -P)
+  root=$(git -C "$records_dir" rev-parse --show-toplevel 2>/dev/null) || die2 "$reindex_dir: not inside a git repository"
+  root=$(cd "$root" && pwd -P)
+  case "$records_dir" in
+    "$root"/*) ;;
+    *) die2 "$reindex_dir: the records directory must be a subdirectory of the repository" ;;
+  esac
+  records_rel=${records_dir#"$root"/}
+  spec_rel="$records_rel"
+  spec_abs=""
+  count=0
+else
+  [ -f "$spec" ] || die2 "$spec: no such spec file"
+  # A link at the spec path would be replaced by the Outcome write, leaving
+  # its target without the line.
+  [ ! -L "$spec" ] || die2 "$spec: the spec must be a regular file, not a symbolic link"
+  spec_dir=$(cd "$(dirname "$spec")" && pwd -P)
+  spec_abs="$spec_dir/$(basename "$spec")"
+  root=$(git -C "$spec_dir" rev-parse --show-toplevel 2>/dev/null) || die2 "$spec: not inside a git repository"
+  root=$(cd "$root" && pwd -P)
+  spec_rel=${spec_abs#"$root"/}
+  records_dir="$(dirname "$spec_dir")/decisions"
+  records_rel=${records_dir#"$root"/}
+  case "$records_dir" in
+    "$root"/*) ;;
+    *) die2 "$spec_rel: the spec must live in a subdirectory of the repository (its records go to the sibling decisions/ of that directory)" ;;
+  esac
+  # An existing decisions entry must be a plain directory: a symbolic link
+  # would carry the records outside the repository that spec_dir's physical
+  # path keeps them in.
+  if [ -L "$records_dir" ] || { [ -e "$records_dir" ] && [ ! -d "$records_dir" ]; }; then
+    die2 "$spec_rel: $records_rel exists but is not a plain directory"
+  fi
 fi
 index_rel="$records_rel/README.md"
 # A directory or a link at the index path would receive the index by rename
@@ -68,7 +94,7 @@ if [ -L "$records_dir/README.md" ] || { [ -e "$records_dir/README.md" ] && [ ! -
   die2 "$spec_rel: $index_rel exists but is not a regular file"
 fi
 today=${DECISIONS_COMPILE_DATE:-$(date +%F)}
-spec_base=$(basename "$spec_abs")
+spec_base=$(basename "${spec_abs:-x}")
 case "$spec_base" in
   [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*) spec_date=${spec_base:0:10} ;;
   *) spec_date=$today ;;
@@ -184,6 +210,9 @@ render_record() {  # N -> the record text
   printf '# %s\n\n- Status: %s\n' "${titles[n]}" "$status"
   identity_of "$n"
   printf -- '- Recorded: %s\n' "$recorded"
+  if [ -n "${sup_of[n]:-}" ]; then
+    printf -- '- Supersedes: %s\n' "$(printf '%s\n' "${sup_of[n]}" | paste -sd, - | sed 's/,/, /g')"
+  fi
   printf '\n## Decision\n\n'
   cat "$tmp/item-$n.txt"
   printf '\n## What implementation changed\n\n%s\n' "$notes_body"
@@ -267,6 +296,19 @@ emit_paths() {
   tr '\0' ' ' < "$tmp/paths.z" | sed 's/ $//'
 }
 
+# --- reindex ------------------------------------------------------------------
+if [ "$mode" = reindex ]; then
+  render_index "$records_dir" > "$tmp/index"
+  if [ -f "$records_dir/README.md" ]; then v=updated; else v=wrote; fi
+  if write_if_changed "$records_dir/README.md" "$tmp/index"; then
+    git -C "$root" add -- "$index_rel" || die3 "$records_rel: git add failed"
+    echo "$v $index_rel"
+  else
+    echo "unchanged $index_rel"
+  fi
+  exit 0
+fi
+
 # --- 1. the Decisions list --------------------------------------------------
 # The first level-two heading whose text contains "decision" opens the
 # section; the next level-two heading closes it for good. A top-level list
@@ -308,11 +350,24 @@ count=$(find "$tmp" -name 'item-*.txt' | wc -l | tr -d ' ')
 [ "$count" -gt 0 ] || die2 "$spec_rel: no decisions list (add \"## Decisions\" with one list item per decision)"
 
 # --- 2. titles, slugs, filenames (nothing written yet) ----------------------
-declare -a titles files existing
+declare -a titles files existing sup_of prev_sup
 planned=" "
 for ((n = 1; n <= count; n++)); do
   item="$tmp/item-$n.txt"
   trim_blank "$item"
+  # sup_of[n] holds the Supersedes paths, one per line, duplicates collapsed.
+  sup_of[n]=""
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    case "$(printf '\n%s\n' "${sup_of[n]}")" in *"
+$p
+"*) continue ;; esac
+    [ -f "$root/$p" ] || die2 "$spec_rel: decision $n: Supersedes path does not exist: $p"
+    [ "$(cd "$(dirname "$root/$p")" && pwd -P)" = "$records_dir" ] || die2 "$spec_rel: decision $n: Supersedes path is not a record in $records_rel: $p"
+    case "$(existing_field "$root/$p" Spec)" in "$spec_rel (decision "*) die2 "$spec_rel: decision $n: cannot supersede a record of this spec: $p" ;; esac
+    sup_of[n]="${sup_of[n]:+${sup_of[n]}
+}$p"
+  done < <(sed -n 's/^[[:space:]]*Supersedes:[[:space:]]*//p' "$item" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   titles[n]=$(title_of "$item")
   slug=$(slug_of "${titles[n]}")
   [ -n "$slug" ] || slug="decision-$n"
@@ -320,8 +375,12 @@ for ((n = 1; n <= count; n++)); do
   if [ -n "$ex" ]; then
     files[n]=$(basename "$ex")
     existing[n]=1
+    # What the record superseded last time, so a line removed or retargeted
+    # since can be reconciled.
+    prev_sup[n]=$(existing_field "$ex" Supersedes | tr ',' '\n' | sed 's/^ *//')
   else
     existing[n]=0
+    prev_sup[n]=""
     f="$spec_date-$slug.md"
     if [ -e "$records_dir/$f" ] || [[ $planned == *" $f "* ]]; then
       f="$spec_date-$slug-$n.md"
@@ -332,6 +391,19 @@ for ((n = 1; n <= count; n++)); do
     files[n]=$f
   fi
   planned="$planned${files[n]} "
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    st=$(existing_field "$root/$p" Status)
+    case "$st" in
+      accepted) ;;
+      "superseded by "*)
+        case ", ${st#superseded by }, " in
+          *", $records_rel/${files[n]}, "*) ;;
+          *) die2 "$spec_rel: decision $n: $p is already superseded by ${st#superseded by }" ;;
+        esac ;;
+      *) die2 "$spec_rel: decision $n: $p has status \"$st\"" ;;
+    esac
+  done < <(printf '%s\n' "${sup_of[n]}")
 done
 
 # --- 3. dry run ---------------------------------------------------------------
@@ -369,6 +441,47 @@ for ((n = 1; n <= count; n++)); do
     verb_lines+=("wrote $records_rel/${files[n]} (decision $n: ${titles[n]})")
   fi
 done
+
+# --- 4a. superseded targets ----------------------------------------------------
+: > "$tmp/targets"
+mine=" "
+for ((n = 1; n <= count; n++)); do
+  mine="$mine$records_rel/${files[n]} "
+  while IFS= read -r p; do
+    [ -n "$p" ] && printf '%s\tnow\t%s\n' "$p" "$records_rel/${files[n]}" >> "$tmp/targets"
+  done < <(printf '%s\n' "${sup_of[n]:-}")
+  while IFS= read -r p; do
+    [ -n "$p" ] && printf '%s\tprev\t%s\n' "$p" "$records_rel/${files[n]}" >> "$tmp/targets"
+  done < <(printf '%s\n' "${prev_sup[n]:-}")
+done
+if [ -s "$tmp/targets" ]; then
+  cut -f1 "$tmp/targets" | sort -u > "$tmp/target-list"
+  while IFS= read -r p; do
+    [ -f "$root/$p" ] || continue
+    st=$(existing_field "$root/$p" Status)
+    case "$st" in
+      "superseded by "*) printf '%s\n' "${st#superseded by }" | tr ',' '\n' | sed 's/^ *//' | grep -v '^$' > "$tmp/listed" ;;
+      *) : > "$tmp/listed" ;;
+    esac
+    : > "$tmp/set"
+    while IFS= read -r q; do
+      case "$mine" in *" $q "*) ;; *) printf '%s\n' "$q" >> "$tmp/set" ;; esac
+    done < "$tmp/listed"
+    awk -F '\t' -v t="$p" '$1 == t && $2 == "now" { print $3 }' "$tmp/targets" >> "$tmp/set"
+    sort -u "$tmp/set" > "$tmp/set.sorted"
+    if [ -s "$tmp/set.sorted" ]; then new="superseded by $(paste -sd, - < "$tmp/set.sorted" | sed 's/,/, /g')"; else new=accepted; fi
+    if [ "$st" != "$new" ]; then
+      awk -v s="$new" '!r && /^- Status: / { print "- Status: " s; r = 1; next } { print }' "$root/$p" > "$tmp/target"
+      # Through write_if_changed (temporary file, then rename), never cp onto a
+      # record: an in-place copy could truncate a durable record. It returns 1
+      # only for "unchanged", which cannot happen here, and exits 3 on a
+      # failed write.
+      write_if_changed "$root/$p" "$tmp/target" || true
+      superseded=$((superseded + 1))
+      verb_lines+=("updated $p ($new)")
+    fi
+  done < "$tmp/target-list"
+fi
 
 # --- 4b. the index and the spec ----------------------------------------------
 render_index "$records_dir" > "$tmp/index"

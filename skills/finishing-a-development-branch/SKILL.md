@@ -13,19 +13,75 @@ description: Use when implementation is complete, all tests pass, and you need t
 
 **REQUIRED SUB-SKILL:** Use hyperpowers:communication for the test-failure report and the PR description. The option menus below are presented exactly as written.
 
-## Step 1: Verify Tests
+## Step 1: Record Decisions and Verify Tests
 
-Run the project's full test suite (`npm test` / `cargo test` / `pytest` / `go test ./...`).
+A branch that implements a spec leaves one record per decision in the
+`decisions/` directory beside the spec's directory, compiled by
+`scripts/decisions-compile` in this skill's directory from the spec's
+`## Decisions` list, with the plan removed in the same commit. The records
+ride the branch before any merge or push, so they are staged here and
+committed in Step 4 once your human partner has seen them. Work with no spec
+has no records: for it, this step is the test run alone.
 
-**If tests fail**, report the failures and stop — the menu comes after a green suite:
+1. **Find the plan and the spec.** The subagent-driven-development hand-off
+   names both. Otherwise read the branch's history, not its tree, so a plan
+   an earlier records commit removed is still found (the base branch is the
+   one Step 3 confirms; your best guess serves here, nothing is merged yet):
 
-```
-Tests failing (<N> failures). Must fix before completing:
+   ```bash
+   MERGE_BASE=$(git merge-base <base-branch> HEAD)
+   git log --diff-filter=A --name-only --format= "$MERGE_BASE"..HEAD -- '*/plans/*.md'
+   ```
 
-[Show failures]
-```
+   Exactly one plan is the plan; read its `**Spec:**` header from the commit
+   that added it (`git show <sha>:<path>`). More than one: ask your human
+   partner which applies. A plan without a Spec header, or with `none`: ask
+   the same way. No plan: when the branch's history added or changed a spec
+   (`git log --diff-filter=AM --name-only --format= "$MERGE_BASE"..HEAD -- '*/specs/*.md'`),
+   ask whether records are wanted for it, and if so there is a spec and no
+   plan; when it did neither, the work is bounded, skip to step 3.
+2. **Take a scratch directory and dry-run the compiler.** The directory
+   comes from `../requesting-code-review/scripts/codex-review-dir` (one per
+   finish; the extractor's output and the pathspec file `records.paths` live
+   in it, whether or not an extractor is dispatched). Then
+   `bash <this skill's directory>/scripts/decisions-compile <spec> --dry-run`.
+   Exit 2 for a missing decisions list is the legacy-spec case: draft the
+   `## Decisions` list from the spec's own text, one item per decision it
+   states, show it to your human partner, and write it into the spec once
+   they approve it. Any other exit 2 names what to fix first (a spec that is
+   not committed, a plan that is not a tracked and clean markdown file under
+   `plans/` whose Spec header names this spec, or a `Supersedes:` problem):
+   resolve it with them before going on. Keep the numbered listing for the
+   extractor.
+3. **Dispatch the extractor, then run the suite.** Skip the dispatch when the
+   hand-off already names an extractor (a task id and an output path), when
+   the branch already carries this spec's records commit
+   (`git log "$MERGE_BASE"..HEAD --grep='^docs: record decisions for '`), or
+   when your harness has no tracked background subagent (then say so when
+   you hand back). Otherwise compose the dispatch from
+   [decision-notes-prompt.md](decision-notes-prompt.md) with the merge-base
+   diff and `<dir>/decision-notes.md` as its output path, and start it in
+   the background. Then run the project's full test suite in the
+   foreground (`npm test` / `cargo test` / `pytest` / `go test ./...`).
+4. **If tests fail**, stop a still-running extractor (TaskStop), report the
+   failures and stop — the menu comes after a green suite. Nothing is
+   compiled; the plan stays.
 
-**If tests pass:** continue to Step 2.
+   ```
+   Tests failing (<N> failures). Must fix before completing:
+
+   [Show failures]
+   ```
+
+5. **If tests pass** and the branch has a spec, collect the extractor without
+   waiting: finished, its file is the `--notes`; unfinished, stop it
+   (TaskStop), compile without notes, and say so when you hand back. Run
+   `bash <this skill's directory>/scripts/decisions-compile <spec> --plan <plan> --notes <file> --paths-file <dir>/records.paths`,
+   omitting `--plan` when the branch has no plan and `--notes` when there is
+   no notes file. A `notes ignored:` line on its stderr is repeated verbatim
+   when you hand back. On exit 2, resolve the named problem and re-run; on
+   exit 3, report the git failure and re-run once it is cleared. Nothing is
+   committed here; the staged set waits for Step 4. Continue to Step 2.
 
 ## Step 2: Detect Environment
 
@@ -53,6 +109,43 @@ known, ask: "This branch split from <your best guess> - is that correct?"
 Confirm before merging: merging into the wrong base is expensive to undo.
 
 ## Step 4: Present Options
+
+**When Step 1 staged records,** the message that presents the options opens
+with the complete staged diff over the pathspec file's paths (`git diff` has
+no pathspec-file option, so the NUL-delimited file is read into an array; a
+path with a space survives, and the variable makes the entries literal, as
+the compiler's own git calls are, so a bracket or star in a spec name
+matches only itself):
+
+```bash
+paths=(); while IFS= read -r -d '' p; do paths+=("$p"); done < <dir>/records.paths
+GIT_LITERAL_PATHSPECS=1 git diff --cached -- "${paths[@]}"
+```
+
+then the extractor's proposals from its notes file, each with the question
+it needs: an undocumented decision (add it to the spec's `## Decisions`
+list, or dismiss it); a proposed supersession (add a
+`Supersedes: <record path>` line to the item that reverses that record, or
+dismiss it); then one line offering to skip the records for this branch; and
+only then the menu text exactly as written below. Your human partner answers
+once. Before executing their option: write each accepted proposal into the
+spec (an accepted undocumented decision is appended after the list's last
+item, never inserted, so the numbers the notes use stay with their records;
+an accepted supersession is a `Supersedes:` line on the item it belongs to)
+and re-run the compiler with the same arguments, and because the staged set
+changed, show the new complete staged diff and ask only for its approval,
+not the dispositions again; record a dismissal in the hand-back in their
+words. A skip ends the records for this branch: run
+`decisions-compile --undo <spec> --plan <plan>` (without `--plan` when there
+is none), record it in their words, make no commit, and run the option they
+chose. Otherwise commit:
+
+```bash
+GIT_LITERAL_PATHSPECS=1 git commit --pathspec-from-file=<dir>/records.paths --pathspec-file-nul -m "docs: record decisions for <spec filename without -design.md>"
+```
+
+and run the option they chose. A branch with no records shows the menu as it
+always did.
 
 **Normal repo and named-branch worktree — present exactly these 3 options:**
 
@@ -225,3 +318,4 @@ place. If your platform provides a workspace-exit tool, use it.
 | "The merged-result failure is probably flaky" | A failing merged result stops everything. Branch and worktree stay put while you investigate. |
 | "The base branch is obviously main" | Confirm the fork point or ask. Merging into the wrong base is expensive to undo. |
 | "The push was rejected — force-push will fix it" | A rejected push means the remote moved. Investigate; force-push only on your human partner's explicit request. |
+| "I'll record the decisions after the merge" | The records ride the branch. After the merge the plan is gone from the tree and the diff review is over. Record first, then present the menu. |

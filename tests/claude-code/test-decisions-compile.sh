@@ -1729,6 +1729,40 @@ case "$OUT" in
     *) fail "trailing period title (got: $OUT)" ;;
 esac
 
+# --- 30. a long plain clause is cut at a clause boundary, never inside a token ---
+repo="$TEST_ROOT/clause"
+make_repo "$repo"
+token="https://example.org/$(printf '%80s' '' | tr ' ' x)"
+write_spec "$repo" 2026-10-22-clause-design.md <<EOS
+# Clause
+
+## Decisions
+
+- Aaaa bbbb cccc dddd eeee ffff gggg hhhh, iiii jjjj kkkk llll mmmm nnnn oooo pppp qqqq rrrr ssss
+- Aaaa bbbb, cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo ppppp qqqq
+- $token
+- Aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo abcdé tail words
+EOS
+commit_all "$repo" "clause"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-22-clause-design.md --dry-run
+if [ "$RC" -eq 0 ]; then pass "clause cuts: dry run exits 0"; else fail "clause cuts exit (got $RC: $ERR)"; fi
+case "$OUT" in
+    *"(decision 1: Aaaa bbbb cccc dddd eeee ffff gggg hhhh)"*) pass "a long clause is cut at its last comma, with no trailing comma" ;;
+    *) fail "comma cut (got: $OUT)" ;;
+esac
+case "$OUT" in
+    *"(decision 2: Aaaa bbbb, cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo)"*) pass "a comma leaving fewer than 20 characters is skipped for the last space" ;;
+    *) fail "early comma title (got: $OUT)" ;;
+esac
+case "$OUT" in
+    *"(decision 3: $token)"*) pass "a single token longer than 80 characters stays whole" ;;
+    *) fail "long token title (got: $OUT)" ;;
+esac
+case "$OUT" in
+    *"(decision 4: Aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo)"*) pass "a multibyte word straddling the limit is dropped whole, no byte split" ;;
+    *) fail "multibyte title (got: $OUT)" ;;
+esac
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

@@ -5193,6 +5193,25 @@ Finally `bun run check` on the final tree; record its counts in the report (the 
 - Consumes: everything above.
 - Produces: the decision Task 13 reads.
 
+- [ ] **Step 0: Correction 4, `echo -e` located in the interpreted segment**
+
+Approved by the human partner on 2026-10-22 after Task 11's fix round 3 re-review. `_interpret_escapes` finds `echo -e` with `ECHO_E.search(segment)` but slices `out`, which an interpreted `printf` format earlier in the same pipeline has already shortened, so the split lands inside the echo's argument and the mark is lost (a false negative; no control run has the shape). It lands as its own commit before the treatment arm launches.
+
+In `test_analyze.py`, add to the positive tuple of `test_bash_ledger_writes_in_every_shell_spelling`, after the Correction 3 spellings:
+
+```text
+            # Correction 4: an interpreted printf format before an echo -e in one pipeline.
+            f"printf 'soak OK\\n' | tee -a /dev/null | echo -e 'ok\\nTask 6: complete' >> {LEDGER}",
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py -k every_shell_spelling` — Expected: FAIL on that spelling (`plan_complete` false). In `analyze.py`, `_interpret_escapes`, replace `echo = ECHO_E.search(segment)` with `echo = ECHO_E.search(out)`. Run the four suites — Expected: `OK`; ruff and mypy on `analyze.py`; `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` — Expected: every control field unchanged, successes 8 of 10. Append to the README `## Corrections` list:
+
+```text
+4. 2026-10-22, before the treatment arm's launch (Task 12 Step 0). `_interpret_escapes` located `echo -e` in the original segment but sliced the text an interpreted `printf` format earlier in the same pipeline had already shortened, so such a segment lost its mark (a false negative found by Task 11's re-review; no control run has the shape). It now locates `echo -e` in the interpreted text. Recomputed from the archive: no control field changes. Pin after the Correction: `analyze.py` `<blob>` (`liveness.py` and `tally.py` unchanged).
+```
+
+Fill `<blob>` as before. Stage `analyze.py`, `test_analyze.py`, `README.md`; leak scan; commit `fix(evidence): echo -e is located in the interpreted segment`.
+
 - [ ] **Step 1: Launch, replace voids, adjudicate, archive**
 
 Exactly Task 11 Steps 1-3 with `treatment` in place of `control` (`manifest-treatment.tsv`, `logs/campaign-treatment.out`, `task-12-runs`). Before Step 4's staging, apply the Global Constraints' redaction rule to any transport void's launch log and run record (the hostname in `getaddrinfo ENOTFOUND <host>` becomes `<proxy-host>`); the control arm's `…-b7be` record shows the shape.

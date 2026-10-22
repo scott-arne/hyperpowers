@@ -603,9 +603,49 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$st_repo" "$HOOK_UNDER_TEST"
 before_dirs="$(find "$st_cache" | sort)"
-HOOK_STDIN="$st_stdin" XDG_CACHE_HOME="$st_cache" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" HOME="$st_home" bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$st_repo" "$HOOK_UNDER_TEST" >/dev/null 2>&1 < "$st_stdin"
+cn_out="$(env -i PATH="${PATH:-}" HOME="$st_home" XDG_CACHE_HOME="$st_cache" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$st_repo" "$HOOK_UNDER_TEST" < "$st_stdin" 2>/dev/null)"
 after_dirs="$(find "$st_cache" | sort)"
-if [ "$before_dirs" = "$after_dirs" ]; then pass "the compaction lookup creates nothing"; else fail "the compaction lookup creates nothing"; fi
+case "$cn_out" in
+    *"$st_legacy"*) cn_named=1 ;;
+    *) cn_named=0 ;;
+esac
+if [ "$before_dirs" = "$after_dirs" ] && [ "$cn_named" -eq 1 ]; then pass "the compaction lookup names the ledger and creates nothing"; else fail "the compaction lookup names the ledger and creates nothing (named=$cn_named)"; fi
+
+# From a linked worktree the state checkout sits under the clone's key (the
+# common git directory) and the pre-6.17 ledger under the hash of the
+# worktree's own git directory. The two keys differ only here, so this is
+# the fixture that catches a hook using one of them for both roots.
+wt_repo="$(make_repo compact-wt)"
+wt_home="$(make_home compact-wt)"
+wt_cache="$TEST_ROOT/compact-wt/cache"
+wt_dir="$TEST_ROOT/compact-wt/linked"
+git -C "$wt_repo" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m init
+git -C "$wt_repo" worktree add -q "$wt_dir" -b compact-wt
+wt_state="$(seed_state_ledger "$wt_cache" "$wt_repo" "state-4444dddd")"
+wt_stdin="$TEST_ROOT/compact-wt/stdin.json"
+write_hook_input "$wt_stdin" compact
+HOOK_STDIN="$wt_stdin"
+assert_command_output \
+    "SessionStart from a linked worktree names the state ledger under the clone's key" \
+    "nested" \
+    "${NOTICE_HEAD}${wt_state}${NOTICE_TAIL}" \
+    "" \
+    "$wt_home" \
+    XDG_CACHE_HOME="$wt_cache" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$wt_dir" "$HOOK_UNDER_TEST"
+wt_legacy="$(seed_ledger "$wt_cache" "$wt_dir" "legacy-5555eeee")"
+touch -t 202601010000 "$wt_state"
+HOOK_STDIN="$wt_stdin"
+assert_command_output \
+    "SessionStart from a linked worktree still reads the pre-6.17 per-worktree key" \
+    "nested" \
+    "${NOTICE_HEAD}${wt_legacy}${NOTICE_TAIL}" \
+    "" \
+    "$wt_home" \
+    XDG_CACHE_HOME="$wt_cache" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$wt_dir" "$HOOK_UNDER_TEST"
 
 # The same assertion over a ledger path carrying a double quote and a
 # backslash. This is what pins escape_for_json on the compaction path: without

@@ -169,7 +169,9 @@ if [ "$hook_source" = "compact" ]; then
       key="$(hp_key . 2>/dev/null)"
       [ -n "$key" ] || exit 0
       legacy="$(hp_legacy_key . 2>/dev/null)"
-      cache="$(hp_cache_root)"
+      [ -n "$legacy" ] || legacy="$key"
+      cache="$(hp_cache_root 2>/dev/null)"
+      [ -n "$cache" ] || exit 0
       # Newest by modification time, chosen with -nt over the paths
       # themselves. A listing is line-oriented and a newline in a
       # plan-derived directory name would split it into a path that names

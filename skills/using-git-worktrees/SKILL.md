@@ -62,7 +62,7 @@ Step 2; for option 3 continue with Step 1. Report the mode in every case.
 
 ### 1a. Native Worktree Tools (preferred)
 
-The user has asked for an isolated workspace (Step 0 consent). Do you already have a way to create a worktree? It might be a tool with a name like `EnterWorktree`, `WorktreeCreate`, a `/worktree` command, or a `--worktree` flag. If you do, use it and skip to Step 2.
+Your human partner chose a worktree in Step 0. Do you already have a way to create one? It might be a tool with a name like `EnterWorktree`, `WorktreeCreate`, a `/worktree` command, or a `--worktree` flag. If you do, use it and skip to Step 2. If the tool is denied or fails, do not fall through to `git worktree add` and do not continue in the current checkout on your own: ask the Step 0 question again with options 1 and 2 only, and report that answer as the mode. The mode is `worktree` only once a worktree exists.
 
 Native tools handle directory placement, branch creation, and cleanup automatically. Using `git worktree add` when you have a native tool creates phantom state your harness can't see or manage.
 

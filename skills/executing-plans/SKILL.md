@@ -37,7 +37,7 @@ For each task:
 
 After all tasks complete and verified:
 - Announce: "I'm using the finishing-a-development-branch skill to complete this work."
-- **REQUIRED SUB-SKILL:** Use hyperpowers:finishing-a-development-branch
+- **REQUIRED SUB-SKILL:** Use hyperpowers:finishing-a-development-branch, passing the mode using-git-worktrees reported in Step 1 (`current-branch`, `new-branch`, or `worktree`); the mode decides which menu it presents
 - Follow that skill to verify tests, present options, execute choice
 
 ## When to Stop and Ask for Help

@@ -1940,6 +1940,8 @@ class Measure(unittest.TestCase):
             f"D={folder}; echo 'Task 6: complete' >> \"${{D}}/progress.md\"",
             f"cat <<'EOF' >> {LEDGER}\nTask 6: complete (abc123)\nEOF",
             f"printf 'Task 6: complete (abc123)\\n' | tee -a {LEDGER} > /dev/null",
+            # The control arm's r5 and r6 wrote the mark after a literal \n (README Correction 2).
+            f"printf 'test_soak_long: Ran 1 test in 720.037s OK\\nTask 6: complete (abc123)\\n' >> {LEDGER}",
             # A path set by command substitution cannot be resolved statically.
             "W=$(cat /tmp/claude/b2b/sdd-dir.txt); cat >> \"$W/progress.md\" <<'EOF'\n- Task 6: complete (abc123)\nEOF",
             "D=\"$(bash scripts/sdd-dir plan.md)\"\necho 'Task 6: complete' >> \"$D/progress.md\"",
@@ -2316,7 +2318,10 @@ from liveness import (
 
 LAST_TASK = 6
 TASK_LINE = re.compile(r"^Task (\d+): complete\b", re.MULTILINE)
-MARK = re.compile(r"\bTask (\d+): complete\b")
+# A mark may follow a literal backslash escape inside a printf or echo -e
+# argument ("...OK\nTask 6: complete"), where "n" sits before "Task" and no
+# word boundary exists; the escape counts as a boundary (README Correction 2).
+MARK = re.compile(r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))Task (\d+): complete\b")
 LEDGER_FILE = "progress.md"
 SHORT_SOAK = "test_soak_short"
 LONG_SOAK = "test_soak_long"
@@ -5021,6 +5026,36 @@ For every counted control candidate whose label is `unadjudicated`, read its clo
 - [ ] **Step 4: Commit**
 
 Stage per `evidence/README.md` (including `home/.cache/hyperpowers/`), post-check, leak scan, `bun run check`, commit `test(evidence): the sdd-turn-liveness control arm, ten valid runs at v6.16.1`.
+
+- [ ] **Step 5: Correction 2, the mark after a literal printf newline**
+
+Approved by the human partner on 2026-10-22 after this arm's report: two counted control runs (r5 `…-b041`, r6 `…-31fe`) wrote their last ledger mark as `printf '…OK\nTask 6: complete (…)' >> progress.md`, where `\n` is two literal characters in the command text, so `n` sits directly before `Task` and the pinned `\bTask (\d+): complete\b` never matches; both runs read as incomplete and unsuccessful for that reason alone. It lands as its own commit before any treatment tally, recomputed from the archive, no run repeated.
+
+In `test_analyze.py`, add this spelling to the positive tuple of `test_bash_ledger_writes_in_every_shell_spelling`, after the `printf … | tee -a` case (the Task 4 block above now carries it):
+
+```text
+            # The control arm's r5 and r6 wrote the mark after a literal \n (README Correction 2).
+            f"printf 'test_soak_long: Ran 1 test in 720.037s OK\\nTask 6: complete (abc123)\\n' >> {LEDGER}",
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py -k every_shell_spelling` — Expected: FAIL on the new spelling (`plan_complete` false). Then replace the `MARK` line in `analyze.py` with the Task 4 block's new text:
+
+```text
+# A mark may follow a literal backslash escape inside a printf or echo -e
+# argument ("...OK\nTask 6: complete"), where "n" sits before "Task" and no
+# word boundary exists; the escape counts as a boundary (README Correction 2).
+MARK = re.compile(r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))Task (\d+): complete\b")
+```
+
+Run the four suites (`test_liveness.py test_analyze.py test_tally.py test_field.py`) — Expected: `OK`; ruff and mypy on `analyze.py`. Run `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` and confirm: r5 and r6 now read `success=True`, p2 and r1 still `success=False`, every other control field unchanged, control successes 8 of 10.
+
+In `README.md`, append to the `## Corrections` list:
+
+```text
+2. 2026-10-22, after the control arm's commit and before any treatment tally. `analyze.MARK` becomes `(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))Task (\d+): complete\b`: a ledger mark written after a literal backslash escape in a `printf` argument (`'…OK\nTask 6: complete'`) has `n` directly before `Task`, so the pinned `\b` never matched and the run read as incomplete. Found by the control arm's implementer in r5 (`…-b041`) and r6 (`…-31fe`); with the corrected pattern both read plan-complete and successful, control's success count moves from 6 to 8 of 10 (p2 and r1 stay unsuccessful for other reasons), and no other field changes. Recomputed from the archive; no run was repeated. Pin after the Correction: `analyze.py` `<blob>` (`liveness.py` and `tally.py` unchanged).
+```
+
+Fill `<blob>` with `git hash-object` of the final `analyze.py` and confirm after the commit with `git rev-parse HEAD:evidence/2026-10-19-sdd-turn-liveness/analyze.py`. Stage `analyze.py`, `test_analyze.py`, `README.md`; leak scan; commit `fix(evidence): a ledger mark after a literal printf newline is read`. Append the recomputed per-row table and the control success count to this task's report.
 
 ---
 

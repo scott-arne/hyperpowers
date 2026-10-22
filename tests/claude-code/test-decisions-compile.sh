@@ -1695,6 +1695,40 @@ else
     fail "wrapped record heading (rc $RC: $ERR; files: $(ls "$repo/docs/hyperpowers/decisions"))"
 fi
 
+# --- 29. title edges: exact 80, unclosed bold, trailing punctuation ----------
+repo="$TEST_ROOT/edges"
+make_repo "$repo"
+exact80="abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghi abcdefghij"
+write_spec "$repo" 2026-10-22-edges-design.md <<EOS
+# Edges
+
+## Decisions
+
+- $exact80 tail words without a stop
+- **No closing stars here. Body.
+- The parallel model to serve first is one controller session per parallel task, and the rest
+- A plain item ending in a period.
+EOS
+commit_all "$repo" "edges"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-22-edges-design.md --dry-run
+if [ "$RC" -eq 0 ]; then pass "title edges: dry run exits 0"; else fail "title edges exit (got $RC: $ERR)"; fi
+case "$OUT" in
+    *"(decision 1: $exact80)"*) pass "80 characters followed by a space are kept whole" ;;
+    *) fail "exact 80 title (got: $OUT)" ;;
+esac
+case "$OUT" in
+    *"(decision 2: No closing stars here)"*) pass "an unclosed ** is dropped and the text is a plain clause" ;;
+    *) fail "unclosed bold title (got: $OUT)" ;;
+esac
+case "$OUT" in
+    *"(decision 3: The parallel model to serve first is one controller session per parallel task)"*) pass "a cut that leaves a trailing comma drops it" ;;
+    *) fail "trailing comma title (got: $OUT)" ;;
+esac
+case "$OUT" in
+    *"(decision 4: A plain item ending in a period)"*) pass "a whole-paragraph plain title loses its final period" ;;
+    *) fail "trailing period title (got: $OUT)" ;;
+esac
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

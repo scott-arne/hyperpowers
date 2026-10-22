@@ -161,7 +161,7 @@ The bundle includes all skills with a router `SKILL.md` that guides skill select
 
 1. **brainstorming** - Activates before writing code. Classifies the request (spike / bounded / architectural) and announces the path. Refines rough ideas through questions, explores alternatives, presents the design for validation — a short in-chat design for bounded changes, a sectioned design saved as a spec document for architectural work.
 
-2. **using-git-worktrees** - Activates after design approval. Creates isolated workspace on new branch, runs project setup, verifies clean test baseline.
+2. **using-git-worktrees** - Activates after design approval. Asks where the work happens (current branch, new branch in place, or isolated worktree), runs project setup, verifies clean test baseline.
 
 3. **writing-plans** - Activates with approved design. Breaks work into bite-sized tasks (2-5 minutes each). Every task has exact file paths, complete code, verification steps.
 

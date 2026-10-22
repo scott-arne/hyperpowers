@@ -2,6 +2,15 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
+## Unreleased
+
+The SDD dossier follows the work between hosts.
+
+- **A plan's workspace lives on a state branch.** `sdd-dir` prints a workspace inside `~/.cache/hyperpowers/state/<key>/`, a checkout of the orphan branch `hyperpowers/state` kept once per clone and keyed by the clone's common git directory, so every worktree of a clone shares one live ledger. The ledger, reports, notes and claims are committed there and travel with the branch; briefs and review packages stay local and regenerate. The 6.16.0 pointer symlinks remain only in the plain cache, for cross-repository plans.
+- **`sdd-state` carries the lifecycle.** `sync` fetches and reconciles (a fast-forward, a conflict-free merge with the ledger under the union driver, or `diverged` for the human partner to merge), never overwriting a live ledger; `verify` checks both ends of every completion range, the code repository's identity, and the plan version the ledger relies on; `snapshot` commits through a private index, with no hooks and no signing; `handoff --push` publishes after the optional scan named in `hyperpowers.prePushScan`, over every commit the push would publish; `finish` keeps the dossier in history and refuses open claims; `prune` is the only remover; `claim` is an atomic per-task claim for parallel sessions.
+- **One branch question.** using-git-worktrees asks whether to stay on the current branch, create one in place, or use a worktree. That answer is the consent SDD used to require for main, and it is recorded per session in the ledger; finishing-a-development-branch takes it as its input.
+- **Upgrade notes.** Both hosts need this version: an older plugin writes to the legacy cache and splits the ledger. A legacy workspace is imported on the first `sdd-dir` call and left as a symlink. Baselines that optimizing-performance stored under a linked worktree's old key are not moved. Codex gate directories and the ungated ledger are keyed by the common git directory from now on; `ungated-ledger pending` still reads the old key for one release. `sdd-dir` now refuses a plan file that does not exist. The sandbox fallback (`backend=plain`) keeps a run working where `git worktree add` is refused, without portability.
+
 ## 6.16.1 (2026-10-19)
 
 Two bundled scripts misread the state they report on.

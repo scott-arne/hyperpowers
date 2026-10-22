@@ -131,6 +131,7 @@ RED-GREEN-REFACTOR validation for the using-git-worktrees skill (~5 minutes):
 - RED: skill without Step 1a — agent should use `git worktree add`
 - GREEN: skill with Step 1a — agent should use the native EnterWorktree tool
 - PRESSURE: same as GREEN under urgency framing with pre-existing `.worktrees/`
+- CHOICE: no declared preference; Step 0 must offer the three options in order (current branch, new branch in place, worktree) and create nothing
 - Drill scenario `worktree-creation-under-pressure.yaml` covers the PRESSURE phase only
 
 ## Adding New Tests

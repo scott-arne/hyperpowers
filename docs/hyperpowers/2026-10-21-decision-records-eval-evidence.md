@@ -101,6 +101,7 @@ hyperpowers-evals (commit pending in hyperpowers-evals).
 | fast | instant | finished (stop path not exercised) | yes | yes | yes | yes | e67f0d7 (fixture repo) | 31 s | 25 s |
 | slow | 150 s | finished | yes | yes | yes | yes | 38213d3 (fixture repo) | 31 s | 25 s |
 | fast2 (extra re-run of fast) | instant | finished, TaskStop sent a second too late | yes | yes | no, summarised | yes | 75e674c (fixture repo) | 28 s | 20 s |
+| stop (ancestor CLAUDE.md excluded) | instant, 5,000-line diff | stopped unfinished (TaskStop seen) | yes | yes | yes | no (Nothing recorded.) | 237e440 (fixture repo) | 27 s | 15 s |
 
 Intervals: suite end to menu is the suite's tool result (fast, fast2) or its
 completion event (slow, where the suite outran the Bash 120 s timeout and the
@@ -110,20 +111,34 @@ the records commit's `%cI`. The fast runs leave the extractor too little to do
 for the stop to be reproducible: it wrote its notes within about seven seconds
 of dispatch, before the instant suite's result, in `fast`; in `fast2` the
 session found no notes file at collection, called TaskStop, and the extractor
-completed in the same second, so TaskStop answered "not running". The stop at
-collection is therefore attempted once and not demonstrated; no run shows a
-stopped unfinished extractor. A slower extractor than the suite needs a larger
-diff than this fixture has.
+completed in the same second, so TaskStop answered "not running". The instant-suite premise failed
+because the fixture's diff is a few lines, which a Sonnet extractor reads and
+summarises in seconds. The `stop` run pads the implementation commit with a
+5,000-line `data/sample.txt` (`PAD_LINES=5000` in `run-finishing.sh`, the
+device Task 14's brief prescribes for the same purpose), and the extractor was
+still running when the suite returned: the session found no notes file, said
+so, called TaskStop after the suite's result, and got "Successfully stopped";
+the agent's only notification has status "stopped" and follows the call. Both
+records read "Nothing recorded." under what implementation changed, the
+hand-back says the extractor was stopped and the records have no notes, and
+the menu message opened with the complete diff. The stop at collection is
+demonstrated by that run alone.
 
 Beyond the skill text: in `fast2` the menu message summarised the staged diff
 in four bullets instead of opening with it, a deviation from Step 4 (the
 diff was read in a tool result, not shown to the human partner). In `slow` the
 extractor reported three undocumented decisions, the menu put them to the
 human partner, and after the bare answer "3" the session committed the records
-without them and said so; Step 4 does not cover an unanswered proposal. Both
-sessions behaved as if the host user-level CLAUDE.md were loaded despite the
-empty config dir (turn 2 ran the host leak scan, and the hand-backs cite a
-CLAUDE.md rule), so the plugin text was not the only instruction source.
+without them and said so; Step 4 does not cover an unanswered proposal. The
+three earlier runs (fast, slow, fast2) behaved as if the host user-level
+CLAUDE.md were loaded despite the empty config dir: turn 2 ran the host leak
+scan (a Bash call containing `realval-scan`) and the hand-backs cite a
+Co-Authored-By rule from it. The `stop` run's config dir carried a
+`claudeMdExcludes` list covering every ancestor's CLAUDE.md and AGENTS.md
+(built as quorum builds it), and both signs are absent there: no Bash call
+containing `realval-scan`, no assistant text mentioning Co-Authored-By. Its
+turn-2 commit command did append Claude Code's built-in attribution trailer,
+which the host rule had suppressed in the earlier runs.
 
 ## 3. SDD-path rehearsal
 

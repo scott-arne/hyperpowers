@@ -1751,21 +1751,63 @@ Expected: `--plan` is a usage error, so 21 and 22 fail; 23 fails because a Setex
 
 and the `reindex)` mode check also refuses `[ -n "$plan" ]`.
 
-(c) After the `--paths-file` preflight, resolve and validate the plan; a plan is acceptable when it is in the tree, or absent with its deletion staged, or absent with a committed removal in history:
+(c) After the `--paths-file` preflight, resolve and validate the plan; a plan is acceptable when it is in the tree, or absent with its deletion staged, or absent with a committed removal in history. Correction (2026-10-22): the task review and the Codex gate reshaped this block: the plan's directory may have been pruned by git after a committed removal, so the nearest existing ancestor is resolved and the missing components re-appended with no `.` or `..` among them; the plan must not be the spec or lie under the records directory; it must be a `.md` file under a `plans/` component with no CR, LF or `; plan ` in its path; when it exists it must be a regular non-symlink file; it must have exactly one index entry equal to its path, with no staged or working-tree changes (checked whether or not the file exists); and its `**Spec:**` header (from the tree, from HEAD when the deletion is staged, or from the adding commit after a committed removal; a backticked path, a link or trailing prose are unwrapped) must name this spec. Every refusal exits 2 before any write, so `git rm` can never be the first thing to fail:
 
 ```bash
 plan_rel=""
 plan_state=""
 if [ -n "$plan" ]; then
-  plan_abs_dir=$(cd "$(dirname "$plan")" 2>/dev/null && pwd -P) || die2 "$spec_rel: plan directory does not exist: $plan"
+  # A committed removal leaves no plan and often no plans directory (git
+  # prunes it when it empties), so resolve the nearest existing ancestor and
+  # re-append the missing components.
+  plan_dir=$(dirname "$plan")
+  plan_missing=""
+  while [ ! -d "$plan_dir" ] && [ "$plan_dir" != / ] && [ "$plan_dir" != . ]; do
+    plan_missing="/$(basename "$plan_dir")$plan_missing"
+    plan_dir=$(dirname "$plan_dir")
+  done
+  plan_abs_dir="$(cd "$plan_dir" && pwd -P)$plan_missing"
   plan_abs="$plan_abs_dir/$(basename "$plan")"
   case "$plan_abs" in
     "$root"/*) plan_rel=${plan_abs#"$root"/} ;;
     *) die2 "$spec_rel: plan is outside the repository: $plan" ;;
   esac
-  if [ -e "$plan_abs" ] || git -C "$root" ls-files --error-unmatch -- "$plan_rel" >/dev/null 2>&1; then
+  # The missing part of the path was never normalised, so a . or .. there
+  # could point outside the repository while still matching "$root"/*.
+  case "/$plan_rel/" in
+    */./*|*/../*) die2 "$spec_rel: plan path must be canonical (no . or .. components): $plan" ;;
+  esac
+  # The plan is deleted and named in every record, so it must not be a path
+  # the compiler owns, must have the shape finishing's discovery glob
+  # (*/plans/*.md) finds, and must survive the Recorded line, which is split
+  # on the last "; plan ".
+  if [ "$plan_rel" = "$spec_rel" ] || [ "$plan_rel" = "$index_rel" ]; then
+    die2 "$spec_rel: plan overlaps a compiler-owned path: $plan"
+  fi
+  case "$plan_rel" in
+    "$records_rel"/*) die2 "$spec_rel: plan overlaps a compiler-owned path: $plan" ;;
+  esac
+  case "/$plan_rel" in
+    */plans/*.md) ;;
+    *) die2 "$spec_rel: plan must be a markdown file under a plans/ directory: $plan" ;;
+  esac
+  case "$plan_rel" in
+    *"; plan "*|*$'\n'*|*$'\r'*) die2 "$spec_rel: plan path contains a newline or the reserved text \"; plan \": $plan" ;;
+  esac
+  # Exactly one index entry equal to the path: a plain ls-files test also
+  # matches a tracked directory's descendants.
+  plan_in_index() { [ "$(git -C "$root" ls-files -z -- "$plan_rel" | tr '\0' '\n')" = "$plan_rel" ]; }
+  if [ -e "$plan_abs" ] || [ -L "$plan_abs" ] || plan_in_index; then
     # In the tree, or deleted in the tree but still in the index: git rm
-    # stages the deletion in both cases.
+    # stages the deletion in both cases. The plan must be a tracked regular
+    # file with no uncommitted changes, because git rm refuses otherwise and
+    # the retry would fail the same way after the records were written.
+    if [ -e "$plan_abs" ] || [ -L "$plan_abs" ]; then
+      { [ ! -L "$plan_abs" ] && [ -f "$plan_abs" ]; } || die2 "$spec_rel: plan is not a regular file: $plan"
+      plan_in_index || die2 "$spec_rel: plan is not tracked by git; commit it before the records compile: $plan"
+      git -C "$root" diff --quiet -- "$plan_rel" || die2 "$spec_rel: plan has uncommitted changes; commit or discard them before the records compile: $plan"
+    fi
+    git -C "$root" diff --cached --quiet -- "$plan_rel" || die2 "$spec_rel: plan has uncommitted changes; commit or discard them before the records compile: $plan"
     plan_state=present
   elif [ -n "$(git -C "$root" diff --cached --name-only --diff-filter=D -- "$plan_rel")" ]; then
     plan_state=staged-deletion
@@ -1774,6 +1816,29 @@ if [ -n "$plan" ]; then
   else
     die2 "$spec_rel: no such plan (not in the tree or index, no staged deletion, never removed in history): $plan"
   fi
+  # The state decides where the plan's text comes from. Not read through a
+  # pipe that exits early, so git is never killed by SIGPIPE under pipefail.
+  case "$plan_state" in
+    present)
+      if [ -e "$plan_abs" ]; then plan_text=$(cat "$plan_abs"); else plan_text=$(git -C "$root" show ":$plan_rel" 2>/dev/null || true); fi ;;
+    staged-deletion) plan_text=$(git -C "$root" show "HEAD:$plan_rel" 2>/dev/null || true) ;;
+    *)
+      plan_added=$(git -C "$root" log --diff-filter=A --format=%H -1 -- "$plan_rel")
+      plan_text=""
+      if [ -n "$plan_added" ]; then plan_text=$(git -C "$root" show "$plan_added:$plan_rel" 2>/dev/null || true); fi ;;
+  esac
+  plan_header=$(printf '%s\n' "$plan_text" | awk '!d && index($0, "**Spec:** ") == 1 { print substr($0, 11); d = 1 }' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+  # Plans write the header as a bare path, a backticked path or a link, often
+  # followed by prose; compare the path alone.
+  case "$plan_header" in
+    '`'*) plan_header=${plan_header#'`'}; plan_header=${plan_header%%'`'*} ;;
+    '['*) plan_header=${plan_header#'['}; plan_header=${plan_header%%']'*} ;;
+  esac
+  plan_spec_base=$(basename "$spec_rel")
+  case "$plan_header" in
+    "$spec_rel"|"$spec_rel "*|*"$plan_spec_base"|*"$plan_spec_base "*) ;;
+    *) die2 "$spec_rel: plan names a different spec: ${plan_header:-none}: $plan" ;;
+  esac
 fi
 ```
 
@@ -1850,7 +1915,7 @@ git commit -m "feat(finishing): decisions-compile removes a validated plan in ev
 Insert before the marker line:
 
 ```bash
-# --- 14. --undo, with a superseded target ---------------------------------
+# --- 24. --undo, with a superseded target ---------------------------------
 repo="$TEST_ROOT/undo"
 make_repo "$repo"
 write_spec "$repo" 2026-07-01-old-design.md <<'EOF'
@@ -1899,27 +1964,53 @@ run_compile "$repo" docs/hyperpowers/specs/2026-10-19-beta-design.md
 run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-beta-design.md
 if [ "$RC" -eq 0 ] && [ ! -d "$repo/docs/hyperpowers/decisions" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "--undo removes an emptied records directory"; else fail "undo2 (rc $RC, status: $(git -C "$repo" status --porcelain), dir: $(ls "$repo/docs/hyperpowers/decisions" 2>/dev/null))"; fi
 
-# --- 15. a later day with an unchanged spec --------------------------------
+# --- 25. a later day with an unchanged spec --------------------------------
 repo="$TEST_ROOT/gitfail-rm"
 commit_all "$repo" "records"
 COMPILE_DATE=2026-11-30 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-gamma-design.md --plan docs/hyperpowers/plans/2026-10-19-gamma.md
 if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a later-day re-run on an unchanged spec changes nothing"; else fail "later-day re-run (status: $(git -C "$repo" status --porcelain))"; fi
 
-# --- 16. the mode table ----------------------------------------------------
+# --- 26. the mode table ----------------------------------------------------
 repo="$TEST_ROOT/undo2"
 for args in "--undo docs/hyperpowers/specs/2026-10-19-beta-design.md --notes x" "--undo docs/hyperpowers/specs/2026-10-19-beta-design.md --dry-run" "--undo docs/hyperpowers/specs/2026-10-19-beta-design.md --paths-file x" "--undo --reindex docs/hyperpowers/decisions" "--reindex docs/hyperpowers/decisions --plan x" "--reindex docs/hyperpowers/decisions --notes x" "docs/hyperpowers/specs/2026-10-19-beta-design.md --plan a --plan b" "docs/hyperpowers/specs/2026-10-19-beta-design.md --notes a --notes b"; do
     # shellcheck disable=SC2086
     run_compile "$repo" $args
     if [ "$RC" -eq 2 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "usage error, nothing written: $args"; else fail "mode table: $args (rc $RC)"; fi
 done
+
+# --- 27. the plan binding is exact ---------------------------------------------
+# Correction (2026-10-22): Task 5's gate found at its cap that the Spec-header
+# binding's basename arms were suffix matches, so a plan written for a
+# same-named spec in another directory passed; the human partner carried the
+# exact-match rule and this test into Task 6.
+repo="$TEST_ROOT/twin"
+make_repo "$repo"
+mkdir -p "$repo/docs/other/specs" "$repo/docs/other/plans"
+write_spec "$repo" 2026-10-19-twin-design.md <<'EOF'
+# Twin
+
+## Decisions
+
+- **One.** Text.
+EOF
+printf '# Twin elsewhere\n\n## Decisions\n\n- **Other.** Text.\n' > "$repo/docs/other/specs/2026-10-19-twin-design.md"
+printf '# Plan\n\n**Spec:** docs/other/specs/2026-10-19-twin-design.md\n' > "$repo/docs/other/plans/2026-10-19-twin.md"
+printf '# Plan\n\n**Spec:** 2026-10-19-twin-design.md\n' > "$repo/docs/hyperpowers/plans/2026-10-19-twin.md"
+commit_all "$repo" "twins"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-twin-design.md --plan docs/other/plans/2026-10-19-twin.md
+if [ "$RC" -eq 2 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a plan naming a same-named spec in another directory is refused before any write"; else fail "twin plan (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
+case "$ERR" in *"plan names a different spec: docs/other/specs/2026-10-19-twin-design.md"*) pass "the twin refusal names the header's path" ;; *) fail "twin message (got: $ERR)" ;; esac
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-twin-design.md --plan docs/hyperpowers/plans/2026-10-19-twin.md
+if [ "$RC" -eq 0 ]; then pass "a bare-basename header still binds"; else fail "bare basename (rc $RC: $ERR)"; fi
+case "$OUT" in *"removed docs/hyperpowers/plans/2026-10-19-twin.md"*) pass "the bare-basename plan is removed" ;; *) fail "bare-basename removal line missing" ;; esac
 ```
 
 (The `SC2086` disable is deliberate: `$args` is a test-controlled list of space-free tokens that must split.)
 
-- [ ] **Step 2: Run to see checks 14 to 16 fail**
+- [ ] **Step 2: Run to see sections 24, 26 and 27 fail**
 
 Run: `bash tests/claude-code/test-decisions-compile.sh`
-Expected: `--undo` is a usage error, so 14 fails; 15 passes already or fails only on the earlier fixture; 16 fails on the `--undo` rows.
+Expected: `--undo` is a usage error, so 24 fails; 25 passes already or fails only on the earlier fixture; 26 fails on the `--undo` rows; 27 fails on the twin refusal (the suffix match accepts it).
 
 - [ ] **Step 3: Add undo and the mode table**
 
@@ -1974,6 +2065,8 @@ fi
 ```
 
 Undo needs the plan resolved but not validated against the three states (a plan whose deletion is staged is exactly the undo case, and one that exists is fine too); the Task 5 validation already accepts both, and a plan that exists nowhere exits 2, which is right for undo as well.
+
+(d) Correction (2026-10-22): Task 5's gate found at its cap that the Spec-header binding's basename arms (`*"$plan_spec_base"|*"$plan_spec_base "*`) were suffix matches, so a plan written for a same-named spec in another directory passed and would have been staged for deletion; the human partner carried the exact-match rule here. In the binding `case` of the plan preflight, replace those two arms with `"$plan_spec_base"|"$plan_spec_base "*`, so only the exact repository-relative path or the exact bare basename, each optionally followed by a space and prose, binds; update the comment above the `case` if it describes the rule.
 
 - [ ] **Step 4: Run the suite, shellcheck, packaging, and the sibling suites**
 

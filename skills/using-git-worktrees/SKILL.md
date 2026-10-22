@@ -31,6 +31,7 @@ git rev-parse --show-superproject-working-tree 2>/dev/null
 ```
 
 **If `GIT_DIR != GIT_COMMON` (and not a submodule):** You are already in a linked worktree. Skip to Step 2 (Project Setup). Do NOT create another worktree.
+The mode is `worktree`; report it with the branch state below.
 
 Report with branch state:
 - On a branch: "Already in isolated workspace at `<path>` on branch `<name>`."
@@ -38,11 +39,22 @@ Report with branch state:
 
 **If `GIT_DIR == GIT_COMMON` (or in a submodule):** You are in a normal repo checkout.
 
-Has the user already indicated their worktree preference in your instructions? If not, ask for consent before creating a worktree:
+Has your human partner already declared where this work should happen (an
+instruction file naming a worktree, a new branch, or the current branch)?
+If so, honor it without asking. Otherwise ask one question with exactly
+these three options, in this order (on Claude Code use the selection
+widget; elsewhere ask in plain text):
 
-> "Would you like me to set up an isolated worktree? It protects your current branch from changes."
+1. Stay on the current branch (`<current branch>`)
+2. Create a new branch in place (`git switch -c <name>`; the name from the
+   plan slug unless they give one)
+3. Create an isolated worktree
 
-Honor any existing declared preference without asking. If the user declines consent, work in place and skip to Step 2.
+The answer is the mode (`current-branch`, `new-branch`, or `worktree`); the
+skill that called you records it in its ledger. Choosing "stay on the
+current branch" is explicit consent to work there, main or master included.
+For option 1 skip to Step 2; for option 2 create the branch, then skip to
+Step 2; for option 3 continue with Step 1. Report the mode in every case.
 
 ## Step 1: Create Isolated Workspace
 
@@ -144,6 +156,11 @@ Ready to implement <feature-name>
 | Situation | Action |
 |-----------|--------|
 | Already in linked worktree | Skip creation (Step 0) |
+| Declared preference in instructions | Honor it, no question (Step 0) |
+| No declared preference | Ask the three-way question (Step 0) |
+| Answer: current branch | Work in place, mode `current-branch` |
+| Answer: new branch | `git switch -c <name>`, mode `new-branch` |
+| Answer: worktree | Step 1, mode `worktree` |
 | In a submodule | Treat as normal repo (Step 0 guard) |
 | Native worktree tool available | Use it (Step 1a) |
 | No native tool | Git worktree fallback (Step 1b) |
@@ -165,3 +182,4 @@ Ready to implement <feature-name>
 | "The worktree directory is surely ignored already" | Run `git check-ignore`. An unignored worktree directory commits the whole tree into the repo. |
 | "Any directory name works" | Explicit instructions beat an existing project-local directory, which beats the `.worktrees/` default. |
 | "The workspace is fresh — baseline tests can wait" | A dirty baseline makes every later failure ambiguous. Run the tests now; proceeding past failures is your human partner's call. |
+| "They said current branch, so the consent rule does not apply to me" | It applies; that answer is the consent. Record the mode and work there; never switch branches on your own. |

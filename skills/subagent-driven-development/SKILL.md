@@ -635,7 +635,9 @@ index (`decisions/README.md` beside the spec's directory) when it exists, and
 inside the workspace, so Finish may delete the workspace while it runs;
 finishing-a-development-branch collects it after the full suite and never
 waits for it, and neither do you. On a harness with no tracked background
-subagent, skip the dispatch and note it in the ledger.
+subagent, skip the dispatch and note it in the ledger. If a Codex final-gate
+fix changes code after the dispatch, stop the extractor (TaskStop) and
+dispatch it again over the new review package, replacing the ledger line.
 
 **Codex Review Gate — final whole-branch (Claude Code only).** After the final code-reviewer
 subagent and its fix wave, and before hyperpowers:finishing-a-development-branch,

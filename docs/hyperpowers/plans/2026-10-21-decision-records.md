@@ -910,6 +910,8 @@ git commit -m "feat(finishing): decisions-compile writes the index and the spec'
 
 Insert before the marker line:
 
+Correction (2026-10-22): the task review and the Codex gate added checks the suite carries beyond this listing, and the suite is the authority for their text: section 15 gains an interrupted-run state (targets updated, record not yet rewritten) that the next run completes, incremental fan-in after a compile, a swap of two decisions' targets, and a target whose status already names a record this run has yet to write; section 16 gains a second `--reindex` reporting `unchanged`, a `rm --cached` index that is re-staged, and `--reindex docs/hyperpowers/specs` refused; a section 18 refuses a `./` spelling and a symlinked record as Supersedes targets.
+
 ```bash
 # --- 15. supersession --------------------------------------------------------
 repo="$TEST_ROOT/supersede"
@@ -1090,6 +1092,9 @@ esac
 if [ "$mode" = reindex ]; then
   [ -d "$reindex_dir" ] || die2 "$reindex_dir: no such records directory"
   records_dir=$(cd "$reindex_dir" && pwd -P)
+  # Correction (2026-10-22): any other directory would have its .md files
+  # rendered as records and its README.md replaced (Task 3 gate round 1).
+  [ "$(basename "$records_dir")" = decisions ] || die2 "$reindex_dir: not a records directory (its name must be decisions)"
   root=$(git -C "$records_dir" rev-parse --show-toplevel 2>/dev/null) || die2 "$reindex_dir: not inside a git repository"
   root=$(cd "$root" && pwd -P)
   case "$records_dir" in
@@ -1144,12 +1149,12 @@ esac
 if [ "$mode" = reindex ]; then
   render_index "$records_dir" > "$tmp/index"
   if [ -f "$records_dir/README.md" ]; then v=updated; else v=wrote; fi
-  if write_if_changed "$records_dir/README.md" "$tmp/index"; then
-    git -C "$root" add -- "$index_rel" || die3 "$records_rel: git add failed"
-    echo "$v $index_rel"
-  else
-    echo "unchanged $index_rel"
-  fi
+  if write_if_changed "$records_dir/README.md" "$tmp/index"; then changed=true; else changed=false; fi
+  # Correction (2026-10-22): staged even when unchanged, so a retry after a
+  # failed add completes it (the task review found the original printed
+  # `unchanged` without staging).
+  git -C "$root" add -- "$index_rel" || die3 "$records_rel: git add failed; run the same command again to complete the staging"
+  if $changed; then echo "$v $index_rel"; else echo "unchanged $index_rel"; fi
   exit 0
 fi
 ```
@@ -1169,30 +1174,50 @@ and in the `else` branch add `prev_sup[n]=""`. Then, after `trim_blank "$item"` 
     case "$(printf '\n%s\n' "${sup_of[n]}")" in *"
 $p
 "*) continue ;; esac
+    # Correction (2026-10-22): exactly one spelling per record, and no link,
+    # so deduplication and the reconciliation compare paths as plain strings
+    # and a status rewrite never replaces a link with a copy (gate round 1).
+    [ "$p" = "$records_rel/${p##*/}" ] || die2 "$spec_rel: decision $n: Supersedes path is not a record in $records_rel: $p"
+    [ ! -L "$root/$p" ] || die2 "$spec_rel: decision $n: Supersedes path is a symbolic link, not a record: $p"
     [ -f "$root/$p" ] || die2 "$spec_rel: decision $n: Supersedes path does not exist: $p"
-    [ "$(cd "$(dirname "$root/$p")" && pwd -P)" = "$records_dir" ] || die2 "$spec_rel: decision $n: Supersedes path is not a record in $records_rel: $p"
     case "$(existing_field "$root/$p" Spec)" in "$spec_rel (decision "*) die2 "$spec_rel: decision $n: cannot supersede a record of this spec: $p" ;; esac
     sup_of[n]="${sup_of[n]:+${sup_of[n]}
 }$p"
   done < <(sed -n 's/^[[:space:]]*Supersedes:[[:space:]]*//p' "$item" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 ```
 
-and, at the end of the loop body after `planned="$planned${files[n]} "`, the status check that needs this decision's filename:
+and, after the loop's `done` (still in section 2, before the dry run), the status check. Correction (2026-10-22): it runs once every planned filename is known, and a listed superseder passes when it is a record this run plans (written yet or not: an interrupted run may have updated the target first) or an on-disk record of this spec (fan-in and swaps before the freeze), so only an unrelated record refuses; `mine` is built here and section 4a reuses it:
 
 ```bash
+# A target's status may already name a record this run is about to write (an
+# earlier run was interrupted after the targets were updated), so every planned
+# record counts as a legitimate superseder, written yet or not.
+mine=" "
+for ((n = 1; n <= count; n++)); do
+  mine="$mine$records_rel/${files[n]} "
+done
+for ((n = 1; n <= count; n++)); do
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     st=$(existing_field "$root/$p" Status)
     case "$st" in
       accepted) ;;
       "superseded by "*)
-        case ", ${st#superseded by }, " in
-          *", $records_rel/${files[n]}, "*) ;;
-          *) die2 "$spec_rel: decision $n: $p is already superseded by ${st#superseded by }" ;;
-        esac ;;
+        # Other records of this spec may already list themselves (fan-in, or a
+        # swap of two decisions' targets); the reconciliation settles those.
+        while IFS= read -r q; do
+          [ -n "$q" ] || continue
+          case "$mine" in *" $q "*) continue ;; esac
+          if [ -f "$root/$q" ]; then
+            case "$(existing_field "$root/$q" Spec)" in "$spec_rel (decision "*) continue ;; esac
+          fi
+          die2 "$spec_rel: decision $n: $p is already superseded by an unrelated record: $q"
+        done < <(printf '%s\n' "${st#superseded by }" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        ;;
       *) die2 "$spec_rel: decision $n: $p has status \"$st\"" ;;
     esac
   done < <(printf '%s\n' "${sup_of[n]}")
+done
 ```
 
 (f) In `render_record`, after `printf -- '- Recorded: %s\n' "$recorded"`, add:
@@ -1203,14 +1228,15 @@ and, at the end of the loop body after `planned="$planned${files[n]} "`, the sta
   fi
 ```
 
-(g) After the records loop (section 4) and before section 4b, add the reconciliation. Every target this spec names now, or named in a previous run, gets one status line: what it already listed minus every record of this spec, plus this spec's records that name it now; a target nothing names any more returns to `accepted`. The `superseded <S>` count is the number of target status lines this run changed, restorations included.
+(g) Correction (2026-10-22): before the records loop (section 4), directly after its counters line `wrote=0; updated=0; superseded=0; undocumented=0; proposed=0`, add the reconciliation; targets are reconciled before the records are rewritten, so an interrupted run leaves the targets updated and the old records intact, and the next run reads those records' previous Supersedes lines and finishes the job (gate round 1). `mine` comes from (e). Every target this spec names now, or named in a previous run, gets one status line: what it already listed minus every record of this spec, plus this spec's records that name it now; a target nothing names any more returns to `accepted`. The `superseded <S>` count is the number of target status lines this run changed, restorations included.
 
 ```bash
 # --- 4a. superseded targets ----------------------------------------------------
+# Targets are reconciled before the records are rewritten: an interrupted run
+# then leaves the targets updated and the old records intact, and the next run
+# reads those records' previous Supersedes lines and finishes the job.
 : > "$tmp/targets"
-mine=" "
 for ((n = 1; n <= count; n++)); do
-  mine="$mine$records_rel/${files[n]} "
   while IFS= read -r p; do
     [ -n "$p" ] && printf '%s\tnow\t%s\n' "$p" "$records_rel/${files[n]}" >> "$tmp/targets"
   done < <(printf '%s\n' "${sup_of[n]:-}")
@@ -1281,7 +1307,7 @@ git commit -m "feat(finishing): decisions-compile validates Supersedes lines, re
 Insert before the marker line:
 
 ```bash
-# --- 11. notes ----------------------------------------------------------------
+# --- 19. notes ----------------------------------------------------------------
 repo="$TEST_ROOT/notes"
 make_repo "$repo"
 write_spec "$repo" 2026-10-19-alpha-design.md <<'EOF'
@@ -1355,12 +1381,60 @@ if grep -q '^Replaced on the second pass\.$' "$rec1" && grep -q '^No change\.$' 
 else
     fail "numbering after append (rec1: $(grep -A2 '^## What' "$rec1" | tail -n 1); rec3: $(ls "$repo/docs/hyperpowers/decisions"))"
 fi
+
+# --- 20. persisted Supersedes paths are validated ----------------------------
+# Correction (2026-10-22): Task 3's gate found at its cap that a record's own
+# Supersedes header fed the reconciliation unvalidated, so a hand-edited or
+# merge-conflicted record could name a file outside the records directory;
+# the human partner carried the guard and this test into Task 4.
+repo="$TEST_ROOT/persisted"
+make_repo "$repo"
+write_spec "$repo" 2026-07-01-old-design.md <<'EOF'
+# Old
+
+## Decisions
+
+- **Hook-based interlock.** A hook gates the first edit.
+- **Twenty-run bar.** Forty sessions per scenario.
+EOF
+commit_all "$repo" "old spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-07-01-old-design.md
+commit_all "$repo" "old records"
+write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
+# New
+
+## Decisions
+
+1. **Skill text, not a hook.** Measured no gain from the hook.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+EOF
+commit_all "$repo" "new spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+commit_all "$repo" "new records"
+rec="$repo/docs/hyperpowers/decisions/2026-08-01-skill-text-not-a-hook.md"
+awk '!r && /^- Supersedes: / { print "- Supersedes: ../hyperpowers/decisions/2026-07-01-hook-based-interlock.md"; r = 1; next } { print }' "$rec" > "$rec.tmp" && mv "$rec.tmp" "$rec"
+commit_all "$repo" "hand-edited header: traversal"
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+if [ "$RC" -eq 2 ]; then pass "a persisted traversal path exits 2"; else fail "persisted traversal (got $RC: $ERR)"; fi
+case "$ERR" in "docs/hyperpowers/specs/2026-08-01-new-design.md: decision 1: record docs/hyperpowers/decisions/2026-08-01-skill-text-not-a-hook.md names a Supersedes path that is not a record in docs/hyperpowers/decisions: ../hyperpowers/decisions/2026-07-01-hook-based-interlock.md") pass "the persisted-path message names the record and the path" ;; *) fail "persisted-path message (got: $ERR)" ;; esac
+if [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "nothing is written for a persisted traversal path"; else fail "persisted traversal wrote (status: $(git -C "$repo" status --porcelain))"; fi
+ln -s 2026-07-01-twenty-run-bar.md "$repo/docs/hyperpowers/decisions/alias.md"
+awk '!r && /^- Supersedes: / { print "- Supersedes: docs/hyperpowers/decisions/alias.md"; r = 1; next } { print }' "$rec" > "$rec.tmp" && mv "$rec.tmp" "$rec"
+commit_all "$repo" "hand-edited header: link"
+sum=$(cksum < "$repo/docs/hyperpowers/decisions/2026-07-01-twenty-run-bar.md")
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+if [ "$RC" -eq 2 ] && [ -L "$repo/docs/hyperpowers/decisions/alias.md" ] && [ "$(cksum < "$repo/docs/hyperpowers/decisions/2026-07-01-twenty-run-bar.md")" = "$sum" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then
+    pass "a persisted symlinked path exits 2 with the link and its target untouched"
+else
+    fail "persisted link (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"
+fi
+case "$ERR" in *"names a Supersedes path that is a symbolic link: docs/hyperpowers/decisions/alias.md") pass "the persisted-link message names the path" ;; *) fail "persisted-link message (got: $ERR)" ;; esac
 ```
 
-- [ ] **Step 2: Run to see check 11 fail**
+- [ ] **Step 2: Run to see sections 19 and 20 fail**
 
 Run: `bash tests/claude-code/test-decisions-compile.sh`
-Expected: checks 1 to 10 pass; `--notes` is a usage error so 11 fails.
+Expected: sections 1 to 18 pass (Task 3's rounds added 15 to 18); `--notes` is a usage error so 19 fails, and 20 fails because a persisted Supersedes path is not yet validated.
 
 - [ ] **Step 3: Add notes**
 
@@ -1449,6 +1523,19 @@ load_notes() {
 ```bash
   if $notes_valid && [ -f "$tmp/note-$n.txt" ]; then notes_body=$(cat "$tmp/note-$n.txt"); fi
   [ -n "${notes_body:-}" ] || notes_body="Nothing recorded."
+```
+
+(f) Correction (2026-10-22): Task 3's gate found at its cap that the persisted `Supersedes:` header of an existing record feeds section 4a unvalidated, so a hand-edited or merge-conflicted record naming `../x.md` or a link could have that file's Status line rewritten; the human partner carried the guard here. In section 2's `if [ -n "$ex" ]` branch, directly after `prev_sup[n]=$(existing_field "$ex" Supersedes | tr ',' '\n' | sed 's/^ *//')`, validate every persisted entry with the spelling and link checks the spec's own lines get (a missing file is tolerated: section 4a skips it):
+
+```bash
+    # A persisted header is only as trustworthy as the last hand that touched
+    # it: the same spelling and link rules as the spec's own lines, before any
+    # write.
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      [ "$p" = "$records_rel/${p##*/}" ] || die2 "$spec_rel: decision $n: record ${ex#"$root"/} names a Supersedes path that is not a record in $records_rel: $p"
+      [ ! -L "$root/$p" ] || die2 "$spec_rel: decision $n: record ${ex#"$root"/} names a Supersedes path that is a symbolic link: $p"
+    done < <(printf '%s\n' "${prev_sup[n]}")
 ```
 
 - [ ] **Step 4: Run the suite, shellcheck, packaging**

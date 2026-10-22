@@ -410,5 +410,14 @@ assert_not_contains "$SDD" "with \`rm -rf <workspace>\`" "finish no longer rm -r
 assert_not_contains "$SDD" "The 14-day reclaim in \`scripts/sdd-dir\`" "no automatic reclaim is promised"
 assert_contains "$SDD" "a session that finished its assigned tasks while other sessions' tasks are open reports that and stops" "completion barrier"
 
+assert_contains "$SDD" "anything else stops Setup until \`verify\` passes again" "every verify outcome but ok stops setup"
+assert_contains "$SDD" "\`busy\` (exit 3) when another session is writing the workspace" "finish busy is handled"
+assert_contains "$SDD" "git -C <that repository> switch -c <name>" "hand-off remediation targets the named repository"
+assert_contains "$SDD" "none of them is a hand-off, so report nothing as ready to pull" "failed hand-offs stop"
+assert_contains "$SDD" "A workspace in the list that is not this plan's belongs to another plan" "remote-finished routes by the workspace list"
+assert_contains "$SDD" "read its completion line, mark the task done, and never dispatch" "claim done skips the task"
+assert_contains "$SDD" "The scan only reads" "the ledger scan acts only after verify"
+assert_contains "$SDD" "Snapshot the workspace (scripts/sdd-state snapshot)" "the process graph snapshots after completion"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

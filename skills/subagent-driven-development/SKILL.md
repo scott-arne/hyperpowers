@@ -52,6 +52,7 @@ digraph process {
 
     subgraph cluster_per_task {
         label="Per Task";
+        "Claim the task (scripts/sdd-state claim): done means skip it; held by another session means ask" [shape=box];
         "Dispatch implementer subagent (./implementer-prompt.md)" [shape=box];
         "Implementer asks questions?" [shape=diamond];
         "Answer questions, provide context" [shape=box];
@@ -70,6 +71,7 @@ digraph process {
         "Codex task code gate\n(Claude Code; degrade if absent)" [shape=box];
         "Codex gate blocking findings?" [shape=diamond];
         "Append completion to ledger, mark todo complete (where kept)" [shape=box];
+        "Snapshot the workspace (scripts/sdd-state snapshot)" [shape=box];
     }
 
     "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" [shape=box];
@@ -80,7 +82,8 @@ digraph process {
     "Final review clean: delete this plan's workspace" [shape=box];
     "Use hyperpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
-    "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" -> "Dispatch implementer subagent (./implementer-prompt.md)";
+    "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" -> "Claim the task (scripts/sdd-state claim): done means skip it; held by another session means ask";
+    "Claim the task (scripts/sdd-state claim): done means skip it; held by another session means ask" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="claimed"];
     "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer asks questions?";
     "Implementer asks questions?" -> "Answer questions, provide context" [label="yes"];
     "Answer questions, provide context" -> "Implementer implements, tests, commits, self-reviews";
@@ -104,8 +107,9 @@ digraph process {
     "Codex task code gate\n(Claude Code; degrade if absent)" -> "Codex gate blocking findings?";
     "Codex gate blocking findings?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="yes - same five-round cap"];
     "Codex gate blocking findings?" -> "Append completion to ledger, mark todo complete (where kept)" [label="no"];
-    "Append completion to ledger, mark todo complete (where kept)" -> "More tasks remain?";
-    "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
+    "Append completion to ledger, mark todo complete (where kept)" -> "Snapshot the workspace (scripts/sdd-state snapshot)";
+    "Snapshot the workspace (scripts/sdd-state snapshot)" -> "More tasks remain?";
+    "More tasks remain?" -> "Claim the task (scripts/sdd-state claim): done means skip it; held by another session means ask" [label="yes"];
     "More tasks remain?" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="no"];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, surface residuals";
     "Final findings? ONE fix dispatch, one scoped re-review, surface residuals" -> "Codex final code gate\n(Claude Code; degrade if absent)";
@@ -161,11 +165,14 @@ a ledger file, not only in todos.
   `foreign` (exit 2): the branch at the state name is not a hyperpowers
   state branch; stop, relay the stderr remedy (set git config
   `hyperpowers.stateBranch` to another name), and ask.
-  `remote-finished plans=<ws,...>` (exit 3): another host finished this
-  plan while this one wrote ledger lines that are not on the branch; stop,
-  show your human partner the lines this host added (the ledger's tail
-  beyond the last snapshot), and ask whether to snapshot them (then `sync`
-  again, which reports `diverged` for their merge) or to discard them.
+  `remote-finished plans=<ws,...>` (exit 3): another host finished a plan
+  whose workspace on this host holds ledger lines that are not on the
+  branch. When the list names this plan's workspace, stop, show your human
+  partner the lines this host added (the ledger's tail beyond the last
+  snapshot), and ask whether to snapshot them (then `sync` again, which
+  reports `diverged` for their merge) or to discard them. A workspace in
+  the list that is not this plan's belongs to another plan: report its
+  name and stop without reading or changing it.
 - Check for this plan's ledger at `<workspace>/progress.md` — this plan's
   workspace only, never a sibling's. The workspace is the plan's identity:
   `scripts/sdd-dir` maps a plan to ONE directory whatever path form you
@@ -184,7 +191,9 @@ a ledger file, not only in todos.
   (list your live children, chase its report), resume it by the recorded
   id where your harness allows, and only if it cannot be recovered
   dispatch a takeover, recording the takeover's identity beside the
-  original. A first line that resolves to a genuinely different plan
+  original. The scan only reads: every action it calls for (a resume, a
+  takeover, the next task) waits until `verify` below has returned `ok`.
+  A first line that resolves to a genuinely different plan
   file means this workspace is corrupt, not that you wandered into a
   sibling's: stop and surface it to your human partner rather than
   starting fresh on top of another plan's state.
@@ -199,10 +208,12 @@ a ledger file, not only in todos.
   assigned this session specific tasks, add `session <sid>: tasks <N,M,...>`.
   Then run `scripts/sdd-state verify PLAN_FILE` (on a found ledger this is
   the check that this host holds the code it relies on): `ok` continues;
-  `code-missing` names commits the ledger relies on that this checkout
-  lacks, so stop and ask your human partner to pull the named branch;
-  `wrong-repo` names the repository the ledger was handed off from;
-  `plan-stale` names the plan repository branch to pull.
+  anything else stops Setup until `verify` passes again. `code-missing`
+  names commits the ledger relies on that this checkout lacks, so ask your
+  human partner to pull the named branch; `wrong-repo` names the repository
+  the ledger was handed off from, so ask which checkout this work belongs
+  in; `plan-stale` names the plan repository branch to pull, and you read
+  the plan again after that pull.
 - The ledger is your recovery map: the commits it names exist in git even
   when your context no longer remembers creating them. After compaction,
   trust the ledger and `git log` over your own recollection.
@@ -220,12 +231,19 @@ a ledger file, not only in todos.
   report its status line, relay `plan-not-committed` with the commands to
   commit the plan, relay `code-dirty` with the listed paths as a question
   (only an explicit yes passes `--code-dirty-ok`), relay `detached-head`
-  by asking for a branch name and creating it (`git switch -c <name>`)
-  before retrying, relay `shallow-source` (exit 12) as a request for a full
-  clone (or `git fetch --unshallow`) before retrying, since a shallow
-  code or plan repository cannot record a root, and list the branches
-  named in `code=` and, when present, `plan=` for your human partner to push
-  here and pull there. You push none of them unless asked.
+  by asking for a branch name and creating it in the repository the line
+  names (`repo=code` or `repo=plan`: `git -C <that repository> switch -c <name>`)
+  before retrying, relay `shallow-source` (exit 12) the same way (a full
+  clone, or `git -C <that repository> fetch --unshallow`, since a shallow
+  code or plan repository cannot record a root), and stop on `plain`
+  (exit 7: this host has no state branch, so there is no dossier to push),
+  `scan-failed` (exit 5: the pre-push scan named in `hyperpowers.prePushScan`
+  rejected the range; show its output and ask) and `push-failed` (exit 1:
+  the remote moved or could not be reached; run `sync` first, then retry):
+  none of them is a hand-off, so report nothing as ready to pull. On
+  `pushed`, list the branches named in `code=` and, when present, `plan=`
+  for your human partner to push here and pull there. You push none of
+  them unless asked.
 
 Read the plan once, note its context and Global Constraints, and create a
 todo per task where your harness surfaces todos — the ledger is the
@@ -341,7 +359,11 @@ and fix-round diffs need it.
   to that ledger entry in the dispatch.
 - Claim the task first: `scripts/sdd-state claim PLAN_FILE N --session <sid>`.
   `claimed`, or `held` by your own session id (a resume after compaction):
-  proceed. `held` by another session: do not take the next task on your own
+  proceed. `done`: another session completed the task since you read the
+  ledger; read its completion line, mark the task done, and never dispatch
+  it. `no-workspace` (exit 2): the workspace is gone (finished or pruned
+  elsewhere); stop, run `sync`, and re-read the ledger before anything
+  else. `held` by another session: do not take the next task on your own
   initiative; which tasks may run concurrently is not yet decided, and
   skipping ahead would decide it by accident. Tell your human partner who
   holds the task and since when, and ask whether to take it over; take over
@@ -716,7 +738,11 @@ When the final whole-branch review is clean and its fixes are merged:
    hyperpowers:finishing-a-development-branch takes the mode as its input.
 2. **Finish the workspace** with `scripts/sdd-state finish PLAN_FILE`: it
    refuses with `open-claims` while any claimed task lacks a completion line
-   (that is a plan not finished, not a reason for `--force`); otherwise it
+   (that is a plan not finished, not a reason for `--force`), and with
+   `busy` (exit 3) when another session is writing the workspace or a copy
+   from an interrupted removal sits beside it (report the stderr line, wait
+   for the other session or ask your human partner about the copy, then run
+   `finish` again); otherwise it
    removes the plan's directory, commits the removal to the state branch,
    and prints `last=<sha>`, the commit that still holds the dossier, and
    `push=<remote>/<branch>`; on the plain backend it prints `backend=plain`

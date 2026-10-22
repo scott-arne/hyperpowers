@@ -4,11 +4,11 @@
 You: I'm using Subagent-Driven Development to execute this plan.
 
 [Setup: branch question answered: worktree]
-[Read plan file once: docs/hyperpowers/plans/feature-plan.md, and the spec its **Spec:** header names]
 [Resolve workspace: scripts/sdd-state sync docs/hyperpowers/plans/feature-plan.md → status=absent; scripts/sdd-dir docs/hyperpowers/plans/feature-plan.md — no ledger inside, fresh start]
 [Ledger: # SDD ledger — plan: docs/hyperpowers/plans/feature-plan.md]
 [Ledger: session 1f3a9c: mode worktree on feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
 [scripts/sdd-state verify docs/hyperpowers/plans/feature-plan.md → status=ok tasks=0]
+[Read plan file once: docs/hyperpowers/plans/feature-plan.md, and the spec its **Spec:** header names]
 [Create todos for all tasks]
 
 Task 1: Hook installation script (declared low)

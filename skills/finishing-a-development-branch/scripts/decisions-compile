@@ -247,7 +247,7 @@ load_notes() {
     NR == 1 { next }
     {
       t = $0; sub(/^ ? ? ?/, "", t)
-      if (match(t, /^#+/) && RLENGTH <= 6 && (length(t) == RLENGTH || substr(t, RLENGTH + 1, 1) == " ")) {
+      if (match(t, /^#+/) && RLENGTH <= 6 && (length(t) == RLENGTH || substr(t, RLENGTH + 1, 1) == " " || substr(t, RLENGTH + 1, 1) == "\t")) {
         mode = ""
         if ($0 ~ /^## Decision [0-9]+$/) {
           n = $3 + 0

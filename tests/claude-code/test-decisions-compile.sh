@@ -985,13 +985,15 @@ for f in dup range head heading empty-optional; do
 done
 # Structure is any ATX heading, not only column-zero level-two lines, and the
 # optional sections are checked in one pass however long they run.
-for f in preamble indented wronglevel dupsup longsup; do
+for f in preamble indented wronglevel tabsup tabdec dupsup longsup; do
     {
         printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-alpha-design.md\n\n'
         case "$f" in
             preamble) printf 'Some stray preamble.\n\n## Decision 1\nText.\n' ;;
             indented) printf '   ## Decision 1\nText.\n' ;;
             wronglevel) printf '## Decision 1\nText.\n\n### Supersessions\n- 1 supersedes docs/hyperpowers/decisions/x.md\n' ;;
+            tabsup) printf '## Decision 1\nText.\n\n##\tSupersessions\n- 1 supersedes docs/hyperpowers/decisions/x.md\n' ;;
+            tabdec) printf '## Decision 1\nText.\n\n##\tDecision 2\nsupersedes docs/hyperpowers/decisions/x.md\n' ;;
             dupsup) printf '## Decision 1\nText.\n\n## Supersessions\n- 1 supersedes docs/hyperpowers/decisions/x.md\n\n## Supersessions\n- 1 supersedes docs/hyperpowers/decisions/y.md\n' ;;
             longsup)
                 printf '## Decision 1\nText.\n\n## Supersessions\nnot a proposal\n'
@@ -1002,6 +1004,9 @@ for f in preamble indented wronglevel dupsup longsup; do
     run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --notes "$TEST_ROOT/notes-$f.md"
     if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "malformed notes ($f) are ignored and the records stay byte-identical"; else fail "malformed notes $f (rc $RC, status: $(git -C "$repo" status --porcelain))"; fi
     case "$ERR" in "notes ignored: "*) pass "malformed notes ($f) reported as notes ignored" ;; *) fail "notes ignored message for $f (got: $ERR)" ;; esac
+    case "$f" in
+        tabsup|tabdec) case "$ERR" in "notes ignored: unexpected heading: "*) pass "a tab-separated heading ($f) is an unexpected heading" ;; *) fail "tab heading message for $f (got: $ERR)" ;; esac ;;
+    esac
     if grep -rq 'supersedes docs/hyperpowers/decisions/x.md' "$repo/docs/hyperpowers/decisions"; then fail "a proposal reached a record ($f)"; else pass "no proposal text reached a record ($f)"; fi
 done
 # An unreadable notes file fails open like every other notes defect.

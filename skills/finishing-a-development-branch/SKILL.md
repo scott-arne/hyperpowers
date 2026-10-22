@@ -144,13 +144,18 @@ paths=(); while IFS= read -r -d '' p; do paths+=("$p"); done < <dir>/records.pat
 GIT_LITERAL_PATHSPECS=1 git diff --cached -- "${paths[@]}"
 ```
 
-then the extractor's proposals from its notes file, each with the question
+The message carries that command's output itself, verbatim; a summary, a
+list of paths or a pointer to a tool result is not the diff, and no option is
+accepted until the diff has been shown. Then the extractor's proposals from
+its notes file, each with the question
 it needs: an undocumented decision (add it to the spec's `## Decisions`
 list, or dismiss it); a proposed supersession (add a
 `Supersedes: <record path>` line to the item that reverses that record, or
 dismiss it); then one line offering to skip the records for this branch; and
 only then the menu text exactly as written below. Your human partner answers
-once. Before executing their option: write each accepted proposal into the
+once. An answer that names an option but leaves any proposal without a
+disposition is incomplete: ask for the missing dispositions and wait; nothing
+is written or committed until every proposal has one. Before executing their option: write each accepted proposal into the
 spec (an accepted undocumented decision is appended after the list's last
 item, never inserted, so the numbers the notes use stay with their records;
 an accepted supersession is a `Supersedes:` line on the item it belongs to),
@@ -166,6 +171,9 @@ chose. Otherwise commit:
 ```bash
 GIT_LITERAL_PATHSPECS=1 git commit --pathspec-from-file=<dir>/records.paths --pathspec-file-nul -m "docs: record decisions for <spec filename without -design.md>"
 ```
+
+The message is that one line and nothing else: no second `-m`, no trailer, no
+attribution or `Co-Authored-By` line, whatever the harness suggests.
 
 The option runs only after that commit succeeds. If it fails (a hook, an
 index conflict, anything), show the failure, stop, and run the same commit

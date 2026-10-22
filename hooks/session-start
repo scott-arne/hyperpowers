@@ -154,18 +154,22 @@ fi
 # --- Stale-replay notice on compaction (spec A9) ----------------------------
 # A compaction summary can carry task instructions that were already executed;
 # a controller that replays them re-does completed work. Point the resumed
-# session at the durable record instead. Read-only by contract: it re-derives
-# the same cache key as scripts/sdd-dir but never calls it, because sdd-dir
-# creates and touches directories. Fail-silent like the notices above it.
+# session at the durable record instead. Read-only by contract: it sources
+# sdd-common.sh for the key but never calls sdd-dir, because sdd-dir creates
+# directories. Fail-silent like the notices above it.
 compaction_notice=""
 if [ "$hook_source" = "compact" ]; then
   compaction_notice="$(
     ( set +e
       git rev-parse --absolute-git-dir >/dev/null 2>&1 || exit 0
-      key="$(printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin 2>/dev/null)"
+      common="${PLUGIN_ROOT}/skills/subagent-driven-development/scripts/sdd-common.sh"
+      [ -f "$common" ] || exit 0
+      # shellcheck source=../skills/subagent-driven-development/scripts/sdd-common.sh
+      . "$common"
+      key="$(hp_key . 2>/dev/null)"
       [ -n "$key" ] || exit 0
-      plans="${XDG_CACHE_HOME:-${HOME:-}/.cache}/hyperpowers/sdd/${key}/plans"
-      [ -d "$plans" ] || exit 0
+      legacy="$(hp_legacy_key . 2>/dev/null)"
+      cache="$(hp_cache_root)"
       # Newest by modification time, chosen with -nt over the paths
       # themselves. A listing is line-oriented and a newline in a
       # plan-derived directory name would split it into a path that names
@@ -175,12 +179,19 @@ if [ "$hook_source" = "compact" ]; then
       # the default glob skips a leading dot, so it must be widened here.
       # The option lives and dies with this subshell.
       shopt -s dotglob
+      # Three places a ledger can be: the state checkout (this release), the
+      # plain cache under the same key (the plain backend, and pointers for
+      # cross-repository plans), and the plain cache under the pre-6.17
+      # per-worktree key. Newest wins across all three.
       newest=""
-      for ledger in "$plans"/*/progress.md; do
-        [ -f "$ledger" ] || continue
-        if [ -z "$newest" ] || [ "$ledger" -nt "$newest" ]; then
-          newest="$ledger"
-        fi
+      for plans in "$cache/state/$key/plans" "$cache/sdd/$key/plans" "$cache/sdd/$legacy/plans"; do
+        [ -d "$plans" ] || continue
+        for ledger in "$plans"/*/progress.md; do
+          [ -f "$ledger" ] || continue
+          if [ -z "$newest" ] || [ "$ledger" -nt "$newest" ]; then
+            newest="$ledger"
+          fi
+        done
       done
       [ -n "$newest" ] || exit 0
       # A JSON string carries Unicode, not bytes. A path that is not valid

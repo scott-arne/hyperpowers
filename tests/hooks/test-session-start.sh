@@ -470,6 +470,14 @@ seed_ledger() { # <cache-root> <repo> <plan-slug> -> prints ledger path
     printf '%s\n' "$dir/progress.md"
 }
 
+seed_state_ledger() { # <cache-root> <repo> <plan-slug> -> prints ledger path
+    local dir
+    dir="$1/hyperpowers/state/$(sdd_key "$2")/plans/$3"
+    mkdir -p "$dir"
+    printf '# SDD ledger — plan: %s\n' "$3" > "$dir/progress.md"
+    printf '%s\n' "$dir/progress.md"
+}
+
 write_hook_input() { # <path> <source>
     mkdir -p "$(dirname "$1")"
     printf '{"session_id":"t","hook_event_name":"SessionStart","source":"%s"}' "$2" > "$1"
@@ -561,6 +569,43 @@ assert_command_output \
     XDG_CACHE_HOME="$xr_cache" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$xr_cwd_repo" "$HOOK_UNDER_TEST"
+
+# The state checkout (this release) is searched first; a newer legacy ledger
+# still wins by mtime, so a host that has not imported yet is not misled.
+st_repo="$(make_repo compact-state)"
+st_home="$(make_home compact-state)"
+st_cache="$TEST_ROOT/compact-state/cache"
+st_legacy="$(seed_ledger "$st_cache" "$st_repo" "legacy-2222bbbb")"
+touch -t 202601010000 "$st_legacy"
+st_ledger="$(seed_state_ledger "$st_cache" "$st_repo" "state-3333cccc")"
+st_stdin="$TEST_ROOT/compact-state/stdin.json"
+write_hook_input "$st_stdin" compact
+HOOK_STDIN="$st_stdin"
+assert_command_output \
+    "SessionStart names the ledger inside the state checkout" \
+    "nested" \
+    "${NOTICE_HEAD}${st_ledger}${NOTICE_TAIL}" \
+    "" \
+    "$st_home" \
+    XDG_CACHE_HOME="$st_cache" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$st_repo" "$HOOK_UNDER_TEST"
+touch "$st_legacy"
+touch -t 202601010000 "$st_ledger"
+HOOK_STDIN="$st_stdin"
+assert_command_output \
+    "SessionStart still names a newer legacy ledger" \
+    "nested" \
+    "${NOTICE_HEAD}${st_legacy}${NOTICE_TAIL}" \
+    "" \
+    "$st_home" \
+    XDG_CACHE_HOME="$st_cache" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$st_repo" "$HOOK_UNDER_TEST"
+before_dirs="$(find "$st_cache" | sort)"
+HOOK_STDIN="$st_stdin" XDG_CACHE_HOME="$st_cache" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" HOME="$st_home" bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$st_repo" "$HOOK_UNDER_TEST" >/dev/null 2>&1 < "$st_stdin"
+after_dirs="$(find "$st_cache" | sort)"
+if [ "$before_dirs" = "$after_dirs" ]; then pass "the compaction lookup creates nothing"; else fail "the compaction lookup creates nothing"; fi
 
 # The same assertion over a ledger path carrying a double quote and a
 # backslash. This is what pins escape_for_json on the compaction path: without
@@ -1184,7 +1229,7 @@ else
     fail "session-start records the one-line notice budget"
 fi
 
-if grep -Fq 'the same cache key as scripts/sdd-dir but never calls it' "$HOOK_UNDER_TEST"; then
+if grep -Fq 'sdd-common.sh for the key but never calls sdd-dir' "$HOOK_UNDER_TEST"; then
     pass "session-start records that it never calls sdd-dir"
 else
     fail "session-start records that it never calls sdd-dir"

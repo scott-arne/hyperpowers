@@ -1,0 +1,144 @@
+# Portable SDD Dossiers — Eval Evidence
+
+Date: 2026-10-20 (runs on the dates recorded in the artifacts)
+Skills changed: using-git-worktrees, subagent-driven-development,
+finishing-a-development-branch, optimizing-performance (one sentence).
+Scripts added: `sdd-common.sh`, `sdd-state`, `tests/run-offline.sh`; rewritten: `sdd-dir`.
+
+Spec: `docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md`.
+Plan: `docs/hyperpowers/plans/2026-10-20-portable-sdd-dossiers.md`.
+
+**Where the run artifacts live.** Every path below resolves under the evals
+repository's committed evidence tree,
+`evals/evidence/2026-10-20-portable-sdd-dossiers/` (hyperpowers-evals commit
+`f579e4a0f454a5a456ef3694655831eb4bf30234`). Nothing in this note cites the SDD
+workspace.
+
+## Two-clone rehearsal (`rehearsal/`)
+
+Four Claude Code sessions on 2026-10-22, Opus 5.5 through Vertex, each against
+the plugin worktree at `e5218e9` and a cache root inside the rehearsal tree.
+Four clones of two bare origins stand in for hosts; `run-rehearsal.sh` drives
+them and `check-rehearsal.sh` reads the outcomes.
+
+Pass 0 (clone P, `--permission-mode acceptEdits`, Edit and Write deliberately
+left out of `--allowedTools`) answers what the spec assumes about writes under
+the state checkout. The session made 55 Bash calls, 4 Read, 2 Agent and 2 Write.
+Both Write calls addressed the state checkout —
+`plans/rehearsal-0797b45f/task-1-report.md` and `global-constraints.md` — and
+both came back `Claude requested permissions to write to <path>, but you haven't
+granted it yet.` Those two are the only denials in the transcript. Thirteen Bash
+calls wrote into the same checkout (the `noclobber` ledger creation, the heredoc
+appends, the report) and none were refused, so the ledger still reached
+`Task 1: complete (commits 3b7f456..84b5434, review clean; codex gate
+incomplete, recorded ungated)`, and both denied files exist, written through
+Bash instead. That is the footing the plain cache has today: Edit and Write under
+the cache need the human partner's own allow rules either way, Bash appends do
+not, and no ledger line depends on the tool that was denied. The session ended
+normally and stopped before Task 2. (`rehearsal/hostP-accept.jsonl`;
+`rehearsal/hostP-state-paths.txt` lists the 34 distinct state-checkout paths the
+session touched.)
+
+Pass 1 (clone A) executed Task 1 only: the implementer committed
+`d0a847b feat: first file` on `main` and the controller stopped there. Then
+`sdd-state handoff docs/hyperpowers/plans/rehearsal.md --push` printed
+`status=pushed sha=5f4133c code=main@d0a847b` (`rehearsal/handoff.txt`), and the
+script pushed `main` to the shared origin.
+
+Pass 2 (clone B, cloned after that push) resumed from the state branch alone.
+`sdd-state sync` printed `status=created local=5f4133c remote=5f4133c age=44`
+and `sdd-state verify` printed `status=ok tasks=1`. The session claimed the next
+task (`status=claimed task=2`), never wrote a `task-1-brief`, committed
+`fa2abc6 feat: second file`, ran the final review, and closed with
+`status=finished sha=a5f5134 last=5e31003fc8c13027af9e56050b31172a694dd020
+push=origin/hyperpowers/state`. Clone B's state key holds no `plans/` entry
+afterwards; clone A's and clone C's still do.
+
+Pass 3 (clone C, reset to the root commit so Task 1's commit is absent) stopped
+where it should. `sdd-state sync` printed
+`status=created local=5f4133c remote=5f4133c age=350`; `sdd-state verify`
+printed `status=code-missing missing=d0a847b branch=main`. The session claimed
+nothing, dispatched nothing, and asked the human partner to pull `main` before
+it would continue.
+
+One environment artifact runs through all four passes: the Codex companion could
+not create `~/.claude/plugins/data/codex-openai-codex/state/repo-*/jobs` on this
+host (EPERM, sandboxed and not), so every pass recorded its Codex gate as
+incomplete and logged the range in the ungated ledger instead of treating it as
+an approval. That is the documented behaviour for a gate that cannot run, and it
+left the state machinery under test untouched.
+
+`check-rehearsal.sh` output, verbatim:
+
+```
+  [PASS] A committed Task 1
+  [PASS] handoff pushed the state branch
+  [PASS] B ran sync
+  [PASS] B ran verify
+  [PASS] B did not re-dispatch Task 1
+  [PASS] B committed Task 2
+  [PASS] C saw code-missing
+  [PASS] C did not dispatch on a stale checkout
+  [INFO] pass 0: 70 lines mention permission; state-checkout paths touched: 34
+  [PASS] pass 0's session ended normally
+  [PASS] pass 0 wrote Task 1's completion line in host P's own ledger in acceptEdits mode
+rehearsal: 0 failed
+```
+
+(The `[INFO]` line counts every transcript line containing the word
+"permission", which includes the session's own mode announcements; the two real
+denials are the Write calls described above.)
+
+## Quorum scenario `sdd-plan-scoped-scratch` (`scenario-runs/`)
+
+Run `sdd-plan-scoped-scratch-claude-auto-20261022T165919Z-9490`, coding agent
+`claude-auto`, against the plugin worktree at `e5218e9`:
+`final pass`, reason `Gauntlet-Agent passed; 5 post-check(s) passed`. All seven
+pre-checks and all five post-checks passed (`scenario-runs/quorum-show.txt`,
+`scenario-runs/<run>/verdict.json`).
+
+The two layout facts the run shows. Plan A's seeded ledger lives at
+`workspaces/<run>/home/.cache/hyperpowers/state/01d6a2e76034ff1d5434c16e9767250a7d1194e6/plans/planA-89f00a91/progress.md`
+— inside the state checkout, under `state/<key>/plans/`, in the run's own home —
+and the scenario's `find ../home/.cache -name progress.md` check reaches it
+there without change. Plan B's workspace `plans/planB-7af75392` existed during
+the run (the Gauntlet-Agent saw the controller create and use it) and is gone
+after `sdd-state finish`: the negated post-check finds no surviving plan B
+ledger, while plan A's workspace is still complete beside it
+(`progress.md`, `review-task-1.md`, `task-1-brief.md`).
+
+The first attempt at this run,
+`sdd-plan-scoped-scratch-claude-auto-20261022T165752Z-7003`, is an instrument
+void, not a result: `setup.sh`'s
+`git init` failed inside the Bash sandbox with "Operation not permitted" while
+copying a hook sample. The run above is the same command with the sandbox off.
+It is not archived.
+
+## The branch question (`choice/`)
+
+`bash tests/claude-code/test-worktree-native-preference.sh choice 3` from the
+plugin worktree at `e5218e9` (`choice/run.txt`), verbatim:
+
+```
+  [PASS] CHOICE run 1: the three options in order, nothing created
+  [PASS] CHOICE run 2: the three options in order, nothing created
+  [PASS] CHOICE run 3: the three options in order, nothing created
+CHOICE: 3 passed, 0 failed
+```
+
+Half of each check is that the session created nothing, and the phase passes no
+`--allowed-tools`, so a session denied its tools would pass that half without
+being able to fail it. It was not: one further session on the same invocation
+(`choice/tooling-probe.jsonl`, run after the phase and not counted in the three)
+made four Bash calls — `git rev-parse --git-dir --git-common-dir`,
+`git rev-parse --show-superproject-working-tree`, `git branch --show-current`,
+and an `ls -a` of the fixture — each returning output with no permission denial
+anywhere in its transcript, and it still created no branch and no worktree. The
+sessions could act on the repository and chose to ask instead.
+
+## Offline suites
+
+`offline set: 0 failed` from `bash tests/run-offline.sh` at hyperpowers commit
+`0b868bd` (Task 15; 42 suites, one per `bash` call, in an unsandboxed shell with
+`brainstorm-server`'s node_modules installed). The per-suite logs are copied to
+`offline/`.

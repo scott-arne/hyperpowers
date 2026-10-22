@@ -360,6 +360,108 @@ else
     fail "hand-made file collision (rc $RC, err: $ERR, files: $(ls "$repo/docs/hyperpowers/decisions"))"
 fi
 
+# --- 11. index, Outcome line, staging, paths -------------------------------
+repo="$TEST_ROOT/stage"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-alpha-design.md <<'EOF'
+# Alpha
+
+**Date:** 2026-10-19
+
+## Decisions
+
+1. **Skill text, not a hook.** The rules live in the skill.
+2. **Evidence: a scenario, then a field rerun.** Two sources.
+EOF
+commit_all "$repo" "spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --paths-file "$TEST_ROOT/no-such-dir/x.paths"
+if [ "$RC" -eq 2 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "an unwritable --paths-file destination exits 2 before any write"; else fail "paths-file preflight (rc $RC, status: $(git -C "$repo" status --porcelain))"; fi
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --paths-file "$TEST_ROOT/stage.paths"
+if [ "$RC" -eq 0 ]; then pass "compile with --paths-file exits 0"; else fail "compile exit (got $RC: $ERR)"; fi
+idx="$repo/docs/hyperpowers/decisions/README.md"
+if [ -f "$idx" ] && grep -q '^2 current, 0 superseded\.$' "$idx"; then pass "index counts"; else fail "index counts (missing or wrong)"; fi
+if grep -q '^| 2026-10-19 | \[Skill text, not a hook\](2026-10-19-skill-text-not-a-hook.md) | \[2026-10-19-alpha-design.md\](../specs/2026-10-19-alpha-design.md) |$' "$idx"; then
+    pass "index row links the record and the spec"
+else
+    fail "index row:"; sed 's/^/        /' "$idx"
+fi
+if grep -q '^## Superseded' "$idx"; then fail "empty Superseded table rendered"; else pass "Superseded table omitted when empty"; fi
+case "$OUT" in *$'\n'"wrote docs/hyperpowers/decisions/README.md"$'\n'*) pass "index verb line" ;; *) fail "index verb line missing" ;; esac
+spec="$repo/docs/hyperpowers/specs/2026-10-19-alpha-design.md"
+if [ "$(sed -n 3p "$spec")" = "**Outcome:** implemented 2026-10-21; 2 decisions under docs/hyperpowers/decisions/." ]; then
+    pass "Outcome line inserted after the title and its blank line"
+else
+    fail "Outcome line (got line 3: $(sed -n 3p "$spec"))"
+fi
+case "$OUT" in *"updated docs/hyperpowers/specs/2026-10-19-alpha-design.md (outcome)"*) pass "spec verb line" ;; *) fail "spec verb line missing" ;; esac
+staged=$(git -C "$repo" diff --cached --name-only | sort | tr '\n' ' ')
+expected="docs/hyperpowers/decisions/2026-10-19-evidence-a-scenario-then-a-field-rerun.md docs/hyperpowers/decisions/2026-10-19-skill-text-not-a-hook.md docs/hyperpowers/decisions/README.md docs/hyperpowers/specs/2026-10-19-alpha-design.md "
+if [ "$staged" = "$expected" ]; then pass "records, index and spec are staged"; else fail "staged set (got: $staged)"; fi
+if [ "$(git -C "$repo" rev-list --count HEAD)" = "1" ]; then pass "no commit was made"; else fail "the compiler committed"; fi
+case "$OUT" in
+    *"paths: docs/hyperpowers/decisions/2026-10-19-evidence-a-scenario-then-a-field-rerun.md docs/hyperpowers/decisions/2026-10-19-skill-text-not-a-hook.md docs/hyperpowers/decisions/README.md docs/hyperpowers/specs/2026-10-19-alpha-design.md"*) pass "paths: line lists the staged set" ;;
+    *) fail "paths: line (got: $(printf '%s\n' "$OUT" | grep '^paths:'))" ;;
+esac
+if [ "$(tr '\0' '\n' < "$TEST_ROOT/stage.paths" | sort | tr '\n' ' ')" = "$staged" ]; then pass "--paths-file holds the same set, NUL-delimited"; else fail "paths file (got: $(tr '\0' ' ' < "$TEST_ROOT/stage.paths"))"; fi
+commit_all "$repo" "records"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --paths-file "$TEST_ROOT/stage2.paths"
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a second run changes nothing"; else fail "second run (rc $RC, status: $(git -C "$repo" status --porcelain))"; fi
+case "$OUT" in
+    *$'\n'"paths: "*) fail "paths: line not empty on an unchanged run" ;;
+    *"paths:"*) pass "paths: line is empty when nothing changed" ;;
+    *) fail "paths: line missing" ;;
+esac
+if [ ! -s "$TEST_ROOT/stage2.paths" ]; then pass "the paths file is empty when nothing changed"; else fail "paths file not empty"; fi
+printf '3. **A third one.** Added later.\n' >> "$spec"
+COMPILE_DATE=2026-10-23 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md
+if [ "$(sed -n 3p "$spec")" = "**Outcome:** implemented 2026-10-21; 3 decisions under docs/hyperpowers/decisions/." ]; then pass "the Outcome line keeps its date and takes the new count"; else fail "Outcome after add (got: $(sed -n 3p "$spec"))"; fi
+if [ "$(grep -c '^\*\*Outcome:\*\*' "$spec")" = "1" ]; then pass "the Outcome line is not duplicated"; else fail "Outcome line duplicated"; fi
+# A retry after a failed first attempt: the files exist unstaged, and the
+# next run must stage them even though it changes nothing.
+commit_all "$repo" "records 2"
+git -C "$repo" rm -q --cached docs/hyperpowers/decisions/2026-10-19-a-third-one.md
+git -C "$repo" commit -q -m "simulate: record written but never staged"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md
+if git -C "$repo" diff --cached --name-only | grep -q '2026-10-19-a-third-one.md'; then pass "a run stages a compiler-owned file an earlier run wrote but never staged"; else fail "unstaged file not picked up (staged: $(git -C "$repo" diff --cached --name-only | tr '\n' ' '))"; fi
+case "$OUT" in *"paths: docs/hyperpowers/decisions/2026-10-19-a-third-one.md"*) pass "paths: carries the inherited staged file" ;; *) fail "paths after inherited staging (got: $(printf '%s\n' "$OUT" | grep '^paths:'))" ;; esac
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --dry-run
+case "$OUT" in *"paths: "*"2026-10-19-a-third-one.md"*) pass "dry run prints the paths it would stage" ;; *) fail "dry-run paths (got: $OUT)" ;; esac
+
+# --- 12. index escaping and a spec without a title -------------------------
+repo="$TEST_ROOT/escape"
+make_repo "$repo"
+write_spec "$repo" 2026-06-06-esc-design.md <<'EOF'
+No title line here.
+
+## Decisions
+
+- **Pipes | and [brackets] survive.** Text.
+EOF
+commit_all "$repo" "spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-06-06-esc-design.md
+if grep -q '\[Pipes \\| and \\\[brackets\\\] survive\]' "$repo/docs/hyperpowers/decisions/README.md"; then pass "index escapes | [ ] in the title"; else fail "index escaping (got: $(grep Pipes "$repo/docs/hyperpowers/decisions/README.md"))"; fi
+if [ "$(sed -n 1p "$repo/docs/hyperpowers/specs/2026-06-06-esc-design.md")" = "**Outcome:** implemented 2026-10-21; 1 decisions under docs/hyperpowers/decisions/." ]; then pass "a spec without a title gets the Outcome line first"; else fail "Outcome placement without a title (got: $(sed -n 1p "$repo/docs/hyperpowers/specs/2026-06-06-esc-design.md"))"; fi
+run_compile "$repo" docs/hyperpowers/specs/2026-06-06-esc-design.md --dry-run --dry-run
+if [ "$RC" -eq 2 ]; then pass "a repeated option is a usage error"; else fail "repeated --dry-run (got $RC)"; fi
+
+# --- 12b. a symlinked records directory is refused (correction 2026-10-22) ----
+repo="$TEST_ROOT/symlinked"
+make_repo "$repo"
+mkdir -p "$TEST_ROOT/outside"
+ln -s "$TEST_ROOT/outside" "$repo/docs/hyperpowers/decisions"
+write_spec "$repo" 2026-09-09-link-design.md <<'EOF'
+# Link
+
+## Decisions
+
+- **Would escape.** The records directory is a link to the outside.
+EOF
+commit_all "$repo" "spec and link"
+run_compile "$repo" docs/hyperpowers/specs/2026-09-09-link-design.md
+if [ "$RC" -eq 2 ]; then pass "a symlinked decisions directory exits 2"; else fail "symlinked decisions (rc $RC: $ERR)"; fi
+case "$ERR" in "docs/hyperpowers/specs/2026-09-09-link-design.md: docs/hyperpowers/decisions exists but is not a plain directory"*) pass "the symlink message names the spec and the rule" ;; *) fail "symlink message (got: $ERR)" ;; esac
+if [ -z "$(ls -A "$TEST_ROOT/outside")" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "nothing is written through the link"; else fail "something was written outside: $(ls -A "$TEST_ROOT/outside")"; fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

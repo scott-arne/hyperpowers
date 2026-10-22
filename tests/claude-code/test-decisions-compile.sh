@@ -249,6 +249,8 @@ write_spec "$repo" 2026-05-05-three-design.md <<'EOF'
 
 - **Same title.** A fourth whose suffixed name is taken too.
 EOF
+# Tracked, so the refusal under test is the collision and not the untracked spec.
+git -C "$repo" add docs/hyperpowers/specs/2026-05-05-three-design.md
 run_compile "$repo" docs/hyperpowers/specs/2026-05-05-three-design.md
 if [ "$RC" -eq 2 ]; then pass "a third collision exits 2 asking for a distinct title"; else fail "third collision (rc $RC)"; fi
 case "$ERR" in *"distinct title"*) pass "collision message names the remedy" ;; *) fail "collision message (got: $ERR)" ;; esac
@@ -1355,6 +1357,7 @@ EOF
 printf '# Plan\n\n**Spec:** docs/hyperpowers/specs/2026-08-01-new-design.md\n' > "$repo/docs/hyperpowers/plans/2026-08-01-new.md"
 commit_all "$repo" "new spec and plan"
 before=$(git -C "$repo" write-tree)
+spec_sum=$(cksum < "$repo/docs/hyperpowers/specs/2026-08-01-new-design.md")
 printf 'unrelated\n' > "$repo/other.txt"
 git -C "$repo" add other.txt
 run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md --plan docs/hyperpowers/plans/2026-08-01-new.md
@@ -1364,6 +1367,7 @@ if [ "$RC" -eq 0 ] && [ "$(git -C "$repo" status --porcelain)" = "A  other.txt" 
 if grep -q '^- Status: accepted$' "$repo/docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md"; then pass "--undo restores the target's accepted status"; else fail "target status after undo: $(grep '^- Status' "$repo/docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md")"; fi
 git -C "$repo" reset -q other.txt && rm "$repo/other.txt"
 if [ "$(git -C "$repo" write-tree)" = "$before" ]; then pass "--undo returns the index to its pre-run tree"; else fail "index differs from the pre-run tree"; fi
+if [ "$(cksum < "$repo/docs/hyperpowers/specs/2026-08-01-new-design.md")" = "$spec_sum" ]; then pass "--undo restores the spec byte for byte"; else fail "spec differs after undo"; fi
 case "$OUT" in *"restored docs/hyperpowers/plans/2026-08-01-new.md"*) pass "--undo reports what it restored" ;; *) fail "undo output (got: $OUT)" ;; esac
 # A records directory emptied by undo disappears.
 repo="$TEST_ROOT/undo2"
@@ -1380,8 +1384,8 @@ run_compile "$repo" docs/hyperpowers/specs/2026-10-19-beta-design.md
 run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-beta-design.md
 if [ "$RC" -eq 0 ] && [ ! -d "$repo/docs/hyperpowers/decisions" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "--undo removes an emptied records directory"; else fail "undo2 (rc $RC, status: $(git -C "$repo" status --porcelain), dir: $(ls "$repo/docs/hyperpowers/decisions" 2>/dev/null))"; fi
 
-# A never-committed spec is unstaged, not deleted. Its content stays as the
-# compiler left it (the Outcome line stays: there is no HEAD copy to restore).
+# An untracked spec is refused in compile and undo modes: the Outcome line
+# would stay behind with the records gone, or the only copy would be deleted.
 repo="$TEST_ROOT/undo3"
 make_repo "$repo"
 write_spec "$repo" 2026-10-19-delta-design.md <<'EOF'
@@ -1391,10 +1395,13 @@ write_spec "$repo" 2026-10-19-delta-design.md <<'EOF'
 
 - **Only one.** Text.
 EOF
-run_compile "$repo" docs/hyperpowers/specs/2026-10-19-delta-design.md
-run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-delta-design.md
-if [ "$RC" -eq 0 ] && [ -f "$repo/docs/hyperpowers/specs/2026-10-19-delta-design.md" ] && [ "$(git -C "$repo" status --porcelain -uall)" = "?? docs/hyperpowers/specs/2026-10-19-delta-design.md" ] && [ ! -d "$repo/docs/hyperpowers/decisions" ]; then pass "--undo keeps a never-committed spec as an untracked file and removes the records"; else fail "undo3 (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain | tr '\n' ';'))"; fi
-case "$OUT" in *"restored docs/hyperpowers/specs/2026-10-19-delta-design.md"*) pass "--undo still reports the spec" ;; *) fail "undo3 output (got: $OUT)" ;; esac
+before_status=$(git -C "$repo" status --porcelain -uall)
+for mode_args in "" "--undo"; do
+    # shellcheck disable=SC2086
+    run_compile "$repo" $mode_args docs/hyperpowers/specs/2026-10-19-delta-design.md
+    if [ "$RC" -eq 2 ] && [ "$(git -C "$repo" status --porcelain -uall)" = "$before_status" ] && [ ! -d "$repo/docs/hyperpowers/decisions" ]; then pass "an untracked spec exits 2 and writes nothing${mode_args:+ ($mode_args)}"; else fail "untracked spec ${mode_args:-compile} (rc $RC, err: $ERR)"; fi
+    case "$ERR" in *"docs/hyperpowers/specs/2026-10-19-delta-design.md: spec is not tracked by git; commit it before the records compile"*) pass "the untracked-spec message names the spec${mode_args:+ ($mode_args)}" ;; *) fail "untracked message (got: $ERR)" ;; esac
+done
 # Nothing staged: undo is a no-op.
 repo="$TEST_ROOT/undo4"
 make_repo "$repo"
@@ -1408,6 +1415,64 @@ EOF
 commit_all "$repo" "spec"
 run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-eps-design.md
 if [ "$RC" -eq 0 ] && [ -z "$OUT" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "--undo with nothing staged prints nothing and changes nothing"; else fail "undo4 (rc $RC, out: $OUT, status: $(git -C "$repo" status --porcelain))"; fi
+
+# A failed deletion leaves the staged entry, so the retry completes the undo.
+repo="$TEST_ROOT/undo5"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-zeta-design.md <<'EOF'
+# Zeta
+
+## Decisions
+
+- **Only one.** Text.
+EOF
+commit_all "$repo" "spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-zeta-design.md
+chmod 555 "$repo/docs/hyperpowers/decisions"
+if [ -w "$repo/docs/hyperpowers/decisions" ]; then
+    chmod 755 "$repo/docs/hyperpowers/decisions"
+    pass "directory stays writable for this user; the failed-deletion retry check is skipped"
+else
+    run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-zeta-design.md
+    chmod 755 "$repo/docs/hyperpowers/decisions"
+    if [ "$RC" -eq 3 ] && [ -n "$(git -C "$repo" ls-files -- docs/hyperpowers/decisions)" ]; then pass "a failed deletion exits 3 and keeps the record's index entry"; else fail "undo5 first (rc $RC, err: $ERR)"; fi
+    case "$ERR" in "docs/hyperpowers/specs/2026-10-19-zeta-design.md: cannot delete "*"; run the same command again to complete the undo") pass "the failed-deletion message names the spec and the remedy" ;; *) fail "undo5 message (got: $ERR)" ;; esac
+    run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-zeta-design.md
+    if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "the retried --undo completes and leaves the tree clean"; else fail "undo5 retry (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+fi
+
+# A plan deletion that git would pair with a similar record addition as a
+# rename is still listed and still restored (git diff --no-renames).
+scratch="$TEST_ROOT/rename-scratch"
+make_repo "$scratch"
+write_spec "$scratch" 2026-10-19-ren-design.md <<'EOF'
+# Ren
+
+## Decisions
+
+- **Only one.** Text.
+EOF
+commit_all "$scratch" "spec"
+run_compile "$scratch" docs/hyperpowers/specs/2026-10-19-ren-design.md
+repo="$TEST_ROOT/rename"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-ren-design.md <<'EOF'
+# Ren
+
+## Decisions
+
+- **Only one.** Text.
+EOF
+{ printf '**Spec:** docs/hyperpowers/specs/2026-10-19-ren-design.md\n'; cat "$scratch/docs/hyperpowers/decisions/2026-10-19-only-one.md"; } > "$repo/docs/hyperpowers/plans/2026-10-19-ren.md"
+commit_all "$repo" "spec and a plan that resembles its record"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-ren-design.md --plan docs/hyperpowers/plans/2026-10-19-ren.md --paths-file "$TEST_ROOT/ren.z"
+pathlist=$(tr '\0' '\n' < "$TEST_ROOT/ren.z")
+case "$pathlist" in
+    *"docs/hyperpowers/plans/2026-10-19-ren.md"*"docs/hyperpowers/decisions/2026-10-19-only-one.md"*|*"docs/hyperpowers/decisions/2026-10-19-only-one.md"*"docs/hyperpowers/plans/2026-10-19-ren.md"*) pass "the pathspec file lists both the deleted plan and the similar new record" ;;
+    *) fail "rename fold (rc $RC, paths: $pathlist)" ;;
+esac
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-ren-design.md --plan docs/hyperpowers/plans/2026-10-19-ren.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "--undo restores a plan that git would pair with a record as a rename"; else fail "rename undo (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
 
 # --- 25. a later day with an unchanged spec --------------------------------
 repo="$TEST_ROOT/gitfail-rm"

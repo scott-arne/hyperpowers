@@ -83,6 +83,9 @@ else
   root=$(git -C "$spec_dir" rev-parse --show-toplevel 2>/dev/null) || die2 "$spec: not inside a git repository"
   root=$(cd "$root" && pwd -P)
   spec_rel=${spec_abs#"$root"/}
+  # The Outcome line is written into the spec, and undo deletes whatever HEAD
+  # lacks; an untracked spec would be left falsely marked implemented or lost.
+  [ "$(git -C "$root" ls-files -- "$spec_rel")" = "$spec_rel" ] || die2 "$spec_rel: spec is not tracked by git; commit it before the records compile"
   records_dir="$(dirname "$spec_dir")/decisions"
   records_rel=${records_dir#"$root"/}
   case "$records_dir" in
@@ -503,9 +506,10 @@ if [ "$mode" = undo ]; then
     if git -C "$root" cat-file -e "HEAD:$p" 2>/dev/null; then
       git -C "$root" restore --staged --worktree -- "$p" || die3 "$spec_rel: git restore failed for $p"
     else
+      # The file goes first, so a failed deletion leaves the staged entry for
+      # the retry to find.
+      rm -f "$root/$p" 2>/dev/null || die3 "$spec_rel: cannot delete $p; run the same command again to complete the undo"
       git -C "$root" rm --cached --quiet -- "$p" || die3 "$spec_rel: git rm --cached failed for $p"
-      # A never-committed spec is the user's only copy; it is unstaged, not deleted.
-      if [ "$p" != "$spec_rel" ]; then rm -f "$root/$p"; fi
     fi
     echo "restored $p"
   done < "$tmp/undo.z"

@@ -503,6 +503,59 @@ fi
 # deleted. Anything else staged is left alone.
 if [ "$mode" = undo ]; then
   git -C "$root" diff --cached --name-only --no-renames -z -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"} > "$tmp/undo.z" || die3 "$spec_rel: git diff --cached failed"
+  undo_blob() { git -C "$root" show "$1" > "$2" 2>/dev/null; }
+  is_my_record() {  # a record copy -> 0 when its identity names this spec
+    case "$(existing_field "$1" Spec)" in "$spec_rel (decision "*) return 0 ;; esac
+    return 1
+  }
+  drop_status() {  # a record copy -> the same text without its first Status line
+    awk '!r && index($0, "- Status: ") == 1 { r = 1; next } { print }' "$1" > "$2"
+  }
+  names_my_record() {  # a Status value -> 0 when it lists a record of this spec
+    local st=$1 q
+    case "$st" in "superseded by "*) ;; *) return 1 ;; esac
+    printf '%s\n' "${st#superseded by }" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | awk 'length' > "$tmp/undo-named"
+    while IFS= read -r q; do
+      if undo_blob ":$q" "$tmp/undo-q" || undo_blob "HEAD:$q" "$tmp/undo-q"; then
+        if is_my_record "$tmp/undo-q"; then return 0; fi
+      fi
+    done < "$tmp/undo-named"
+    return 1
+  }
+  # The records directory is shared, so a staged path under it is not
+  # necessarily this compile's work. A second spec compiled before the commit
+  # would be restored or deleted here while its own staged Outcome line stayed
+  # behind, pointing at records that are gone. Every staged record must be
+  # attributable to this spec first: either it carries this spec's identity,
+  # or it is a target this compile superseded, whose staged change is the
+  # Status line alone and whose Status names a record of this spec.
+  while IFS= read -r -d '' p; do
+    case "$p" in "$records_rel"/*) ;; *) continue ;; esac
+    if [ "$p" = "$index_rel" ]; then continue; fi
+    have_idx=false; have_head=false
+    if undo_blob ":$p" "$tmp/undo-idx"; then have_idx=true; fi
+    if undo_blob "HEAD:$p" "$tmp/undo-head"; then have_head=true; fi
+    # A staged deletion has no index copy; its identity comes from HEAD.
+    ident=""
+    if $have_idx; then ident="$tmp/undo-idx"; elif $have_head; then ident="$tmp/undo-head"; fi
+    owned=false
+    if [ -n "$ident" ] && is_my_record "$ident"; then
+      owned=true
+    elif $have_idx && $have_head; then
+      drop_status "$tmp/undo-idx" "$tmp/undo-idx.body"
+      drop_status "$tmp/undo-head" "$tmp/undo-head.body"
+      if cmp -s "$tmp/undo-idx.body" "$tmp/undo-head.body"; then
+        if names_my_record "$(existing_field "$tmp/undo-idx" Status)" || names_my_record "$(existing_field "$tmp/undo-head" Status)"; then owned=true; fi
+      fi
+    fi
+    $owned || die2 "$spec_rel: --undo refused: $p is staged but belongs to another compile; commit or undo it first"
+  done < "$tmp/undo.z"
+  # An edit made after the compile is not this compile's text, and the restore
+  # below would discard it without a trace.
+  while IFS= read -r -d '' p; do
+    if [ ! -e "$root/$p" ]; then continue; fi
+    git -C "$root" diff --quiet -- "$p" || die2 "$spec_rel: --undo refused: $p was edited after the compile; commit or stash the edit first"
+  done < "$tmp/undo.z"
   while IFS= read -r -d '' p; do
     if git -C "$root" cat-file -e "HEAD:$p" 2>/dev/null; then
       git -C "$root" restore --staged --worktree -- "$p" || die3 "$spec_rel: git restore failed for $p"

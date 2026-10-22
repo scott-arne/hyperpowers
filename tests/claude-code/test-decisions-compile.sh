@@ -1485,6 +1485,65 @@ esac
 run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-ren-design.md --plan docs/hyperpowers/plans/2026-10-19-ren.md
 if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "--undo restores a plan that git would pair with a record as a rename"; else fail "rename undo (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
 
+# Two compiles staged at once. The records directory is shared, so undoing
+# one spec while the other's Outcome line stays staged would leave that spec
+# pointing at records that are gone. Until one of them is committed each
+# blocks the other's undo, so the operator commits or undoes in order.
+repo="$TEST_ROOT/undo6"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-one-design.md <<'EOF'
+# One
+
+## Decisions
+
+- **Alpha choice.** Text.
+EOF
+write_spec "$repo" 2026-10-19-two-design.md <<'EOF'
+# Two
+
+## Decisions
+
+- **Beta choice.** Text.
+EOF
+commit_all "$repo" "two specs"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-one-design.md
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-two-design.md
+before_status=$(git -C "$repo" status --porcelain -uall)
+sum_one=$(cksum < "$repo/docs/hyperpowers/decisions/2026-10-19-alpha-choice.md")
+sum_two=$(cksum < "$repo/docs/hyperpowers/decisions/2026-10-19-beta-choice.md")
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-two-design.md
+if [ "$RC" -eq 2 ] && [ "$(git -C "$repo" status --porcelain -uall)" = "$before_status" ] && [ "$(cksum < "$repo/docs/hyperpowers/decisions/2026-10-19-alpha-choice.md")" = "$sum_one" ] && [ "$(cksum < "$repo/docs/hyperpowers/decisions/2026-10-19-beta-choice.md")" = "$sum_two" ]; then pass "--undo refuses while another spec's compile is staged, and writes nothing"; else fail "undo6 (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+case "$ERR" in *"--undo refused: docs/hyperpowers/decisions/2026-10-19-alpha-choice.md is staged but belongs to another compile; commit or undo it first"*) pass "the refusal names the other compile's record" ;; *) fail "undo6 message (got: $ERR)" ;; esac
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-one-design.md
+if [ "$RC" -eq 2 ] && [ "$(git -C "$repo" status --porcelain -uall)" = "$before_status" ]; then pass "the first spec's --undo is refused the same way, writing nothing"; else fail "undo6 reverse (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+case "$ERR" in *"--undo refused: docs/hyperpowers/decisions/2026-10-19-beta-choice.md is staged but belongs to another compile"*) pass "the reverse refusal names the second compile's record" ;; *) fail "undo6 reverse message (got: $ERR)" ;; esac
+git -C "$repo" commit -q -m "one" -- docs/hyperpowers/decisions/2026-10-19-alpha-choice.md docs/hyperpowers/decisions/README.md docs/hyperpowers/specs/2026-10-19-one-design.md
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-two-design.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ] && [ ! -e "$repo/docs/hyperpowers/decisions/2026-10-19-beta-choice.md" ] && [ -f "$repo/docs/hyperpowers/decisions/2026-10-19-alpha-choice.md" ]; then pass "once the other compile is committed the undo runs and leaves its records alone"; else fail "undo6 after commit (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+
+# An edit made after the compile is not the compile's text; the restore would
+# discard it without a trace.
+repo="$TEST_ROOT/undo7"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-eta-design.md <<'EOF'
+# Eta
+
+## Decisions
+
+- **Only one.** Text.
+EOF
+commit_all "$repo" "spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-eta-design.md
+printf 'A line your human partner added.\n' >> "$repo/docs/hyperpowers/decisions/2026-10-19-only-one.md"
+before_status=$(git -C "$repo" status --porcelain -uall)
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-eta-design.md
+if [ "$RC" -eq 2 ] && [ "$(git -C "$repo" status --porcelain -uall)" = "$before_status" ]; then pass "--undo refuses when a record was edited after the compile, and writes nothing"; else fail "undo7 (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+case "$before_status" in *"AM docs/hyperpowers/decisions/2026-10-19-only-one.md"*) pass "the edited record stays staged-added and modified across the refusal" ;; *) fail "undo7 fixture status (got: $before_status)" ;; esac
+case "$ERR" in *"--undo refused: docs/hyperpowers/decisions/2026-10-19-only-one.md was edited after the compile; commit or stash the edit first"*) pass "the refusal names the edited record" ;; *) fail "undo7 message (got: $ERR)" ;; esac
+git -C "$repo" add docs/hyperpowers/decisions/2026-10-19-only-one.md
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-eta-design.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "a staged edit is part of the run again, so --undo completes and leaves the tree clean"; else fail "undo7 staged edit (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+
 # --- 25. a later day with an unchanged spec --------------------------------
 repo="$TEST_ROOT/gitfail-rm"
 commit_all "$repo" "records"

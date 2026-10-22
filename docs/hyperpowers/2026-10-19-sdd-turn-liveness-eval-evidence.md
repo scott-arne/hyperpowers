@@ -83,7 +83,54 @@ window spans 14 Claude Code versions, 2.1.207 to 2.1.300, and six model ids.
 
 ## Scenario results
 
-Filled in by plan Task 12, after the treatment arm runs and the tally decides.
+Both arms ran on 2026-10-22, control first (03:34Z to 06:49Z), treatment
+second (17:53Z to 19:42Z), ten valid runs each. Every number here is read
+from `evals/evidence/2026-10-19-sdd-turn-liveness/tally.txt`; the full table,
+the per-measure verdicts and the limits are that directory's `README.md`
+under "Results", and the archived runs are `task-11-runs/control/` (sixteen
+run records: ten counted, one capped void, five transport voids) and
+`task-12-runs/treatment/` (ten, no voids).
+
+| Measure | Control (v6.16.1) | Treatment (c353fc7) |
+|---|---|---|
+| Valid runs | 10 | 10 |
+| Dispatches, foreground / background | 99 / 33 | 132 / 0 |
+| Foreground share | 0.75 | 1.0 |
+| Live-work turn ends | 71 | 0 |
+| Premature stops (runs with none) | 1 (9) | 1 (9) |
+| Both slow-command measures | 0 of 10 | 8 of 10 |
+| Untracked launches | 0 | 0 |
+| Successful runs | 8 | 8 |
+
+Against the pre-registered rule: **W1** 1.0 against a 0.9 threshold, PASS;
+**W2** 0 live-work turn ends against at most one, PASS; **F** 8 of 10 against
+at least nine, FAIL; **U** 0 untracked launches, PASS; **P** measured, since
+control has one premature stop, and treatment's 1 is not lower than
+control's, FAIL, although 9 of its ten runs have none; **R** 8 successful
+runs against at least seven and at least control's 8 minus one, PASS.
+
+**decision: FAIL.**
+
+The behavioral separation the change was written for is large and one-sided:
+every treatment dispatch ran in the foreground and no treatment turn ended
+with work live, against 33 background dispatches and 71 live-work turn ends
+in control. The campaign still fails its own rule. Both F misses are the same
+shape: p8 (`…184730Z-c05c`) and p10 (`…184831Z-16ed`) each launched the
+twelve-minute test as a tracked background job and watched it in a foreground
+call that printed `exit=0` more than 600 s later, p8 through a shell variable
+and p10 through a relative path after a `cd`, neither of which the pinned
+analyzer pairs to its job. No Correction was made for it: the shape was found
+while reading the treatment arm's own results, where changing the instrument
+would be post-hoc. The same two runs are treatment's only unsuccessful ones
+and the source of its single premature stop, and P in any case rests on one
+control event in ten runs, which cannot separate the arms either way.
+
+Four Corrections were made to the pinned analyzers, each recorded in the
+campaign README before the tally it affected: the uncapped transport void
+(1), the ledger mark written after a literal `printf` newline (2), the
+shell's own escape rules together with the rule that a written grader result
+stays a capped void (3), and `echo -e` located in the interpreted segment
+(4).
 
 ## Release
 

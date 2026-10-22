@@ -1544,6 +1544,59 @@ git -C "$repo" add docs/hyperpowers/decisions/2026-10-19-only-one.md
 run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-eta-design.md
 if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "a staged edit is part of the run again, so --undo completes and leaves the tree clean"; else fail "undo7 staged edit (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
 
+# A file recreated at the path of a staged deletion is untracked relative to
+# the index, so the edit check says nothing about it while the restore would
+# overwrite it with HEAD's copy. At the plan's path the plan preflight gets
+# there first, with its own message; every other path is the new check's.
+repo="$TEST_ROOT/undo8"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-theta-design.md <<'EOF'
+# Theta
+
+## Decisions
+
+- **Only one.** Text.
+EOF
+printf '# Plan\n\n**Spec:** docs/hyperpowers/specs/2026-10-19-theta-design.md\n' > "$repo/docs/hyperpowers/plans/2026-10-19-theta.md"
+commit_all "$repo" "spec and plan"
+plan_head_sum=$(cksum < "$repo/docs/hyperpowers/plans/2026-10-19-theta.md")
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-theta-design.md --plan docs/hyperpowers/plans/2026-10-19-theta.md
+# git prunes the plans directory when its last file goes.
+mkdir -p "$repo/docs/hyperpowers/plans"
+printf 'recreated\n' > "$repo/docs/hyperpowers/plans/2026-10-19-theta.md"
+plan_sum=$(cksum < "$repo/docs/hyperpowers/plans/2026-10-19-theta.md")
+before_status=$(git -C "$repo" status --porcelain -uall)
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-theta-design.md --plan docs/hyperpowers/plans/2026-10-19-theta.md
+if [ "$RC" -eq 2 ] && [ "$(cksum < "$repo/docs/hyperpowers/plans/2026-10-19-theta.md")" = "$plan_sum" ] && [ "$(git -C "$repo" status --porcelain -uall)" = "$before_status" ]; then pass "--undo refuses while a recreated plan sits at the staged deletion's path, and writes nothing"; else fail "undo8 plan (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+case "$before_status" in *"D  docs/hyperpowers/plans/2026-10-19-theta.md"*"?? docs/hyperpowers/plans/2026-10-19-theta.md"*) pass "the recreated plan is a staged deletion with an untracked file at its path" ;; *) fail "undo8 fixture status (got: $(printf '%s' "$before_status" | tr '\n' ';'))" ;; esac
+case "$ERR" in *"plan is not tracked by git; commit it before the records compile: docs/hyperpowers/plans/2026-10-19-theta.md"*) pass "the plan preflight refuses the recreated plan before the undo block" ;; *) fail "undo8 plan message (got: $ERR)" ;; esac
+mv "$repo/docs/hyperpowers/plans/2026-10-19-theta.md" "$TEST_ROOT/theta-recreated.md"
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-theta-design.md --plan docs/hyperpowers/plans/2026-10-19-theta.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ] && [ "$(cksum < "$repo/docs/hyperpowers/plans/2026-10-19-theta.md")" = "$plan_head_sum" ]; then pass "once the recreation is moved aside --undo restores HEAD's plan"; else fail "undo8 after mv (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+# A record, whose path no preflight looks at, reaches the new check.
+repo="$TEST_ROOT/undo9"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-iota-design.md <<'EOF'
+# Iota
+
+## Decisions
+
+- **Only one.** Text.
+EOF
+commit_all "$repo" "spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-iota-design.md
+commit_all "$repo" "records"
+git -C "$repo" rm -q docs/hyperpowers/decisions/2026-10-19-only-one.md
+printf 'recreated by hand\n' > "$repo/docs/hyperpowers/decisions/2026-10-19-only-one.md"
+rec_sum=$(cksum < "$repo/docs/hyperpowers/decisions/2026-10-19-only-one.md")
+before_status=$(git -C "$repo" status --porcelain -uall)
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-iota-design.md
+if [ "$RC" -eq 2 ] && [ "$(cksum < "$repo/docs/hyperpowers/decisions/2026-10-19-only-one.md")" = "$rec_sum" ] && [ "$(git -C "$repo" status --porcelain -uall)" = "$before_status" ]; then pass "--undo refuses when a record was recreated after its deletion was staged, and writes nothing"; else fail "undo9 (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+case "$ERR" in *"--undo refused: docs/hyperpowers/decisions/2026-10-19-only-one.md was recreated after the compile; move it aside or stage it first"*) pass "the refusal names the recreated record" ;; *) fail "undo9 message (got: $ERR)" ;; esac
+mv "$repo/docs/hyperpowers/decisions/2026-10-19-only-one.md" "$TEST_ROOT/iota-recreated.md"
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-iota-design.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "once the recreation is moved aside the record's staged deletion is undone"; else fail "undo9 after mv (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+
 # --- 25. a later day with an unchanged spec --------------------------------
 repo="$TEST_ROOT/gitfail-rm"
 commit_all "$repo" "records"

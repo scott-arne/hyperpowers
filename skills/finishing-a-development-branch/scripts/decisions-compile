@@ -554,6 +554,12 @@ if [ "$mode" = undo ]; then
   # below would discard it without a trace.
   while IFS= read -r -d '' p; do
     if [ ! -e "$root/$p" ]; then continue; fi
+    # A path whose deletion is staged and that exists again is untracked
+    # relative to the index, so git diff says nothing about it while the
+    # restore below would overwrite it with HEAD's copy.
+    if [ -z "$(git -C "$root" ls-files -z -- "$p" | tr '\0' '\n')" ]; then
+      die2 "$spec_rel: --undo refused: $p was recreated after the compile; move it aside or stage it first"
+    fi
     git -C "$root" diff --quiet -- "$p" || die2 "$spec_rel: --undo refused: $p was edited after the compile; commit or stash the edit first"
   done < "$tmp/undo.z"
   while IFS= read -r -d '' p; do

@@ -11,7 +11,7 @@ Plan: `docs/hyperpowers/plans/2026-10-20-portable-sdd-dossiers.md`.
 **Where the run artifacts live.** Every path below resolves under the evals
 repository's committed evidence tree,
 `evals/evidence/2026-10-20-portable-sdd-dossiers/` (hyperpowers-evals commit
-`f291f9a0afd895f2b9a1d7046407f1d5f7c912a8`). Nothing in this note cites the SDD
+`1e19e2a951ba08e1bec05ee696e5f0b8cf878276`). Nothing in this note cites the SDD
 workspace.
 
 ## Two-clone rehearsal (`rehearsal/`)
@@ -238,9 +238,14 @@ complete`. The control arm (`rehearsal/control/`) showed the plain cache path
 and the state checkout path behave identically in the default permission mode
 (both denied) and with `Write` allowed (both written). That is measured for the
 Write tool only: not Bash writes, not the operator's own allow rules, and not a
-checkout that `sdd-state` created. The Edit tool was not exercised in either arm
-(not observed: no pass or control session issued an Edit under either root); the
-assumption is resolved for Write only. The numbers and their limits are in the
+checkout that `sdd-state` created. The Edit arm (`rehearsal/control-edit/`)
+asked two sessions to Write and then Edit a file under each root. With `Write`
+and `Edit` allowed, both paths were written and both edited. In the default mode
+both Write calls were denied, and the Edit that followed each failed with `File
+does not exist`, not with a permission denial (not observed: Edit's own
+permission behavior in the default mode, because the Write denial left nothing
+to edit). The assumption is resolved for Write in both modes and for Edit only
+with it allowed. The numbers and their limits are in the
 "Two-clone rehearsal" section above.
 
 ### Open items
@@ -249,8 +254,8 @@ Eight ungated events from this plan's task gates await the final whole-branch
 gate, which the controller sweeps before the hand-back. Release readiness is
 conditional on that gate passing.
 The three slots marked not observed above (the four bergen checks counted as
-one, the work-repository dry run, and the Edit tool) are release inputs still
-open; the hand-back lists them.
+one, the work-repository dry run, and Edit in the default mode) are release
+inputs still open; the hand-back lists them.
 
 Two decisions the plan queued for the human partner are still open:
 
@@ -260,16 +265,25 @@ Two decisions the plan queued for the human partner are still open:
 
 ### Release commands
 
-The human partner runs these once this release is sequenced against the
+The human partner runs these once every slot above holds an observation or
+an explicit waiver, and once this release is sequenced against the
 `sdd-turn-liveness` plan. The version is `6.17.0` (the human partner chose it:
 this plan ships first). At release time the CHANGELOG's `## Unreleased` heading
 becomes `## 6.17.0 (<date>)`, with the date of the release day, before the bump.
+Pushes happen only on the human partner's go, which running this block is.
 
 ```bash
-# in the hyperpowers main checkout, after the branch is merged and the CHANGELOG heading is set to the version and date
+# in the hyperpowers main checkout, after the branch is merged: a clean tree first
+git status --short            # must print nothing
 bash scripts/bump-version.sh 6.17.0
-git commit -am "chore(release): 6.17.0"
+git add CHANGELOG.md package.json .claude-plugin/plugin.json .cursor-plugin/plugin.json .codex-plugin/plugin.json .kimi-plugin/plugin.json .claude-plugin/marketplace.json
+git diff --cached --stat      # only the CHANGELOG and the version manifests
+git commit -m "chore(release): 6.17.0"
 git tag -a v6.17.0 -m "Release v6.17.0"
-# install on each host: check out the tag in the plugin-install worktree, then
+git push origin main v6.17.0
+# on each host: the plugin-install worktree checks out the tag, then the plugin reloads
+git -C .worktrees/plugin-install fetch origin --tags
+git -C .worktrees/plugin-install checkout --detach v6.17.0
 claude plugin update hyperpowers@hyperpowers
+claude plugin list | grep hyperpowers   # expect 6.17.0
 ```

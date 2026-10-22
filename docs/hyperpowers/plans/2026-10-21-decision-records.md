@@ -2395,8 +2395,11 @@ has no records: for it, this step is the test run alone.
    Exit 2 for a missing decisions list is the legacy-spec case: draft the
    `## Decisions` list from the spec's own text, one item per decision it
    states, show it to your human partner, and write it into the spec once
-   they approve it. Any other exit 2 names a `Supersedes:` problem: resolve
-   it with them before going on. Keep the numbered listing for the extractor.
+   they approve it. Any other exit 2 names what to fix first (a spec that is
+   not committed, a plan that is not a tracked and clean markdown file under
+   `plans/` whose Spec header names this spec, or a `Supersedes:` problem):
+   resolve it with them before going on. Keep the numbered listing for the
+   extractor.
 3. **Dispatch the extractor, then run the suite.** Skip the dispatch when the
    hand-off already names an extractor (a task id and an output path), when
    the branch already carries this spec's records commit

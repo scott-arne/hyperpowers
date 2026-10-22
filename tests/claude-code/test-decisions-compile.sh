@@ -1331,6 +1331,95 @@ printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-setext-design.md\n\n
 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-setext-design.md --notes "$TEST_ROOT/notes-rule.md"
 if [ "$RC" -eq 0 ] && [ -z "$ERR" ] && grep -q '^And the tests\.$' "$repo/docs/hyperpowers/decisions/2026-10-19-first.md"; then pass "a thematic break after a blank line is body text, not a heading"; else fail "thematic break (rc $RC, err: $ERR)"; fi
 
+# --- 24. --undo, with a superseded target ---------------------------------
+repo="$TEST_ROOT/undo"
+make_repo "$repo"
+write_spec "$repo" 2026-07-01-old-design.md <<'EOF'
+# Old
+
+## Decisions
+
+- **Hook-based interlock.** A hook gates the first edit.
+EOF
+commit_all "$repo" "old spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-07-01-old-design.md
+commit_all "$repo" "old records"
+write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
+# New
+
+## Decisions
+
+- **Skill text, not a hook.** Measured no gain from the hook.
+  Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+EOF
+printf '# Plan\n\n**Spec:** docs/hyperpowers/specs/2026-08-01-new-design.md\n' > "$repo/docs/hyperpowers/plans/2026-08-01-new.md"
+commit_all "$repo" "new spec and plan"
+before=$(git -C "$repo" write-tree)
+printf 'unrelated\n' > "$repo/other.txt"
+git -C "$repo" add other.txt
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md --plan docs/hyperpowers/plans/2026-08-01-new.md
+if grep -q '^- Status: superseded by' "$repo/docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md"; then pass "undo fixture: the target is superseded before undo"; else fail "undo fixture did not supersede"; fi
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-08-01-new-design.md --plan docs/hyperpowers/plans/2026-08-01-new.md
+if [ "$RC" -eq 0 ] && [ "$(git -C "$repo" status --porcelain)" = "A  other.txt" ]; then pass "--undo restores spec, plan and the superseded record, removes the new record, keeps the unrelated staged file"; else fail "--undo (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain | tr '\n' ';'))"; fi
+if grep -q '^- Status: accepted$' "$repo/docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md"; then pass "--undo restores the target's accepted status"; else fail "target status after undo: $(grep '^- Status' "$repo/docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md")"; fi
+git -C "$repo" reset -q other.txt && rm "$repo/other.txt"
+if [ "$(git -C "$repo" write-tree)" = "$before" ]; then pass "--undo returns the index to its pre-run tree"; else fail "index differs from the pre-run tree"; fi
+case "$OUT" in *"restored docs/hyperpowers/plans/2026-08-01-new.md"*) pass "--undo reports what it restored" ;; *) fail "undo output (got: $OUT)" ;; esac
+# A records directory emptied by undo disappears.
+repo="$TEST_ROOT/undo2"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-beta-design.md <<'EOF'
+# Beta
+
+## Decisions
+
+- **Only one.** Text.
+EOF
+commit_all "$repo" "spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-beta-design.md
+run_compile "$repo" --undo docs/hyperpowers/specs/2026-10-19-beta-design.md
+if [ "$RC" -eq 0 ] && [ ! -d "$repo/docs/hyperpowers/decisions" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "--undo removes an emptied records directory"; else fail "undo2 (rc $RC, status: $(git -C "$repo" status --porcelain), dir: $(ls "$repo/docs/hyperpowers/decisions" 2>/dev/null))"; fi
+
+# --- 25. a later day with an unchanged spec --------------------------------
+repo="$TEST_ROOT/gitfail-rm"
+commit_all "$repo" "records"
+COMPILE_DATE=2026-11-30 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-gamma-design.md --plan docs/hyperpowers/plans/2026-10-19-gamma.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a later-day re-run on an unchanged spec changes nothing"; else fail "later-day re-run (status: $(git -C "$repo" status --porcelain))"; fi
+
+# --- 26. the mode table ----------------------------------------------------
+repo="$TEST_ROOT/undo2"
+for args in "--undo docs/hyperpowers/specs/2026-10-19-beta-design.md --notes x" "--undo docs/hyperpowers/specs/2026-10-19-beta-design.md --dry-run" "--undo docs/hyperpowers/specs/2026-10-19-beta-design.md --paths-file x" "--undo --reindex docs/hyperpowers/decisions" "--reindex docs/hyperpowers/decisions --plan x" "--reindex docs/hyperpowers/decisions --notes x" "docs/hyperpowers/specs/2026-10-19-beta-design.md --plan a --plan b" "docs/hyperpowers/specs/2026-10-19-beta-design.md --notes a --notes b"; do
+    # shellcheck disable=SC2086
+    run_compile "$repo" $args
+    if [ "$RC" -eq 2 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "usage error, nothing written: $args"; else fail "mode table: $args (rc $RC)"; fi
+done
+
+# --- 27. the plan binding is exact ---------------------------------------------
+# Correction (2026-10-22): Task 5's gate found at its cap that the Spec-header
+# binding's basename arms were suffix matches, so a plan written for a
+# same-named spec in another directory passed; the human partner carried the
+# exact-match rule and this test into Task 6.
+repo="$TEST_ROOT/twin"
+make_repo "$repo"
+mkdir -p "$repo/docs/other/specs" "$repo/docs/other/plans"
+write_spec "$repo" 2026-10-19-twin-design.md <<'EOF'
+# Twin
+
+## Decisions
+
+- **One.** Text.
+EOF
+printf '# Twin elsewhere\n\n## Decisions\n\n- **Other.** Text.\n' > "$repo/docs/other/specs/2026-10-19-twin-design.md"
+printf '# Plan\n\n**Spec:** docs/other/specs/2026-10-19-twin-design.md\n' > "$repo/docs/other/plans/2026-10-19-twin.md"
+printf '# Plan\n\n**Spec:** 2026-10-19-twin-design.md\n' > "$repo/docs/hyperpowers/plans/2026-10-19-twin.md"
+commit_all "$repo" "twins"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-twin-design.md --plan docs/other/plans/2026-10-19-twin.md
+if [ "$RC" -eq 2 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a plan naming a same-named spec in another directory is refused before any write"; else fail "twin plan (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"; fi
+case "$ERR" in *"plan names a different spec: docs/other/specs/2026-10-19-twin-design.md"*) pass "the twin refusal names the header's path" ;; *) fail "twin message (got: $ERR)" ;; esac
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-twin-design.md --plan docs/hyperpowers/plans/2026-10-19-twin.md
+if [ "$RC" -eq 0 ]; then pass "a bare-basename header still binds"; else fail "bare basename (rc $RC: $ERR)"; fi
+case "$OUT" in *"removed docs/hyperpowers/plans/2026-10-19-twin.md"*) pass "the bare-basename plan is removed" ;; *) fail "bare-basename removal line missing" ;; esac
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

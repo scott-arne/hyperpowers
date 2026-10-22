@@ -8,6 +8,7 @@
 # ever committed. Design: docs/hyperpowers/specs/2026-10-21-decision-records-design.md.
 #
 # Usage: decisions-compile SPEC [--plan PLAN] [--notes FILE] [--paths-file FILE] [--dry-run]
+#        decisions-compile --undo SPEC [--plan PLAN]
 #        decisions-compile --reindex RECORDS_DIR
 # Exit 2: an input problem (no spec, no decisions list, an unresolvable
 # filename collision); nothing has been written. Exit 3: a write failure
@@ -24,6 +25,7 @@ export GIT_LITERAL_PATHSPECS=1
 
 usage() {
   echo "usage: decisions-compile SPEC [--plan PLAN] [--notes FILE] [--paths-file FILE] [--dry-run]" >&2
+  echo "       decisions-compile --undo SPEC [--plan PLAN]" >&2
   echo "       decisions-compile --reindex RECORDS_DIR" >&2
   exit 2
 }
@@ -41,14 +43,16 @@ while [ $# -gt 0 ]; do
     --notes) [ $# -ge 2 ] || usage; [ -z "$notes" ] || usage; notes=$2; shift 2 ;;
     --plan) [ $# -ge 2 ] || usage; [ -z "$plan" ] || usage; plan=$2; shift 2 ;;
     --paths-file) [ $# -ge 2 ] || usage; [ -z "$paths_file" ] || usage; paths_file=$2; shift 2 ;;
+    --undo) [ "$mode" = compile ] || usage; mode=undo; shift ;;
     --reindex) [ $# -ge 2 ] || usage; [ "$mode" = compile ] || usage; mode=reindex; reindex_dir=$2; shift 2 ;;
     -*) usage ;;
     *) [ -z "$spec" ] || usage; spec=$1; shift ;;
   esac
 done
 case "$mode" in
-  reindex) if [ -n "$spec" ] || [ -n "$paths_file" ] || [ -n "$notes" ] || [ -n "$plan" ] || $dry_run; then usage; fi ;;
-  *) [ -n "$spec" ] || usage ;;
+  reindex) if [ -n "$spec" ] || [ -n "$plan" ] || [ -n "$notes" ] || [ -n "$paths_file" ] || $dry_run; then usage; fi ;;
+  undo) if [ -z "$spec" ] || [ -n "$notes" ] || [ -n "$paths_file" ] || $dry_run; then usage; fi ;;
+  compile) [ -n "$spec" ] || usage ;;
 esac
 
 die2() { echo "$1" >&2; exit 2; }
@@ -193,14 +197,16 @@ if [ -n "$plan" ]; then
   esac
   plan_header=$(printf '%s\n' "$plan_text" | awk '!d && index($0, "**Spec:** ") == 1 { print substr($0, 11); d = 1 }' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
   # Plans write the header as a bare path, a backticked path or a link, often
-  # followed by prose; compare the path alone.
+  # followed by prose; compare the path alone. Only the exact repository-
+  # relative path or the exact bare basename binds, so a same-named spec in
+  # another directory does not.
   case "$plan_header" in
     '`'*) plan_header=${plan_header#'`'}; plan_header=${plan_header%%'`'*} ;;
     '['*) plan_header=${plan_header#'['}; plan_header=${plan_header%%']'*} ;;
   esac
   plan_spec_base=$(basename "$spec_rel")
   case "$plan_header" in
-    "$spec_rel"|"$spec_rel "*|*"$plan_spec_base"|*"$plan_spec_base "*) ;;
+    "$spec_rel"|"$spec_rel "*|"$plan_spec_base"|"$plan_spec_base "*) ;;
     *) die2 "$spec_rel: plan names a different spec: ${plan_header:-none}: $plan" ;;
   esac
 fi
@@ -484,6 +490,25 @@ if [ "$mode" = reindex ]; then
   # Staged even when unchanged, so a retry after a failed add completes it.
   git -C "$root" add -- "$index_rel" || die3 "$records_rel: git add failed; run the same command again to complete the staging"
   if $changed; then echo "$v $index_rel"; else echo "unchanged $index_rel"; fi
+  exit 0
+fi
+
+# --- undo -------------------------------------------------------------------
+# The skip before the commit: every compiler-owned path with a staged
+# difference from HEAD goes back to HEAD, and a path HEAD does not have is
+# deleted. Anything else staged is left alone.
+if [ "$mode" = undo ]; then
+  git -C "$root" diff --cached --name-only -z -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"} > "$tmp/undo.z" || die3 "$spec_rel: git diff --cached failed"
+  while IFS= read -r -d '' p; do
+    if git -C "$root" cat-file -e "HEAD:$p" 2>/dev/null; then
+      git -C "$root" restore --staged --worktree -- "$p" || die3 "$spec_rel: git restore failed for $p"
+    else
+      git -C "$root" rm --cached --quiet -- "$p" || die3 "$spec_rel: git rm --cached failed for $p"
+      rm -f "$root/$p"
+    fi
+    echo "restored $p"
+  done < "$tmp/undo.z"
+  rmdir "$records_dir" 2>/dev/null || true
   exit 0
 fi
 

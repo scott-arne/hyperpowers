@@ -511,6 +511,66 @@ for case_name in directory symlink inside; do
 done
 if [ "$(cat "$TEST_ROOT/links/real")" = plain ]; then pass "the symlink target is untouched"; else fail "symlink target overwritten"; fi
 
+# --- 13. spec names are literal pathspecs (fix round 2) ----------------------
+repo="$TEST_ROOT/literal"
+make_repo "$repo"
+lit_spec='docs/hyperpowers/specs/2026-10-19-a[1]-design.md'
+write_spec "$repo" '2026-10-19-a[1]-design.md' <<'EOF'
+# Bracketed
+
+## Decisions
+
+1. **First literal.** Text.
+2. **Second literal.** Text.
+EOF
+echo unrelated > "$repo/docs/hyperpowers/specs/2026-10-19-a1-design.md"
+commit_all "$repo" "bracketed spec and a lookalike"
+echo changed >> "$repo/docs/hyperpowers/specs/2026-10-19-a1-design.md"
+run_compile "$repo" "$lit_spec" --paths-file "$TEST_ROOT/literal.paths"
+if [ "$RC" -eq 0 ]; then pass "a bracketed spec name compiles"; else fail "bracketed compile (rc $RC: $ERR)"; fi
+lit_staged=$(git -C "$repo" diff --cached --name-only)
+case "$lit_staged" in *"$lit_spec"*) pass "the bracketed spec is staged" ;; *) fail "bracketed spec not staged (got: $lit_staged)" ;; esac
+case "$lit_staged" in *2026-10-19-a1-design.md*) fail "the lookalike file was staged" ;; *) pass "the lookalike file is not staged" ;; esac
+lit_paths=$(tr '\0' '\n' < "$TEST_ROOT/literal.paths")
+case "$lit_paths" in *"$lit_spec"*) pass "the paths file names the bracketed spec" ;; *) fail "paths file lacks the spec (got: $lit_paths)" ;; esac
+case "$lit_paths" in *2026-10-19-a1-design.md*) fail "the paths file names the lookalike" ;; *) pass "the paths file omits the lookalike" ;; esac
+case "$(git -C "$repo" status --porcelain)" in *" M docs/hyperpowers/specs/2026-10-19-a1-design.md"*) pass "the lookalike stays modified and unstaged" ;; *) fail "lookalike status (got: $(git -C "$repo" status --porcelain))" ;; esac
+run_compile "$repo" "$lit_spec" --dry-run
+case "$(printf '%s\n' "$OUT" | grep '^paths:')" in *2026-10-19-a1-design.md*) fail "dry-run paths name the lookalike" ;; *) pass "dry-run paths omit the lookalike" ;; esac
+
+# --- 14. an index destination that is not a regular file is refused (fix round 2) ---
+repo="$TEST_ROOT/indexdest"
+make_repo "$repo"
+write_spec "$repo" 2026-09-12-idx-design.md <<'EOF'
+# Idx
+
+## Decisions
+
+- **One thing.** Text.
+EOF
+commit_all "$repo" "spec"
+idx_spec=docs/hyperpowers/specs/2026-09-12-idx-design.md
+mkdir -p "$repo/docs/hyperpowers/decisions/README.md"
+run_compile "$repo" "$idx_spec"
+case "$ERR" in "$idx_spec: docs/hyperpowers/decisions/README.md exists but is not a regular file"*) msg_ok=yes ;; *) msg_ok=no ;; esac
+if [ "$RC" -eq 2 ] && [ "$msg_ok" = yes ] && [ "$(ls -A "$repo/docs/hyperpowers/decisions")" = README.md ] && [ -z "$(ls -A "$repo/docs/hyperpowers/decisions/README.md")" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then
+    pass "a directory at the index path exits 2 and writes nothing"
+else
+    fail "directory index (rc $RC, err: $ERR, files: $(ls -A "$repo/docs/hyperpowers/decisions"))"
+fi
+rmdir "$repo/docs/hyperpowers/decisions/README.md"
+mkdir -p "$TEST_ROOT/outside-index"
+ln -s "$TEST_ROOT/outside-index" "$repo/docs/hyperpowers/decisions/README.md"
+commit_all "$repo" "index link"
+run_compile "$repo" "$idx_spec"
+case "$ERR" in "$idx_spec: docs/hyperpowers/decisions/README.md exists but is not a regular file"*) msg_ok=yes ;; *) msg_ok=no ;; esac
+if [ "$RC" -eq 2 ] && [ "$msg_ok" = yes ] && [ -z "$(ls -A "$TEST_ROOT/outside-index")" ] && [ "$(ls -A "$repo/docs/hyperpowers/decisions")" = README.md ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then
+    pass "a symlinked index path exits 2 and writes nothing"
+else
+    fail "symlink index (rc $RC, err: $ERR, outside: $(ls -A "$TEST_ROOT/outside-index"))"
+fi
+rm "$repo/docs/hyperpowers/decisions/README.md"
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

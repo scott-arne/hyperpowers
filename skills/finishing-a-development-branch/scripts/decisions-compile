@@ -17,6 +17,9 @@
 set -euo pipefail
 # Slugs, sorting and character classes must not depend on the host locale.
 export LC_ALL=C
+# Spec and records paths are literal names, never patterns: a bracket, star or
+# question mark in a spec name must not match another file.
+export GIT_LITERAL_PATHSPECS=1
 
 usage() {
   echo "usage: decisions-compile SPEC [--paths-file FILE] [--dry-run]" >&2
@@ -59,6 +62,11 @@ if [ -L "$records_dir" ] || { [ -e "$records_dir" ] && [ ! -d "$records_dir" ]; 
   die2 "$spec_rel: $records_rel exists but is not a plain directory"
 fi
 index_rel="$records_rel/README.md"
+# A directory or a link at the index path would receive the index by rename
+# instead of being replaced.
+if [ -L "$records_dir/README.md" ] || { [ -e "$records_dir/README.md" ] && [ ! -f "$records_dir/README.md" ]; }; then
+  die2 "$spec_rel: $index_rel exists but is not a regular file"
+fi
 today=${DECISIONS_COMPILE_DATE:-$(date +%F)}
 spec_base=$(basename "$spec_abs")
 case "$spec_base" in

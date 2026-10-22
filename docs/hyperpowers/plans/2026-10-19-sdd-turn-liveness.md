@@ -5339,12 +5339,46 @@ In `_ledger_marks`' Bash branch replace the block from `env = _assignments(comma
                 written.append(_interpret_escapes(segment))
 ```
 
-In the long-job loop replace `if out_file in str(later.inp.get("command", "")) and "exit=" in later.result:` with `if _names_file(str(later.inp.get("command", "")), out_file) and "exit=" in later.result:`.
+In the long-job loop the watch is matched against the launch's output path resolved with the launch's own assignments, because a launch may name its output through a variable it sets in the same command (`> $W/soak-long.out`, treatment p3); the literal test stays as a disjunct so no run loses a match. Insert after `out_file = target.group(2) if target else None`:
+
+```text
+            # A launch may name its own output through a variable it sets in
+            # the same command ("> $W/soak-long.out", treatment p3), so the
+            # path a watch is matched against is resolved first; a watch that
+            # spells it the same unexpanded way still matches literally.
+            resolved = _expand(out_file, _assignments(command)) if out_file else ""
+```
+
+and replace `if out_file in str(later.inp.get("command", "")) and "exit=" in later.result:` with:
+
+```text
+                watch = str(later.inp.get("command", ""))
+                if (out_file in watch or _names_file(watch, resolved)) and "exit=" in later.result:
+```
+
+Add this test after `test_long_job_watch_names_its_file_through_a_variable_or_a_cd`:
+
+```text
+    def test_long_job_launch_names_its_output_through_a_variable(self) -> None:
+        # Treatment p3 set W in the launch ("> $W/soak-long.out") and watched
+        # the same way, so the path a watch is matched against is resolved
+        # with the launch's own assignments (README Correction 5).
+        records = long_job()
+        launch = 'W=/tmp; python3 -m unittest tests.test_soak_long -v > $W/long.out 2>&1; echo "exit=$?" > $W/long.out.exit'
+        watch = 'W=/tmp; for i in $(seq 1 58); do test -f $W/long.out.exit && break; sleep 5; done; cat $W/long.out.exit; tail -4 $W/long.out'
+        for rec in records:
+            for use in liveness.tool_uses(rec):
+                if use.get("id") == "b2":
+                    use["input"]["command"] = launch
+                if use.get("id") == "b4":
+                    use["input"]["command"] = watch
+        self.assertTrue(self.run_of("w10", records)["long_ok"])
+```
 
 Run the four suites — Expected: `OK`; ruff and mypy on `analyze.py`; `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` — Expected: control unchanged (10 counted, 8 successes, premature 1); treatment p8 and p10 `long=True`, F 10 of 10, p10 `plan_complete` true, p8 still plan-incomplete with `premature=1`, decision FAIL with P the only failing criterion. Append to the README `## Corrections` list:
 
 ```text
-5. 2026-10-22, after the treatment arm's first tally and before the decision of record. The analyzer paired a long-job watch to its launch by the literal output path and read a Bash ledger write only when its target was an absolute SDD path, so a watch that names the exit file through a shell variable (`W=<dir>; … "$W/soak-long.out.exit"`, treatment p8) or by name after `cd <dir>` (treatment p10), and ledger marks written after `cd <ledger dir>` (treatment p10, Tasks 1-5), were missed: both runs read `long_ok` false and p10 read plan-incomplete, although each watched a tracked background launch to `exit=0` 720 s later with no turn end between. `_names_file` and `_cwd_segments` now resolve shell-variable assignments and `cd` prefixes for both recognizers. Recomputed from the archives: control unchanged; treatment F 10 of 10 and p10 plan-complete; the decision is unchanged, FAIL on P: p8's last ledger line reads `Task 6: soak_long OK (…) ; complete (…)`, not the canonical `Task 6: complete`, so p8 stays plan-incomplete and its end-of-run closing stays the treatment's premature stop, by the human partner's decision to keep the pre-registered rule. Pin after the Correction: `analyze.py` `<blob>` (`liveness.py` and `tally.py` unchanged).
+5. 2026-10-22, after the treatment arm's first tally and before the decision of record. The analyzer paired a long-job watch to its launch by the literal output path and read a Bash ledger write only when its target was an absolute SDD path, so a watch that names the exit file through a shell variable (`W=<dir>; … "$W/soak-long.out.exit"`, treatment p8) or by name after `cd <dir>` (treatment p10), and ledger marks written after `cd <ledger dir>` (treatment p10, Tasks 1-5), were missed: both runs read `long_ok` false and p10 read plan-incomplete, although each watched a tracked background launch to `exit=0` 720 s later with no turn end between. `_names_file` and `_cwd_segments` now resolve shell-variable assignments and `cd` prefixes for both recognizers, and the launch's own output path is resolved with its own assignments before the watch is matched (treatment p3 launched with `> $W/soak-long.out`); the literal match stays as a disjunct, so no run loses a match. Recomputed from the archives: control unchanged; treatment F 10 of 10 and p10 plan-complete; the decision is unchanged, FAIL on P: p8's last ledger line reads `Task 6: soak_long OK (…) ; complete (…)`, not the canonical `Task 6: complete`, so p8 stays plan-incomplete and its end-of-run closing stays the treatment's premature stop, by the human partner's decision to keep the pre-registered rule. Pin after the Correction: `analyze.py` `<blob>` (`liveness.py` and `tally.py` unchanged).
 ```
 
 Fill `<blob>` as before. Stage `analyze.py`, `test_analyze.py`, `README.md`; leak scan; commit `fix(evidence): watch and ledger paths resolve through cd and shell variables`.

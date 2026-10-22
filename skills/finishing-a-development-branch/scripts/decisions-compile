@@ -7,7 +7,7 @@
 # Nothing is written before every input has been validated, and nothing is
 # ever committed. Design: docs/hyperpowers/specs/2026-10-21-decision-records-design.md.
 #
-# Usage: decisions-compile SPEC [--paths-file FILE] [--dry-run]
+# Usage: decisions-compile SPEC [--notes FILE] [--paths-file FILE] [--dry-run]
 #        decisions-compile --reindex RECORDS_DIR
 # Exit 2: an input problem (no spec, no decisions list, an unresolvable
 # filename collision); nothing has been written. Exit 3: a write failure
@@ -23,7 +23,7 @@ export LC_ALL=C
 export GIT_LITERAL_PATHSPECS=1
 
 usage() {
-  echo "usage: decisions-compile SPEC [--paths-file FILE] [--dry-run]" >&2
+  echo "usage: decisions-compile SPEC [--notes FILE] [--paths-file FILE] [--dry-run]" >&2
   echo "       decisions-compile --reindex RECORDS_DIR" >&2
   exit 2
 }
@@ -31,11 +31,13 @@ usage() {
 spec=""
 dry_run=false
 paths_file=""
+notes=""
 reindex_dir=""
 mode=compile
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) if $dry_run; then usage; fi; dry_run=true; shift ;;
+    --notes) [ $# -ge 2 ] || usage; [ -z "$notes" ] || usage; notes=$2; shift 2 ;;
     --paths-file) [ $# -ge 2 ] || usage; [ -z "$paths_file" ] || usage; paths_file=$2; shift 2 ;;
     --reindex) [ $# -ge 2 ] || usage; [ "$mode" = compile ] || usage; mode=reindex; reindex_dir=$2; shift 2 ;;
     -*) usage ;;
@@ -43,7 +45,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$mode" in
-  reindex) if [ -n "$spec" ] || [ -n "$paths_file" ] || $dry_run; then usage; fi ;;
+  reindex) if [ -n "$spec" ] || [ -n "$paths_file" ] || [ -n "$notes" ] || $dry_run; then usage; fi ;;
   *) [ -n "$spec" ] || usage ;;
 esac
 
@@ -203,6 +205,7 @@ render_record() {  # N -> the record text
   fi
   [ -n "${status:-}" ] || status=accepted
   [ -n "${rec_date:-}" ] || rec_date=$today
+  if $notes_valid && [ -f "$tmp/note-$n.txt" ]; then notes_body=$(cat "$tmp/note-$n.txt"); fi
   [ -n "${notes_body:-}" ] || notes_body="Nothing recorded."
   recorded=$rec_date
   if [ "$notes_body" != "Nothing recorded." ]; then
@@ -217,6 +220,66 @@ render_record() {  # N -> the record text
   printf '\n## Decision\n\n'
   cat "$tmp/item-$n.txt"
   printf '\n## What implementation changed\n\n%s\n' "$notes_body"
+}
+
+# --- notes ------------------------------------------------------------------
+# The extractor's file is prose and proposals, never authority: anything
+# malformed is reported once and the compile proceeds as if --notes had not
+# been given. A decision the file does not mention keeps its section.
+notes_valid=false
+load_notes() {
+  local f=$1 n reason="" first
+  [ -f "$f" ] || { echo "notes ignored: no such file: $f" >&2; return 0; }
+  first=$(head -n 1 "$f")
+  case "$first" in
+    "# Decision notes: "*) ;;
+    *) echo "notes ignored: first line is not \"# Decision notes: <spec path>\"" >&2; return 0 ;;
+  esac
+  if [ "$(basename "${first#\# Decision notes: }")" != "$(basename "$spec_abs")" ]; then
+    echo "notes ignored: first line names $(basename "${first#\# Decision notes: }"), not $(basename "$spec_abs")" >&2; return 0
+  fi
+  rm -f "$tmp"/note-*.txt "$tmp/notes-sup" "$tmp/notes-undoc" "$tmp/notes-bad"
+  awk -v out="$tmp" -v max="$count" '
+    NR == 1 { next }
+    /^## / {
+      if ($0 ~ /^## Decision [0-9]+$/) {
+        n = $3 + 0
+        if (n < 1 || n > max) { print "decision " n " is out of range 1.." max > (out "/notes-bad"); cur = ""; next }
+        if (seen[n]++) { print "duplicate section: " $0 > (out "/notes-bad"); cur = ""; next }
+        cur = out "/note-" n ".txt"; printf "" > cur; next
+      }
+      if ($0 == "## Supersessions") { cur = out "/notes-sup"; printf "" > cur; next }
+      if ($0 == "## Undocumented decisions") { cur = out "/notes-undoc"; printf "" > cur; next }
+      print "unexpected heading: " $0 > (out "/notes-bad"); cur = ""; next
+    }
+    cur != "" { print > cur }
+  ' "$f"
+  [ -f "$tmp/notes-bad" ] && reason=$(head -n 1 "$tmp/notes-bad")
+  if [ -z "$reason" ]; then
+    for ((n = 1; n <= count; n++)); do
+      [ -f "$tmp/note-$n.txt" ] || continue
+      trim_blank "$tmp/note-$n.txt"
+      awk 'NR == 1 && /^$/ { next } { print }' "$tmp/note-$n.txt" > "$tmp/note-$n.t" && mv "$tmp/note-$n.t" "$tmp/note-$n.txt"
+      [ -s "$tmp/note-$n.txt" ] || { reason="empty body for decision $n"; break; }
+    done
+  fi
+  if [ -z "$reason" ] && [ -f "$tmp/notes-sup" ]; then
+    if ! grep -q '^- [0-9][0-9]* supersedes .' "$tmp/notes-sup"; then reason="Supersessions has no \"- <N> supersedes <path>\" line"
+    elif grep -v '^[[:space:]]*$' "$tmp/notes-sup" | grep -qv '^- [0-9][0-9]* supersedes .'; then reason="a Supersessions line is not \"- <N> supersedes <path>\""; fi
+  fi
+  if [ -z "$reason" ] && [ -f "$tmp/notes-undoc" ]; then
+    if ! grep -q '^- .' "$tmp/notes-undoc"; then reason="Undocumented decisions has no list item"
+    elif grep -v '^[[:space:]]*$' "$tmp/notes-undoc" | grep -qv '^- .'; then reason="an Undocumented decisions line is not a list item"; fi
+  fi
+  if [ -n "$reason" ]; then
+    echo "notes ignored: $reason" >&2
+    rm -f "$tmp"/note-*.txt "$tmp/notes-sup" "$tmp/notes-undoc"
+    return 0
+  fi
+  notes_valid=true
+  [ -f "$tmp/notes-sup" ] && proposed=$(grep -c '^- ' "$tmp/notes-sup")
+  [ -f "$tmp/notes-undoc" ] && undocumented=$(grep -c '^- ' "$tmp/notes-undoc")
+  return 0
 }
 
 escape_cell() { printf '%s' "$1" | sed 's/|/\\|/g; s/\[/\\[/g; s/\]/\\]/g'; }
@@ -308,6 +371,8 @@ if [ "$mode" = reindex ]; then
   exit 0
 fi
 
+wrote=0; updated=0; superseded=0; undocumented=0; proposed=0
+
 # --- 1. the Decisions list --------------------------------------------------
 # The first level-two heading whose text contains "decision" opens the
 # section; the next level-two heading closes it for good. A top-level list
@@ -380,6 +445,14 @@ $p
     # What the record superseded last time, so a line removed or retargeted
     # since can be reconciled.
     prev_sup[n]=$(existing_field "$ex" Supersedes | tr ',' '\n' | sed 's/^ *//')
+    # A persisted header is only as trustworthy as the last hand that touched
+    # it: the same spelling and link rules as the spec's own lines, before any
+    # write.
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      [ "$p" = "$records_rel/${p##*/}" ] || die2 "$spec_rel: decision $n: record ${ex#"$root"/} names a Supersedes path that is not a record in $records_rel: $p"
+      [ ! -L "$root/$p" ] || die2 "$spec_rel: decision $n: record ${ex#"$root"/} names a Supersedes path that is a symbolic link: $p"
+    done < <(printf '%s\n' "${prev_sup[n]}")
   else
     existing[n]=0
     prev_sup[n]=""
@@ -424,6 +497,7 @@ for ((n = 1; n <= count; n++)); do
     esac
   done < <(printf '%s\n' "${sup_of[n]}")
 done
+[ -z "$notes" ] || load_notes "$notes"
 
 # --- 3. dry run ---------------------------------------------------------------
 verb_lines=()
@@ -444,7 +518,6 @@ if $dry_run; then
 fi
 
 # --- 4. records ---------------------------------------------------------------
-wrote=0; updated=0; superseded=0; undocumented=0; proposed=0
 
 # --- 4a. superseded targets ----------------------------------------------------
 # Targets are reconciled before the records are rewritten: an interrupted run

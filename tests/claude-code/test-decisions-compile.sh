@@ -920,6 +920,129 @@ run_compile "$repo" docs/hyperpowers/specs/2026-09-15-fresh-design.md
 case "$OUT" in "wrote 0 records, updated 0, superseded 0,"*) out_ok=yes ;; *) out_ok=no ;; esac
 if [ "$RC" -eq 0 ] && [ "$out_ok" = yes ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a second run after the retry changes nothing"; else fail "fresh second run (rc $RC, out: $OUT, status: $(git -C "$repo" status --porcelain))"; fi
 
+# --- 19. notes ----------------------------------------------------------------
+repo="$TEST_ROOT/notes"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-alpha-design.md <<'EOF'
+# Alpha
+
+## Decisions
+
+1. **Skill text, not a hook.** The rules live in the skill.
+2. **Evidence: a scenario, then a field rerun.** Two sources.
+EOF
+commit_all "$repo" "spec"
+cat > "$TEST_ROOT/notes-good.md" <<'EOF'
+# Decision notes: docs/hyperpowers/specs/2026-10-19-alpha-design.md
+
+## Decision 1
+The turn-ending rule landed in SKILL.md's "Continuous execution" paragraph
+and the Stop hook was never written; test-sdd-contract.sh covers the rule.
+
+## Decision 2
+No change.
+
+## Supersessions
+- 1 supersedes docs/hyperpowers/decisions/2026-09-17-first-edit-interlock-hook.md
+
+## Undocumented decisions
+- The field classifier reads the ledger, not the transcript.
+EOF
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --notes "$TEST_ROOT/notes-good.md"
+if [ "$RC" -eq 0 ]; then pass "notes compile exits 0"; else fail "notes exit (got $RC: $ERR)"; fi
+rec1="$repo/docs/hyperpowers/decisions/2026-10-19-skill-text-not-a-hook.md"
+rec2="$repo/docs/hyperpowers/decisions/2026-10-19-evidence-a-scenario-then-a-field-rerun.md"
+if grep -q '^The turn-ending rule landed' "$rec1" && grep -q '^- Recorded: 2026-10-21; notes from the branch diff by a subagent at finish$' "$rec1"; then pass "a decision with notes gets the body and the Recorded notes part"; else fail "notes body or Recorded part (got: $(grep '^- Recorded' "$rec1"))"; fi
+if grep -q '^No change\.$' "$rec2"; then pass "a No change section is recorded as such"; else fail "record 2 body"; fi
+case "$OUT" in *"undocumented 1, proposed supersessions 1,"*) pass "proposals are counted" ;; *) fail "proposal counts (got: $(printf '%s\n' "$OUT" | head -n 1))" ;; esac
+if grep -q 'first-edit-interlock-hook' "$rec1" || grep -rq 'field classifier' "$repo/docs/hyperpowers/decisions"; then fail "a proposal reached a record"; else pass "proposals are never written to records"; fi
+if grep -q '^- Supersedes:' "$rec1"; then fail "a notes supersession was applied"; else pass "a notes supersession is not applied"; fi
+commit_all "$repo" "records"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a re-run without notes leaves recorded notes alone"; else fail "re-run without notes (status: $(git -C "$repo" status --porcelain))"; fi
+cat > "$TEST_ROOT/notes-partial.md" <<'EOF'
+# Decision notes: docs/hyperpowers/specs/2026-10-19-alpha-design.md
+
+## Decision 1
+Replaced on the second pass.
+EOF
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --notes "$TEST_ROOT/notes-partial.md"
+case "$OUT" in "wrote 0 records, updated 1,"*) pass "notes for one decision update one record and leave the other alone" ;; *) fail "partial-notes summary (got: $(printf '%s\n' "$OUT" | head -n 1))" ;; esac
+if grep -q '^Replaced on the second pass\.$' "$rec1" && grep -q '^No change\.$' "$rec2"; then pass "the mentioned section is replaced, the unmentioned one kept"; else fail "partial notes bodies"; fi
+if ! git -C "$repo" diff --cached --name-only | grep -q specs/; then pass "a notes-only re-run does not touch the spec"; else fail "spec staged on a notes-only run"; fi
+commit_all "$repo" "records 2"
+for f in dup range head heading empty-optional; do
+    case "$f" in
+        dup) printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-alpha-design.md\n\n## Decision 2\nA.\n\n## Decision 2\nB.\n' ;;
+        range) printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-alpha-design.md\n\n## Decision 7\nOut of range.\n' ;;
+        head) printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-other-design.md\n\n## Decision 1\nText.\n' ;;
+        heading) printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-alpha-design.md\n\n## Decision 1\nText.\n\n## Remarks\nNot allowed.\n' ;;
+        empty-optional) printf '# Decision notes: docs/hyperpowers/specs/2026-10-19-alpha-design.md\n\n## Decision 1\nText.\n\n## Supersessions\n' ;;
+    esac > "$TEST_ROOT/notes-$f.md"
+    run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --notes "$TEST_ROOT/notes-$f.md"
+    if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "invalid notes ($f) are ignored and the run proceeds unchanged"; else fail "invalid notes $f (rc $RC, status: $(git -C "$repo" status --porcelain))"; fi
+    case "$ERR" in "notes ignored: "*) pass "invalid notes ($f) reported as notes ignored" ;; *) fail "notes ignored message for $f (got: $ERR)" ;; esac
+done
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --notes "$TEST_ROOT/does-not-exist.md"
+if [ "$RC" -eq 0 ]; then pass "a missing notes file is not an error"; else fail "missing notes file (rc $RC)"; fi
+# An accepted undocumented decision is appended after the last item, so the
+# numbering the notes use stays attached to the right records.
+printf '3. **Appended at the menu.** An undocumented decision the human partner accepted.\n' >> "$repo/docs/hyperpowers/specs/2026-10-19-alpha-design.md"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-alpha-design.md --notes "$TEST_ROOT/notes-partial.md"
+if grep -q '^Replaced on the second pass\.$' "$rec1" && grep -q '^No change\.$' "$rec2" && grep -q '^Nothing recorded\.$' "$repo/docs/hyperpowers/decisions/2026-10-19-appended-at-the-menu.md"; then
+    pass "notes keyed by number stay with their records when a decision is appended"
+else
+    fail "numbering after append (rec1: $(grep -A2 '^## What' "$rec1" | tail -n 1); rec3: $(ls "$repo/docs/hyperpowers/decisions"))"
+fi
+
+# --- 20. persisted Supersedes paths are validated ----------------------------
+# Correction (2026-10-22): Task 3's gate found at its cap that a record's own
+# Supersedes header fed the reconciliation unvalidated, so a hand-edited or
+# merge-conflicted record could name a file outside the records directory;
+# the human partner carried the guard and this test into Task 4.
+repo="$TEST_ROOT/persisted"
+make_repo "$repo"
+write_spec "$repo" 2026-07-01-old-design.md <<'EOF'
+# Old
+
+## Decisions
+
+- **Hook-based interlock.** A hook gates the first edit.
+- **Twenty-run bar.** Forty sessions per scenario.
+EOF
+commit_all "$repo" "old spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-07-01-old-design.md
+commit_all "$repo" "old records"
+write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
+# New
+
+## Decisions
+
+1. **Skill text, not a hook.** Measured no gain from the hook.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+EOF
+commit_all "$repo" "new spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+commit_all "$repo" "new records"
+rec="$repo/docs/hyperpowers/decisions/2026-08-01-skill-text-not-a-hook.md"
+awk '!r && /^- Supersedes: / { print "- Supersedes: ../hyperpowers/decisions/2026-07-01-hook-based-interlock.md"; r = 1; next } { print }' "$rec" > "$rec.tmp" && mv "$rec.tmp" "$rec"
+commit_all "$repo" "hand-edited header: traversal"
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+if [ "$RC" -eq 2 ]; then pass "a persisted traversal path exits 2"; else fail "persisted traversal (got $RC: $ERR)"; fi
+case "$ERR" in "docs/hyperpowers/specs/2026-08-01-new-design.md: decision 1: record docs/hyperpowers/decisions/2026-08-01-skill-text-not-a-hook.md names a Supersedes path that is not a record in docs/hyperpowers/decisions: ../hyperpowers/decisions/2026-07-01-hook-based-interlock.md") pass "the persisted-path message names the record and the path" ;; *) fail "persisted-path message (got: $ERR)" ;; esac
+if [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "nothing is written for a persisted traversal path"; else fail "persisted traversal wrote (status: $(git -C "$repo" status --porcelain))"; fi
+ln -s 2026-07-01-twenty-run-bar.md "$repo/docs/hyperpowers/decisions/alias.md"
+awk '!r && /^- Supersedes: / { print "- Supersedes: docs/hyperpowers/decisions/alias.md"; r = 1; next } { print }' "$rec" > "$rec.tmp" && mv "$rec.tmp" "$rec"
+commit_all "$repo" "hand-edited header: link"
+sum=$(cksum < "$repo/docs/hyperpowers/decisions/2026-07-01-twenty-run-bar.md")
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+if [ "$RC" -eq 2 ] && [ -L "$repo/docs/hyperpowers/decisions/alias.md" ] && [ "$(cksum < "$repo/docs/hyperpowers/decisions/2026-07-01-twenty-run-bar.md")" = "$sum" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then
+    pass "a persisted symlinked path exits 2 with the link and its target untouched"
+else
+    fail "persisted link (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"
+fi
+case "$ERR" in *"names a Supersedes path that is a symbolic link: docs/hyperpowers/decisions/alias.md") pass "the persisted-link message names the path" ;; *) fail "persisted-link message (got: $ERR)" ;; esac
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

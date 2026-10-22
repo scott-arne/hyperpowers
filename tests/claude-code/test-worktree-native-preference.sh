@@ -47,20 +47,26 @@ Use the using-git-worktrees skill to settle where the work happens. Do NOT imple
 Report the exact question you would ask me with its numbered options, then stop.'
 
 run_choice_check() {
-    local i test_dir output scan branch_before branch_after p1 p2 p3 passes=0 fails=0
+    local i test_dir output scan branch_before branch_after p1 p2 p3 passes=0 fails=0 start_dir
+    start_dir=$(pwd)
     for i in $(seq 1 "$RUNS"); do
         test_dir=$(create_test_project)
-        cd "$test_dir" || return 1
+        cd "$test_dir" || { cleanup_test_project "$test_dir"; return 1; }
         git init -q && git commit -q --allow-empty -m "init"
         branch_before=$(git branch --show-current)
         output=$(run_claude "$CHOICE_SCENARIO" 120)
         branch_after=$(git branch --show-current)
         scan="$test_dir/choice-output.txt"
         printf '%s\n' "$output" > "$scan"
-        p1=$(grep -ni 'current branch' "$scan" | head -n 1 | cut -d: -f1)
-        p2=$(grep -ni 'new branch' "$scan" | head -n 1 | cut -d: -f1)
-        p3=$(grep -ni 'worktree' "$scan" | head -n 1 | cut -d: -f1)
-        cd - >/dev/null || true
+        # Each option is pinned to its own numbered line: the skill announces
+        # itself with the word worktree before the options, so a first-match
+        # scan of the whole transcript would fail a compliant answer. A
+        # non-matching grep exits 1, which errexit would turn into an abort
+        # of the phase before its diagnostics; the || true keeps the run alive.
+        p1=$(grep -niE '^[[:space:]>*_-]*1[.)].*current branch' "$scan" | head -n 1 | cut -d: -f1) || true
+        p2=$(grep -niE '^[[:space:]>*_-]*2[.)].*(new branch|branch in place)' "$scan" | head -n 1 | cut -d: -f1) || true
+        p3=$(grep -niE '^[[:space:]>*_-]*3[.)].*worktree' "$scan" | head -n 1 | cut -d: -f1) || true
+        cd "$start_dir" || return 1
         if [ -n "$p1" ] && [ -n "$p2" ] && [ -n "$p3" ] && [ "$p1" -lt "$p2" ] && [ "$p2" -lt "$p3" ] \
            && [ "$branch_before" = "$branch_after" ] && [ "$(git -C "$test_dir" worktree list | wc -l | tr -d ' ')" = 1 ] && [ ! -d "$test_dir/.worktrees" ]; then
             echo "  [PASS] CHOICE run $i: the three options in order, nothing created"

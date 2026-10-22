@@ -1637,6 +1637,64 @@ run_compile "$repo" docs/hyperpowers/specs/2026-10-19-twin-design.md --plan docs
 if [ "$RC" -eq 0 ]; then pass "a bare-basename header still binds"; else fail "bare basename (rc $RC: $ERR)"; fi
 case "$OUT" in *"removed docs/hyperpowers/plans/2026-10-19-twin.md"*) pass "the bare-basename plan is removed" ;; *) fail "bare-basename removal line missing" ;; esac
 
+# --- 28. titles come from the first paragraph, across lines ------------------
+# Real specs wrap a bold title or a plain first clause onto a second line;
+# reading line 1 alone left a raw `**` and a mid-phrase cut.
+repo="$TEST_ROOT/wrap"
+make_repo "$repo"
+write_spec "$repo" 2026-07-01-old-design.md <<'EOS'
+# Old
+
+## Decisions
+
+- **Hook-based interlock.** A hook gates the first edit.
+EOS
+commit_all "$repo" "old spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-07-01-old-design.md
+commit_all "$repo" "old records"
+write_spec "$repo" 2026-10-22-wrap-design.md <<'EOS'
+# Wrap
+
+## Decisions
+
+- **Records are extracted at finish only, and the spec's Decisions
+  section stays the authority.** Body text.
+- The spec is the only source of a record's title and
+  decision text. A re-run refreshes them.
+- Plain clause words repeat until the first clause passes eighty characters in total length without a stop. Tail.
+- **Wrapped title that is superseding something.**
+  Supersedes: docs/hyperpowers/decisions/2026-07-01-hook-based-interlock.md
+  Body.
+EOS
+commit_all "$repo" "wrap"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-22-wrap-design.md --dry-run
+if [ "$RC" -eq 0 ]; then pass "wrapped titles: dry run exits 0"; else fail "wrapped titles exit (got $RC: $ERR)"; fi
+case "$OUT" in
+    *"(decision 1: Records are extracted at finish only, and the spec's Decisions section stays the authority)"*) pass "a bold title wrapping onto line 2 is whole and unmarked" ;;
+    *) fail "wrapped bold title (got: $OUT)" ;;
+esac
+case "$OUT" in
+    *"(decision 2: The spec is the only source of a record's title and decision text)"*) pass "a plain first clause ending on line 2 is whole" ;;
+    *) fail "wrapped plain title (got: $OUT)" ;;
+esac
+long=$(printf '%s\n' "$OUT" | grep '(decision 3: ' | sed 's/.*(decision 3: //; s/)$//' || true)
+if [ -n "$long" ] && [ ${#long} -le 80 ] && [ "$long" = "Plain clause words repeat until the first clause passes eighty characters in" ]; then
+    pass "a long plain clause is cut at a word boundary, at most 80 characters"
+else
+    fail "long plain title (got: $long)"
+fi
+case "$OUT" in
+    *"(decision 4: Wrapped title that is superseding something)"*) pass "a Supersedes line after the title does not leak into it" ;;
+    *) fail "supersedes title (got: $OUT)" ;;
+esac
+case "$OUT" in *"(decision "[0-9]": **"*) fail "a title begins with ** (got: $OUT)" ;; *) pass "no title begins with **" ;; esac
+run_compile "$repo" docs/hyperpowers/specs/2026-10-22-wrap-design.md
+if [ "$RC" -eq 0 ] && grep -q "^# Records are extracted at finish only, and the spec's Decisions section stays the authority$" "$repo"/docs/hyperpowers/decisions/2026-10-22-records-are-extracted-at-finish-only-and-the-spec-s*.md; then
+    pass "the record's heading carries the whole wrapped title"
+else
+    fail "wrapped record heading (rc $RC: $ERR; files: $(ls "$repo/docs/hyperpowers/decisions"))"
+fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

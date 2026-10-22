@@ -98,39 +98,46 @@ run records: ten counted, one capped void, five transport voids) and
 | Foreground share | 0.75 | 1.0 |
 | Live-work turn ends | 71 | 0 |
 | Premature stops (runs with none) | 1 (9) | 1 (9) |
-| Both slow-command measures | 0 of 10 | 8 of 10 |
+| Both slow-command measures | 0 of 10 | 10 of 10 |
 | Untracked launches | 0 | 0 |
-| Successful runs | 8 | 8 |
+| Successful runs | 8 | 9 |
 
 Against the pre-registered rule: **W1** 1.0 against a 0.9 threshold, PASS;
-**W2** 0 live-work turn ends against at most one, PASS; **F** 8 of 10 against
-at least nine, FAIL; **U** 0 untracked launches, PASS; **P** measured, since
-control has one premature stop, and treatment's 1 is not lower than
-control's, FAIL, although 9 of its ten runs have none; **R** 8 successful
-runs against at least seven and at least control's 8 minus one, PASS.
+**W2** 0 live-work turn ends against at most one, PASS; **F** 10 of 10
+against at least nine, PASS; **U** 0 untracked launches, PASS; **P**
+measured, since control has one premature stop, and treatment's 1 is not
+lower than control's, FAIL, although 9 of its ten runs have none; **R** 9
+successful runs against at least seven and at least control's 8 minus one,
+PASS.
 
-**decision: FAIL.**
+**decision: FAIL**, on P alone.
 
 The behavioral separation the change was written for is large and one-sided:
-every treatment dispatch ran in the foreground and no treatment turn ended
-with work live, against 33 background dispatches and 71 live-work turn ends
-in control. The campaign still fails its own rule. Both F misses are the same
-shape: p8 (`…184730Z-c05c`) and p10 (`…184831Z-16ed`) each launched the
-twelve-minute test as a tracked background job and watched it in a foreground
-call that printed `exit=0` more than 600 s later, p8 through a shell variable
-and p10 through a relative path after a `cd`, neither of which the pinned
-analyzer pairs to its job. No Correction was made for it: the shape was found
-while reading the treatment arm's own results, where changing the instrument
-would be post-hoc. The same two runs are treatment's only unsuccessful ones
-and the source of its single premature stop, and P in any case rests on one
-control event in ten runs, which cannot separate the arms either way.
+every treatment dispatch ran in the foreground, no treatment turn ended with
+work live, and every treatment run ran the four-minute command in the
+foreground and watched the twelve-minute one to `exit=0`, against 33
+background dispatches and 71 live-work turn ends in control. P still fails,
+because the rule needs a strictly lower premature total than a control base
+of one and the arms tie at one each. Treatment's single stop is p8
+(`…184730Z-c05c`), a run that completed and merged the work but wrote its
+last ledger line as `Task 6: soak_long OK (…) ; complete (…)` rather than
+the canonical `Task 6: complete`, so its closing report after the merge
+counts as a stop before the plan completes and was adjudicated `neither`.
+The pre-registered rule was kept rather than relabeled once the decision was
+visible. By the spec, the failure goes back to design and the P failure opens
+the Stop-hook follow-up with these runs as its evidence.
 
-Four Corrections were made to the pinned analyzers, each recorded in the
+Five Corrections were made to the pinned analyzers, each recorded in the
 campaign README before the tally it affected: the uncapped transport void
 (1), the ledger mark written after a literal `printf` newline (2), the
 shell's own escape rules together with the rule that a written grader result
-stays a capped void (3), and `echo -e` located in the interpreted segment
-(4).
+stays a capped void (3), `echo -e` located in the interpreted segment (4),
+and watch and ledger paths resolved through `cd` and shell variables (5).
+Correction 5 is why F reads 10 of 10 rather than the first tally's 8: p8 and
+p10 had both watched their tracked background job to `exit=0`, p8 naming the
+exit file through a shell variable and p10 by name after a `cd`, and the
+earlier matcher saw only literal absolute paths. No run was repeated; every
+number is recomputed from the archive.
 
 ## Release
 

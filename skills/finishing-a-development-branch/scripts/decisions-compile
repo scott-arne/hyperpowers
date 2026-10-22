@@ -55,7 +55,7 @@ esac
 # An existing decisions entry must be a plain directory: a symbolic link
 # would carry the records outside the repository that spec_dir's physical
 # path keeps them in.
-if [ -e "$records_dir" ] && { [ -L "$records_dir" ] || [ ! -d "$records_dir" ]; }; then
+if [ -L "$records_dir" ] || { [ -e "$records_dir" ] && [ ! -d "$records_dir" ]; }; then
   die2 "$spec_rel: $records_rel exists but is not a plain directory"
 fi
 index_rel="$records_rel/README.md"
@@ -68,6 +68,15 @@ esac
 if [ -n "$paths_file" ]; then
   paths_dir=$(dirname "$paths_file")
   { [ -d "$paths_dir" ] && [ -w "$paths_dir" ]; } || die2 "$spec_rel: --paths-file directory is not writable: $paths_dir"
+  # The pathspec file is scratch: inside the repository it could alias a
+  # compiler-owned input or be picked up by the staging.
+  paths_phys=$(cd "$paths_dir" && pwd -P)
+  case "$paths_phys" in
+    "$root"|"$root"/*) die2 "$spec_rel: --paths-file must lie outside the repository: $paths_file" ;;
+  esac
+  if [ -e "$paths_file" ] || [ -L "$paths_file" ]; then
+    { [ -f "$paths_file" ] && [ ! -L "$paths_file" ]; } || die2 "$spec_rel: --paths-file exists but is not a regular file: $paths_file"
+  fi
 fi
 
 tmp=$(mktemp -d)
@@ -240,7 +249,13 @@ stage_owned() {
 # HEAD, NUL-delimited into --paths-file and space-joined on stdout.
 emit_paths() {
   git -C "$root" diff --cached --name-only -z -- "$records_rel" "$spec_rel" > "$tmp/paths.z" || die3 "$spec_rel: git diff --cached failed"
-  if [ -n "$paths_file" ]; then cp "$tmp/paths.z" "$paths_file" || die3 "$spec_rel: cannot write $paths_file"; fi
+  if [ -n "$paths_file" ]; then
+    # Atomic, so a reader never sees a half-written pathspec.
+    if ! { cp "$tmp/paths.z" "$paths_file.tmp.$$" && mv -f "$paths_file.tmp.$$" "$paths_file"; }; then
+      rm -f "$paths_file.tmp.$$"
+      die3 "$spec_rel: cannot write $paths_file"
+    fi
+  fi
   tr '\0' ' ' < "$tmp/paths.z" | sed 's/ $//'
 }
 

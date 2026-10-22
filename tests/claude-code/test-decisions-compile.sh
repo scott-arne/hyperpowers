@@ -462,6 +462,55 @@ if [ "$RC" -eq 2 ]; then pass "a symlinked decisions directory exits 2"; else fa
 case "$ERR" in "docs/hyperpowers/specs/2026-09-09-link-design.md: docs/hyperpowers/decisions exists but is not a plain directory"*) pass "the symlink message names the spec and the rule" ;; *) fail "symlink message (got: $ERR)" ;; esac
 if [ -z "$(ls -A "$TEST_ROOT/outside")" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "nothing is written through the link"; else fail "something was written outside: $(ls -A "$TEST_ROOT/outside")"; fi
 
+# --- 12b-2. a dangling decisions link is refused (fix round 1) ------------------
+repo="$TEST_ROOT/dangling"
+make_repo "$repo"
+ln -s "$TEST_ROOT/no-such-dir" "$repo/docs/hyperpowers/decisions"
+write_spec "$repo" 2026-09-10-dangle-design.md <<'EOF'
+# Dangle
+
+## Decisions
+
+- **Would fail late.** The records directory is a dangling link.
+EOF
+commit_all "$repo" "spec and dangling link"
+run_compile "$repo" docs/hyperpowers/specs/2026-09-10-dangle-design.md
+if [ "$RC" -eq 2 ]; then pass "a dangling decisions link exits 2"; else fail "dangling decisions (rc $RC: $ERR)"; fi
+case "$ERR" in "docs/hyperpowers/specs/2026-09-10-dangle-design.md: docs/hyperpowers/decisions exists but is not a plain directory"*) pass "the dangling-link message names the spec and the rule" ;; *) fail "dangling-link message (got: $ERR)" ;; esac
+if [ ! -e "$TEST_ROOT/no-such-dir" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "nothing is written for a dangling link"; else fail "dangling link wrote something"; fi
+
+# --- 12c. a --paths-file that is not a safe scratch file is refused -----------
+repo="$TEST_ROOT/pathsfile"
+make_repo "$repo"
+write_spec "$repo" 2026-09-11-pf-design.md <<'EOF'
+# Pf
+
+## Decisions
+
+- **One thing.** Text.
+EOF
+commit_all "$repo" "spec"
+pf_spec=docs/hyperpowers/specs/2026-09-11-pf-design.md
+mkdir -p "$TEST_ROOT/links"
+echo plain > "$TEST_ROOT/links/real"
+ln -s "$TEST_ROOT/links/real" "$TEST_ROOT/links/sym.paths"
+before=$(cksum < "$repo/$pf_spec")
+for case_name in directory symlink inside; do
+    case "$case_name" in
+        directory) dest="$TEST_ROOT" ;;
+        symlink) dest="$TEST_ROOT/links/sym.paths" ;;
+        inside) dest="$repo/$pf_spec" ;;
+    esac
+    run_compile "$repo" "$pf_spec" --paths-file "$dest"
+    case "$ERR" in "$pf_spec: "*) msg_ok=yes ;; *) msg_ok=no ;; esac
+    if [ "$RC" -eq 2 ] && [ "$msg_ok" = yes ] && [ -z "$(git -C "$repo" status --porcelain)" ] && [ "$(cksum < "$repo/$pf_spec")" = "$before" ]; then
+        pass "a $case_name --paths-file exits 2 before any write"
+    else
+        fail "$case_name --paths-file (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain))"
+    fi
+done
+if [ "$(cat "$TEST_ROOT/links/real")" = plain ]; then pass "the symlink target is untouched"; else fail "symlink target overwritten"; fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

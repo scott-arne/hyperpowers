@@ -108,8 +108,11 @@ HP_LEGACY_KEY="$legacy" node -e '
   try { ungatedKeys = fs.readdirSync(path.join(base, "ungated")); } catch (e) { ungatedKeys = []; }
   for (const k of ungatedKeys) {
     const f = path.join(base, "ungated", k, "ledger.jsonl");
-    if (!fs.existsSync(f)) continue;
-    for (const l of fs.readFileSync(f, "utf8").split("\n")) {
+    // A ledger this pass cannot read contributes no sweeps; it is not this
+    // row and must not abort the report for every other row.
+    let text;
+    try { text = fs.readFileSync(f, "utf8"); } catch (err) { continue; }
+    for (const l of text.split("\n")) {
       if (!l.trim()) continue;
       let e; try { e = JSON.parse(l); } catch (err) { continue; }
       if (!e || e.event !== "swept") continue;

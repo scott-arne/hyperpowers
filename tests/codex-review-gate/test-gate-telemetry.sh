@@ -441,8 +441,12 @@ fj="$(bash "$GT" --all --json)"
 node -e 'const j=JSON.parse(process.argv[1]);const row=j.repos.find(r=>r.key===process.argv[2]);process.exit(row&&row.pending===1?0:1)' "$fj" "$lkey" && pass "the fleet view lists the legacy row pending before the sweep" || fail "the fleet view lists the legacy row pending before the sweep"
 ( cd "$lw" && bash "$UL" mark-swept --ref legacy-wt-1 --verdict approved --note migrated "$lw" >/dev/null )
 rj="$( (cd "$lw" && bash "$GT" --json) )"
-node -e 'const j=JSON.parse(process.argv[1]);process.exit(j.repos[0].pending===0&&(j.repos[0].swept.approved||0)>=1?0:1)' "$rj" && pass "a legacy event swept under the clone key is closed in repository telemetry" || fail "a legacy event swept under the clone key is closed in repository telemetry ($rj)"
+node -e 'const j=JSON.parse(process.argv[1]);const r=j.repos[0];process.exit(r.pending===0&&(r.swept.approved||0)>=1&&(r.degrades["stale-broker"]||0)===1?0:1)' "$rj" && pass "a legacy event swept under the clone key is closed in repository telemetry" || fail "a legacy event swept under the clone key is closed in repository telemetry ($rj)"
 fj="$(bash "$GT" --all --json)"
 node -e 'const j=JSON.parse(process.argv[1]);const row=j.repos.find(r=>r.key===process.argv[2]);const c=j.repos.find(r=>r.key===process.argv[3]);process.exit(row&&row.pending===0&&c&&(c.swept.approved||0)>=1?0:1)' "$fj" "$lkey" "$skey" && pass "after the sweep the fleet view shows the legacy row closed and the clone row carrying the sweep" || fail "after the sweep the fleet view shows the legacy row closed and the clone row carrying the sweep"
+# An unreadable ledger under a foreign key must not abort another repository's report.
+mkdir -p "$XDG_CACHE_HOME/hyperpowers/ungated/stray/ledger.jsonl"
+rj="$( (cd "$lw" && bash "$GT" --json) 2>/dev/null )"; rrc=$?
+node -e 'const j=JSON.parse(process.argv[1]);process.exit(j.repos[0].pending===0?0:1)' "$rj" 2>/dev/null && [ "$rrc" -eq 0 ] && pass "a ledger path this pass cannot read is skipped, and the report still exits 0" || fail "a ledger path this pass cannot read is skipped, and the report still exits 0 (rc $rrc: $rj)"
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

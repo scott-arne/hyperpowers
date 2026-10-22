@@ -802,7 +802,7 @@ if [ "${out%% *}" = "status=ahead" ]; then pass "an unpushed snapshot reports ah
 git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
 printf 'note from A while behind\n' >> "$wsa/progress.md"
 out=$(run_state "$PAIR_A" sync docs/plan.md); rc=$?
-if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=merged" ] && grep -q '^Task 3: complete' "$wsa/progress.md" && grep -q '^note from A while behind$' "$wsa/progress.md" && ! grep -q '^<<<<<<<' "$wsa/progress.md" && [ "$(git -C "$co_a" log -1 --format=%P hyperpowers/state | wc -w | tr -d ' ')" = 2 ]; then pass "behind with pending ledger edits ends merged with both sides' lines and two parents"; else fail "behind with pending ledger edits ends merged (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=merged" ] && grep -q '^Task 3: complete' "$wsa/progress.md" && grep -q '^note from A while behind$' "$wsa/progress.md" && ! grep -qE '^<{7}' "$wsa/progress.md" && [ "$(git -C "$co_a" log -1 --format=%P hyperpowers/state | wc -w | tr -d ' ')" = 2 ]; then pass "behind with pending ledger edits ends merged with both sides' lines and two parents"; else fail "behind with pending ledger edits ends merged (rc=$rc: $out)"; fi
 if [ -z "$(git -C "$co_a" status --porcelain -- plans/)" ] && [ "$(cat "$wsa/progress.md")" = "$(git -C "$co_a" show "hyperpowers/state:plans/$(basename "$wsa")/progress.md")" ]; then pass "after a merge the checkout is clean and the ledger equals the merged blob"; else fail "after a merge the checkout is clean and the ledger equals the merged blob"; fi
 git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md >/dev/null

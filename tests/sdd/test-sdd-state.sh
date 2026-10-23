@@ -1259,5 +1259,47 @@ git -C "$P_B" pull -q origin main 2>/dev/null; git -C "$C_B" pull -q origin main
 out=$(cd "$C_B" && bash "$SDD_STATE" verify "$P_B/docs/plan.md"); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=ok tasks=1" ]; then pass "clean clones of both repositories verify after pulling the named branches"; else fail "clean clones of both repositories verify after pulling the named branches (rc=$rc: $out)"; fi
 
+echo ""
+echo "=== leftover entries under plans/ ==="
+# A leftover entry directly under plans/ must not wedge every later sync.
+make_pair p11
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+co_b="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null; wsb="$co_b/plans/$(basename "$wsa")"
+advance() { printf '%s\n' "$1" >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null; }
+# A tomb a killed finish or prune left for a plan no later call revisits.
+tomb_p11="$co_b/plans/.removing-gone-1234abcd-999"
+mkdir -p "$tomb_p11"; printf 'orphaned copy\n' > "$tomb_p11/progress.md"
+advance 'line one'
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && grep -q '^line one$' "$wsb/progress.md" && [ -d "$tomb_p11" ]; then pass "a tomb left under plans/ by a killed removal does not stop the apply"; else fail "a tomb left under plans/ by a killed removal does not stop the apply (rc=$rc: $out)"; fi
+rm -rf "$tomb_p11"
+# Any other leftover entry still stops the apply, and names itself.
+printf 'stray\n' > "$co_b/plans/stray.txt"
+advance 'line two'
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p11.out" 2> "$TEST_ROOT/p11.err"; rc=$?
+out=$(cat "$TEST_ROOT/p11.out")
+if [ "$rc" -eq 3 ] && [ "${out%% *}" = "status=busy" ] && grep -q 'plans/stray.txt' "$TEST_ROOT/p11.err"; then pass "another leftover entry under plans/ is busy with the path named on stderr"; else fail "another leftover entry under plans/ is busy with the path named on stderr (rc=$rc: $out: $(cat "$TEST_ROOT/p11.err"))"; fi
+rm -f "$co_b/plans/stray.txt"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && grep -q '^line two$' "$wsb/progress.md"; then pass "the apply resumes once the named entry is gone"; else fail "the apply resumes once the named entry is gone (rc=$rc: $out)"; fi
+# A crash inside the recovery between its ref move and its tomb loop: the
+# tombs go before the ref, so the crash leaves nothing under plans/.
+: > "$PAIR_A/docs/fin.md"; git -C "$PAIR_A" add docs/fin.md; git -C "$PAIR_A" commit -qm fin; git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
+wsf=$(run_sdd_dir "$PAIR_A" docs/fin.md); printf '# SDD ledger — plan: docs/fin.md\n' > "$wsf/progress.md"
+run_state "$PAIR_A" snapshot docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+run_state "$PAIR_A" finish docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-marker bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 )
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=recover-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && ! ls -d "$co_b/plans/.removing-$(basename "$wsf")-"* >/dev/null 2>&1; then pass "the recovery deletes the verified copies before it moves the ref"; else fail "the recovery deletes the verified copies before it moves the ref (rc=$rc)"; fi
+advance 'line three'
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -d "$co_b/plans/$(basename "$wsf")" ] && grep -q '^line three$' "$wsb/progress.md"; then pass "the next sync after that crash finishes the apply and keeps going"; else fail "the next sync after that crash finishes the apply and keeps going (rc=$rc: $out)"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

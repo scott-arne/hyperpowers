@@ -28,6 +28,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Set by remove_verified when it leaves a verified copy at its tomb.
 TOMB=""
+# Set once a leftover entry under plans/ has been named on stderr, so the
+# caller's three attempts do not repeat the same diagnosis.
+NAMED_LEFTOVER=0
 
 usage() {
   printf '%s\n' \
@@ -848,10 +851,14 @@ recover_apply() {
   head=$(tip_of "$CO" "refs/heads/$BRANCH")
   if [ "$head" = "$S" ] && [ "$S" != "$target" ]; then
     hp_has_sentinel "$CO" "$target" || { echo "sdd-state: $CO/.sync-applying names a target without the state sentinel; check the working tree under $CO, then remove the marker" >&2; return 2; }
-    git -C "$CO" update-ref -m "sdd sync (recovered)" "refs/heads/$BRANCH" "$target" "$S" 2>/dev/null || { echo "sdd-state: an interrupted sync left $CO/.sync-applying and the branch could not be moved to its target; check the working tree under $CO, then remove the marker" >&2; return 2; }
+    # The verified copies go before the ref moves, the order apply_target
+    # itself follows: a crash between the two would otherwise leave a tomb
+    # under plans/ that no later call for this plan revisits.
     while IFS= read -r path; do
       case "$path" in plans/*/progress.md) rm -rf "$CO/plans/.removing-$(basename "$(dirname "$path")")"-* ;; esac
     done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
+    git -C "$CO" update-ref -m "sdd sync (recovered)" "refs/heads/$BRANCH" "$target" "$S" 2>/dev/null || { echo "sdd-state: an interrupted sync left $CO/.sync-applying and the branch could not be moved to its target; check the working tree under $CO, then remove the marker" >&2; return 2; }
+    if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = recover-after-update-ref ]; then hp_unlock; exit 99; fi
     head=$target
   fi
   if [ "$head" != "$target" ]; then
@@ -872,7 +879,7 @@ recover_apply() {
 # after the ref moved (the marker stays; the next call finishes it), 2 error.
 # Controllers write without the lock, so the working tree is live.
 apply_target() {
-  local S=$1 target=$2 pending line status path res dir rc i tombs=() dirs=()
+  local S=$1 target=$2 pending line status path res dir rc i refused tombs=() dirs=()
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-apply:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-apply:}" ;; esac
   if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = sync-before-apply ]; then
     : > "$CO/.sync-paused"
@@ -881,14 +888,21 @@ apply_target() {
   fi
   pending=$(git -C "$CO" status --porcelain -- plans/ 2>/dev/null)
   if [ -n "$pending" ]; then
+    refused=0
     while IFS= read -r line; do
       [ -n "$line" ] || continue
       status=${line:0:2}; path=${line:3}
       case "$status|$path" in
-        " M|plans/"*"/progress.md") ;;
-        *) return 5 ;;
+        " M|plans/"*"/progress.md") continue ;;
       esac
+      # A copy a killed removal left aside is not a concurrent write: it is
+      # cleared by finish, by sdd-dir and by the recovery above, and
+      # treating it as one would wedge every later sync on this repository.
+      case "$path" in "plans/.removing-"*) continue ;; esac
+      [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is not part of a plan workspace and holds the apply; inspect it, move or delete it, then run sdd-state sync again" >&2
+      refused=1
     done < <(printf '%s\n' "$pending")
+    if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
   fi
   # Ledgers the target deletes are a remote finish: every one is renamed
   # aside and verified first, before the ref moves, so a line written up to

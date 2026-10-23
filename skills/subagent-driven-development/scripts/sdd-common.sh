@@ -560,7 +560,7 @@ hp_ensure_checkout() {
 # because the workspace is published by one rename from a staging
 # directory.
 hp_materialize_plain() {
-  local repo=$1 ws=$2 dest=$3 br remote local_tip remote_tip tip root staging archive_rc tar_rc local_has remote_has
+  local repo=$1 ws=$2 dest=$3 br remote local_tip remote_tip tip root staging archive_rc tar_rc local_has remote_has rc refusal rest
   [ -f "$dest/progress.md" ] && return 0
   br=$(hp_state_branch "$repo"); remote=$(hp_state_remote "$repo")
   local_tip=$(git -C "$repo" rev-parse -q --verify "refs/heads/$br^{commit}" 2>/dev/null) || local_tip=""
@@ -585,6 +585,21 @@ hp_materialize_plain() {
   fi
   [ -n "$tip" ] || return 0
   git -C "$repo" cat-file -e "$tip:plans/$ws/progress.md" 2>/dev/null || return 0
+  # git archive writes whatever the tip holds, so this backend inspects the
+  # tree before any of it reaches the cache, as the branch backend does
+  # before a checkout is created. The remedy names the branch: a link the
+  # extraction had already written could not be cleared from this host,
+  # because the next call extracts it again from the same tip.
+  rc=0; refusal=$(hp_tree_refusal "$repo" "$tip") || rc=$?
+  if [ "$rc" -eq 2 ]; then
+    echo "sdd-dir: $tip could not be read as a tree; refusing to materialize the plain workspace from it. Fetch the state branch again and retry; if it persists, the repository needs repair" >&2
+    return 2
+  fi
+  if [ "$rc" -ne 0 ]; then
+    rest=${refusal#* }
+    echo "sdd-dir: ${tip:0:7} on $br carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to materialize the plain workspace from it. Remove it on the host that committed it and commit the removal on the state branch, push, then run sdd-state sync (it fetches) and sdd-dir again" >&2
+    return 2
+  fi
   root=$(dirname "$(dirname "$dest")")
   mkdir -p "$root/plans"
   # The same containment rule the branch writers follow: neither the local

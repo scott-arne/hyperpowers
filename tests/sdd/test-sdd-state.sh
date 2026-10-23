@@ -1836,5 +1836,49 @@ git -C "$PAIR_A" push -q origin "$evil26:refs/heads/hyperpowers/state" 2>/dev/nu
 run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p26.out" 2> "$TEST_ROOT/p26.err"; rc=$?
 out=$(cat "$TEST_ROOT/p26.out")
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'submodule entry' "$TEST_ROOT/p26.err" && [ ! -e "$co_b26/plans/$ws26/vendor" ]; then pass "a submodule entry inside a workspace is refused and never materialized"; else fail "a submodule entry inside a workspace is refused and never materialized (rc=$rc: $out: $(cat "$TEST_ROOT/p26.err"))"; fi
+# f. A plain-backend host, where git archive writes the tip's entries
+# straight into the plain cache. Nothing inspected that tree, so the link
+# landed; sdd-dir then refused the workspace it had just written, and the
+# remedy it printed could not clear the tip it keeps re-extracting.
+make_pair p27
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+wsa27=$(run_sdd_dir "$PAIR_A" docs/plan.md); ws27=$(basename "$wsa27")
+# Host B fails its worktree add once, against a branch that holds no
+# workspace yet: backend=plain is recorded and nothing is materialized.
+git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
+keyb27=$(state_key "$PAIR_B"); plainb27="$XDG_CACHE_HOME/hyperpowers/sdd/$keyb27"
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 bash "$SDD_DIR" docs/plan.md 2>/dev/null)
+if [ "$out" = "$plainb27/plans/$ws27" ] && [ "$(head -n1 "$STATE_ROOT/$keyb27.backend")" = plain ]; then pass "the plain host records its backend before the branch carries the plan"; else fail "the plain host records its backend before the branch carries the plan ($out)"; fi
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa27/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+outside27="$TEST_ROOT/outside-p27"; mkdir -p "$outside27"; printf 'untouched\n' > "$outside27/victim"
+idx27="$TEST_ROOT/p27.index"; tip27=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+lb27=$(printf '%s' "$outside27/victim" | git -C "$PAIR_A" hash-object -w --stdin)
+rb27=$(git -C "$PAIR_A" rev-parse "hyperpowers/state:plans/$ws27/progress.md")
+rm -f "$idx27"; GIT_INDEX_FILE=$idx27 git -C "$PAIR_A" read-tree "$tip27"
+GIT_INDEX_FILE=$idx27 git -C "$PAIR_A" update-index --force-remove "plans/$ws27/progress.md"
+GIT_INDEX_FILE=$idx27 git -C "$PAIR_A" update-index --add --cacheinfo "120000,$lb27,plans/$ws27/progress.md"
+evil27=$(printf 'the ledger is a link\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$(GIT_INDEX_FILE=$idx27 git -C "$PAIR_A" write-tree)" -p "$tip27")
+git -C "$PAIR_A" push -q origin "$evil27:refs/heads/hyperpowers/state" 2>/dev/null
+# The host fetches for itself: sync returns on the backend file alone.
+git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=plain" ]; then pass "sync on the plain host reports the backend"; else fail "sync on the plain host reports the backend (rc=$rc: $out)"; fi
+rc=0; out=$(run_sdd_dir "$PAIR_B" docs/plan.md 2> "$TEST_ROOT/p27.err") || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q 'symbolic link' "$TEST_ROOT/p27.err" && grep -q "plans/$ws27/progress.md" "$TEST_ROOT/p27.err" && grep -q 'hyperpowers/state' "$TEST_ROOT/p27.err"; then pass "the plain fallback refuses a tip whose ledger is a symbolic link, naming the branch to repair"; else fail "the plain fallback refuses a tip whose ledger is a symbolic link, naming the branch to repair (rc=$rc: $out: $(cat "$TEST_ROOT/p27.err"))"; fi
+if [ -z "$(find "$plainb27" -type l 2>/dev/null)" ] && ! ls -d "$plainb27"/.materialize.* >/dev/null 2>&1 && [ "$(cat "$outside27/victim")" = "untouched" ]; then pass "no link and no staging directory reach the plain cache, and the link's target is untouched"; else fail "no link and no staging directory reach the plain cache, and the link's target is untouched ($(find "$plainb27" -type l 2>/dev/null | tr '\n' ' '))"; fi
+# The remedy it prints is reachable: the branch gets the regular file back.
+rm -f "$idx27"; GIT_INDEX_FILE=$idx27 git -C "$PAIR_A" read-tree "$evil27"
+GIT_INDEX_FILE=$idx27 git -C "$PAIR_A" update-index --force-remove "plans/$ws27/progress.md"
+GIT_INDEX_FILE=$idx27 git -C "$PAIR_A" update-index --add --cacheinfo "100644,$rb27,plans/$ws27/progress.md"
+fixed27=$(printf 'the ledger is a file again\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$(GIT_INDEX_FILE=$idx27 git -C "$PAIR_A" write-tree)" -p "$evil27")
+git -C "$PAIR_A" push -q origin "$fixed27:refs/heads/hyperpowers/state" 2>/dev/null
+git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+rc=0; out=$(run_sdd_dir "$PAIR_B" docs/plan.md 2>/dev/null) || rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "$plainb27/plans/$ws27" ] && [ ! -L "$out/progress.md" ] && [ "$(sed -n 2p "$out/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "with the link replaced on the branch the same call materializes the workspace"; else fail "with the link replaced on the branch the same call materializes the workspace (rc=$rc: $out)"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

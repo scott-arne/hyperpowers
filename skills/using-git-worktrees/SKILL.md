@@ -146,10 +146,16 @@ npm test / cargo test / pytest / go test ./...
 ### Report
 
 ```
-Worktree ready at <full-path>
+<Worktree ready at <full-path> | Working in place on <branch>>
+Mode: <current-branch|new-branch|worktree>
 Tests passing (<N> tests, 0 failures)
 Ready to implement <feature-name>
 ```
+
+The first line claims a worktree only under mode `worktree`; under
+`current-branch` and `new-branch` none was created, so name the branch the
+work is happening on instead. The mode line is never omitted: the skill
+that called you records it, and the finishing skill routes on it.
 
 ## Quick Reference
 
@@ -163,13 +169,14 @@ Ready to implement <feature-name>
 | Answer: worktree | Step 1, mode `worktree` |
 | In a submodule | Treat as normal repo (Step 0 guard) |
 | Native worktree tool available | Use it (Step 1a) |
+| Native tool denied or failed | Re-ask options 1 and 2; their answer is the mode, never `worktree` (Step 1a) |
 | No native tool | Git worktree fallback (Step 1b) |
 | `.worktrees/` exists | Use it (verify ignored) |
 | `worktrees/` exists | Use it (verify ignored) |
 | Both exist | Use `.worktrees/` |
 | Neither exists | Check instruction file, then default `.worktrees/` |
 | Directory not ignored | Add to .gitignore + commit |
-| Permission error on create | Sandbox fallback, work in place |
+| Permission error on create | Re-ask options 1 and 2; their answer is the mode, never `worktree` (Step 1b) |
 | Tests fail during baseline | Report failures + ask |
 | No package.json/Cargo.toml | Skip dependency install |
 

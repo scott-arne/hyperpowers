@@ -1512,5 +1512,34 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q '.rewrite is a symb
 rm -f "$co_a16/.rewrite"
 out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$(grep -c '^walk A$' "$wsa16/progress.md")" -eq 1 ] && [ "$(grep -c '^walk B$' "$wsa16/progress.md")" -eq 1 ] && [ ! -e "$co_a16/.rewrite/$(basename "$wsa16").journal" ]; then pass "with the link gone the rewrite completes, each line once"; else fail "with the link gone the rewrite completes, each line once (rc=$rc: $out)"; fi
+
+echo ""
+echo "=== a new ledger interrupted while it is created ==="
+# A ledger absent at S is written with a plain append. Interrupted, it left
+# a prefix that the next apply's ledger_apply extended with the whole blob
+# (S has no blob to subtract), giving the ledger twice.
+make_pair p17
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+co_b17="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa17=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa17/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+: > "$PAIR_A/docs/fresh.md"; git -C "$PAIR_A" add docs/fresh.md; git -C "$PAIR_A" commit -qm fresh; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+wsf17=$(run_sdd_dir "$PAIR_A" docs/fresh.md)
+printf '# SDD ledger — plan: docs/fresh.md\nsession s-1: tasks 1,2\nTask 1: complete (commits 1111111..2222222, review clean)\nTask 2: complete (commits 3333333..4444444, review clean)\n' > "$wsf17/progress.md"
+run_state "$PAIR_A" snapshot docs/fresh.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+wsf17_b="$co_b17/plans/$(basename "$wsf17")"
+# The blob to compare against is read from the publishing host, before the
+# interrupted apply can snapshot whatever it leaves over the target.
+want17=$(git -C "$PAIR_A" rev-parse "hyperpowers/state:plans/$(basename "$wsf17")/progress.md")
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-mid-ledger-create bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && ls "$co_b17"/plans/*/*.new.* >/dev/null 2>&1 && [ ! -e "$wsf17_b/progress.md" ]; then pass "the seam stops halfway through creating a new ledger, with nothing published at its path"; else fail "the seam stops halfway through creating a new ledger, with nothing published at its path (rc=$rc)"; fi
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+have17=$(git -C "$co_b17" hash-object "$wsf17_b/progress.md" 2>/dev/null)
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ -n "$want17" ] && [ "$have17" = "$want17" ]; then pass "the next sync leaves the new ledger byte-identical to the target blob, with nothing to snapshot over it"; else fail "the next sync leaves the new ledger byte-identical to the target blob, with nothing to snapshot over it (rc=$rc: $out: $(wc -c < "$wsf17_b/progress.md" | tr -d ' ') bytes)"; fi
+if ! ls "$co_b17"/plans/*/*.new.* >/dev/null 2>&1 && [ -z "$(git -C "$co_b17" status --porcelain -- plans/)" ]; then pass "no temporary copy is left behind and the checkout is clean"; else fail "no temporary copy is left behind and the checkout is clean ($(git -C "$co_b17" status --porcelain -- plans/ | tr '\n' ' '))"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

@@ -831,7 +831,7 @@ ledger_apply() {
 # locally returns 5 (from ledger_apply); a changed ledger the target deletes
 # returns 6.
 apply_files() {
-  local S=$1 target=$2 path dir
+  local S=$1 target=$2 path dir tmp half
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     hp_contained "$CO" "$path" || return 2
@@ -842,7 +842,29 @@ apply_files() {
           ledger_apply "$path" "$S" "$target" || return $?
           if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-ledger-apply ]; then hp_unlock; exit 99; fi
         else
-          git -C "$CO" show "$target:$path" >> "$CO/$path" || return 2
+          # A ledger absent at S is materialized through a temporary file
+          # beside it and published with one link(2), never appended to in
+          # place: an interrupted append leaves a prefix that the next
+          # apply's ledger_apply extends with the whole blob (S has no blob
+          # to subtract), and the result reads as a valid ledger.
+          tmp="$CO/$path.new.$$"
+          rm -f "$tmp"
+          git -C "$CO" show "$target:$path" > "$tmp" || { rm -f "$tmp"; return 2; }
+          if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-mid-ledger-create ]; then
+            # Test hook: half the blob written, the publish never reached.
+            half=$(( $(wc -c < "$tmp" | tr -d ' ') / 2 ))
+            head -c "$half" "$tmp" > "$tmp.half" && mv -f "$tmp.half" "$tmp"
+            hp_unlock; exit 99
+          fi
+          if ln "$tmp" "$CO/$path" 2>/dev/null; then
+            rm -f "$tmp"
+          else
+            # A writer created the ledger between the check and the
+            # publish: reconcile with it instead of replacing it.
+            rm -f "$tmp"
+            [ -f "$CO/$path" ] || return 2
+            ledger_apply "$path" "$S" "$target" || return $?
+          fi
         fi ;;
       *) git -C "$CO" checkout -q "$target" -- "$path" || return 2 ;;
     esac
@@ -872,6 +894,9 @@ apply_files() {
 # until the tree is repaired.
 recover_apply() {
   local S="" target="" rc head j path
+  # A new ledger interrupted between its temporary copy and its publish
+  # leaves that copy inside a workspace, where a snapshot would commit it.
+  rm -f "$CO"/plans/*/*.new.* 2>/dev/null
   for j in "$CO"/.rewrite/*.journal; do
     [ -f "$j" ] || continue
     rewrite_finish "${j%.journal}" || { echo "sdd-state: an interrupted ledger rewrite left $j and finishing it failed; check the ledger it names, then remove it and its .staged file" >&2; return 2; }

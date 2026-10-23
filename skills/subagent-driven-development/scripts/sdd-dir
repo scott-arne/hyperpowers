@@ -99,6 +99,12 @@ ensure=$(hp_ensure_checkout "$plan_dir") || exit 2
 backend=${ensure%% *}
 root=${ensure#* }
 dir="$root/plans/$ws"
+# A fetched branch can carry a symbolic link where the workspace or its
+# parent should be; every path below follows links, so refuse first.
+if ! hp_contained "$root" "plans/$ws"; then
+  echo "sdd-dir: refusing to resolve a workspace through a symbolic link under $root; remove the link and run sdd-state sync" >&2
+  exit 2
+fi
 # The workspace directory is created under the repository lock, and only
 # when it is missing, so the branch-backend fast path takes no lock and an
 # unlocked mkdir can never resurrect a path finish has just renamed aside.
@@ -106,6 +112,12 @@ dir="$root/plans/$ws"
 # materialization leaves no half-built workspace.
 if [ "$backend" = plain ] || [ ! -d "$dir" ]; then
   hp_lock "$plan_dir" || exit 2
+  # The branch can move between the check above and the lock.
+  if ! hp_contained "$root" "plans/$ws"; then
+    hp_unlock
+    echo "sdd-dir: refusing to resolve a workspace through a symbolic link under $root; remove the link and run sdd-state sync" >&2
+    exit 2
+  fi
   if [ "$backend" = plain ]; then
     # The plain root may not exist yet; touch alone would create a file.
     mkdir -p "$root" || { hp_unlock; exit 2; }

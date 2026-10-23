@@ -608,6 +608,8 @@ git commit -m "feat(finishing): decisions-compile lifts a spec's Decisions list 
 
 ### Task 2: The index, the Outcome line, staging and the paths contract
 
+Correction (2026-10-22, after the final Codex gate): the compiler preflights the records directory before its first write and exits 2 on any dirty path it does not own (its planned records, the supersession targets it rewrites, README.md), and stages and exports only owned paths, so a foreign change under decisions/ never enters the approval diff or the records commit (7b5af60); the notes file's first line must name the spec's repository-relative path exactly, not merely its basename.
+
 **Risk tier:** high — edits a tracked spec in place, stages git changes, and produces the pathspec the finishing commit consumes.
 
 **Files:**
@@ -2454,6 +2456,8 @@ has no records: for it, this step is the test run alone.
 ````
 
 - [ ] **Step 3: Add the Step 4 preface**
+
+Correction (2026-10-22), decision 12 (The serial cost is the compiler and one commit, after the suite; the human review rides the finishing menu): the final Codex gate withdrew the second commit described in the paragraph below (c669364): an accepted proposal is written into the spec, the compiler re-run stages the spec with the proposal and the Outcome line together with the records, the new complete staged diff is approved, and the one records commit takes them all through the pathspec file; a withheld approval commits nothing and asks what to change. The decision's one commit holds as written.
 
 Correction (2026-10-22), decision 12 (The serial cost is the compiler and one commit, after the suite; the human review rides the finishing menu): Step 4 as built makes a second commit, the spec edit, whenever your human partner accepts a proposal, so that the staged records stay staged and the compiler re-run reads a committed spec; the records commit itself is still one, after the suite. The final whole-branch review also added to Step 4 (9e1232c): an empty pathspec file means there is nothing to commit (a re-finish skips the commit and runs the option); a skip is settled before any accepted proposal is written, so the spec is never committed on the skip path; the preface's loop reads the pathspec file through a named variable; Step 1's dry run passes `--plan` when a plan was found; the Overview names Step 1 as built.
 

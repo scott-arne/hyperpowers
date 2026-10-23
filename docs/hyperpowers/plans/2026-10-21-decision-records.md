@@ -608,7 +608,7 @@ git commit -m "feat(finishing): decisions-compile lifts a spec's Decisions list 
 
 ### Task 2: The index, the Outcome line, staging and the paths contract
 
-Correction (2026-10-22, after the final Codex gate): the compiler preflights the records directory before its first write and exits 2 on any dirty path it does not own (its planned records, the supersession targets it rewrites, README.md), and stages and exports only owned paths, so a foreign change under decisions/ never enters the approval diff or the records commit (7b5af60); the notes file's first line must name the spec's repository-relative path exactly, not merely its basename.
+Correction (2026-10-22, after the final Codex gate): the compiler preflights the records directory before its first write and exits 2 on any dirty path it does not own (its planned records and README.md are owned whole; a supersession target is owned only when HEAD, the index and the working tree agree apart from its Status line, the one line the compiler rewrites, and a target without a Status line is refused), and stages and exports only owned paths, so a foreign change under decisions/ never enters the approval diff or the records commit (7b5af60, narrowed in 5795645 and a155e0c); the notes file's first line must name the spec's repository-relative path exactly, not merely its basename.
 
 **Risk tier:** high — edits a tracked spec in place, stages git changes, and produces the pathspec the finishing commit consumes.
 
@@ -1899,6 +1899,8 @@ git commit -m "feat(finishing): decisions-compile removes a validated plan in ev
 ---
 
 ### Task 6: `--undo`, the later day, and the mode table
+
+Correction (2026-10-22, after the final Codex gate): `drop_status`, listed below inside the `--undo` block, now lives among the compiler's helpers so the ownership preflight shares it (5795645); its awk is unchanged.
 
 **Risk tier:** high — restores the tree on skip, including a superseded record's status.
 

@@ -2,7 +2,10 @@
 # ungated-ledger — durable record of work that shipped without a Codex
 # confirmation (spec 4.1). Append-only JSONL under the user cache:
 #   ${XDG_CACHE_HOME:-~/.cache}/hyperpowers/ungated/<key>/ledger.jsonl
-# <key> is byte-identical to sdd-dir's derivation. The ungated/ root is
+# <key> is the state key of sdd-common.sh (the clone's common git directory,
+# shared by every worktree). `pending` also reads the ledger under the
+# pre-6.17 per-worktree key so entries written before the upgrade stay
+# visible; `append` and `mark-swept` write only the new key. The ungated/ root is
 # deliberately OUTSIDE sdd/ — no GC touches it.
 #
 # Subcommands:
@@ -22,6 +25,10 @@
 # (ledger.lock/) with a 30s stale takeover recorded in the event note; readers
 # never lock. Exit 0 for determinate answers; exit 2 for usage/internal errors.
 set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=../../subagent-driven-development/scripts/sdd-common.sh
+. "$SCRIPT_DIR/../../subagent-driven-development/scripts/sdd-common.sh"
 
 command -v node >/dev/null 2>&1 || { echo "ungated-ledger: node not found" >&2; exit 2; }
 sub="${1:-}"; shift || true
@@ -51,10 +58,12 @@ done
 
 git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || {
   echo "ungated-ledger: not inside a git repository: $repo" >&2; exit 2; }
-# Byte-identical to sdd-dir's derivation.
-key=$(printf '%s' "$(git -C "$repo" rev-parse --absolute-git-dir)" | git -C "$repo" hash-object --stdin)
-root="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/ungated/${key}"
+key=$(hp_key "$repo")
+legacy_key=$(hp_legacy_key "$repo")
+root="$(hp_cache_root)/ungated/${key}"
 ledger="$root/ledger.jsonl"
+legacy_ledger=""
+[ "$legacy_key" != "$key" ] && legacy_ledger="$(hp_cache_root)/ungated/${legacy_key}/ledger.jsonl"
 
 # Acquisition is complete only when the owner file provably carries our
 # token: a failed write, or a lockdir swept away in the mkdir-to-write
@@ -182,20 +191,25 @@ case "$sub" in
     printf '{"ok":true,"id":"%s"}\n' "$id"
     ;;
   pending)
-    [ -f "$ledger" ] || { if [ "$count_only" -eq 1 ]; then echo '{"count":0,"skipped":0}'; else echo '[]'; fi; exit 0; }
+    files=()
+    [ -f "$ledger" ] && files+=("$ledger")
+    if [ -n "$legacy_ledger" ] && [ -f "$legacy_ledger" ]; then files+=("$legacy_ledger"); fi
+    [ "${#files[@]}" -gt 0 ] || { if [ "$count_only" -eq 1 ]; then echo '{"count":0,"skipped":0}'; else echo '[]'; fi; exit 0; }
     node -e '
       const fs = require("fs");
-      const lines = fs.readFileSync(process.argv[1], "utf8").split("\n").filter(l => l.trim() !== "");
+      const mode = process.argv[1];
+      let lines = [];
+      for (const f of process.argv.slice(2)) lines = lines.concat(fs.readFileSync(f, "utf8").split("\n").filter(l => l.trim() !== ""));
       let skipped = 0; const events = [];
       for (const l of lines) { try { events.push(JSON.parse(l)); } catch (e) { skipped++; } }
       const sweptRefs = new Set(events.filter(e => e.event === "swept").map(e => e.ref));
       const pending = events.filter(e => e.event === "ungated" && e.sweepable === true && !sweptRefs.has(e.id));
-      if (process.argv[2] === "count") {
+      if (mode === "count") {
         process.stdout.write(JSON.stringify({ count: pending.length, skipped }) + "\n");
       } else {
         process.stdout.write(JSON.stringify(pending) + "\n");
       }
-    ' "$ledger" "$([ "$count_only" -eq 1 ] && echo count || echo list)"
+    ' "$([ "$count_only" -eq 1 ] && echo count || echo list)" "${files[@]}"
     ;;
   mark-swept)
     [ -n "$ref" ] || { echo "ungated-ledger: --ref is required" >&2; exit 2; }

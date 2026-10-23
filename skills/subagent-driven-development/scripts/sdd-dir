@@ -1,32 +1,39 @@
 #!/usr/bin/env bash
-# Emit the SDD scratch directory for this repo instance, off any protected
-# path. Single source of truth for task-brief, review-package, and the
-# SKILL.md ledger guidance.
+# Emit the SDD workspace for a plan: the directory holding its ledger, briefs,
+# reports, review packages and claims. Single source of truth for task-brief,
+# review-package, sdd-state and the SKILL.md ledger guidance.
 #
-# Why not <git-dir>/sdd: .git/ is a hardcoded protected path in Claude Code.
-# Writes under it prompt in every permission mode except bypassPermissions,
-# and that check runs BEFORE permission rules and PreToolUse hooks — so
-# neither an allow-glob nor a hook can suppress it. SDD is write-intensive,
-# so that meant a prompt per scratch file. Relocating off .git/ lets the
-# normal permission machinery cover the writes.
+# With a plan argument the workspace lives inside the repository's state
+# checkout, a linked worktree of the orphan branch hyperpowers/state kept
+# once per clone under the user cache (sdd-common.sh, hp_ensure_checkout):
+#   ${XDG_CACHE_HOME:-~/.cache}/hyperpowers/state/<key>/plans/<slug>-<hash8>/
+# <key> hashes the clone's physical common git directory, so every worktree
+# of the clone shares the checkout, and the workspace name derives from the
+# plan's repo-relative path, so it is the same on every host. When the
+# branch backend is unavailable (git worktree add failed, for example under
+# a sandbox) the workspace falls back to the plain cache at
+#   ${XDG_CACHE_HOME:-~/.cache}/hyperpowers/sdd/<key>/plans/<slug>-<hash8>/
+# and does not travel. Without a plan argument the plain-cache root
+# sdd/<key> is printed: the repository-level scratch other skills use.
 #
-# The dir is keyed by a stable hash of the absolute git-dir. That preserves
-# the two properties the old `git rev-parse --git-path sdd` idiom gave for
-# free: per-repo-instance isolation, and per-worktree distinctness (linked
-# worktrees have distinct absolute git-dirs). It lives under the user cache,
-# so it is never inside the working tree and cannot be accidentally
-# committed. Hashing uses `git hash-object` rather than shasum/sha256sum
-# because the latter's name differs across platforms while git is already a
-# hard dependency here.
+# Why not <git-dir>/sdd: .git/ is a hardcoded protected path in Claude Code;
+# writes under it prompt in every permission mode. Why not the working tree:
+# the dossier must survive git clean, stash and checkout, and never be
+# committed by accident. Design:
+# docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md.
 set -euo pipefail
 
-# The repository that owns the plan keys the workspace when a plan is given,
-# so a plan invoked from another repository's checkout (a cross-repo plan)
-# still maps to one workspace. Without a plan argument the cwd's repository
-# keys, as before.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=sdd-common.sh
+. "$SCRIPT_DIR/sdd-common.sh"
+
 plan_dir=""
 if [ $# -ge 1 ] && [ -n "${1:-}" ]; then
   plan=$1
+  [ -f "$plan" ] || {
+    echo "sdd-dir: plan file does not exist: $plan" >&2
+    exit 2
+  }
   plan_dir=$(cd "$(dirname "$plan")" 2>/dev/null && pwd -P) || {
     echo "sdd-dir: plan file directory does not exist: $plan" >&2
     exit 2
@@ -41,86 +48,160 @@ else
     exit 2
   }
 fi
-repo_git() {
-  if [ -n "$plan_dir" ]; then git -C "$plan_dir" "$@"; else git "$@"; fi
+
+base="$(hp_cache_root)/sdd"
+
+# Reclaim plain-cache roots idle for 14+ days, never the given key's. Left
+# alone the cache grows one root per repository instance forever, and editors
+# that follow agent-touched files hold a watcher per scratch file. An idle
+# root is claimed by renaming it aside (atomic), then re-checked on the
+# claimed tree: an import that got in first left a fresh mtime (it touches
+# the root before anything else) or its backup (`plans/*.importing-*`),
+# and such a root is put back; an import that arrives after the rename
+# finds no root and fails cleanly with nothing lost. Best effort: pruning
+# must never break the contract that stdout is the path.
+reclaim_plain() {
+  local r claimed
+  for r in "$base"/*/; do
+    r=${r%/}
+    [ -d "$r" ] && [ ! -L "$r" ] || continue
+    [ "${r##*/}" != "$1" ] || continue
+    [ -n "$(find "$r" -maxdepth 0 -mtime +14 2>/dev/null)" ] || continue
+    ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
+    claimed="$r.reclaiming-$$"
+    mv "$r" "$claimed" 2>/dev/null || continue
+    if [ -n "${HYPERPOWERS_TEST_RECLAIM_RACE:-}" ] && [ "$HYPERPOWERS_TEST_RECLAIM_RACE" = "$r" ]; then
+      # Test hook: an importer that touched the root and renamed its source
+      # aside just before the claim.
+      mkdir -p "$claimed/plans/x.importing-1"; touch "$claimed"
+    fi
+    if [ -z "$(find "$claimed" -maxdepth 0 -mtime +14 2>/dev/null)" ] || ls -d "$claimed"/plans/*.importing-* >/dev/null 2>&1; then
+      mv "$claimed" "$r" 2>/dev/null || true
+      continue
+    fi
+    rm -rf "$claimed" 2>/dev/null || true
+  done
 }
 
-key=$(printf '%s' "$(repo_git rev-parse --absolute-git-dir)" | repo_git hash-object --stdin)
-base="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/sdd"
-dir="${base}/${key}"
-
-# Optional PLAN_FILE argument scopes the workspace to one plan. The slug is
-# the plan basename plus an 8-char hash of the normalized repo-relative
-# path: basename alone collides (two plans named plan.md in different
-# directories must not share a ledger). No-arg mode is unchanged — it is
-# the repo-instance dir other skills use as a generic cache root.
-repo_dir="$dir"
-if [ -n "$plan_dir" ]; then
-  abs="${plan_dir}/$(basename "$plan")"
-  toplevel=$(repo_git rev-parse --show-toplevel)
-  rel=${abs#"$toplevel"/}
-  slug=$(basename "$plan")
-  slug=${slug%.*}
-  hash8=$(printf '%s' "$rel" | repo_git hash-object --stdin | cut -c1-8)
-  plans_root="${dir}/plans"
-  dir="${plans_root}/${slug}-${hash8}"
+if [ -z "$plan_dir" ]; then
+  key=$(hp_key .)
+  dir="$base/$key"
+  mkdir -p "$dir"
+  touch "$dir"
+  reclaim_plain "$key"
+  printf '%s\n' "$dir"
+  exit 0
 fi
 
-mkdir -p "$dir"
-# Refresh the current workspace's mtime and, in plan mode, the repo cache root.
-# Invariant: every sdd-dir invocation freshens both the current workspace AND
-# its repo cache root, so neither leaf-level nor repo-level sibling GC can see
-# an active workspace as idle; the by-name exclusion remains defense in depth.
-touch "$dir"
-if [ "$dir" != "$repo_dir" ]; then
-  touch "$repo_dir"
+key=$(hp_key "$plan_dir") || { echo "sdd-dir: could not derive the repository key for: $plan" >&2; exit 2; }
+ws=$(hp_plan_ws_name "$plan") || { echo "sdd-dir: plan file must be a regular file inside the repository, not a symlink: $plan" >&2; exit 2; }
+ensure=$(hp_ensure_checkout "$plan_dir") || exit 2
+backend=${ensure%% *}
+root=${ensure#* }
+dir="$root/plans/$ws"
+# A fetched branch can carry a symbolic link where the workspace or its
+# parent should be; every path below follows links, so refuse first.
+if ! hp_contained "$root" "plans/$ws"; then
+  echo "sdd-dir: refusing to resolve a workspace through a symbolic link under $root; remove the link and run sdd-state sync" >&2
+  exit 2
+fi
+# And inside it: Setup and the implementers write the ledger, the reports
+# and the claims by path, so one link in the workspace would take those
+# writes out of the cache.
+refuse_ws_links() {
+  local found
+  [ -d "$dir" ] || return 0
+  found=$(find "$dir" -type l 2>/dev/null) || found=""
+  [ -n "$found" ] || return 0
+  echo "sdd-dir: refusing to resolve a workspace that holds a symbolic link at ${found%%$'\n'*}; remove the link and run sdd-state sync" >&2
+  return 2
+}
+refuse_ws_links || exit 2
+# The workspace directory is created under the repository lock, and only
+# when it is missing, so the branch-backend fast path takes no lock and an
+# unlocked mkdir can never resurrect a path finish has just renamed aside.
+# Writes under the plain backend take the same lock; a failed
+# materialization leaves no half-built workspace.
+if [ "$backend" = plain ] || [ ! -d "$dir" ]; then
+  hp_lock "$plan_dir" || exit 2
+  # The branch can move between the check above and the lock.
+  if ! hp_contained "$root" "plans/$ws"; then
+    hp_unlock
+    echo "sdd-dir: refusing to resolve a workspace through a symbolic link under $root; remove the link and run sdd-state sync" >&2
+    exit 2
+  fi
+  if [ "$backend" = plain ]; then
+    # The plain root may not exist yet; touch alone would create a file.
+    mkdir -p "$root" || { hp_unlock; exit 2; }
+    touch "$root"
+    if ! hp_materialize_plain "$plan_dir" "$ws" "$dir"; then
+      hp_unlock
+      echo "sdd-dir: could not materialize the branch workspace into the plain cache" >&2
+      exit 2
+    fi
+  fi
+  # A removal interrupted after its rename-aside left the dossier at
+  # plans/.removing-<ws>-<pid>; it comes back before an empty workspace
+  # could take its place.
+  for t in "$root/plans/.removing-$ws-"*; do
+    [ -d "$t" ] && [ ! -d "$dir" ] || continue
+    mv "$t" "$dir" 2>/dev/null || true
+  done
+  mkdir -p "$dir" || { hp_unlock; exit 2; }
+  # A materialized or restored workspace is checked once more under the
+  # lock: it is a tree this host did not write.
+  refuse_ws_links || { hp_unlock; exit 2; }
+  hp_unlock
+  [ "$backend" != plain ] || echo "sdd-dir: backend=plain for this repository; the dossier will not travel from this host" >&2
 fi
 
-# A plan run from another repository's checkout keeps its one workspace under
-# the plan repository's key, but a reader that only knows the cwd (the
-# compaction notice in hooks/session-start scans the cwd key's plans/) would
-# not find it there. Leave a pointer under the cwd key: a symlink named after
-# the workspace with the plan repository's key prefix appended, so it can never
-# coincide with the cwd repository's own workspace for a plan at the same
-# repo-relative path. The cwd key is hashed with plain git on purpose, so it
-# matches what the hook derives for the same cwd. Only a path that is free or
-# already a symlink is taken; a real directory at that path is never replaced.
-# The cwd key directory is touched as well, so the repo-level reclaim below
-# never takes a pointer-only key with it. Dangling pointers left by reclaimed
-# workspaces are pruned alongside. Best effort, like the reclaim below: stdout
-# stays exactly the dir path.
-if [ -n "$plan_dir" ] && git rev-parse --git-dir >/dev/null 2>&1; then
-  cwd_key=$(printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin)
+# Pull a workspace an older plugin left in the plain cache into place. A
+# failed import stops here: no caller may work in a workspace whose legacy
+# ledger is still elsewhere. Import's stderr stays visible: it reports an
+# abandoned or kept legacy copy there.
+import_line=$(bash "$SCRIPT_DIR/sdd-state" import "$plan") || {
+  echo "sdd-dir: importing a legacy workspace failed; run: sdd-state import $plan" >&2
+  exit 2
+}
+# A skipped import is not a failure, but it leaves a legacy workspace whose
+# ledger lines are not in the one this caller is about to work in: say so,
+# because nothing else would.
+case "$import_line" in
+  status=skipped*) echo "sdd-dir: a legacy workspace was left where it is: $import_line" >&2 ;;
+esac
+
+# Keep the plan repository's plain root fresh: it holds pointers for other
+# repositories and the no-argument scratch, and another repository's reclaim
+# would otherwise take it after 14 idle days. The reclaim itself runs last,
+# after the cwd key below has been touched, so a pointer-only key is never
+# taken with it.
+mkdir -p "$base/$key" 2>/dev/null || true
+touch "$base/$key" 2>/dev/null || true
+
+# A plan run from another repository's checkout: leave a pointer under the
+# cwd's key in the plain cache, so the compaction notice finds the ledger
+# without a state branch being created in the hosting repository.
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  cwd_key=$(hp_key .)
   if [ "$cwd_key" != "$key" ]; then
-    cwd_plans="${base}/${cwd_key}/plans"
+    cwd_plans="$base/$cwd_key/plans"
     mkdir -p "$cwd_plans" 2>/dev/null || true
-    touch "${base}/${cwd_key}" 2>/dev/null || true
-    pointer="${cwd_plans}/$(basename "$dir")+${key:0:8}"
+    touch "$base/$cwd_key" 2>/dev/null || true
+    pointer="${cwd_plans}/${ws}+${key:0:8}"
     if [ ! -e "$pointer" ] || [ -L "$pointer" ]; then
       ln -sfn "$dir" "$pointer" 2>/dev/null || true
     fi
-    find "$cwd_plans" -mindepth 1 -maxdepth 1 -type l ! -exec test -e {} \; -delete 2>/dev/null || true
+    # Dangling pointers left by finished workspaces are pruned; one whose
+    # target is an interrupted import's backup is kept for import to recover.
+    for p in "$cwd_plans"/*; do
+      [ -L "$p" ] && [ ! -e "$p" ] || continue
+      t=$(readlink "$p")
+      ls -d "$t".importing-* >/dev/null 2>&1 && continue
+      rm -f "$p" 2>/dev/null || true
+    done
   fi
 fi
 
-# Reclaim sibling scratch dirs idle for 14+ days. Left alone the cache grows
-# one dir per repo instance forever, and editors that follow agent-touched
-# files (Zed's agent panel, for one) hold a filesystem watcher per scratch
-# file — enough accumulation has exhausted macOS FSEvent streams in practice.
-# A dir's mtime refreshes whenever a file is added or removed inside it, so
-# 14 idle days means the run is long finished. The current key is excluded:
-# mkdir -p does not bump mtime on an existing dir, so a repo resumed after a
-# long pause would otherwise lose its live ledger. Best-effort by design —
-# pruning must never break the contract that stdout is exactly the dir path.
-find "$base" -mindepth 1 -maxdepth 1 -type d ! -name "$key" -mtime +14 \
-  -exec rm -rf {} + 2>/dev/null || true
-
-# Plan-level GC backstop: stale sibling plan workspaces are pruned on the
-# same 14-idle-day rule. Scoped to the plans/ subdir only — never non-plan
-# cache content under the repo dir — and never the current plan's dir.
-if [ -n "${plans_root:-}" ]; then
-  find "$plans_root" -mindepth 1 -maxdepth 1 -type d ! -name "$(basename "$dir")" -mtime +14 \
-    -exec rm -rf {} + 2>/dev/null || true
-fi
+reclaim_plain "$key"
 
 printf '%s\n' "$dir"

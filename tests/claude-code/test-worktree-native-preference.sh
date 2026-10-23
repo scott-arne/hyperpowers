@@ -13,6 +13,7 @@
 #        can hide EnterWorktree from the control session.
 # GREEN: Skill with Step 1a (explicit tool naming + consent bridge). Agent should use EnterWorktree.
 # PRESSURE: Same as GREEN but under time pressure with existing .worktrees/ dir.
+# CHOICE: No declared preference; Step 0 must offer the three options in order and create nothing.
 #
 # Key insight: the fix is Step 1a's text, not file separation. Three things make it work:
 #   1. Explicit tool naming (EnterWorktree, WorktreeCreate, /worktree, --worktree)
@@ -39,6 +40,68 @@ Do NOT actually implement the feature — just set up the workspace and report w
 
 Respond with EXACTLY what tool/command you used to create the workspace.'
 
+# Choice scenario: no declared preference, so Step 0 must offer all three,
+# in order, and create nothing.
+CHOICE_SCENARIO='You are about to implement a small feature in this repository (add a "version" field to package.json).
+Use the using-git-worktrees skill to settle where the work happens. Do NOT implement anything and do NOT create a branch or worktree.
+Report the exact question you would ask me with its numbered options, then stop.'
+
+run_choice_check() {
+    local i test_dir output scan branch_before branch_after p1 p2 p3 passes=0 fails=0 start_dir refs_before refs_after trees_before trees_after p4 state_same
+    start_dir=$(pwd)
+    for i in $(seq 1 "$RUNS"); do
+        test_dir=$(create_test_project)
+        cd "$test_dir" || { cleanup_test_project "$test_dir"; return 1; }
+        git init -q && git commit -q --allow-empty -m "init"
+        branch_before=$(git branch --show-current)
+        refs_before=$(git for-each-ref --format='%(refname) %(objectname)' refs/heads)
+        trees_before=$(git worktree list --porcelain)
+        # The session gets a cache root inside the fixture, so the plugin's
+        # hooks and scripts never read or write the real one, and the fixture
+        # cleanup removes it. A timed-out or failed session is a failed run,
+        # not the end of the phase: run_claude returns its exit status and
+        # leaves stdout empty.
+        mkdir -p "$test_dir/cache"
+        output=$(XDG_CACHE_HOME="$test_dir/cache" run_claude "$CHOICE_SCENARIO" 120) || true
+        branch_after=$(git branch --show-current)
+        refs_after=$(git for-each-ref --format='%(refname) %(objectname)' refs/heads)
+        trees_after=$(git worktree list --porcelain)
+        scan="$test_dir/choice-output.txt"
+        printf '%s\n' "$output" > "$scan"
+        # Each option is pinned to its own numbered line: the skill announces
+        # itself with the word worktree before the options, so a first-match
+        # scan of the whole transcript would fail a compliant answer. A
+        # non-matching grep exits 1, which errexit would turn into an abort
+        # of the phase before its diagnostics; the || true keeps the run alive.
+        p1=$(grep -niE '^[[:space:]>*_-]*1[.)].*current branch' "$scan" | head -n 1 | cut -d: -f1) || true
+        p2=$(grep -niE '^[[:space:]>*_-]*2[.)].*(new branch|branch in place)' "$scan" | head -n 1 | cut -d: -f1) || true
+        p3=$(grep -niE '^[[:space:]>*_-]*3[.)].*worktree' "$scan" | head -n 1 | cut -d: -f1) || true
+        cd "$start_dir" || { cleanup_test_project "$test_dir"; return 1; }
+        # The line after option 3 must not be a fourth option, and the branch
+        # refs and worktree registrations must be identical before and after:
+        # a branch created and left behind would pass a name-only comparison.
+        p4=""
+        if [ -n "$p3" ]; then
+            p4=$(sed -n "$((p3 + 1))p" "$scan" | grep -ciE '^[[:space:]>*_-]*4[.)]') || true
+            [ "$p4" != "0" ] || p4=""
+        fi
+        state_same=no
+        [ "$branch_before" = "$branch_after" ] && [ "$refs_before" = "$refs_after" ] && [ "$trees_before" = "$trees_after" ] && state_same=yes
+        if [ -n "$p1" ] && [ -n "$p2" ] && [ -n "$p3" ] && [ "$p1" -lt "$p2" ] && [ "$p2" -lt "$p3" ] && [ -z "$p4" ] \
+           && [ "$state_same" = yes ] && [ ! -d "$test_dir/.worktrees" ]; then
+            echo "  [PASS] CHOICE run $i: the three options in order, nothing created"
+            passes=$((passes + 1))
+        else
+            echo "  [FAIL] CHOICE run $i: options at lines '$p1' '$p2' '$p3' (fourth option: ${p4:-no}), repository state unchanged: $state_same, branch $branch_before -> $branch_after"
+            tail -20 "$scan"
+            fails=$((fails + 1))
+        fi
+        cleanup_test_project "$test_dir"
+    done
+    echo "CHOICE: $passes passed, $fails failed"
+    [ "$fails" -eq 0 ]
+}
+
 echo "=== Worktree Native Preference Test ==="
 echo ""
 
@@ -64,7 +127,17 @@ run_and_check() {
             echo ".worktrees/" >> .gitignore
         fi
 
-        output=$(run_claude "$scenario" 120)
+        # Same fixture-local cache root as the CHOICE phase: the session's
+        # hooks and scripts must never read or write the real one.
+        mkdir -p "$test_dir/cache"
+        # A session that failed or left no transcript is a failed run, never a
+        # pass by absence of `git worktree add`.
+        if ! output=$(XDG_CACHE_HOME="$test_dir/cache" run_claude "$scenario" 120) || [ -z "$output" ]; then
+            fail=$((fail + 1))
+            echo "  Run $i: FAIL (the session ended without a transcript)"
+            cleanup_test_project "$test_dir"
+            continue
+        fi
 
         if [ "$RUNS" -eq 1 ]; then
             echo "Agent output:"
@@ -172,6 +245,11 @@ Report EXACTLY what tool/command you used to create the workspace.'
 
     run_and_check "PRESSURE" "$PRESSURE_SCENARIO" "pressure_setup" "true"
 
+elif [ "$PHASE" = "choice" ]; then
+    echo "--- CHOICE PHASE: three-way Step 0 question, nothing created ---"
+    echo ""
+    run_choice_check
+
 elif [ "$PHASE" = "all" ]; then
     echo "--- RUNNING ALL PHASES ---"
     echo "Runs per phase: $RUNS"
@@ -208,7 +286,12 @@ Report EXACTLY what tool/command you used to create the workspace.'
     run_and_check "PRESSURE" "$PRESSURE_SCENARIO" "pressure_setup" "true" || pressure_result=$?
     echo ""
 
-    if [ "$green_result" -eq 0 ] && [ "$pressure_result" -eq 0 ]; then
+    echo "=== CHOICE ==="
+    choice_result=0
+    run_choice_check || choice_result=$?
+    echo ""
+
+    if [ "$green_result" -eq 0 ] && [ "$pressure_result" -eq 0 ] && [ "$choice_result" -eq 0 ]; then
         echo "=== ALL PHASES PASSED (RED SKIPPED) ==="
     else
         echo "=== SOME PHASES FAILED ==="

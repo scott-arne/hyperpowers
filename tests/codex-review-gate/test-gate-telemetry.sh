@@ -415,5 +415,49 @@ node -e 'const r=JSON.parse(process.argv[1]).repos[0];process.exit(r.tasks===4&&
 xall2="$(bash "$GT" --all --json)"
 node -e 'const a=JSON.parse(process.argv[1]).aggregate,b=JSON.parse(process.argv[2]).aggregate;process.exit(a.tasks===b.tasks&&a.fixBriefs===b.fixBriefs&&a.sharedWorkspaces===b.sharedWorkspaces?0:1)' "$xall" "$xall2" \
   && pass "a duplicate alias leaves the fleet tasks, fix briefs, and shared workspaces unchanged" || fail "a duplicate alias leaves the fleet tasks, fix briefs, and shared workspaces unchanged"
+# --- the state checkout layout (portable dossiers) ---
+LIB="$REPO_ROOT/skills/subagent-driven-development/scripts/sdd-common.sh"
+srepo="$work/state-repo"; git init -q "$srepo"; git -C "$srepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m one
+# shellcheck source=../../skills/subagent-driven-development/scripts/sdd-common.sh
+skey="$( ( . "$LIB"; hp_key "$srepo" ) )"
+st="$XDG_CACHE_HOME/hyperpowers/state/$skey/plans/plan-00000001"; mkdir -p "$st"
+echo brief > "$st/task-1-brief.md"; echo brief > "$st/task-2-brief.md"; echo fix > "$st/task-2-codex-fix-brief.md"
+: > "$XDG_CACHE_HOME/hyperpowers/state/$skey.backend"
+mkdir -p "$XDG_CACHE_HOME/hyperpowers/state/$skey.lock" "$XDG_CACHE_HOME/hyperpowers/state/$skey.tmp-123"
+smd="$( (cd "$srepo" && bash "$GT") )"
+expect "$smd" "Fix-cycle rate: 1/2 tasks" "plan workspaces inside the state checkout are counted"
+sall="$(bash "$GT" --all --json)"
+node -e 'const j=JSON.parse(process.argv[1]);process.exit(j.repos.every(r=>/^[0-9a-f]+$/.test(r.key))?0:1)' "$sall" \
+  && pass "the fleet view skips the backend, lock and stamp files beside a checkout" || fail "the fleet view skips the backend, lock and stamp files beside a checkout"
+# A pre-6.17 worktree event swept under the clone's key is closed in both views.
+lw="$work/legacy-wt"; git -C "$srepo" worktree add -q "$lw" -b lw >/dev/null 2>&1
+# shellcheck source=../../skills/subagent-driven-development/scripts/sdd-common.sh
+lkey="$( ( . "$LIB"; hp_legacy_key "$lw" ) )"
+mkdir -p "$XDG_CACHE_HOME/hyperpowers/ungated/$lkey"
+printf '{"v":1,"id":"legacy-wt-1","event":"ungated","class":"degraded-gate","gate":"task","ts":"2026-10-01T00:00:00Z","repo":"/tmp/r","base":"a","head":"b","status":"stale-broker","sweepable":true,"gateDir":null,"note":"legacy pending"}\n' > "$XDG_CACHE_HOME/hyperpowers/ungated/$lkey/ledger.jsonl"
+rj="$( (cd "$lw" && bash "$GT" --json) )"
+node -e 'const j=JSON.parse(process.argv[1]);process.exit(j.repos[0].pending===1?0:1)' "$rj" && pass "repository telemetry from a worktree counts its legacy ledger's event" || fail "repository telemetry from a worktree counts its legacy ledger's event ($rj)"
+fj="$(bash "$GT" --all --json)"
+node -e 'const j=JSON.parse(process.argv[1]);const row=j.repos.find(r=>r.key===process.argv[2]);process.exit(row&&row.pending===1?0:1)' "$fj" "$lkey" && pass "the fleet view lists the legacy row pending before the sweep" || fail "the fleet view lists the legacy row pending before the sweep"
+( cd "$lw" && bash "$UL" mark-swept --ref legacy-wt-1 --verdict approved --note migrated "$lw" >/dev/null )
+rj="$( (cd "$lw" && bash "$GT" --json) )"
+node -e 'const j=JSON.parse(process.argv[1]);const r=j.repos[0];process.exit(r.pending===0&&(r.swept.approved||0)>=1&&(r.degrades["stale-broker"]||0)===1?0:1)' "$rj" && pass "a legacy event swept under the clone key is closed in repository telemetry" || fail "a legacy event swept under the clone key is closed in repository telemetry ($rj)"
+fj="$(bash "$GT" --all --json)"
+node -e 'const j=JSON.parse(process.argv[1]);const row=j.repos.find(r=>r.key===process.argv[2]);const c=j.repos.find(r=>r.key===process.argv[3]);process.exit(row&&row.pending===0&&c&&(c.swept.approved||0)>=1?0:1)' "$fj" "$lkey" "$skey" && pass "after the sweep the fleet view shows the legacy row closed and the clone row carrying the sweep" || fail "after the sweep the fleet view shows the legacy row closed and the clone row carrying the sweep"
+# An unreadable ledger under a foreign key must not abort another repository's report.
+mkdir -p "$XDG_CACHE_HOME/hyperpowers/ungated/stray/ledger.jsonl"
+rj="$( (cd "$lw" && bash "$GT" --json) 2>/dev/null )"; rrc=$?
+node -e 'const j=JSON.parse(process.argv[1]);process.exit(j.repos[0].pending===0?0:1)' "$rj" 2>/dev/null && [ "$rrc" -eq 0 ] && pass "a ledger path this pass cannot read is skipped, and the report still exits 0" || fail "a ledger path this pass cannot read is skipped, and the report still exits 0 (rc $rrc: $rj)"
+# --all over a cache root with no key directory: an empty report, never an
+# unbound-variable abort (bash 3.2 expands an empty array that way).
+empty_cache="$work/empty-cache"; mkdir -p "$empty_cache/hyperpowers"
+ej="$(XDG_CACHE_HOME="$empty_cache" bash "$GT" --all --json 2>&1)"; erc=$?
+node -e 'const j=JSON.parse(process.argv[1]);process.exit(Array.isArray(j.repos)&&j.repos.length===0?0:1)' "$ej" 2>/dev/null && [ "$erc" -eq 0 ] && pass "--all over a cache root with no keys is an empty report, not an abort" || fail "--all over a cache root with no keys is an empty report, not an abort (rc $erc: $ej)"
+# A ledger path under a key of the fleet that cannot be read is skipped, and
+# every other key is still reported.
+mkdir -p "$XDG_CACHE_HOME/hyperpowers/ungated/abcdef0123456789/ledger.jsonl"
+fj="$(bash "$GT" --all --json 2>/dev/null)"; frc=$?
+node -e 'const j=JSON.parse(process.argv[1]);process.exit(j.repos.find(r=>r.key===process.argv[2])?0:1)' "$fj" "$key" 2>/dev/null && [ "$frc" -eq 0 ] && pass "an unreadable ledger under a fleet key is skipped and the other keys still report" || fail "an unreadable ledger under a fleet key is skipped and the other keys still report (rc $frc: $fj)"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

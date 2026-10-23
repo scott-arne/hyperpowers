@@ -166,6 +166,8 @@ A new branch gets one initial commit carrying four root files:
       # Regenerable on any host: briefs come from task-brief, packages from review-package.
       plans/*/task-*-brief.md
       plans/*/review-*.diff
+      # A copy an import left beside an entry it could not install: local to that host, for a human to merge.
+      plans/*/*.from-import
 
 - `.gitattributes`: `plans/*/progress.md merge=union`, so two hosts that both
   appended to one ledger merge without conflict markers.
@@ -321,6 +323,14 @@ pushes. The line also carries `local=<sha7|none> remote=<sha7|none>
 age=<seconds since the newer tip>`. `--assume-absent` exists for an offline
 fresh host whose human partner knows no remote dossier exists.
 
+The branch is content from other hosts, so a tree is inspected whole before
+any of it reaches disk: a tip or an incoming commit that carries a symbolic
+link, a submodule entry, or a recovery sidecar (`.sync-applying`, anything
+under `.rewrite/`) anywhere in its tree is refused entire, both when the
+checkout is created from it and when a commit is applied to an existing
+one, and `sdd-dir` refuses a workspace that holds a symbolic link rather
+than printing a path the writers would follow out of the cache.
+
 Controllers and subagents write ledger and report files without the lock,
 so reconciliation treats the working tree as live. After computing the
 target tree (fast-forward or merge) and before touching any file, it
@@ -331,7 +341,12 @@ never the rest of the tree. If a plan's `progress.md` gained lines since the
 snapshot, those lines are re-appended after the checkout: the ledger is
 append-only, so the tail since S is the whole local change. If any other
 file changed, it snapshots again and recomputes, up to three times, then
-reports `busy` with nothing changed. What remains is the duration of one
+reports `busy`. Before the ref moves, `busy` means nothing changed. The
+three attempts that follow the ref update are the other case: the branch is
+already at the target, so the sync marker stays on disk and the next
+publishing call finishes the apply from it before it does anything else —
+`busy` there means the apply is incomplete, not that nothing happened.
+What remains is the duration of one
 `git checkout` of a few files; the test override
 `HYPERPOWERS_TEST_PAUSE_AT=sync-before-apply` holds reconciliation at that
 point so a test can append a ledger line and assert it survives.
@@ -383,6 +398,13 @@ files=<n>` or `status=none`. Default message
    the list and said the in-flight work stays behind on purpose.
 3. Backend is `branch`; under `plain`, `status=plain`, exit 7: the dossier
    cannot travel from this host.
+4. Neither repository is on a detached HEAD: there would be no branch for
+   the destination to pull. `status=detached-head repo=<code|plan>`,
+   exit 11, and the human partner creates a branch there first.
+5. Neither repository is shallow: its oldest commit is a fetch boundary,
+   not the root a full clone computes, so the identity recorded would
+   mislead `verify` at the destination. `status=shallow-source
+   repo=<code|plan>`, exit 12.
 
 Then it appends `handoff: code root=<root commit full sha> <branch>@<full
 sha> at <UTC time> from <host>` to the ledger (identity, branch, and head of
@@ -396,21 +418,32 @@ hand-off report names every branch the destination must pull. It then runs
 `snapshot`, and:
 
 - without `--push`: `status=snapshot sha=<sha7> push=<remote>/<branch>`,
-  exit 0;
-- with `--push`: if `hyperpowers.prePushScan` is set in the plan
-  repository's git config, the scan runs first (below); then
-  `git -C <checkout> push <remote> <branch>`; `status=pushed sha=<sha7>`,
-  or `status=push-failed` exit 1 with git's message on stderr.
+  exit 0, and `push=none` when the plan repository has no remote — the
+  record is committed here and nothing left the host;
+- with `--push`: the remote tip is pinned first, with
+  `git ls-remote <remote> refs/heads/<branch>`. A remote that cannot be
+  read, or a pinned tip that is not an ancestor of the snapshot (the remote
+  moved since the last sync), is `status=push-failed` exit 1 with the
+  remedy on stderr. If `hyperpowers.prePushScan` is set in the plan
+  repository's git config, the scan runs next (below) over exactly the
+  commits this push publishes; then
+  `git -C <checkout> push --force-with-lease=refs/heads/<branch>:<pinned
+  tip> <remote> <sha>:refs/heads/<branch>`. The lease is the point: a
+  remote that moved between the scan and the push is refused, never
+  overwritten with history the scanner never saw. `status=pushed
+  sha=<sha7>`, or `status=push-failed` exit 1 with git's message on stderr.
 
 The scan covers every object the push would publish, including content
-added and later deleted: the range is `<remote>/<branch>..HEAD` when the
-remote-tracking branch exists and `<empty tree>..HEAD` (the hash of
-`git hash-object -t tree /dev/null`) when it does not; the content is
-`git log -p --format= <range>`, the per-commit patches, written to a file
-first. A git failure writing it is `status=scan-failed` exit 5 before the
-scanner runs. The file is then piped into `sh -c "$prePushScan"` with the
-checkout as cwd and `HYPERPOWERS_SCAN_RANGE` in the environment; a non-zero
-exit is `status=scan-failed` exit 5 with the command's output shown. `--push`
+added and later deleted: the range is `<pinned tip>..<sha>` when the remote
+has the branch and `<sha>` read with `--root` when it does not; the content
+is `git log --root -p --format= --no-color -m --text <range> -- .` — the
+root commit's own patch, every commit the range reaches on any parent line,
+a merge as its diff against each parent, binary content as bytes — written
+to a file first. A git failure writing it is `status=scan-failed
+reason=git` exit 5 before the scanner runs. The file is then piped into
+`sh -c "$prePushScan"` with the checkout as cwd and `HYPERPOWERS_SCAN_RANGE`
+in the environment; a non-zero exit is `status=scan-failed reason=scanner`
+exit 5 with the command's output shown. `--push`
 is passed only when the human partner asked for a hand-off; no skill text
 passes it on its own initiative.
 
@@ -441,7 +474,7 @@ source untouched and exits 2 with `status=import-failed`. The copied
 ledger's first line is rewritten to the repo-relative form when it holds an
 absolute path inside the plan repository. If the checkout already has a
 ledger, the candidate is left alone: `status=skipped reason=ledger-exists
-path=<candidate>`. Otherwise `status=moved from=<path>` or `status=none`.
+path=<candidate>`. Otherwise `status=moved from=<path>`, with `conflicts=<n>` appended when `n` destination entries differed from their legacy copies and were kept (the legacy copy of a report or review sits beside it as `<name>.from-import`, ignored by the branch, for a human to merge; a conflicting brief or review package regenerates and is not copied), or `status=none`.
 Idempotent: a second call prints `status=none`. Under `plain` the
 destination is the plain-cache workspace, the state branch is the first
 candidate when it holds `plans/<ws>` (materialized with `git archive`), and

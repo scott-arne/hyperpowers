@@ -15,15 +15,15 @@ Hyperpowers has two distinct kinds of tests, in two different repositories:
 ## Plugin tests
 
 Most suites are standalone bash scripts; two directories are not. There is no
-aggregate runner and no CI; run the suites that cover what you changed, one
-script per `bash` invocation.
+CI. `bash tests/run-offline.sh` runs the documented offline set, one script per
+`bash` invocation; while working, run the suites that cover what you changed.
 
 | Directory | Covers | Runner |
 |---|---|---|
 | `tests/hooks/` | session-start context injection, the ungated notice, the Codex broker janitor, the heredoc fence (no heredoc or here-string in `hooks/`, no here-string in `tests/`) | each `test-*.sh`, one per `bash` call |
 | `tests/codex-review-gate/` | gate scripts (`verdict-normalize`, `gate-round`, `gate-telemetry`, `ungated-ledger`, preflight, broker health), gate topology, and the gate-split losslessness proof | each `test-*.sh`, one per `bash` call |
-| `tests/sdd/` | the subagent-driven-development contract | `bash tests/sdd/test-sdd-contract.sh` |
-| `tests/claude-code/` | offline: SDD scratch-dir derivation, helper stdout and range guards, delivery resolution, worktree path policy, the planning-directory allowlist; live: skill tests that spawn the real `claude` CLI | offline: `test-sdd-dir-path.sh`, `test-codex-review-dir-path.sh`, `test-delivery-resolution.sh`, `test-worktree-path-policy.sh`, `test-docs-allowlist.sh`, one per `bash` call; live: `run-skill-tests.sh` (covers `test-subagent-driven-development.sh`; `--integration` adds `test-subagent-driven-development-integration.sh`), plus `test-worktree-native-preference.sh` |
+| `tests/sdd/` | the subagent-driven-development contract, the state library (`sdd-common.sh`), and the state branch lifecycle (`sdd-dir`, `sdd-state`) | `bash tests/sdd/test-sdd-contract.sh`, `bash tests/sdd/test-sdd-common.sh`, `bash tests/sdd/test-sdd-state.sh` |
+| `tests/claude-code/` | offline: SDD workspace derivation (state checkout, plain fallback, pointers), helper stdout and range guards, delivery resolution, worktree path policy, the planning-directory allowlist; live: skill tests that spawn the real `claude` CLI | offline: `test-sdd-dir-path.sh`, `test-codex-review-dir-path.sh`, `test-delivery-resolution.sh`, `test-worktree-path-policy.sh`, `test-docs-allowlist.sh`, one per `bash` call; live: `run-skill-tests.sh` (covers `test-subagent-driven-development.sh`; `--integration` adds `test-subagent-driven-development-integration.sh`), plus `test-worktree-native-preference.sh <phase> [runs]` (phases `green`, `pressure`, `choice`; with no argument it runs the skipped `red` phase and exercises nothing) |
 | `tests/packaging/` | manifest wiring, the orphaned-skill-file guard, skill frontmatter, and the frontmatter rejection fixtures that prove the validator still rejects | each `test-*.sh`, one per `bash` call |
 | `tests/brainstorm-server/` | the brainstorm server: JavaScript unit tests plus the start/stop and Windows-lifecycle shell tests | `cd tests/brainstorm-server && npm test`; `bash tests/brainstorm-server/windows-lifecycle.test.sh` |
 | `tests/pi/` | the Pi extension | `node tests/pi/test-pi-extension.mjs` |
@@ -54,7 +54,10 @@ The offline set is every `test-*.sh` outside `tests/claude-code/` and
 named in the table, `npm test` in `tests/brainstorm-server/`, the
 `windows-lifecycle.test.sh` test, and the Pi Node file. The live suites spawn
 the real `claude` CLI: they need credentials, take minutes, and are not part of
-any automated run.
+any automated run. `tests/run-offline.sh` runs exactly that set; the
+`tests/brainstorm-server/` suite inside it needs `npm ci` there first
+(`node_modules` is not committed) and a shell outside the Claude Code
+sandbox, whose file watchers it cannot open.
 
 ## Skill behavior evals
 

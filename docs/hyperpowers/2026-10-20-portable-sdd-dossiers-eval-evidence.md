@@ -184,6 +184,17 @@ the Pi node test, one entry per `bash` call, in an unsandboxed shell with
 `offline/`. The summary line is quoted from the controller's run log; the
 archive holds the 42 entry logs, none of which records a failure.
 
+The same command was re-run after the final whole-branch review and the
+Codex final gate's fix rounds, at hyperpowers commit `0760886`, the last code
+change on the branch (the commits after it are documentation): `offline set:
+0 failed`, 42 entry logs, with the state suite at 296 assertions (225 at
+`0b868bd`; the fix rounds added fixtures for crash recovery, symbolic-link
+containment and hostile trees). Those logs are archived beside the first
+set at `offline-0760886/` (hyperpowers-evals commit `f89fa40c9`), with the
+controller's run log as `run.log`. The run also passed at each fix-round head
+in between (`6aef1d8`, `656acb9`, `5d7ca18`, `169517d`); those logs were not
+archived.
+
 ## Release readiness
 
 Each row resolves one of the spec's Assumptions or one check the human partner

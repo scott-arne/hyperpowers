@@ -266,6 +266,44 @@ ensure "$r10" >/dev/null; co10="$STATE_ROOT/$(state_key "$r10")"
 git -C "$r10" worktree remove --force "$co10"
 err=$(ensure "$r10" "HYPERPOWERS_TEST_SWAP_REF=refs/heads/hyperpowers/state=$(git -C "$r10" rev-parse main)" 2>&1 >/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'hyperpowers.stateBranch' && [ ! -e "$co10/.git" ] && ! ls -d "$co10.tmp-"* >/dev/null 2>&1 && [ "$(registrations "$r10")" -eq 0 ]; then pass "a local branch moved under the add fails verification before the move"; else fail "a local branch moved under the add fails verification before the move (rc=$rc: $err)"; fi
+# The same seam with a commit that passes verification: it carries the
+# sentinel, so only its tree gives it away. Local mode adds from the branch
+# name, not from the commit hp_refuse_tip validated, so the promotion is
+# the last place to catch what actually landed.
+r12="$TEST_ROOT/r12"; make_repo "$r12"
+ensure "$r12" >/dev/null; co12="$STATE_ROOT/$(state_key "$r12")"
+outside_r12="$TEST_ROOT/outside-r12"; mkdir -p "$outside_r12"; printf 'untouched\n' > "$outside_r12/victim"
+# <repo> <tip> -> a commit on top of it whose ledger is a link out of the
+# cache; the sentinel comes with the tree it reads.
+hostile_tip() {
+    local idx lb
+    idx="$TEST_ROOT/$(basename "$1").hostile.index"
+    lb=$(printf '%s' "$outside_r12/victim" | git -C "$1" hash-object -w --stdin)
+    rm -f "$idx"; GIT_INDEX_FILE=$idx git -C "$1" read-tree "$2"
+    GIT_INDEX_FILE=$idx git -C "$1" update-index --add --cacheinfo "120000,$lb,plans/plan-deadbeef/progress.md"
+    printf 'the ledger is a link\n' | git -C "$1" -c user.name=t -c user.email=t@example.com commit-tree "$(GIT_INDEX_FILE=$idx git -C "$1" write-tree)" -p "$2"
+}
+evil12=$(hostile_tip "$r12" "$(git -C "$r12" rev-parse hyperpowers/state)")
+git -C "$r12" worktree remove --force "$co12"
+out=$(ensure "$r12" "HYPERPOWERS_TEST_SWAP_REF=refs/heads/hyperpowers/state=$evil12" 2> "$TEST_ROOT/r12.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q 'symbolic link' "$TEST_ROOT/r12.err" && grep -q 'plans/plan-deadbeef/progress.md' "$TEST_ROOT/r12.err" && [ ! -e "$co12/.git" ] && ! ls -d "$co12.tmp-"* >/dev/null 2>&1 && [ "$(registrations "$r12")" -eq 0 ] && [ "$(cat "$outside_r12/victim")" = "untouched" ]; then pass "a hostile commit swapped in under the add is refused before the temporary checkout is promoted"; else fail "a hostile commit swapped in under the add is refused before the temporary checkout is promoted (rc=$rc, '$out': $(cat "$TEST_ROOT/r12.err"))"; fi
+# The other promotion: a leftover temporary checkout is on the branch and
+# its HEAD carries the sentinel, which until its tree is read is all a
+# hostile commit needs to be moved into place.
+r13="$TEST_ROOT/r13"; make_repo "$r13"
+ensure "$r13" >/dev/null; co13="$STATE_ROOT/$(state_key "$r13")"
+clean13=$(git -C "$r13" rev-parse hyperpowers/state)
+evil13=$(hostile_tip "$r13" "$clean13")
+git -C "$r13" worktree remove --force "$co13"
+git -C "$r13" update-ref refs/heads/hyperpowers/state "$evil13"
+git -C "$r13" worktree add -q "$co13.tmp-1-1" hyperpowers/state >/dev/null 2>&1
+out=$(ensure "$r13" 2> "$TEST_ROOT/r13.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q 'symbolic link' "$TEST_ROOT/r13.err" && [ ! -e "$co13/.git" ] && ! ls -d "$co13.tmp-"* >/dev/null 2>&1 && [ "$(registrations "$r13")" -eq 0 ] && [ "$(cat "$outside_r12/victim")" = "untouched" ]; then pass "a leftover temporary checkout holding a hostile tree is removed instead of promoted"; else fail "a leftover temporary checkout holding a hostile tree is removed instead of promoted (rc=$rc, '$out': $(cat "$TEST_ROOT/r13.err"))"; fi
+# update-ref, not branch -f, so the step is the same whether or not the
+# refusal above left a worktree holding the branch.
+git -C "$r13" update-ref refs/heads/hyperpowers/state "$clean13"
+out=$(ensure "$r13" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "branch $co13" ] && [ ! -L "$co13/plans/plan-deadbeef/progress.md" ] && ! ls -d "$co13.tmp-"* >/dev/null 2>&1; then pass "with the branch back at the clean tip the checkout is created from it"; else fail "with the branch back at the clean tip the checkout is created from it (rc=$rc, '$out')"; fi
 
 # A caller that waited for the lock honors a plain backend persisted by the
 # holder meanwhile, instead of creating a branch checkout beside it.

@@ -410,8 +410,10 @@ hp_add_orphan_worktree() {
 
 # <repo-dir> <checkout> <branch>: finish or undo an interrupted creation.
 # A temporary checkout is promoted only when it is itself on the configured
-# branch and its own HEAD carries the sentinel; the candidate is validated,
-# not the branch tip, so a leftover from another configuration is removed.
+# branch, its own HEAD carries the sentinel and its own tree passes the
+# refusal; the candidate is validated, not the branch tip, so a leftover
+# from another configuration, or one holding a tree no caller may be handed,
+# is removed and the checkout is created from the tip instead.
 # An interrupted orphan leaves no ref (the branch is unborn until its first
 # commit), so there is nothing to delete; a branch with commits but no
 # sentinel is foreign and refused later.
@@ -422,7 +424,7 @@ hp_recover_tmp_checkouts() {
   for wt in "$co".tmp-*; do
     [ -e "$wt/.git" ] || continue
     head=$(git -C "$wt" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || head=""
-    if [ ! -e "$co/.git" ] && [ -n "$head" ] && [ "$(git -C "$wt" symbolic-ref -q HEAD 2>/dev/null)" = "refs/heads/$br" ] && hp_has_sentinel "$repo" "$head"; then
+    if [ ! -e "$co/.git" ] && [ -n "$head" ] && [ "$(git -C "$wt" symbolic-ref -q HEAD 2>/dev/null)" = "refs/heads/$br" ] && hp_has_sentinel "$repo" "$head" && hp_tree_refusal "$wt" "$head" >/dev/null; then
       if git -C "$repo" worktree move "$wt" "$co" >/dev/null 2>&1; then continue; fi
     fi
     git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || rm -rf "$wt"
@@ -539,8 +541,12 @@ hp_ensure_checkout() {
   fi
   if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = after-initial-commit ]; then hp_unlock; exit 99; fi
   # Whatever moved under the add, the checkout that becomes live is the one
-  # whose own HEAD was verified.
+  # whose own HEAD was verified and whose own tree was validated: local
+  # mode adds from the branch name, so a ref moved between the validation
+  # above and the add would otherwise be promoted unseen. An orphan's four
+  # root files pass, so the call is the same in all three modes.
   hp_verify_checkout "$repo" "$tmp" "$br" || { git -C "$repo" worktree remove --force "$tmp" >/dev/null 2>&1 || rm -rf "$tmp"; hp_unlock; return 2; }
+  hp_refuse_tip "$tmp" "$(git -C "$tmp" rev-parse HEAD)" || { git -C "$repo" worktree remove --force "$tmp" >/dev/null 2>&1 || rm -rf "$tmp"; hp_unlock; return 2; }
   git -C "$repo" worktree move "$tmp" "$co" >/dev/null 2>&1 || { echo "sdd-dir: git worktree move of $tmp to $co failed; remove whatever occupies $co and run again" >&2; hp_unlock; return 2; }
   hp_write_backend "$repo" branch || { hp_unlock; return 2; }
   hp_unlock

@@ -4,8 +4,9 @@
 # stdout: {"status":"healthy|dead|absent|unknown","reason":"..."}
 #   healthy - live listener on the broker socket (definitive, record-specific probe)
 #             OR socket exists + pid alive + verified broker identity (fallback)
-#   dead    - positive evidence of death: sessionDir gone, socket gone, pid not alive,
-#             connection refused on existing socket, or pid reused by non-broker process
+#   dead    - positive evidence of death: sessionDir gone, socket gone, pid gone
+#             (ESRCH; EPERM means it exists), connection refused on existing
+#             socket, or pid reused by non-broker process
 #   absent  - no broker.json (normal before first companion call)
 #   unknown - unparseable/unexpected schema (hands-off: never quarantined)
 #
@@ -14,7 +15,8 @@
 #   - Connection refused on existing socket = dead (positive death evidence).
 #   - Sandbox denial / timeout = unverifiable -> fall back to pid checks.
 #
-# Fallback: pid alive + process identity via ps (when probe is unverifiable).
+# Fallback: pid alive (kill(2) ESRCH is the only death signal) + process
+# identity via ps (when probe is unverifiable).
 #
 # Exit 0 for every determinate answer; exit 2 for usage/internal errors.
 # Socket presence is an existence check (-e), not -S: a purged or missing
@@ -78,7 +80,15 @@ case "$probe" in
 esac
 # unverifiable (sandbox denial, timeout) -> fall through to pid checks
 
-kill -0 "$pid" 2>/dev/null || emit dead "pid $pid not alive"
+# kill(2) answers ESRCH for a pid that is gone and EPERM for one that exists
+# but may not be signalled (another user's process, or any process from a
+# sandboxed shell); only the first is death. bash's kill builtin folds both
+# into exit 1, which is how a sandboxed probe used to call a live broker dead.
+signal="$(node -e '
+  try { process.kill(Number(process.argv[1]), 0); process.stdout.write("alive"); }
+  catch (e) { process.stdout.write(e && e.code === "ESRCH" ? "gone" : "alive"); }
+' "$pid" 2>/dev/null)" || signal="alive"
+[ "$signal" != gone ] || emit dead "pid $pid not alive"
 
 # Verify process identity: pid must belong to a broker process, not a reused PID.
 cmd="$(ps -p "$pid" -o command= 2>/dev/null)"

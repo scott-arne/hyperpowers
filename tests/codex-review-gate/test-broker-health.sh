@@ -66,6 +66,15 @@ sleep 0.01 & deadpid=$!; wait "$deadpid" 2>/dev/null
 mk_broker "$work/deadpid" "$sdir3/broker.sock" "$deadpid" "$sdir3"
 expect_status "$(bash "$BH" "$work/deadpid")" dead "dead pid -> dead"
 
+# alive but unsignalable: kill(2) answers EPERM for a process that exists but
+# may not be signalled (another user's process, or any process from a
+# sandboxed shell); that is not death. pid 1 always exists and is never ours;
+# the pattern names the init process so the identity step can pass.
+sdir3b="$work/s3b"; mkdir -p "$sdir3b"; touch "$sdir3b/broker.sock"
+mk_broker "$work/eperm" "$sdir3b/broker.sock" 1 "$sdir3b"
+out="$(HYPERPOWERS_BROKER_CMD_PATTERN='launchd|init|systemd' bash "$BH" "$work/eperm")"
+expect_status "$out" healthy "unsignalable live pid (EPERM) -> healthy, not dead"
+
 # unknown: malformed JSON
 mkdir -p "$work/mal"; echo '{not json' > "$work/mal/broker.json"
 expect_status "$(bash "$BH" "$work/mal")" unknown "malformed json -> unknown"

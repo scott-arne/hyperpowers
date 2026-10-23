@@ -435,6 +435,30 @@ assert_contains "$FIN" "A passed \`new-branch\` or \`worktree\` changes nothing 
 assert_contains "$FIN" "Skip this step when mode \`current-branch\` was passed and \`\$CURRENT_BRANCH\` is \`\$DEFAULT_BRANCH\`" "only the default-branch case skips the base step"
 assert_contains "$FIN" "ask your human partner which is the default before choosing a row" "a main-and-master tie asks"
 assert_contains "$FIN" "git push <remote> <branch>:<branch>" "the push names one remote and one refspec"
+# Turn liveness (spec 2026-10-19): a status message never ends a turn mid-plan,
+# long work is tracked, and Claude Code waits in the foreground.
+assert_contains "$SDD" "While the plan has tasks left, a turn ends in exactly three cases" \
+  "continuous execution names the three permitted turn ends"
+assert_contains "$SDD" "A message that names your next step is followed by that step's tool call in the same turn." \
+  "an announced step is taken in the same turn"
+assert_contains "$SDD" 'never start it with a trailing `&`, `nohup`, `setsid`, `disown`, or a script that detaches a process' \
+  "untracked launches are forbidden"
+assert_contains "$SDD" 'subagents with `run_in_background: false`' \
+  "Claude Code dispatches SDD subagents in the foreground"
+for template in "$IMPL" "$REVW" "$REREVW" "$FIXP" "$CODEREVW"; do
+  assert_contains "$template" 'run_in_background: false # Claude Code: dispatch in the foreground (SKILL.md "Waiting on subagents"); omit on harnesses without the flag' \
+    "the $(basename "$template") dispatch block carries the foreground flag"
+done
+assert_contains "$SDD" 'echo "exit=$?" > <out>.exit' \
+  "a long command writes its exit status to its own file whether it succeeds or fails"
+assert_contains "$SDD" "capped at the harness's maximum background lifetime (7200000 ms on Claude Code)" \
+  "the watch budget is capped at the background lifetime"
+assert_contains "$SDD" "stop the job through the harness, record the output tail in the ledger, and report BLOCKED" \
+  "an exhausted watch ends in BLOCKED"
+assert_contains "$SDD_RATIONALIZATIONS" "I've said what's next; I'll pick it up on the next turn" \
+  "rationalization row for the announced-step stop"
+assert_contains "$SDD_RATIONALIZATIONS" 'A trailing `&` keeps it out of my way' \
+  "rationalization row for the detached launch"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

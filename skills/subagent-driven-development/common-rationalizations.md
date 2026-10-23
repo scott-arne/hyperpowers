@@ -15,3 +15,5 @@
 | "Codex is still verifying, that's basically a pass" | Treat an unfinished or "still verifying" Codex result as approval and the gate never happened. Incomplete is not a pass: recover via `status`/`result`, or surface it. |
 | "Batching these small tasks lets the gate go" | A batch's tier is the MAX of its members' declared tiers. Batching never manufactures a gate skip. |
 | "I'll keep the workspace for reference" | The repo's commits are the record. Delete it — an undeleted clean-finish workspace becomes a stale-forensics trap for the next plan. |
+| "I've said what's next; I'll pick it up on the next turn" | There is no next turn until your human partner types. A status message that ends the turn stops the plan, and the editor shows the session idle while the message says it is working. Take the step's tool call now. |
+| "A trailing `&` keeps it out of my way" | A detached process is invisible to the harness: no completion notice arrives, and a turn ended to wait for it never resumes. Start it with the tracked background option and watch it in the foreground. |

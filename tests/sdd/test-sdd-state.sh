@@ -1331,7 +1331,7 @@ git -C "$PAIR_A" push -q origin "$evil1:refs/heads/hyperpowers/state" 2>/dev/nul
 run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p12.out" 2> "$TEST_ROOT/p12.err"; rc=$?
 out=$(cat "$TEST_ROOT/p12.out")
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$co_b/plans/evil" ] && [ ! -L "$co_b/plans/evil" ] && [ ! -e "$outside12/progress.md" ] && grep -q 'plans/evil' "$TEST_ROOT/p12.err"; then pass "a workspace the branch carries as a symbolic link is refused before the checkout can materialize it"; else fail "a workspace the branch carries as a symbolic link is refused before the checkout can materialize it (rc=$rc: $out: $(cat "$TEST_ROOT/p12.err"))"; fi
-if grep -q 'Remove the link on the host that committed it and commit the removal on the state branch (snapshot does that for a link under plans/; a root-level link needs a commit on the branch itself), push, then sync again' "$TEST_ROOT/p12.err"; then pass "the refusal says what to do about the link"; else fail "the refusal says what to do about the link ($(cat "$TEST_ROOT/p12.err"))"; fi
+if grep -q 'Remove it on the host that committed it and commit the removal on the state branch (snapshot does that for a path under plans/; a root-level one needs a commit on the branch itself), push, then sync again' "$TEST_ROOT/p12.err"; then pass "the refusal says what to do about the link"; else fail "the refusal says what to do about the link ($(cat "$TEST_ROOT/p12.err"))"; fi
 if [ ! -f "$co_b/.sync-applying" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$tip12" ]; then pass "the refusal comes before anything is applied: no marker, the ref unmoved"; else fail "the refusal comes before anything is applied: no marker, the ref unmoved"; fi
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$outside12/progress.md" ] && [ "$(cat "$outside12/sentinel")" = "untouched" ]; then pass "a second sync refuses the same way and still writes nothing outside the checkout"; else fail "a second sync refuses the same way and still writes nothing outside the checkout (rc=$rc: $out)"; fi
@@ -1712,5 +1712,129 @@ if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy21 conflicts=2" ]; th
 if [ ! -e "$ws21/task-1-brief.md.from-import" ] && [ "$(cat "$ws21/task-1-brief.md")" = "brief one, regenerated here" ] && grep -q 'regenerable, not copied' "$TEST_ROOT/i21.err"; then pass "a regenerable entry the branch ignores gets no copy and is named as such"; else fail "a regenerable entry the branch ignores gets no copy and is named as such ($(cat "$TEST_ROOT/i21.err"))"; fi
 run_state "$i21" snapshot docs/plan.md >/dev/null
 if [ -f "$ws21/task-1-report.md.from-import" ] && git -C "$co21" check-ignore -q "plans/$(basename "$ws21")/task-1-report.md.from-import" && ! git -C "$co21" cat-file -e "refs/heads/hyperpowers/state:plans/$(basename "$ws21")/task-1-report.md.from-import" 2>/dev/null && [ -z "$(git -C "$co21" status --porcelain | grep -F '.from-import')" ]; then pass "a report's copy stays beside it, ignored by the branch, uncommitted and out of the status"; else fail "a report's copy stays beside it, ignored by the branch, uncommitted and out of the status ($(git -C "$co21" status --porcelain | tr '\n' ' '))"; fi
+
+echo ""
+echo "=== a hostile tree is refused before any of it reaches disk ==="
+# The branch is foreign content. Every way a tree reaches this host is
+# validated the same way: when the checkout is created at a tip, and when a
+# commit is applied to an existing one.
+# a. A fresh host whose tip carries the ledger as a link out of the cache.
+make_pair p22
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa22=$(run_sdd_dir "$PAIR_A" docs/plan.md); ws22=$(basename "$wsa22")
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa22/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+outside22="$TEST_ROOT/outside-p22"; mkdir -p "$outside22"; printf 'untouched\n' > "$outside22/victim"
+idx22="$TEST_ROOT/p22.index"; tip22=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+lb22=$(printf '%s' "$outside22/victim" | git -C "$PAIR_A" hash-object -w --stdin)
+rm -f "$idx22"; GIT_INDEX_FILE=$idx22 git -C "$PAIR_A" read-tree "$tip22"
+GIT_INDEX_FILE=$idx22 git -C "$PAIR_A" update-index --force-remove "plans/$ws22/progress.md"
+GIT_INDEX_FILE=$idx22 git -C "$PAIR_A" update-index --add --cacheinfo "120000,$lb22,plans/$ws22/progress.md"
+evil22=$(printf 'the ledger is a link\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$(GIT_INDEX_FILE=$idx22 git -C "$PAIR_A" write-tree)" -p "$tip22")
+git -C "$PAIR_A" push -q origin "$evil22:refs/heads/hyperpowers/state" 2>/dev/null
+co_b22="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p22.out" 2> "$TEST_ROOT/p22.err"; rc=$?
+out=$(cat "$TEST_ROOT/p22.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'symbolic link' "$TEST_ROOT/p22.err" && grep -q "plans/$ws22/progress.md" "$TEST_ROOT/p22.err"; then pass "a tip whose ledger is a symbolic link is refused when the checkout would be created"; else fail "a tip whose ledger is a symbolic link is refused when the checkout would be created (rc=$rc: $out: $(cat "$TEST_ROOT/p22.err"))"; fi
+if [ ! -e "$co_b22/.git" ] && ! ls -d "$co_b22".tmp-* >/dev/null 2>&1 && [ "$(cat "$outside22/victim")" = "untouched" ]; then pass "no checkout and no temporary one is left behind, and the link's target is untouched"; else fail "no checkout and no temporary one is left behind, and the link's target is untouched"; fi
+rc=0; out=$(run_sdd_dir "$PAIR_B" docs/plan.md 2>/dev/null) || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(cat "$outside22/victim")" = "untouched" ]; then pass "sdd-dir on that host prints no path and exits 2"; else fail "sdd-dir on that host prints no path and exits 2 (rc=$rc: $out)"; fi
+# b. A fresh host whose tip carries a recovery journal as plain files.
+make_pair p23
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa23=$(run_sdd_dir "$PAIR_A" docs/plan.md); ws23=$(basename "$wsa23")
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa23/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+live23=$(wc -c < "$wsa23/progress.md" | tr -d ' ')
+forged23="$TEST_ROOT/p23.staged"; cp "$wsa23/progress.md" "$forged23"
+printf 'Task 99: complete (commits dead000..beef000, review clean)\n' >> "$forged23"
+new23=$(wc -c < "$forged23" | tr -d ' ')
+idx23="$TEST_ROOT/p23.index"; tip23=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+jb23=$(printf '%s %s plans/%s/progress.md\n' "$live23" "$new23" "$ws23" | git -C "$PAIR_A" hash-object -w --stdin)
+sb23=$(git -C "$PAIR_A" hash-object -w "$forged23")
+rm -f "$idx23"; GIT_INDEX_FILE=$idx23 git -C "$PAIR_A" read-tree "$tip23"
+GIT_INDEX_FILE=$idx23 git -C "$PAIR_A" update-index --add --cacheinfo "100644,$jb23,.rewrite/$ws23.journal"
+GIT_INDEX_FILE=$idx23 git -C "$PAIR_A" update-index --add --cacheinfo "100644,$sb23,.rewrite/$ws23.staged"
+evil23=$(printf 'a journal in the tree\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$(GIT_INDEX_FILE=$idx23 git -C "$PAIR_A" write-tree)" -p "$tip23")
+git -C "$PAIR_A" push -q origin "$evil23:refs/heads/hyperpowers/state" 2>/dev/null
+co_b23="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p23.out" 2> "$TEST_ROOT/p23.err"; rc=$?
+out=$(cat "$TEST_ROOT/p23.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recovery sidecar' "$TEST_ROOT/p23.err"; then pass "a tip carrying a committed recovery journal is refused when the checkout would be created"; else fail "a tip carrying a committed recovery journal is refused when the checkout would be created (rc=$rc: $out: $(cat "$TEST_ROOT/p23.err"))"; fi
+if [ ! -e "$co_b23/.git" ] && ! ls -d "$co_b23".tmp-* >/dev/null 2>&1 && ! grep -rq 'Task 99' "$co_b23" 2>/dev/null; then pass "no checkout is created and no ledger on this host holds the forged line"; else fail "no checkout is created and no ledger on this host holds the forged line"; fi
+# c. The same pair of files arriving at a host that already has a checkout.
+make_pair p24
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa24=$(run_sdd_dir "$PAIR_A" docs/plan.md); ws24=$(basename "$wsa24")
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa24/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+co_b24="$STATE_ROOT/$(state_key "$PAIR_B")"; wsb24="$co_b24/plans/$ws24"
+before24=$(git -C "$co_b24" hash-object "$wsb24/progress.md")
+live24=$(wc -c < "$wsb24/progress.md" | tr -d ' ')
+forged24="$TEST_ROOT/p24.staged"; cp "$wsb24/progress.md" "$forged24"
+printf 'Task 99: complete (commits dead000..beef000, review clean)\n' >> "$forged24"
+new24=$(wc -c < "$forged24" | tr -d ' ')
+idx24="$TEST_ROOT/p24.index"; tip24=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+jb24=$(printf '%s %s plans/%s/progress.md\n' "$live24" "$new24" "$ws24" | git -C "$PAIR_A" hash-object -w --stdin)
+sb24=$(git -C "$PAIR_A" hash-object -w "$forged24")
+rm -f "$idx24"; GIT_INDEX_FILE=$idx24 git -C "$PAIR_A" read-tree "$tip24"
+GIT_INDEX_FILE=$idx24 git -C "$PAIR_A" update-index --add --cacheinfo "100644,$jb24,.rewrite/$ws24.journal"
+GIT_INDEX_FILE=$idx24 git -C "$PAIR_A" update-index --add --cacheinfo "100644,$sb24,.rewrite/$ws24.staged"
+evil24=$(printf 'a journal in the tree\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$(GIT_INDEX_FILE=$idx24 git -C "$PAIR_A" write-tree)" -p "$tip24")
+git -C "$PAIR_A" push -q origin "$evil24:refs/heads/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p24.out" 2> "$TEST_ROOT/p24.err"; rc=$?
+out=$(cat "$TEST_ROOT/p24.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recovery sidecar' "$TEST_ROOT/p24.err"; then pass "a committed recovery journal arriving by fast-forward is refused on apply"; else fail "a committed recovery journal arriving by fast-forward is refused on apply (rc=$rc: $out: $(cat "$TEST_ROOT/p24.err"))"; fi
+if [ ! -f "$co_b24/.sync-applying" ] && [ ! -e "$co_b24/.rewrite" ] && [ "$(git -C "$co_b24" hash-object "$wsb24/progress.md")" = "$before24" ]; then pass "nothing is applied: no marker, no sidecar on disk, the ledger as it was"; else fail "nothing is applied: no marker, no sidecar on disk, the ledger as it was"; fi
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(git -C "$co_b24" hash-object "$wsb24/progress.md")" = "$before24" ]; then pass "a second sync refuses it the same way"; else fail "a second sync refuses it the same way (rc=$rc: $out)"; fi
+# d. A checkout created before this fix, whose HEAD already tracks the pair.
+make_pair p25
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa25=$(run_sdd_dir "$PAIR_A" docs/plan.md); ws25=$(basename "$wsa25")
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa25/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+co_a25="$STATE_ROOT/$(state_key "$PAIR_A")"
+before25=$(git -C "$co_a25" hash-object "$wsa25/progress.md")
+live25=$(wc -c < "$wsa25/progress.md" | tr -d ' ')
+mkdir -p "$co_a25/.rewrite"
+cp "$wsa25/progress.md" "$co_a25/.rewrite/$ws25.staged"
+printf 'Task 99: complete (commits dead000..beef000, review clean)\n' >> "$co_a25/.rewrite/$ws25.staged"
+new25=$(wc -c < "$co_a25/.rewrite/$ws25.staged" | tr -d ' ')
+printf '%s %s plans/%s/progress.md\n' "$live25" "$new25" "$ws25" > "$co_a25/.rewrite/$ws25.journal"
+git -C "$co_a25" add -f .rewrite >/dev/null 2>&1
+git -C "$co_a25" -c user.name=t -c user.email=t@example.com commit -qm "a sidecar on the branch" >/dev/null 2>&1
+run_state "$PAIR_A" snapshot docs/plan.md > "$TEST_ROOT/p25.out" 2> "$TEST_ROOT/p25.err"; rc=$?
+out=$(cat "$TEST_ROOT/p25.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recovery sidecar' "$TEST_ROOT/p25.err"; then pass "a snapshot refuses to run recovery from files the branch tracks"; else fail "a snapshot refuses to run recovery from files the branch tracks (rc=$rc: $out: $(cat "$TEST_ROOT/p25.err"))"; fi
+out=$(run_state "$PAIR_A" sync docs/plan.md 2>"$TEST_ROOT/p25b.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recovery sidecar' "$TEST_ROOT/p25b.err"; then pass "sync refuses the same tracked sidecar"; else fail "sync refuses the same tracked sidecar (rc=$rc: $out: $(cat "$TEST_ROOT/p25b.err"))"; fi
+if [ "$(git -C "$co_a25" hash-object "$wsa25/progress.md")" = "$before25" ] && [ -f "$co_a25/.rewrite/$ws25.journal" ] && [ -f "$co_a25/.rewrite/$ws25.staged" ]; then pass "the ledger is unchanged and the tracked journal is neither run nor removed"; else fail "the ledger is unchanged and the tracked journal is neither run nor removed ($(cat "$wsa25/progress.md" | tr '\n' '|'))"; fi
+# e. A submodule entry inside a workspace.
+make_pair p26
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa26=$(run_sdd_dir "$PAIR_A" docs/plan.md); ws26=$(basename "$wsa26")
+printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa26/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+co_b26="$STATE_ROOT/$(state_key "$PAIR_B")"
+idx26="$TEST_ROOT/p26.index"; tip26=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+rm -f "$idx26"; GIT_INDEX_FILE=$idx26 git -C "$PAIR_A" read-tree "$tip26"
+GIT_INDEX_FILE=$idx26 git -C "$PAIR_A" update-index --add --cacheinfo "160000,$tip26,plans/$ws26/vendor"
+evil26=$(printf 'a submodule in a workspace\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$(GIT_INDEX_FILE=$idx26 git -C "$PAIR_A" write-tree)" -p "$tip26")
+git -C "$PAIR_A" push -q origin "$evil26:refs/heads/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p26.out" 2> "$TEST_ROOT/p26.err"; rc=$?
+out=$(cat "$TEST_ROOT/p26.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'submodule entry' "$TEST_ROOT/p26.err" && [ ! -e "$co_b26/plans/$ws26/vendor" ]; then pass "a submodule entry inside a workspace is refused and never materialized"; else fail "a submodule entry inside a workspace is refused and never materialized (rc=$rc: $out: $(cat "$TEST_ROOT/p26.err"))"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

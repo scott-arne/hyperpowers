@@ -954,7 +954,7 @@ apply_files() {
 # leave it in place and say so, and every publishing subcommand refuses
 # until the tree is repaired.
 recover_apply() {
-  local S="" target="" rc head j path
+  local S="" target="" rc head j path tracked
   # Both paths this helper writes at the checkout root are read below, the
   # journals before anything else: a link at either one would have the
   # recovery walk, and finish, whatever it points at.
@@ -964,6 +964,14 @@ recover_apply() {
   fi
   if [ -L "$CO/.sync-applying" ]; then
     echo "sdd-state: $CO/.sync-applying is a symbolic link; refusing to write the sync marker through it" >&2
+    return 2
+  fi
+  # Defence in depth for a checkout created before the tree validation: the
+  # sidecars are this host's own interrupted state, so a branch that tracks
+  # one is carrying somebody else's, and the loop below would run it.
+  tracked=$(git -C "$CO" ls-tree --full-tree HEAD -- .sync-applying .rewrite 2>/dev/null) || tracked=""
+  if [ -n "$tracked" ]; then
+    echo "sdd-state: the state branch tracks a recovery sidecar at ${tracked#*$'\t'}; refusing to run recovery from committed files. Remove it from the branch on the host that committed it, push, then sync again" >&2
     return 2
   fi
   # A new ledger interrupted between its temporary copy and its publish
@@ -1042,7 +1050,7 @@ restore_tombs() {
 # after the ref moved (the marker stays; the next call finishes it), 2 error.
 # Controllers write without the lock, so the working tree is live.
 apply_target() {
-  local S=$1 target=$2 pending line status path left links res dir rc i refused tombs=() dirs=()
+  local S=$1 target=$2 pending line status path left refusal rest res dir rc i refused tombs=() dirs=()
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-apply:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-apply:}" ;; esac
   if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = sync-before-apply ]; then
     : > "$CO/.sync-paused"
@@ -1080,15 +1088,15 @@ apply_target() {
     done < <(printf '%s\n' "$pending")
     if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
   fi
-  # A dossier holds plain files, and so do the branch's root files. The
-  # incoming tree is inspected before the checkout materializes it: a commit
-  # that carries any path as a symbolic link is refused whole, including a
-  # relative link a host committed inside its own workspace and a root-level
-  # link at a path this helper itself writes. The refusal comes before
-  # anything is renamed or moved, so nothing is left half-applied.
-  links=$(git -C "$CO" ls-tree -r "$target" | awk -F'\t' '$1 ~ /^120000 / {print $2}') || return 2
-  if [ -n "$links" ]; then
-    echo "sdd-state: $target carries a symbolic link at $(printf '%s\n' "$links" | head -n 1); refusing to apply it. Remove the link on the host that committed it and commit the removal on the state branch (snapshot does that for a link under plans/; a root-level link needs a commit on the branch itself), push, then sync again" >&2
+  # The incoming tree is inspected whole before the checkout materializes
+  # any of it: the same validation the creation of a checkout runs, so a
+  # commit carrying a symbolic link, a submodule entry or a recovery sidecar
+  # is refused by either route. The refusal comes before anything is renamed
+  # or moved, so nothing is left half-applied.
+  if ! refusal=$(hp_tree_refusal "$CO" "$target"); then
+    [ -n "$refusal" ] || refusal="tree this host could not read $target"
+    rest=${refusal#* }
+    echo "sdd-state: $target carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to apply it. Remove it on the host that committed it and commit the removal on the state branch (snapshot does that for a path under plans/; a root-level one needs a commit on the branch itself), push, then sync again" >&2
     return 2
   fi
   # Every path this apply touches must also be a real entry on disk: a link
@@ -1185,7 +1193,10 @@ cmd_sync() {
   mkdir -p "$(dirname "$stamp")"
   # Outcomes that end before reconciliation still ensure the checkout.
   settle() { # <status> <exit>
-    ensure=$(hp_ensure_checkout "$PLAN_DIR") || return 2
+    # A refused tip (hostile tree) or a checkout this host cannot have is an
+    # error with a status line, not a silent exit: every subcommand prints
+    # exactly one.
+    ensure=$(hp_ensure_checkout "$PLAN_DIR") || { echo "status=error"; return 2; }
     if [ "${ensure%% *}" != branch ]; then echo "status=plain"; return 0; fi
     S=$(tip_of "$CO" "refs/heads/$BRANCH")
     echo "status=$1 local=$(short "$S") remote=none age=$(age_of "$CO" "$S")"
@@ -1229,7 +1240,7 @@ cmd_sync() {
     return 2
   fi
   had_co=0; [ -e "$CO/.git" ] && had_co=1
-  ensure=$(hp_ensure_checkout "$PLAN_DIR") || return 2
+  ensure=$(hp_ensure_checkout "$PLAN_DIR") || { echo "status=error"; return 2; }
   if [ "${ensure%% *}" != branch ]; then echo "status=plain"; return 0; fi
   [ "$had_co" -eq 1 ] || created=created
   hp_lock "$PLAN_DIR" || return 2

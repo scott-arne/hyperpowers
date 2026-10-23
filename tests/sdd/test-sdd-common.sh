@@ -253,6 +253,44 @@ bash -c '. "$1"; hp_commit_paths "$2" hyperpowers/state b plans/b' _ "$LIB" "$co
 wait
 if [ "$(git -C "$co2" rev-list --count hyperpowers/state)" -eq 2 ] && git -C "$co2" ls-tree -r --name-only hyperpowers/state | grep -qx 'plans/a/progress.md' && git -C "$co2" ls-tree -r --name-only hyperpowers/state | grep -qx 'plans/b/progress.md'; then pass "two concurrent first commits both land in order"; else fail "two concurrent first commits both land in order ($(cat "$TEST_ROOT/co2.a") / $(cat "$TEST_ROOT/co2.b"))"; fi
 
+
+# --- tree refusal ----------------------------------------------------------
+# One validation of a whole tree, used before a checkout is created and
+# before a commit is applied: a dossier holds plain files, and the recovery
+# sidecars are local state, never branch content.
+tr_repo="$TEST_ROOT/treefusal"; make_repo "$tr_repo"
+tr_idx="$TEST_ROOT/treefusal.index"
+tr_blob=$(printf 'a file\n' | git -C "$tr_repo" hash-object -w --stdin)
+tr_sent=$(printf 'hyperpowers-state 1\n' | git -C "$tr_repo" hash-object -w --stdin)
+tr_link=$(printf '/etc/passwd' | git -C "$tr_repo" hash-object -w --stdin)
+# <name> <extra cacheinfo>... -> a commit whose tree holds the root files,
+# one plain workspace and whatever else the caller names.
+tr_commit() {
+    local spec
+    rm -f "$tr_idx"
+    GIT_INDEX_FILE=$tr_idx git -C "$tr_repo" update-index --add --cacheinfo "100644,$tr_sent,.hyperpowers-state"
+    GIT_INDEX_FILE=$tr_idx git -C "$tr_repo" update-index --add --cacheinfo "100644,$tr_blob,.gitignore"
+    GIT_INDEX_FILE=$tr_idx git -C "$tr_repo" update-index --add --cacheinfo "100644,$tr_blob,.gitattributes"
+    GIT_INDEX_FILE=$tr_idx git -C "$tr_repo" update-index --add --cacheinfo "100644,$tr_blob,README.md"
+    GIT_INDEX_FILE=$tr_idx git -C "$tr_repo" update-index --add --cacheinfo "100644,$tr_blob,plans/plan-deadbeef/progress.md"
+    for spec in "$@"; do
+        GIT_INDEX_FILE=$tr_idx git -C "$tr_repo" update-index --add --cacheinfo "$spec"
+    done
+    printf 'tree under test\n' | git -C "$tr_repo" commit-tree "$(GIT_INDEX_FILE=$tr_idx git -C "$tr_repo" write-tree)"
+}
+tr_clean=$(tr_commit)
+tr_out=$(hp_tree_refusal "$tr_repo" "$tr_clean"); tr_rc=$?
+if [ "$tr_rc" -eq 0 ] && [ -z "$tr_out" ]; then pass "hp_tree_refusal passes the root files and a plain workspace in silence"; else fail "hp_tree_refusal passes the root files and a plain workspace in silence (rc=$tr_rc: $tr_out)"; fi
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "120000,$tr_link,plans/plan-deadbeef/task-1-report.md")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "symbolic link plans/plan-deadbeef/task-1-report.md" ]; then pass "hp_tree_refusal names a symbolic link and its path"; else fail "hp_tree_refusal names a symbolic link and its path (rc=$tr_rc: $tr_out)"; fi
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "160000,$tr_clean,plans/plan-deadbeef/vendor")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "submodule entry plans/plan-deadbeef/vendor" ]; then pass "hp_tree_refusal names a submodule entry and its path"; else fail "hp_tree_refusal names a submodule entry and its path (rc=$tr_rc: $tr_out)"; fi
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.rewrite/plan-deadbeef.journal")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .rewrite/plan-deadbeef.journal" ]; then pass "hp_tree_refusal names a committed rewrite journal, regular as it is"; else fail "hp_tree_refusal names a committed rewrite journal, regular as it is (rc=$tr_rc: $tr_out)"; fi
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.sync-applying")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .sync-applying" ]; then pass "hp_tree_refusal names a committed sync marker"; else fail "hp_tree_refusal names a committed sync marker (rc=$tr_rc: $tr_out)"; fi
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "120000,$tr_link,escape")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "symbolic link escape" ]; then pass "hp_tree_refusal reaches a link at the tree's root"; else fail "hp_tree_refusal reaches a link at the tree's root (rc=$tr_rc: $tr_out)"; fi
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

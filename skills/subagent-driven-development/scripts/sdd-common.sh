@@ -338,6 +338,48 @@ hp_check_sentinel() {
   return 2
 }
 
+# <repo-dir or checkout> <rev>: inspect a whole tree before any of it can
+# reach disk. Prints "<kind> <path>" for the first entry this helper refuses
+# and returns 1; silent and 0 for a clean tree, 2 when the tree cannot be
+# read. A dossier holds plain files, and so do the branch's root files: a
+# symbolic link or a submodule entry anywhere would take a later write out
+# of the cache, and a recovery sidecar (.sync-applying, .rewrite/) is this
+# host's own interrupted state, which the next recovery executes, so no
+# commit may carry one whatever its mode.
+hp_tree_refusal() {
+  local out line mode path
+  # --full-tree: ls-tree is otherwise limited to the directory git runs in,
+  # and the caller may pass the directory a plan file sits in.
+  out=$(git -C "$1" -c core.quotePath=false ls-tree -r --full-tree "$2" 2>/dev/null) || return 2
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    mode=${line%% *}
+    path=${line#*$'\t'}
+    case "$mode" in
+      120000) printf 'symbolic link %s\n' "$path"; return 1 ;;
+      160000) printf 'submodule entry %s\n' "$path"; return 1 ;;
+    esac
+    # A path git had to quote keeps its opening quote here; both forms are
+    # matched rather than unquoted, since only the refusal depends on it.
+    case "$path" in
+      .sync-applying|.rewrite/*|'".sync-applying'*|'".rewrite/'*) printf 'recovery sidecar %s\n' "$path"; return 1 ;;
+    esac
+  done < <(printf '%s\n' "$out")
+  return 0
+}
+
+# <repo-dir> <tip>: 0 when a checkout may be created from <tip>. The tree
+# arrives from another host, and git worktree add would write all of it, so
+# it is validated before the first file lands; the caller holds the lock.
+hp_refuse_tip() {
+  local refusal rest
+  refusal=$(hp_tree_refusal "$1" "$2") && return 0
+  [ -n "$refusal" ] || refusal="tree this host could not read $2"
+  rest=${refusal#* }
+  echo "sdd-state: ${2:0:7} carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to create the state checkout from it. Remove it on the host that committed it and commit the removal on the state branch, push, then sync again" >&2
+  return 2
+}
+
 hp_write_root_files() { # <dir>
   printf 'hyperpowers-state 1\n' > "$1/.hyperpowers-state"
   printf '%s\n' '# Regenerable on any host: briefs come from task-brief, packages from review-package.' 'plans/*/task-*-brief.md' 'plans/*/review-*.diff' '# A copy an import left beside an entry it could not install: local to that host, for a human to merge.' 'plans/*/*.from-import' > "$1/.gitignore"
@@ -412,7 +454,7 @@ hp_verify_checkout() {
 # state name belongs to a foreign branch. The one creation operation: it
 # owns the lock, the temporary path, recovery, and the backend file.
 hp_ensure_checkout() {
-  local repo=$1 co br remote backend tmp mode tip rc=0
+  local repo=$1 co br remote backend tmp mode tip rc=0 refusal rest
   co=$(hp_checkout_path "$repo") || return 2
   br=$(hp_state_branch "$repo"); remote=$(hp_state_remote "$repo")
   backend=$(hp_backend "$repo")
@@ -442,9 +484,11 @@ hp_ensure_checkout() {
   fi
   if tip=$(git -C "$repo" rev-parse -q --verify "refs/heads/$br^{commit}" 2>/dev/null); then
     hp_check_sentinel "$repo" "$tip" || { hp_unlock; return 2; }
+    hp_refuse_tip "$repo" "$tip" || { hp_unlock; return 2; }
     mode=local
   elif tip=$(git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$br^{commit}" 2>/dev/null); then
     hp_check_sentinel "$repo" "$tip" || { hp_unlock; return 2; }
+    hp_refuse_tip "$repo" "$tip" || { hp_unlock; return 2; }
     mode=remote
   else
     if hp_has_remote "$repo" && [ ! -f "$(hp_stamp_path "$repo")" ]; then

@@ -646,6 +646,20 @@ assert_command_output \
     XDG_CACHE_HOME="$wt_cache" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$wt_dir" "$HOOK_UNDER_TEST"
+# The third root of the same fixture: the plain cache under the CLONE key,
+# which neither assertion above reaches.
+wt_plain="$(seed_ledger "$wt_cache" "$wt_repo" "plain-6666ffff")"
+touch -t 202601010000 "$wt_legacy"
+HOOK_STDIN="$wt_stdin"
+assert_command_output \
+    "SessionStart from a linked worktree also reads the plain root under the clone's key" \
+    "nested" \
+    "${NOTICE_HEAD}${wt_plain}${NOTICE_TAIL}" \
+    "" \
+    "$wt_home" \
+    XDG_CACHE_HOME="$wt_cache" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$wt_dir" "$HOOK_UNDER_TEST"
 
 # The same assertion over a ledger path carrying a double quote and a
 # backslash. This is what pins escape_for_json on the compaction path: without

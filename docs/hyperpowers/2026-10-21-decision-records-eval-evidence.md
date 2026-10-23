@@ -181,7 +181,50 @@ parameter existed, without ancestor excludes (the host CLAUDE.md loaded);
 
 ## 3. SDD-path rehearsal
 
-(Task 14 appends this section.)
+Three counted print-mode Claude Code sessions (model claude-opus-5-5, CC
+2.1.302) executing a one-task plan in the fixture with the decision-records
+worktree (HEAD 3f9aca9) as the plugin. Every session ran with
+`XDG_CACHE_HOME` set to a per-run directory (so the SDD workspace, ledger and
+review dirs are visible), `HYPERPOWERS_PLUGINS_FILE=/nonexistent` (the Codex
+preflight finds no plugin, so the gates degrade) and the `claudeMdExcludes`
+file for every ancestor of the working copy. Artifacts:
+`evidence/2026-10-21-decision-records/task-14-runs/` in hyperpowers-evals
+(commit pending in hyperpowers-evals).
+
+| Check | slow (120 s suite) | fast (instant suite) | fast2 (instant, 10,000-line padding) |
+|---|---|---|---|
+| dry run at Setup | yes | yes | yes |
+| extractor dispatched after the final review, in the background | yes | yes | yes |
+| `Decision extractor:` ledger line written | yes | no | yes |
+| workspace deleted while the extractor ran | yes (listing: the repo key dir with an empty `plans/`) | yes | yes |
+| extractor at collection | finished | finished (no TaskStop) | finished (no TaskStop) |
+| compile after the suite, records and plan deletion staged | yes | yes | yes |
+| menu message carried the diff | yes | yes | yes |
+| notes applied | yes (two undocumented proposals) | yes (three proposals) | yes (three proposals) |
+| turn 2 ("3") asked and did not commit | yes | yes | yes |
+| records commit after "Dismiss all of them." | 42ab9f5 | d7ebf3b | 835ac8f |
+| suite result to menu | 52.6 s | 35.7 s | 38.4 s |
+| answer to commit (turn 3) | 23 s | 20 s | 22 s |
+
+The stopped-unfinished path was not reached. The extractor completed within
+about 20 to 30 s of its dispatch in `fast` and `fast2`, inside the finishing
+suite and before the compile call, so the review package's size (5,000 and then
+10,000 numbered lines) did not hold it open; the `TaskStop` branch in the SDD
+path is covered only by the finishing-path rehearsal's `stop` run (section 2).
+Deviations: the first line of `prompt-1.txt` carries one added sentence ("Work
+in place on the current branch; do not create a worktree.") so the session does
+not stop at a worktree-consent question. Two earlier `slow` attempts are kept as
+`slow-void1` and `slow-void2`: both were fixture defects (the plan's sample
+file was read by nothing; then the plan's own code carried a missing-file bug
+and a circular assertion that the final review rightly raised), and the plan
+was revised twice. In `fast` the session skipped the `Decision extractor:`
+ledger line the SDD text asks for (dispatch, background flag and ordering
+otherwise held); `slow` and `fast2` wrote it. Because the extractor proposed
+undocumented decisions in every counted run, the bare "3" never committed, as
+the Step 4 amendment requires, and the third turn, "Dismiss all of them.",
+drew the one-line records commit. The implementer subagents' commits carry a
+`Co-Authored-By` trailer that is not in the skills' text. `run-sdd.sh`, the
+fixture, `analyze.py` and `runs.md` are in `task-14-runs/`.
 
 ## 4. Post-landing checks still owed
 

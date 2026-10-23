@@ -105,6 +105,18 @@ if ! hp_contained "$root" "plans/$ws"; then
   echo "sdd-dir: refusing to resolve a workspace through a symbolic link under $root; remove the link and run sdd-state sync" >&2
   exit 2
 fi
+# And inside it: Setup and the implementers write the ledger, the reports
+# and the claims by path, so one link in the workspace would take those
+# writes out of the cache.
+refuse_ws_links() {
+  local found
+  [ -d "$dir" ] || return 0
+  found=$(find "$dir" -type l 2>/dev/null) || found=""
+  [ -n "$found" ] || return 0
+  echo "sdd-dir: refusing to resolve a workspace that holds a symbolic link at ${found%%$'\n'*}; remove the link and run sdd-state sync" >&2
+  return 2
+}
+refuse_ws_links || exit 2
 # The workspace directory is created under the repository lock, and only
 # when it is missing, so the branch-backend fast path takes no lock and an
 # unlocked mkdir can never resurrect a path finish has just renamed aside.
@@ -136,6 +148,9 @@ if [ "$backend" = plain ] || [ ! -d "$dir" ]; then
     mv "$t" "$dir" 2>/dev/null || true
   done
   mkdir -p "$dir" || { hp_unlock; exit 2; }
+  # A materialized or restored workspace is checked once more under the
+  # lock: it is a tree this host did not write.
+  refuse_ws_links || { hp_unlock; exit 2; }
   hp_unlock
   [ "$backend" != plain ] || echo "sdd-dir: backend=plain for this repository; the dossier will not travel from this host" >&2
 fi

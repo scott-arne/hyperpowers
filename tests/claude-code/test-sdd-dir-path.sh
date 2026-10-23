@@ -505,11 +505,11 @@ if grep -q 'ledger-exists' < <(printf '%s\n' "$err") && [ -d "$legacy_skip" ]; t
 
 
 echo ""
-echo "Test: a state branch that carries the workspace as a symbolic link is refused"
-# A fetched state branch is a foreign tree: it can hold plans/<ws>, or plans
-# itself, as a symbolic link, and everything below (the -d fast path, the
-# tomb restore, mkdir -p) follows links, so the workspace would resolve, and
-# Setup would write, outside the cache.
+echo "Test: a workspace path that is a symbolic link is refused"
+# plans/<ws>, or plans itself, can be a symbolic link on disk, and
+# everything below (the -d fast path, the tomb restore, mkdir -p) follows
+# links, so the workspace would resolve, and Setup would write, outside the
+# cache.
 SDD_STATE_SCRIPT="$(dirname "$SDD_DIR_SCRIPT")/sdd-state"
 link_origin="$TEST_ROOT/link-origin.git"
 git init -q --bare -b main "$link_origin"
@@ -527,49 +527,55 @@ printf '# SDD ledger — plan: docs/plan.md\n' > "$ws_link/progress.md"
 git -C "$link_a" push -q origin hyperpowers/state 2>/dev/null
 ws_name=$(basename "$ws_link")
 outside_link="$TEST_ROOT/link-outside"; mkdir -p "$outside_link"; printf 'untouched\n' > "$outside_link/sentinel"
-idx_link="$TEST_ROOT/link.index"
-tip_link=$(git -C "$link_a" rev-parse hyperpowers/state)
-blob_link=$(printf '%s' "$outside_link" | git -C "$link_a" hash-object -w --stdin)
-rm -f "$idx_link"
-GIT_INDEX_FILE=$idx_link git -C "$link_a" read-tree "$tip_link"
-GIT_INDEX_FILE=$idx_link git -C "$link_a" update-index --force-remove "plans/$ws_name/progress.md"
-GIT_INDEX_FILE=$idx_link git -C "$link_a" update-index --add --cacheinfo "120000,$blob_link,plans/$ws_name"
-tree_link=$(GIT_INDEX_FILE=$idx_link git -C "$link_a" write-tree)
-evil_ws=$(printf 'a workspace that is a link\n' | git -C "$link_a" -c user.name=t -c user.email=t@example.com commit-tree "$tree_link" -p "$tip_link")
-git -C "$link_a" push -q origin "$evil_ws:refs/heads/hyperpowers/state" 2>/dev/null
 link_b="$TEST_ROOT/link-hostB"
 git clone -q "$link_origin" "$link_b" 2>/dev/null
 git -C "$link_b" config user.name "Host B"; git -C "$link_b" config user.email "b@example.com"
 ( cd "$link_b" && bash "$SDD_STATE_SCRIPT" sync docs/plan.md ) >/dev/null 2>&1
 co_b_link="$STATE_ROOT/$(state_key "$link_b")"
+# A link where the workspace should be. A commit carrying one is refused
+# before the checkout is created (the state suite covers that); this is the
+# same shape once it is on disk, whatever put it there.
+rm -rf "$co_b_link/plans/$ws_name"
+ln -s "$outside_link" "$co_b_link/plans/$ws_name"
 rc=0
 out=$(cd "$link_b" && bash "$SDD_DIR_SCRIPT" docs/plan.md 2>"$TEST_ROOT/link-ws.err") || rc=$?
-if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q "plans/$ws_name" "$TEST_ROOT/link-ws.err"; then pass "a workspace the state branch carries as a symbolic link is refused, naming the link"; else fail "a workspace the state branch carries as a symbolic link is refused, naming the link (rc=$rc, out='$out', err=$(cat "$TEST_ROOT/link-ws.err"))"; fi
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q "plans/$ws_name" "$TEST_ROOT/link-ws.err"; then pass "a workspace that is a symbolic link is refused, naming the link"; else fail "a workspace that is a symbolic link is refused, naming the link (rc=$rc, out='$out', err=$(cat "$TEST_ROOT/link-ws.err"))"; fi
 if [ -L "$co_b_link/plans/$ws_name" ] && [ "$(ls -A "$outside_link" | tr '\n' ' ')" = "sentinel " ]; then pass "nothing is created through the link: its target still holds only the sentinel"; else fail "nothing is created through the link ($(ls -A "$outside_link" | tr '\n' ' '))"; fi
-# The human removes the link and syncs: the workspace resolves again.
+# The human removes the link: the workspace resolves again.
 rm -f "$co_b_link/plans/$ws_name"
-( cd "$link_b" && bash "$SDD_STATE_SCRIPT" sync docs/plan.md ) >/dev/null 2>&1
 rc=0
 out=$(cd "$link_b" && bash "$SDD_DIR_SCRIPT" docs/plan.md 2>/dev/null) || rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "$co_b_link/plans/$ws_name" ] && [ -d "$out" ] && [ ! -L "$out" ]; then pass "with the link removed and the repository synced the workspace resolves normally"; else fail "with the link removed and the repository synced the workspace resolves normally (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "$out" = "$co_b_link/plans/$ws_name" ] && [ -d "$out" ] && [ ! -L "$out" ]; then pass "with the link removed the workspace resolves normally"; else fail "with the link removed the workspace resolves normally (rc=$rc: $out)"; fi
 # The same for plans/ itself, where the fast path would mkdir the workspace
 # inside the link's target.
-rm -f "$idx_link"
-GIT_INDEX_FILE=$idx_link git -C "$link_a" read-tree "$evil_ws"
-GIT_INDEX_FILE=$idx_link git -C "$link_a" update-index --force-remove "plans/$ws_name"
-GIT_INDEX_FILE=$idx_link git -C "$link_a" update-index --add --cacheinfo "120000,$blob_link,plans"
-tree_link=$(GIT_INDEX_FILE=$idx_link git -C "$link_a" write-tree)
-evil_plans=$(printf 'plans is a link\n' | git -C "$link_a" -c user.name=t -c user.email=t@example.com commit-tree "$tree_link" -p "$evil_ws")
-git -C "$link_a" push -q origin "$evil_plans:refs/heads/hyperpowers/state" 2>/dev/null
-link_c="$TEST_ROOT/link-hostC"
-git clone -q "$link_origin" "$link_c" 2>/dev/null
-git -C "$link_c" config user.name "Host C"; git -C "$link_c" config user.email "c@example.com"
-( cd "$link_c" && bash "$SDD_STATE_SCRIPT" sync docs/plan.md ) >/dev/null 2>&1
-co_c_link="$STATE_ROOT/$(state_key "$link_c")"
+mv "$co_b_link/plans" "$co_b_link/plans.real"
+ln -s "$outside_link" "$co_b_link/plans"
 rc=0
-out=$(cd "$link_c" && bash "$SDD_DIR_SCRIPT" docs/plan.md 2>"$TEST_ROOT/link-plans.err") || rc=$?
-if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q "$co_c_link/plans" "$TEST_ROOT/link-plans.err"; then pass "plans/ itself carried as a symbolic link is refused, naming the link"; else fail "plans/ itself carried as a symbolic link is refused, naming the link (rc=$rc, out='$out', err=$(cat "$TEST_ROOT/link-plans.err"))"; fi
-if [ -L "$co_c_link/plans" ] && [ "$(ls -A "$outside_link" | tr '\n' ' ')" = "sentinel " ]; then pass "no workspace is created inside the link's target"; else fail "no workspace is created inside the link's target ($(ls -A "$outside_link" | tr '\n' ' '))"; fi
+out=$(cd "$link_b" && bash "$SDD_DIR_SCRIPT" docs/plan.md 2>"$TEST_ROOT/link-plans.err") || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q "$co_b_link/plans" "$TEST_ROOT/link-plans.err"; then pass "plans/ itself as a symbolic link is refused, naming the link"; else fail "plans/ itself as a symbolic link is refused, naming the link (rc=$rc, out='$out', err=$(cat "$TEST_ROOT/link-plans.err"))"; fi
+if [ -L "$co_b_link/plans" ] && [ "$(ls -A "$outside_link" | tr '\n' ' ')" = "sentinel " ]; then pass "no workspace is created inside the link's target"; else fail "no workspace is created inside the link's target ($(ls -A "$outside_link" | tr '\n' ' '))"; fi
+rm -f "$co_b_link/plans"; mv "$co_b_link/plans.real" "$co_b_link/plans"
+
+echo ""
+echo "Test: a workspace that holds a symbolic link is refused"
+# Setup and the implementers write into the workspace by path: a link
+# anywhere inside it would take those writes out of the cache, whoever put
+# it there.
+make_repo "$TEST_ROOT/repo-wslink"
+git -C "$TEST_ROOT/repo-wslink" commit -q --allow-empty -m "initial"
+: > "$TEST_ROOT/repo-wslink/plan.md"
+ws_link_dir=$(cd "$TEST_ROOT/repo-wslink" && bash "$SDD_DIR_SCRIPT" plan.md 2>/dev/null)
+scratch_wslink="$TEST_ROOT/wslink-scratch"; mkdir -p "$scratch_wslink"; printf 'untouched\n' > "$scratch_wslink/victim"
+rm -f "$ws_link_dir/progress.md"
+ln -s "$scratch_wslink/victim" "$ws_link_dir/progress.md"
+rc=0
+out=$(cd "$TEST_ROOT/repo-wslink" && bash "$SDD_DIR_SCRIPT" plan.md 2>"$TEST_ROOT/wslink.err") || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q 'refusing to resolve a workspace that holds a symbolic link' "$TEST_ROOT/wslink.err" && grep -q 'progress.md' "$TEST_ROOT/wslink.err"; then pass "a workspace whose ledger is a symbolic link is refused, naming it"; else fail "a workspace whose ledger is a symbolic link is refused, naming it (rc=$rc, out='$out', err=$(cat "$TEST_ROOT/wslink.err"))"; fi
+if [ "$(cat "$scratch_wslink/victim")" = "untouched" ]; then pass "the link's target is left as it was"; else fail "the link's target is left as it was"; fi
+rm -f "$ws_link_dir/progress.md"; printf '# SDD ledger — plan: plan.md\n' > "$ws_link_dir/progress.md"
+rc=0
+out=$(cd "$TEST_ROOT/repo-wslink" && bash "$SDD_DIR_SCRIPT" plan.md 2>/dev/null) || rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "$ws_link_dir" ]; then pass "with the link replaced by a regular file the workspace resolves"; else fail "with the link replaced by a regular file the workspace resolves (rc=$rc: $out)"; fi
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"
     exit 1

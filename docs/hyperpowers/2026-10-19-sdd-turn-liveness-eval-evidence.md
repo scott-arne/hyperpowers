@@ -84,7 +84,7 @@ carry five model ids and the `<synthetic>` bucket.
 
 ## Scenario results
 
-Both arms ran on 2026-10-22, control first (03:34Z to 06:49Z), treatment
+Both arms ran on 2026-10-22, control first (03:34Z to 06:56Z), treatment
 second (17:53Z to 19:42Z), ten valid runs each. Every number here is read
 from `evals/evidence/2026-10-19-sdd-turn-liveness/tally.txt`; the full table,
 the per-measure verdicts and the limits are that directory's `README.md`

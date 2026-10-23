@@ -276,6 +276,28 @@ slug_of() {  # title -> filename slug, at most 60 characters, cut at a hyphen
 
 identity_of() { printf -- '- Spec: %s (decision %s)\n' "$spec_rel" "$1"; }
 
+drop_status() {  # a record copy -> the same text without its first Status line
+  awk '!r && index($0, "- Status: ") == 1 { r = 1; next } { print }' "$1" > "$2"
+}
+
+# status_only_change PATH: 0 when the working tree and the index each hold
+# HEAD's record with at most its Status line changed. That line is the whole
+# of what the compiler writes into a supersession target (section 4a rewrites
+# it and nothing else), so this is also the whole of what an unfinished
+# earlier run can have left there; a deletion, a staged deletion, a path HEAD
+# does not have and a body edit all answer 1.
+status_only_change() {
+  local p=$1
+  git -C "$root" show "HEAD:$p" > "$tmp/own-head" 2>/dev/null || return 1
+  [ -f "$root/$p" ] || return 1
+  git -C "$root" show ":$p" > "$tmp/own-idx" 2>/dev/null || return 1
+  drop_status "$tmp/own-head" "$tmp/own-head.body"
+  drop_status "$root/$p" "$tmp/own-work.body"
+  cmp -s "$tmp/own-head.body" "$tmp/own-work.body" || return 1
+  drop_status "$tmp/own-idx" "$tmp/own-idx.body"
+  cmp -s "$tmp/own-head.body" "$tmp/own-idx.body"
+}
+
 # Header fields are read only above the first "## " heading, so a decision
 # body that quotes another record's metadata cannot be mistaken for it.
 existing_field() { awk -v k="- $2: " 'index($0, "## ") == 1 { exit } index($0, k) == 1 { print substr($0, length(k) + 1); exit }' "$1"; }
@@ -552,9 +574,6 @@ if [ "$mode" = undo ]; then
     case "$(existing_field "$1" Spec)" in "$spec_rel (decision "*) return 0 ;; esac
     return 1
   }
-  drop_status() {  # a record copy -> the same text without its first Status line
-    awk '!r && index($0, "- Status: ") == 1 { r = 1; next } { print }' "$1" > "$2"
-  }
   names_my_record() {  # a Status value -> 0 when it lists a record of this spec
     local st=$1 q
     case "$st" in "superseded by "*) ;; *) return 1 ;; esac
@@ -771,16 +790,20 @@ fi
 # --- 3b. the paths this compile owns -------------------------------------------
 # The records directory is shared, and the staging and the approval diff cover
 # it, so a change this compile did not make would ride into the records commit
-# under this spec's message. Owned: the records it is about to write (whether
-# new or re-run, so a retry after a failed run still completes), the
-# supersession targets whose Status line it rewrites, and the index. Anything
-# else there that differs from HEAD or is untracked is refused before the
-# first write, with nothing changed.
+# under this spec's message. Owned whole: the records it is about to write
+# (whether new or re-run, so a retry after a failed run still completes) and
+# the index. Owned in part: a supersession target, of which the compiler
+# writes the Status line and nothing else, so a change there is this
+# compile's only when it is that line alone, in the working tree and in the
+# index alike. Anything else under the directory that differs from HEAD or is
+# untracked is refused before the first write, with nothing changed.
 {
   printf '%s\n' "$index_rel"
-  for ((n = 1; n <= count; n++)); do
-    printf '%s\n' "$records_rel/${files[n]}" "${sup_of[n]:-}" "${prev_sup[n]:-}"
-  done
+  for ((n = 1; n <= count; n++)); do printf '%s\n' "$records_rel/${files[n]}"; done
+} | awk 'length' | sort -u > "$tmp/owned-whole"
+{
+  cat "$tmp/owned-whole"
+  for ((n = 1; n <= count; n++)); do printf '%s\n' "${sup_of[n]:-}" "${prev_sup[n]:-}"; done
 } | awk 'length' | sort -u > "$tmp/owned"
 # Three passes, because a change staged and then reverted in the working tree
 # shows only in the second: the working tree against HEAD, the index against
@@ -790,7 +813,8 @@ git -C "$root" diff --name-only --no-renames -z HEAD -- "$records_rel" > "$tmp/d
 git -C "$root" diff --cached --name-only --no-renames -z -- "$records_rel" >> "$tmp/dirty.z" || die2 "$spec_rel: cannot read the staged state of $records_rel"
 git -C "$root" ls-files --others --exclude-standard -z -- "$records_rel" >> "$tmp/dirty.z" || die2 "$spec_rel: cannot list the untracked files of $records_rel"
 while IFS= read -r -d '' p; do
-  if grep -q -F -x -e "$p" "$tmp/owned"; then continue; fi
+  if grep -q -F -x -e "$p" "$tmp/owned-whole"; then continue; fi
+  if grep -q -F -x -e "$p" "$tmp/owned" && status_only_change "$p"; then continue; fi
   die2 "$spec_rel: $p is changed under $records_rel but is not this compile's to write; commit, stash or discard it before the records compile"
 done < "$tmp/dirty.z"
 owned_paths=()

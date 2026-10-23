@@ -1917,6 +1917,117 @@ run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
 newrec="$repo/docs/hyperpowers/decisions/2026-08-01-new-choice.md"
 if [ "$RC" -eq 0 ] && ! printf '%s' "$ERR" | grep -q 'fatal' && ! grep -q '^- Supersedes:' "$newrec" && git -C "$repo" diff --cached --name-only | grep -q '2026-08-01-new-choice.md'; then pass "a deleted prior Supersedes target is tolerated: rewritten without the line and staged, no fatal"; else fail "gone target (rc $RC, err: $ERR)"; fi
 
+# --- 34. a Supersedes target is owned only for its Status line --------------
+# Correction (2026-10-22): the final whole-branch gate found the ownership
+# preflight exempting every Supersedes target whole, though the compiler
+# writes only a target's Status line. A target deleted or edited in the
+# working tree therefore rode into the records commit through the staging.
+# A target is this compile's only while the working tree and the index each
+# hold HEAD's record with at most that one line changed, which is all an
+# unfinished earlier run can have left behind.
+repo="$TEST_ROOT/target-ownership"
+make_repo "$repo"
+write_spec "$repo" 2026-07-01-old-design.md <<'EOF'
+# Old
+
+## Decisions
+
+- **Old choice.** Text.
+EOF
+commit_all "$repo" "old spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-07-01-old-design.md
+commit_all "$repo" "old records"
+write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
+# New
+
+## Decisions
+
+1. **New choice.** Text.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-old-choice.md
+EOF
+commit_all "$repo" "new spec"
+new_spec=docs/hyperpowers/specs/2026-08-01-new-design.md
+target=docs/hyperpowers/decisions/2026-07-01-old-choice.md
+# refuse_target LABEL PATH: the compile exits 2 naming PATH, writes nothing,
+# and leaves git status exactly as it found it.
+refuse_target() {
+    local before after msg_ok
+    before=$(git -C "$repo" status --porcelain -uall)
+    run_compile "$repo" "$new_spec"
+    after=$(git -C "$repo" status --porcelain -uall)
+    case "$ERR" in "$new_spec: $2 is changed under docs/hyperpowers/decisions but is not this compile's to write; commit, stash or discard it before the records compile") msg_ok=1 ;; *) msg_ok=0 ;; esac
+    if [ "$RC" -eq 2 ] && [ "$msg_ok" = 1 ] && [ "$before" = "$after" ]; then pass "$1"; else fail "$1 (rc $RC, err: $ERR, status before: $before, after: $after)"; fi
+}
+printf 'a body line nobody compiled\n' >> "$repo/$target"
+refuse_target "a current Supersedes target with a body edit is refused before any write" "$target"
+git -C "$repo" restore --staged --worktree -- "$target"
+run_compile "$repo" "$new_spec"
+if [ "$RC" -eq 0 ] && grep -q '^- Status: superseded by docs/hyperpowers/decisions/2026-08-01-new-choice.md$' "$repo/$target"; then pass "with the target otherwise clean the compile rewrites its Status line"; else fail "clean target compile (rc $RC, err: $ERR, status line: $(grep '^- Status' "$repo/$target"))"; fi
+# The retry: a Status rewrite an earlier run left unstaged is this compiler's
+# own text, not a foreign change.
+git -C "$repo" restore --staged -- "$target"
+run_compile "$repo" "$new_spec"
+if [ "$RC" -eq 0 ] && git -C "$repo" diff --cached --name-only | grep -q '2026-07-01-old-choice.md'; then pass "a target carrying only this compiler's Status rewrite is a retry: the re-run completes and stages it"; else fail "target retry (rc $RC, err: $ERR, staged: $(git -C "$repo" diff --cached --name-only | tr '\n' ' '))"; fi
+commit_all "$repo" "new records"
+# A previous target, named by the committed record's Supersedes line after
+# the spec dropped it: its uncommitted deletion is not the compiler's to
+# stage either.
+write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
+# New
+
+## Decisions
+
+1. **New choice.** Text.
+EOF
+commit_all "$repo" "the spec drops the supersession"
+rm "$repo/$target"
+refuse_target "a previous Supersedes target deleted but not committed is refused" "$target"
+git -C "$repo" restore --staged --worktree -- "$target"
+run_compile "$repo" "$new_spec"
+if [ "$RC" -eq 0 ] && grep -q '^- Status: accepted$' "$repo/$target"; then pass "with the deletion undone the reconciliation returns the previous target to accepted"; else fail "previous target reconciliation (rc $RC, err: $ERR, status line: $(grep '^- Status' "$repo/$target"))"; fi
+
+# --- 35. a change of mind to a skip after an accepted proposal --------------
+# The skill's Step 4: the human partner accepts a proposal, the compiler is
+# re-run with the same arguments, and they then change their mind to a skip.
+# --undo refuses a staged path whose working tree differs from the index, so
+# the retraction is staged before the undo; without that staging the guard
+# trips.
+repo="$TEST_ROOT/retracted-proposal"
+make_repo "$repo"
+write_spec "$repo" 2026-10-19-kappa-design.md <<'EOF'
+# Kappa
+
+## Decisions
+
+- **First choice.** Text.
+EOF
+printf '# Plan\n\n**Spec:** docs/hyperpowers/specs/2026-10-19-kappa-design.md\n' > "$repo/docs/hyperpowers/plans/2026-10-19-kappa.md"
+commit_all "$repo" "spec and plan"
+kappa_spec=docs/hyperpowers/specs/2026-10-19-kappa-design.md
+kappa_plan=docs/hyperpowers/plans/2026-10-19-kappa.md
+kappa_spec_sum=$(cksum < "$repo/$kappa_spec")
+kappa_plan_sum=$(cksum < "$repo/$kappa_plan")
+run_compile "$repo" "$kappa_spec" --plan "$kappa_plan" --paths-file "$TEST_ROOT/kappa.paths"
+if [ "$RC" -eq 0 ]; then pass "the proposal fixture's first compile exits 0"; else fail "kappa compile (rc $RC, err: $ERR)"; fi
+# The accepted proposal: an undocumented decision appended to the list, then
+# the same compile again.
+printf -- '- **Accepted proposal.** The extractor found it; the human partner kept it.\n' >> "$repo/$kappa_spec"
+run_compile "$repo" "$kappa_spec" --plan "$kappa_plan" --paths-file "$TEST_ROOT/kappa.paths"
+if [ "$RC" -eq 0 ] && [ -f "$repo/docs/hyperpowers/decisions/2026-10-19-accepted-proposal.md" ]; then pass "the re-run after an accepted proposal writes its record"; else fail "proposal re-run (rc $RC, err: $ERR, files: $(ls "$repo/docs/hyperpowers/decisions" 2>/dev/null))"; fi
+# The change of mind: the item comes back out of the spec.
+grep -v '^- \*\*Accepted proposal\.\*\*' "$repo/$kappa_spec" > "$TEST_ROOT/kappa-retracted"
+cp "$TEST_ROOT/kappa-retracted" "$repo/$kappa_spec"
+before_status=$(git -C "$repo" status --porcelain -uall)
+run_compile "$repo" --undo "$kappa_spec" --plan "$kappa_plan"
+case "$ERR" in *"--undo refused: $kappa_spec was edited after the compile; commit or stash the edit first"*) msg_ok=1 ;; *) msg_ok=0 ;; esac
+if [ "$RC" -eq 2 ] && [ "$msg_ok" = 1 ] && [ "$(git -C "$repo" status --porcelain -uall)" = "$before_status" ]; then pass "an unstaged retraction trips the guard: --undo refuses and changes nothing"; else fail "unstaged retraction (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+git -C "$repo" add -- "$kappa_spec"
+run_compile "$repo" --undo "$kappa_spec" --plan "$kappa_plan"
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "with the retraction staged --undo completes and leaves the tree clean"; else fail "staged retraction (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+if [ "$(cksum < "$repo/$kappa_spec")" = "$kappa_spec_sum" ]; then pass "the spec is back to HEAD: no Outcome line and no accepted proposal"; else fail "spec after undo (got: $(tr '\n' ' ' < "$repo/$kappa_spec"))"; fi
+if [ ! -d "$repo/docs/hyperpowers/decisions" ]; then pass "the records of both compiles are gone"; else fail "records after undo (files: $(ls "$repo/docs/hyperpowers/decisions" 2>/dev/null))"; fi
+if [ "$(cksum < "$repo/$kappa_plan")" = "$kappa_plan_sum" ]; then pass "the plan is restored byte for byte"; else fail "plan after undo (cksum: $(cksum < "$repo/$kappa_plan" 2>/dev/null))"; fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

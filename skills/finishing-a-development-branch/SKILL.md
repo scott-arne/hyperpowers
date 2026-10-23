@@ -164,12 +164,17 @@ the skip, before executing their option: write each accepted proposal into the s
 decision is appended after the list's last item, never inserted, so the
 numbers the notes use stay with their records; an accepted supersession is a
 `Supersedes:` line on the item it belongs to),
-commit that spec edit first (`git commit -m "docs: <spec filename without -design.md> accepts a decision from the finish" -- <spec>`, a pathspec commit, so the staged records stay staged), then re-run
-the compiler with the same arguments, and because the staged set
+then re-run the compiler with the same arguments (it stages the spec,
+carrying the proposal and the Outcome line, with the records and the index),
+and because the staged set
 changed, show the new complete staged diff and ask only for its approval,
 not the dispositions again; record a dismissal in the hand-back in their
-words. A skip ends the records for this branch: the spec is never committed on
-this path, so run `bash <this skill's directory>/scripts/decisions-compile --undo <spec> --plan <plan>` (without `--plan` when there
+words. An approval leads to the one records commit below, which takes the
+spec too through the pathspec file; a withheld approval commits nothing,
+keeps the staged set and the spec edit in place, and asks what to change (the
+skip was settled before any proposal was written, so `--undo` is not this
+path's tool). A skip ends the records for this branch:
+run `bash <this skill's directory>/scripts/decisions-compile --undo <spec> --plan <plan>` (without `--plan` when there
 is none), record it in their words, make no commit, and run the option they
 chose. Otherwise commit:
 

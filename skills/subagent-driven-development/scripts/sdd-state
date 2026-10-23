@@ -1093,8 +1093,14 @@ apply_target() {
   # commit carrying a symbolic link, a submodule entry or a recovery sidecar
   # is refused by either route. The refusal comes before anything is renamed
   # or moved, so nothing is left half-applied.
-  if ! refusal=$(hp_tree_refusal "$CO" "$target"); then
-    [ -n "$refusal" ] || refusal="tree this host could not read $target"
+  rc=0; refusal=$(hp_tree_refusal "$CO" "$target") || rc=$?
+  # A tree that could not be read at all names no kind and no path, so it
+  # gets its own sentence rather than the refusal's two-word parse.
+  if [ "$rc" -eq 2 ]; then
+    echo "sdd-state: $target could not be read as a tree; refusing to apply it. Fetch the state branch again and retry; if it persists, the repository needs repair" >&2
+    return 2
+  fi
+  if [ "$rc" -ne 0 ]; then
     rest=${refusal#* }
     echo "sdd-state: $target carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to apply it. Remove it on the host that committed it and commit the removal on the state branch (snapshot does that for a path under plans/; a root-level one needs a commit on the branch itself), push, then sync again" >&2
     return 2

@@ -372,9 +372,16 @@ hp_tree_refusal() {
 # arrives from another host, and git worktree add would write all of it, so
 # it is validated before the first file lands; the caller holds the lock.
 hp_refuse_tip() {
-  local refusal rest
-  refusal=$(hp_tree_refusal "$1" "$2") && return 0
-  [ -n "$refusal" ] || refusal="tree this host could not read $2"
+  local refusal rest rc=0
+  refusal=$(hp_tree_refusal "$1" "$2") || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  # A tree that could not be read at all names no kind and no path, so it
+  # gets its own sentence: the refusal below is parsed as two kind words
+  # and a path, and its remedy would be wrong advice here.
+  if [ "$rc" -ne 1 ]; then
+    echo "sdd-state: $2 could not be read as a tree; refusing to create the state checkout from it. Fetch the state branch again and retry; if it persists, the repository needs repair" >&2
+    return 2
+  fi
   rest=${refusal#* }
   echo "sdd-state: ${2:0:7} carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to create the state checkout from it. Remove it on the host that committed it and commit the removal on the state branch, push, then sync again" >&2
   return 2

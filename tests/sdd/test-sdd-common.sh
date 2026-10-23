@@ -291,6 +291,11 @@ tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.sync-applying
 if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .sync-applying" ]; then pass "hp_tree_refusal names a committed sync marker"; else fail "hp_tree_refusal names a committed sync marker (rc=$tr_rc: $tr_out)"; fi
 tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "120000,$tr_link,escape")"); tr_rc=$?
 if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "symbolic link escape" ]; then pass "hp_tree_refusal reaches a link at the tree's root"; else fail "hp_tree_refusal reaches a link at the tree's root (rc=$tr_rc: $tr_out)"; fi
+# A tree this host cannot read is its own sentence. The refusal above is
+# parsed as two kind words and a path, so free text pushed through that
+# parser came out garbled, with a remedy that does not apply here.
+tr_err=$(hp_refuse_tip "$tr_repo" 0000000000000000000000000000000000000001 2>&1 >/dev/null); tr_rc=$?
+if [ "$tr_rc" -eq 2 ] && printf '%s' "$tr_err" | grep -q 'could not be read as a tree' && ! printf '%s' "$tr_err" | grep -q 'tree this'; then pass "hp_refuse_tip reports an unreadable tree in its own words"; else fail "hp_refuse_tip reports an unreadable tree in its own words (rc=$tr_rc: $tr_err)"; fi
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

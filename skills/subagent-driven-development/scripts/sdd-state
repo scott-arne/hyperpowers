@@ -1006,6 +1006,10 @@ restore_tombs() {
       fi
       continue
     fi
+    # Only a workspace the branch still tracks comes back: its deleted
+    # rows are what would hold the apply. A copy left for a plan the branch
+    # does not know is a human's leftover and stays where it is.
+    git -C "$CO" cat-file -e "refs/heads/$BRANCH:plans/$name" 2>/dev/null || continue
     restore_tomb "$CO/plans/$name" "$t" || {
       if [ "$NAMED_TOMB" -eq 0 ]; then
         echo "sdd-state: the copy an interrupted removal left at $t could not be put back at $CO/plans/$name; move its files back or delete the copy, then run sdd-state sync again" >&2

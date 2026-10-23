@@ -2600,6 +2600,8 @@ path.
 
 - [ ] **Step 3: Final Review**
 
+Correction (2026-10-22, after Task 14's Codex gate): the dispatch paragraph gained one sentence (2db0cf0): the dispatch is complete only when the `Decision extractor:` line is in the ledger, written before any other tool call, because after a compaction it is the only record of the task id and the notes path (one of three rehearsal sessions had skipped it).
+
 After the paragraph that ends `with the evidence, as BLOCKED, when finishing-a-development-branch presents the options.` and before `**Codex Review Gate — final whole-branch (Claude Code only).**`, add the text below. Correction (2026-10-22): the extractor reads a regenerated full-branch package, not a fix wave's scoped one; a Codex final-gate fix after the dispatch stops the extractor, settles any altered decision first, refreshes the listing and the package, and re-dispatches:
 
 ```markdown
@@ -2982,6 +2984,8 @@ Use hyperpowers:subagent-driven-development to execute docs/hyperpowers/plans/20
 `prompt-2.txt` is the one line `3`.
 
 - [ ] **Step 2: Run twice and check the transcripts**
+
+Correction (2026-10-22, after this task's Codex gate): the padding never held the extractor open (it finished within the dispatch-to-collection window at 5,000 and 10,000 lines), so the stopped-unfinished SDD run is produced the way the spec's Live section describes, a deliberately slowed extractor: the launcher's `EXTRACTOR_DELAY` installs a PreToolUse hook in the run's config dir that holds a subagent's write of `decision-notes.md` for that many seconds (hooks on the extractor's reads missed: it reads through a shell variable and a glob); the run `stop3` carries that configuration and was stopped mid-work, `stop` reached the stop by a race and `stop2` finished. One of the three earlier counted runs skipped the `Decision extractor:` ledger line; the SDD text now makes the line the dispatch's completion step (2db0cf0, recorded under Task 9).
 
 Run `SUITE_SLEEP=120 bash run-sdd.sh slow` (the extractor has its window and finishes) and `SUITE_SLEEP=0 bash run-sdd.sh fast` (the suite is instant and the review package carries the 5,000-line file, so collection comes before the handed-over extractor can finish, after Finish deleted the workspace). The `fast` run's state is proved from the transcript, not assumed: the Agent dispatch's timestamp, the suite's result timestamp, the `TaskStop` call, and the absence of a completion notification for that agent before the `TaskStop`. If the extractor nonetheless finished first, the run is labelled `finished`, the padding is doubled to 10,000 lines, and the run is repeated once. For each run check, and write into its `status.txt`:
 

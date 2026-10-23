@@ -191,8 +191,8 @@ ledger and review dirs are visible), `HYPERPOWERS_PLUGINS_FILE=/nonexistent`
 `claudeMdExcludes` file for every ancestor of the working copy. Artifacts:
 `evidence/2026-10-21-decision-records/task-14-runs/` in hyperpowers-evals
 (commit 5d7c69311 for `slow`, `fast`, `fast2` and the void attempts; commit
-pending in hyperpowers-evals for `stop`, `stop2`, `stop3`, the delay hook, the
-launcher's `EXTRACTOR_DELAY` parameter and the manifest).
+060e7a33d for `stop`, `stop2`, `stop3`, the delay hook, the launcher's
+`EXTRACTOR_DELAY` parameter and the manifest).
 
 | Check | slow (120 s suite) | fast (instant suite) | fast2 (instant, 10,000-line padding) | stop (instant, extractor delayed 180 s by a Read hook) | stop2 (instant, hook revised to Read, Bash and Grep for subagents) | stop3 (instant, extractor's notes Write delayed 240 s by a hook) |
 |---|---|---|---|---|---|---|

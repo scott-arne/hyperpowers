@@ -264,6 +264,9 @@ hp_commit_paths() { # [--remove] <checkout> <branch> <message> <path>...
   if [ "${1:-}" = --remove ]; then mode=remove; shift; fi
   co=$1 br=$2 msg=$3
   shift 3
+  # With --remove and no pathspec, ls-files would list the whole index and
+  # the commit would drop every dossier and the sentinel with them.
+  [ $# -gt 0 ] || return 2
   ref="refs/heads/$br"
   idxdir=$(mktemp -d "${TMPDIR:-/tmp}/sdd-index.XXXXXX") || return 2
   idx="$idxdir/index"

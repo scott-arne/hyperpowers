@@ -222,6 +222,11 @@ sha6=$(hp_commit_paths --remove "$co" hyperpowers/state "remove p3" plans/p3)
 if [ -n "$sha6" ] && [ "$sha6" != none ] && ! git -C "$co" ls-tree -r --name-only "$sha6" | grep -q 'plans/p3' && [ "$(git -C "$co" rev-parse "$sha6^")" = "$sha5" ] && [ "$(cat "$co/plans/p3/progress.md")" = "recreated after verification" ]; then pass "--remove drops the path from the tip without reading the working tree"; else fail "--remove drops the path from the tip without reading the working tree (got '$sha6')"; fi
 if [ "$(hp_commit_paths --remove "$co" hyperpowers/state "remove p3 again" plans/p3)" = none ]; then pass "--remove of a path the tip lacks commits nothing"; else fail "--remove of a path the tip lacks commits nothing"; fi
 rm -rf "$co/plans/p3"
+# A remove with no paths at all would drop every tracked file from the tip.
+tip_before=$(git -C "$co" rev-parse hyperpowers/state)
+hp_commit_paths --remove "$co" hyperpowers/state "remove nothing" >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 2 ] && [ "$(git -C "$co" rev-parse hyperpowers/state)" = "$tip_before" ]; then pass "--remove with no paths refuses and leaves the branch where it was"; else fail "--remove with no paths refuses and leaves the branch where it was (rc=$rc)"; fi
+
 # --- containment ------------------------------------------------------------
 croot="$TEST_ROOT/contained"; outside_c="$TEST_ROOT/outside-contained"
 mkdir -p "$croot/plans/ws" "$outside_c"; printf 'ledger\n' > "$croot/plans/ws/progress.md"; printf 'untouched\n' > "$outside_c/sentinel"

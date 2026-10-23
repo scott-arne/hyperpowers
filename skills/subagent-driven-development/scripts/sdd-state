@@ -961,7 +961,7 @@ recover_apply() {
   fi
   # A new ledger interrupted between its temporary copy and its publish
   # leaves that copy inside a workspace, where a snapshot would commit it.
-  rm -f "$CO"/plans/*/*.new.* 2>/dev/null
+  rm -f "$CO"/plans/*/progress.md.new.* 2>/dev/null
   for j in "$CO"/.rewrite/*.journal; do
     [ -f "$j" ] || continue
     rewrite_finish "${j%.journal}" || { echo "sdd-state: an interrupted ledger rewrite left $j and finishing it failed; check the ledger it names, then remove it and its .staged file" >&2; return 2; }

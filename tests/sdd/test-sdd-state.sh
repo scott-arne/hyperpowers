@@ -1670,5 +1670,23 @@ printf 'report one\n' > "$ws20/task-1-report.md"
 out=$(cd "$i20" && HYPERPOWERS_TEST_DEST_APPEND='Task 9: complete (commits 7777777..8888888, review clean)' bash "$SDD_STATE" import docs/plan.md 2> "$TEST_ROOT/i20.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "${out%% *}" = "status=import-failed" ] && grep -q '^Task 9: complete' "$ws20/progress.md" && grep -q '^Task 1: complete' "$ws20/progress.md"; then pass "a ledger line written into the destination during the recovery is neither replaced nor deleted"; else fail "a ledger line written into the destination during the recovery is neither replaced nor deleted (rc=$rc: $out: $(cat "$ws20/progress.md" | tr '\n' '|'))"; fi
 if [ -f "$legacy20/progress.md" ] && grep -q '^Task 2: complete' "$legacy20/progress.md" && ! ls -d "$legacy20.importing-"* >/dev/null 2>&1; then pass "the legacy source is put back whole for the next import"; else fail "the legacy source is put back whole for the next import"; fi
+
+echo ""
+echo "=== the new-ledger litter sweep is confined to its own name ==="
+# The sweep clears a temporary copy of a ledger. A dossier file that merely
+# carries .new. in its name is a controller's, and deleting it on every
+# publishing call would take it off the branch.
+make_pair p21
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+co_a21="$STATE_ROOT/$(state_key "$PAIR_A")"
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa21=$(run_sdd_dir "$PAIR_A" docs/plan.md)
+printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa21/progress.md"
+printf 'notes a controller keeps\n' > "$wsa21/notes.new.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+if [ "$rc" -eq 0 ] && [ "${out%% *}" != "status=busy" ] && [ -f "$wsa21/notes.new.md" ] && [ "$(cat "$wsa21/notes.new.md")" = "notes a controller keeps" ]; then pass "a dossier file whose name holds .new. survives a sync and a snapshot"; else fail "a dossier file whose name holds .new. survives a sync and a snapshot (rc=$rc: $out)"; fi
+if git -C "$co_a21" cat-file -e "refs/heads/hyperpowers/state:plans/$(basename "$wsa21")/notes.new.md" 2>/dev/null && [ -z "$(git -C "$co_a21" status --porcelain -- plans/)" ]; then pass "it stays tracked on the branch and the checkout is clean"; else fail "it stays tracked on the branch and the checkout is clean ($(git -C "$co_a21" status --porcelain -- plans/ | tr '\n' ' '))"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

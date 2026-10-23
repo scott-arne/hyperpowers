@@ -1671,6 +1671,7 @@ printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..
 printf 'report one\n' > "$ws20/task-1-report.md"
 out=$(cd "$i20" && HYPERPOWERS_TEST_DEST_APPEND='Task 9: complete (commits 7777777..8888888, review clean)' bash "$SDD_STATE" import docs/plan.md 2> "$TEST_ROOT/i20.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "${out%% *}" = "status=import-failed" ] && grep -q '^Task 9: complete' "$ws20/progress.md" && grep -q '^Task 1: complete' "$ws20/progress.md"; then pass "a ledger line written into the destination during the recovery is neither replaced nor deleted"; else fail "a ledger line written into the destination during the recovery is neither replaced nor deleted (rc=$rc: $out: $(cat "$ws20/progress.md" | tr '\n' '|'))"; fi
+if grep -q 'kept its own ledger' "$TEST_ROOT/i20.err" && grep -q "progress.md for a human to merge" "$TEST_ROOT/i20.err" && ! grep -q 'nothing was moved' "$TEST_ROOT/i20.err"; then pass "the abort says the source-only files moved and names the ledger left for a human"; else fail "the abort says the source-only files moved and names the ledger left for a human ($(cat "$TEST_ROOT/i20.err"))"; fi
 if [ -f "$legacy20/progress.md" ] && grep -q '^Task 2: complete' "$legacy20/progress.md" && ! ls -d "$legacy20.importing-"* >/dev/null 2>&1; then pass "the legacy source is put back whole for the next import"; else fail "the legacy source is put back whole for the next import"; fi
 
 echo ""

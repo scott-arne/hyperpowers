@@ -476,7 +476,7 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
         # legacy ledger holds beyond it are appended.
         dbody=$(tail -n +2 "$dest/progress.md" | wc -c | tr -d ' ')
         if ! ledger_body_prefix "$dest/progress.md" "$stage/progress.md"; then
-          echo "sdd-state: $dest/progress.md was written to during the import and is no longer a prefix of the legacy ledger; nothing was moved, run import again" >&2
+          echo "sdd-state: $dest/progress.md was written to while the import ran and is no longer a prefix of the legacy ledger; the files only the legacy workspace held were moved into $dest, which kept its own ledger, and the legacy ledger is still at $ref/progress.md for a human to merge" >&2
           import_abort "$c" "$backup" "$ref" "$stage" ""; return 2
         fi
         if [ "$(tail -n +2 "$stage/progress.md" | wc -c | tr -d ' ')" -gt "$dbody" ]; then

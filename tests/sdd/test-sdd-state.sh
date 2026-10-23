@@ -20,6 +20,10 @@ TEST_ROOT=$(mktemp -d) || exit 2
 # git prints worktree paths physically; a symlinked temp root (macOS /var) would defeat registrations().
 TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || exit 2
 export XDG_CACHE_HOME="$TEST_ROOT/cache"
+# As in the sibling suite: a host-global hyperpowers.stateBranch, or a
+# clone.defaultRemoteName other than origin, would fail this suite there and
+# nowhere else (GIT_CONFIG_GLOBAL needs git 2.32+).
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 STATE_ROOT="$XDG_CACHE_HOME/hyperpowers/state"
 cleanup() { if [ -n "$TEST_ROOT" ] && [ -d "$TEST_ROOT" ]; then rm -rf "$TEST_ROOT"; fi; }
 trap cleanup EXIT

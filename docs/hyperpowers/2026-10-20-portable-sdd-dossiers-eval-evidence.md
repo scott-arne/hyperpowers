@@ -19,7 +19,9 @@ workspace.
 Four Claude Code sessions on 2026-10-22, Opus 5.5 through Vertex, each against
 the plugin worktree at `e5218e9` and a cache root inside the rehearsal tree.
 Four clones of two bare origins stand in for hosts; `run-rehearsal.sh` drives
-them and `check-rehearsal.sh` reads the outcomes.
+them and `check-rehearsal.sh` reads the outcomes. The live sessions ran at
+`e5218e9`; the skill-text and helper fixes after it (the final wave,
+d23be84..HEAD) are covered by the offline suites, not by a repeated live run.
 
 Pass 0 (clone P, `--permission-mode acceptEdits`, Edit and Write deliberately
 left out of `--allowedTools`) answers what the spec assumes about writes under
@@ -193,7 +195,8 @@ observed, and the latter stays open until its output arrives.
 The human partner was asked on 2026-10-22 to run these four commands on bergen,
 from a checkout of `portable-sdd-dossiers` inside a Claude Code session, and to
 paste the output. The branch was pushed to origin for that purpose (the ref is
-at `777a392`; the commits after it are documentation only). No output has
+at `777a392`; script and test fixes landed after it, so the branch should be
+pushed again at the final head before the bergen run). No output has
 arrived, so each row below is awaiting that run (requested 2026-10-22). A
 failing suite there is a plan conflict to
 surface to the human partner, not a value to guess. This host runs git 2.56;

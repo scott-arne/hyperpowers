@@ -222,6 +222,17 @@ sha6=$(hp_commit_paths --remove "$co" hyperpowers/state "remove p3" plans/p3)
 if [ -n "$sha6" ] && [ "$sha6" != none ] && ! git -C "$co" ls-tree -r --name-only "$sha6" | grep -q 'plans/p3' && [ "$(git -C "$co" rev-parse "$sha6^")" = "$sha5" ] && [ "$(cat "$co/plans/p3/progress.md")" = "recreated after verification" ]; then pass "--remove drops the path from the tip without reading the working tree"; else fail "--remove drops the path from the tip without reading the working tree (got '$sha6')"; fi
 if [ "$(hp_commit_paths --remove "$co" hyperpowers/state "remove p3 again" plans/p3)" = none ]; then pass "--remove of a path the tip lacks commits nothing"; else fail "--remove of a path the tip lacks commits nothing"; fi
 rm -rf "$co/plans/p3"
+# --- containment ------------------------------------------------------------
+croot="$TEST_ROOT/contained"; outside_c="$TEST_ROOT/outside-contained"
+mkdir -p "$croot/plans/ws" "$outside_c"; printf 'ledger\n' > "$croot/plans/ws/progress.md"; printf 'untouched\n' > "$outside_c/sentinel"
+if hp_contained "$croot" "plans/ws/progress.md" 2>/dev/null; then pass "hp_contained accepts a path of real directories"; else fail "hp_contained accepts a path of real directories"; fi
+if hp_contained "$croot" "plans/ws/task-1-report.md" 2>/dev/null; then pass "hp_contained accepts a leaf that does not exist yet"; else fail "hp_contained accepts a leaf that does not exist yet"; fi
+ln -s "$outside_c" "$croot/plans/link-ws"
+err=$(hp_contained "$croot" "plans/link-ws/progress.md" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'plans/link-ws' < <(printf '%s\n' "$err"); then pass "hp_contained refuses a path under a symlinked directory and names the link"; else fail "hp_contained refuses a path under a symlinked directory and names the link (rc=$rc: $err)"; fi
+ln -s "$outside_c/sentinel" "$croot/plans/ws/linked-ledger"
+err=$(hp_contained "$croot" "plans/ws/linked-ledger" 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'linked-ledger' < <(printf '%s\n' "$err"); then pass "hp_contained refuses a leaf that is a symbolic link"; else fail "hp_contained refuses a leaf that is a symbolic link (rc=$rc: $err)"; fi
 # Two concurrent first commits on an unborn branch: one creates it, the other chains.
 co2="$TEST_ROOT/co2"; git init -q -b hyperpowers/state "$co2"; mkdir -p "$co2/plans/a" "$co2/plans/b"
 printf 'a\n' > "$co2/plans/a/progress.md"; printf 'b\n' > "$co2/plans/b/progress.md"

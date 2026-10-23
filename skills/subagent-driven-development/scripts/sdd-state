@@ -100,6 +100,7 @@ cmd_snapshot() {
   [ -n "$msg" ] || msg="sdd $SLUG: snapshot $(hp_utc_now)"
   hp_lock "$PLAN_DIR" || return 2
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  hp_contained "$CO" "plans/$WS" || { hp_unlock; echo "status=error"; return 2; }
   out=$(hp_commit_paths "$CO" "$BRANCH" "$msg" "plans/$WS"); rc=$?
   hp_unlock
   [ "$rc" -eq 0 ] || { echo "status=error"; return 2; }
@@ -142,6 +143,7 @@ cmd_claim() {
   grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md"; rc=$?
   if [ "$rc" -eq 0 ]; then hp_unlock; echo "status=done task=$n"; return 0; fi
   if [ "$rc" -ne 1 ]; then hp_unlock; echo "status=error"; return 2; fi
+  hp_contained "$ROOT" "plans/$WS/claims" || { hp_unlock; echo "status=error"; return 2; }
   mkdir -p "$claims" || { hp_unlock; echo "status=error"; return 2; }
   if [ "$takeover" -eq 1 ] && [ -d "$target" ]; then
     # New record first (invisible until the rename), then the history line,
@@ -558,6 +560,7 @@ cmd_finish() {
     restore_tomb "$WSDIR" "$t" || { hp_unlock; echo "status=error"; return 2; }
   done
   [ -d "$WSDIR" ] || { hp_unlock; echo "status=none"; return 0; }
+  hp_contained "$ROOT" "plans/$WS" || { hp_unlock; echo "status=error"; return 2; }
   # The claims are read under the lock, so a claim published after a first
   # look, or a takeover in flight, is seen before anything is removed.
   open=$(open_claims)
@@ -737,6 +740,7 @@ blob_prefix_id() {
 rewrite_finish() {
   local jbase=$1 path live_size new_size file ext_size have want
   read -r live_size new_size path < "$jbase.journal" || return 2
+  hp_contained "$CO" "$path" || return 2
   file="$CO/$path"
   [ -f "$jbase.staged" ] && [ -f "$file" ] || return 2
   ext_size=$((new_size - live_size))
@@ -821,6 +825,7 @@ apply_files() {
   local S=$1 target=$2 path dir
   while IFS= read -r path; do
     [ -n "$path" ] || continue
+    hp_contained "$CO" "$path" || return 2
     mkdir -p "$(dirname "$CO/$path")" || return 2
     case "$path" in
       plans/*/progress.md)
@@ -835,6 +840,7 @@ apply_files() {
   done < <(git -C "$CO" diff --name-only --diff-filter=AM "$S" "$target")
   while IFS= read -r path; do
     [ -n "$path" ] || continue
+    hp_contained "$CO" "$path" || return 2
     case "$path" in
       plans/*/progress.md)
         dir=$(dirname "$CO/$path")
@@ -923,6 +929,14 @@ apply_target() {
     done < <(printf '%s\n' "$pending")
     if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
   fi
+  # Every path this apply touches must be a real entry inside the checkout:
+  # a fetched branch can carry plans/<ws>, or a ledger, as a symbolic link,
+  # and the writes below would follow it out of the cache. The refusal comes
+  # before anything is renamed or moved, so nothing is left half-applied.
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    hp_contained "$CO" "$path" || return 2
+  done < <(git -C "$CO" diff --name-only "$S" "$target")
   # Ledgers the target deletes are a remote finish: every one is renamed
   # aside and verified first, before the ref moves, so a line written up to
   # the rename is caught; one refusal puts them all back and nothing has
@@ -1236,12 +1250,9 @@ cmd_handoff() {
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   # The dossier must be real files inside the checkout: a plans directory,
   # workspace or ledger that is a symbolic link (one a fetched branch could
-  # carry) would send the writes below outside it. -L is true for a
-  # dangling link too, which the -f test below would otherwise create
-  # through.
-  if [ -L "$CO/plans" ] || [ -L "$WSDIR" ] || [ -L "$WSDIR/progress.md" ]; then
-    hp_unlock; echo "sdd-state: $WSDIR or its ledger is a symbolic link; refusing to write through it" >&2; echo "status=error"; return 2
-  fi
+  # carry) would send the writes below outside it. hp_contained is the one
+  # rule every writer shares.
+  hp_contained "$CO" "plans/$WS/progress.md" || { hp_unlock; echo "status=error"; return 2; }
   mkdir -p "$WSDIR" || { hp_unlock; echo "status=error"; return 2; }
   ledger=$(ledger_path)
   if [ ! -f "$ledger" ]; then printf '%s%s\n' "$IDENTITY_PREFIX" "$rel" > "$ledger" || { hp_unlock; echo "status=error"; return 2; }; fi

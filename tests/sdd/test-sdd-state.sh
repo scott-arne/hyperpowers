@@ -1302,6 +1302,42 @@ out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -d "$co_b/plans/$(basename "$wsf")" ] && grep -q '^line three$' "$wsb/progress.md"; then pass "the next sync after that crash finishes the apply and keeps going"; else fail "the next sync after that crash finishes the apply and keeps going (rc=$rc: $out)"; fi
 
 echo ""
+echo "=== containment on the apply path ==="
+# A state branch a remote carries can hold plans/<ws> as a symbolic link,
+# and the apply writes with shell redirection: it must refuse instead.
+make_pair p12
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+co_b="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+outside12="$TEST_ROOT/outside-p12"; mkdir -p "$outside12"; printf 'untouched\n' > "$outside12/sentinel"
+idx12="$TEST_ROOT/p12.index"
+tip12=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+link12=$(printf '%s' "$outside12" | git -C "$PAIR_A" hash-object -w --stdin)
+rm -f "$idx12"; GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" read-tree "$tip12"
+GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" update-index --add --cacheinfo "120000,$link12,plans/evil"
+tree12=$(GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" write-tree)
+evil1=$(printf 'a workspace that is a link\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$tree12" -p "$tip12")
+git -C "$PAIR_A" push -q origin "$evil1:refs/heads/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null 2>&1
+ledger12=$(printf '# SDD ledger — plan: docs/evil.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' | git -C "$PAIR_A" hash-object -w --stdin)
+rm -f "$idx12"; GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" read-tree "$evil1"
+GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" update-index --force-remove plans/evil
+GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" update-index --add --cacheinfo "100644,$ledger12,plans/evil/progress.md"
+tree12=$(GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" write-tree)
+evil2=$(printf 'a ledger under the link\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$tree12" -p "$evil1")
+git -C "$PAIR_A" push -q origin "$evil2:refs/heads/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p12.out" 2> "$TEST_ROOT/p12.err"; rc=$?
+out=$(cat "$TEST_ROOT/p12.out")
+if [ -L "$co_b/plans/evil" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$outside12/progress.md" ] && grep -q 'plans/evil' "$TEST_ROOT/p12.err"; then pass "a workspace the branch carries as a symbolic link is refused and its target is not written"; else fail "a workspace the branch carries as a symbolic link is refused and its target is not written (rc=$rc: $out: $(cat "$TEST_ROOT/p12.err"))"; fi
+if [ ! -f "$co_b/.sync-applying" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$evil1" ]; then pass "the refusal comes before anything is applied: no marker, the ref unmoved"; else fail "the refusal comes before anything is applied: no marker, the ref unmoved"; fi
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$outside12/progress.md" ] && [ "$(cat "$outside12/sentinel")" = "untouched" ]; then pass "a second sync refuses the same way and still writes nothing outside the checkout"; else fail "a second sync refuses the same way and still writes nothing outside the checkout (rc=$rc: $out)"; fi
+
+echo ""
 echo "=== import recovery when the source outgrew the published copy ==="
 # A cutover interrupted after publication whose legacy source then gained a
 # report and a ledger line: the extra entries are installed, not skipped.

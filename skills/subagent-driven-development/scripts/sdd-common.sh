@@ -225,6 +225,30 @@ hp_unlock() {
   HP_LOCK_DIR=""
 }
 
+# --- containment ------------------------------------------------------------
+# <root> <relative path>: 0 when every component of the path, from <root>
+# down, is a real entry rather than a symbolic link. The dossier writers
+# use shell redirection (>>, dd, mkdir -p), which follows a link out of the
+# cache, and a state branch fetched from a remote can carry plans/<ws>, a
+# ledger or any other entry as a link. The leaf is checked too and need not
+# exist; -L is true for a dangling link, which a -f test would create
+# through. The link that was found is named on stderr.
+hp_contained() { # <root> <relative path>
+  local cur=$1 rel=$2 part
+  case "$rel" in /*|'') return 2 ;; esac
+  while [ -n "$rel" ]; do
+    part=${rel%%/*}
+    if [ "$part" = "$rel" ]; then rel=""; else rel=${rel#*/}; fi
+    case "$part" in ''|.|..) return 2 ;; esac
+    cur="$cur/$part"
+    if [ -L "$cur" ]; then
+      echo "sdd-state: $cur is a symbolic link; refusing to write through it" >&2
+      return 1
+    fi
+  done
+  return 0
+}
+
 # --- private-index commit ---------------------------------------------------
 # Commit only <paths> of <checkout> onto <branch> through a private index, so
 # another session's staged or half-written files are never included. With
@@ -502,6 +526,9 @@ hp_materialize_plain() {
   git -C "$repo" cat-file -e "$tip:plans/$ws/progress.md" 2>/dev/null || return 0
   root=$(dirname "$(dirname "$dest")")
   mkdir -p "$root/plans"
+  # The same containment rule the branch writers follow: neither the local
+  # path being published nor the workspace the branch carries may be a link.
+  hp_contained "$root" "plans/$ws" || return 2
   # Extract into a staging directory beside the destination and publish it
   # with one rename, so an interrupted extraction never leaves a partial
   # workspace that the ledger check above would accept as complete. Stale
@@ -514,6 +541,7 @@ hp_materialize_plain() {
   git -C "$(git -C "$repo" rev-parse --show-toplevel)" archive "$tip" "plans/$ws" | tar -x -C "$staging"
   archive_rc=${PIPESTATUS[0]} tar_rc=${PIPESTATUS[1]}
   if [ "$archive_rc" -ne 0 ] || [ "$tar_rc" -ne 0 ] || [ ! -f "$staging/plans/$ws/progress.md" ]; then rm -rf "$staging"; return 2; fi
+  hp_contained "$staging" "plans/$ws" || { rm -rf "$staging"; return 2; }
   rm -rf "$dest"
   if ! mv "$staging/plans/$ws" "$dest"; then rm -rf "$staging"; return 2; fi
   rm -rf "$staging"

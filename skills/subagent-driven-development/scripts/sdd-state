@@ -1088,7 +1088,7 @@ apply_target() {
   # anything is renamed or moved, so nothing is left half-applied.
   links=$(git -C "$CO" ls-tree -r "$target" | awk -F'\t' '$1 ~ /^120000 / {print $2}') || return 2
   if [ -n "$links" ]; then
-    echo "sdd-state: $target carries a symbolic link at $(printf '%s\n' "$links" | head -n 1); refusing to apply it. Remove the link on the host that committed it, snapshot, push, then sync again" >&2
+    echo "sdd-state: $target carries a symbolic link at $(printf '%s\n' "$links" | head -n 1); refusing to apply it. Remove the link on the host that committed it and commit the removal on the state branch (snapshot does that for a link under plans/; a root-level link needs a commit on the branch itself), push, then sync again" >&2
     return 2
   fi
   # Every path this apply touches must also be a real entry on disk: a link

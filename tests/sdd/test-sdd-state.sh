@@ -1394,5 +1394,55 @@ run_state "$p13_b" sync docs/plan.md > "$TEST_ROOT/p13.out" 2> "$TEST_ROOT/p13.e
 out=$(cat "$TEST_ROOT/p13.out")
 case "${out%% *}" in status=up-to-date|status=fast-forwarded) ff13=1 ;; *) ff13=0 ;; esac
 if [ "$rc" -eq 0 ] && [ "$ff13" -eq 1 ] && [ ! -f "$co13_b/.sync-applying" ] && grep -q '^Task 1: complete' "$ws13b/progress.md"; then pass "an interrupted apply in a sha256 repository is recovered and the marker is gone"; else fail "an interrupted apply in a sha256 repository is recovered and the marker is gone (rc=$rc: $out: $(cat "$TEST_ROOT/p13.err"))"; fi
+
+echo ""
+echo "=== a killed removal must not wedge another plan's sync ==="
+# finish and prune rename a workspace aside before they verify it. Killed
+# there, the copy plus the deleted tracked rows it leaves held every later
+# sync on the repository: only a later call for that same plan revisits them.
+make_pair p14
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; : > "$PAIR_A/docs/x.md"; : > "$PAIR_A/docs/z.md"
+git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plans; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+co_b14="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsy=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsy/progress.md"
+wsx=$(run_sdd_dir "$PAIR_A" docs/x.md); printf '# SDD ledger — plan: docs/x.md\n' > "$wsx/progress.md"
+wsz=$(run_sdd_dir "$PAIR_A" docs/z.md); printf '# SDD ledger — plan: docs/z.md\n' > "$wsz/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+run_state "$PAIR_A" snapshot docs/x.md >/dev/null
+GIT_COMMITTER_DATE="2026-01-01T00:00:00Z" GIT_AUTHOR_DATE="2026-01-01T00:00:00Z" run_state "$PAIR_A" snapshot docs/z.md >/dev/null
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+wsy_b="$co_b14/plans/$(basename "$wsy")"; wsx_b="$co_b14/plans/$(basename "$wsx")"; wsz_b="$co_b14/plans/$(basename "$wsz")"
+advance14() { printf '%s\n' "$1" >> "$wsy/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null; }
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=remove-after-rename bash "$SDD_STATE" finish docs/x.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ ! -d "$wsx_b" ] && ls -d "$co_b14/plans/.removing-$(basename "$wsx")-"* >/dev/null 2>&1; then pass "the seam leaves finish's copy renamed aside"; else fail "the seam leaves finish's copy renamed aside (rc=$rc)"; fi
+advance14 'line after the killed finish'
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p14a.out" 2> "$TEST_ROOT/p14a.err"; rc=$?
+out=$(cat "$TEST_ROOT/p14a.out")
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && grep -q '^line after the killed finish$' "$wsy_b/progress.md"; then pass "a sync for another plan is not held by the killed finish"; else fail "a sync for another plan is not held by the killed finish (rc=$rc: $out: $(cat "$TEST_ROOT/p14a.err"))"; fi
+if [ -f "$wsx_b/progress.md" ] && ! ls -d "$co_b14/plans/.removing-"* >/dev/null 2>&1 && [ -z "$(git -C "$co_b14" status --porcelain -- plans/)" ]; then pass "the killed finish's dossier is back and its deleted rows are gone"; else fail "the killed finish's dossier is back and its deleted rows are gone ($(git -C "$co_b14" status --porcelain -- plans/ | tr '\n' ' '))"; fi
+touch -t 202601010000 "$wsz_b/progress.md" "$wsz_b"
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=remove-after-rename bash "$SDD_STATE" prune --repo "$PAIR_B" --apply >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ ! -d "$wsz_b" ] && ls -d "$co_b14/plans/.removing-$(basename "$wsz")-"* >/dev/null 2>&1; then pass "the seam leaves prune's copy renamed aside"; else fail "the seam leaves prune's copy renamed aside (rc=$rc)"; fi
+advance14 'line after the killed prune'
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p14b.out" 2> "$TEST_ROOT/p14b.err"; rc=$?
+out=$(cat "$TEST_ROOT/p14b.out")
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && grep -q '^line after the killed prune$' "$wsy_b/progress.md"; then pass "a sync for another plan is not held by the killed prune"; else fail "a sync for another plan is not held by the killed prune (rc=$rc: $out: $(cat "$TEST_ROOT/p14b.err"))"; fi
+if [ -f "$wsz_b/progress.md" ] && ! ls -d "$co_b14/plans/.removing-"* >/dev/null 2>&1 && [ -z "$(git -C "$co_b14" status --porcelain -- plans/)" ]; then pass "the killed prune's dossier is back and its deleted rows are gone"; else fail "the killed prune's dossier is back and its deleted rows are gone ($(git -C "$co_b14" status --porcelain -- plans/ | tr '\n' ' '))"; fi
+# A copy stranded beside a workspace path that is occupied again is a
+# human's to merge: it stays, and the message names it and the workspace,
+# never telling the human to move or delete a file that is gone.
+mv "$wsx_b" "$co_b14/plans/.removing-$(basename "$wsx")-4242"; mkdir -p "$wsx_b"
+advance14 'line beside the stranded copy'
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p14c.out" 2> "$TEST_ROOT/p14c.err"; rc=$?
+out=$(cat "$TEST_ROOT/p14c.out")
+if [ "$rc" -eq 0 ] && [ -d "$co_b14/plans/.removing-$(basename "$wsx")-4242" ] && grep -q "removing-$(basename "$wsx")-4242" "$TEST_ROOT/p14c.err" && grep -q "$wsx_b" "$TEST_ROOT/p14c.err" && ! grep -q "progress.md is not part of a plan workspace" "$TEST_ROOT/p14c.err"; then pass "a copy stranded beside an occupied workspace stays, named with the workspace"; else fail "a copy stranded beside an occupied workspace stays, named with the workspace (rc=$rc: $out: $(cat "$TEST_ROOT/p14c.err"))"; fi
+# The human moves the copy back: the next sync takes the dossier with it.
+rmdir "$wsx_b"; mv "$co_b14/plans/.removing-$(basename "$wsx")-4242" "$wsx_b"
+advance14 'line after the copy came back'
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$wsx_b/progress.md" ] && [ -z "$(git -C "$co_b14" status --porcelain -- plans/)" ] && grep -q '^line after the copy came back$' "$wsy_b/progress.md"; then pass "once the human puts the copy back the apply carries on and the tree is clean"; else fail "once the human puts the copy back the apply carries on and the tree is clean (rc=$rc: $out: $(git -C "$co_b14" status --porcelain -- plans/ | tr '\n' ' '))"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

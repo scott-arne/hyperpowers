@@ -32,6 +32,9 @@ TOMB=""
 # Set once a leftover entry under plans/ has been named on stderr, so the
 # caller's three attempts do not repeat the same diagnosis.
 NAMED_LEFTOVER=0
+# The same, for a copy an interrupted removal stranded beside a workspace
+# that is occupied again.
+NAMED_TOMB=0
 
 usage() {
   printf '%s\n' \
@@ -506,6 +509,7 @@ remove_verified() {
   # workspace inside it: refuse instead.
   [ ! -e "$tomb" ] || { echo "sdd-state: a copy from an earlier removal is in the way at $tomb" >&2; return 1; }
   mv "$dir" "$tomb" 2>/dev/null || return 1
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = remove-after-rename ]; then hp_unlock; exit 99; fi
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
     remove-after-rename:*|remove-after-rename-changed:*)
       # Test hook: an unlocked writer recreates the path after the rename;
@@ -901,19 +905,46 @@ recover_apply() {
   fi
   rm -f "$CO/.sync-applying"
 }
+# restore_tombs: put back every copy an interrupted removal renamed aside
+# whose workspace path is free again. finish and sdd-dir restore such a copy
+# for their own plan and nothing revisits one for another plan, so without
+# this the deleted tracked rows it leaves would hold every later sync on the
+# repository. A copy stranded beside a workspace that is occupied again is a
+# human's to merge: it stays, named once.
+restore_tombs() {
+  local t name
+  for t in "$CO"/plans/.removing-*; do
+    [ -d "$t" ] || continue
+    name=${t##*/}; name=${name#.removing-}; name=${name%-*}
+    if [ -e "$CO/plans/$name" ] || [ -L "$CO/plans/$name" ]; then
+      if [ "$NAMED_TOMB" -eq 0 ]; then
+        echo "sdd-state: a copy from an interrupted removal is at $t beside $CO/plans/$name; move its files back into $CO/plans/$name or delete the copy, then run sdd-state sync again" >&2
+        NAMED_TOMB=1
+      fi
+      continue
+    fi
+    restore_tomb "$CO/plans/$name" "$t" || {
+      if [ "$NAMED_TOMB" -eq 0 ]; then
+        echo "sdd-state: the copy an interrupted removal left at $t could not be put back at $CO/plans/$name; move its files back or delete the copy, then run sdd-state sync again" >&2
+        NAMED_TOMB=1
+      fi
+    }
+  done
+}
 # apply_target <S> <target>: 0 applied, 5 retry (a non-ledger file changed
 # before the ref moved, or the ref moved under us), 6 remote-finished (a
 # ledger the target deletes changed here; nothing moved), 7 apply incomplete
 # after the ref moved (the marker stays; the next call finishes it), 2 error.
 # Controllers write without the lock, so the working tree is live.
 apply_target() {
-  local S=$1 target=$2 pending line status path res dir rc i refused tombs=() dirs=()
+  local S=$1 target=$2 pending line status path left res dir rc i refused tombs=() dirs=()
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-apply:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-apply:}" ;; esac
   if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = sync-before-apply ]; then
     : > "$CO/.sync-paused"
     while [ -e "$CO/.sync-pause" ]; do sleep 0.1; done
     rm -f "$CO/.sync-paused"
   fi
+  restore_tombs
   pending=$(git -C "$CO" status --porcelain -- plans/ 2>/dev/null)
   if [ -n "$pending" ]; then
     refused=0
@@ -924,9 +955,21 @@ apply_target() {
         " M|plans/"*"/progress.md") continue ;;
       esac
       # A copy a killed removal left aside is not a concurrent write: it is
-      # cleared by finish, by sdd-dir and by the recovery above, and
+      # cleared by finish, by sdd-dir and by the restore above, and
       # treating it as one would wedge every later sync on this repository.
       case "$path" in "plans/.removing-"*) continue ;; esac
+      # A tracked file missing from a workspace: the restore above left the
+      # copy that holds it only when the workspace is occupied again, and
+      # named it there, so nothing more is said about this row; telling a
+      # human to move or delete a file that is gone would be wrong.
+      case "$status|$path" in
+        " D|plans/"*)
+          left=${path#plans/}; left=${left%%/*}
+          if ! ls -d "$CO/plans/.removing-$left-"* >/dev/null 2>&1; then
+            [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is committed on the state branch but missing from the checkout and holds the apply; put it back or finish its plan, then run sdd-state sync again" >&2
+          fi
+          refused=1; continue ;;
+      esac
       [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is not part of a plan workspace and holds the apply; inspect it, move or delete it, then run sdd-state sync again" >&2
       refused=1
     done < <(printf '%s\n' "$pending")

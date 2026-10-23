@@ -189,7 +189,7 @@ review dirs are visible), `HYPERPOWERS_PLUGINS_FILE=/nonexistent` (the Codex
 preflight finds no plugin, so the gates degrade) and the `claudeMdExcludes`
 file for every ancestor of the working copy. Artifacts:
 `evidence/2026-10-21-decision-records/task-14-runs/` in hyperpowers-evals
-(commit pending in hyperpowers-evals).
+(commit 5d7c69311).
 
 | Check | slow (120 s suite) | fast (instant suite) | fast2 (instant, 10,000-line padding) |
 |---|---|---|---|

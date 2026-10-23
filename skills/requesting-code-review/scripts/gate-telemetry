@@ -245,9 +245,16 @@ HP_LEGACY_KEY="$legacy" node -e '
     const presentLedgers = ledgerFiles.filter((f) => fs.existsSync(f));
     if (presentLedgers.length) {
       const all = [];
-      for (const f of presentLedgers) for (const l of fs.readFileSync(f, "utf8").split("\n")) {
-        if (!l.trim()) continue;
-        try { all.push(JSON.parse(l)); } catch (e) { r.skipped++; }
+      for (const f of presentLedgers) {
+        // A path that exists but cannot be read (a directory at the ledger
+        // name, a mode this user lacks) is counted and skipped, never an
+        // abort that would lose the rows of every other key.
+        let text;
+        try { text = fs.readFileSync(f, "utf8"); } catch (e) { r.skipped++; continue; }
+        for (const l of text.split("\n")) {
+          if (!l.trim()) continue;
+          try { all.push(JSON.parse(l)); } catch (e) { r.skipped++; }
+        }
       }
       // Ledger events carry their own timestamp, so that is the window basis
       // here. An event whose ts is missing or unparseable belongs to neither
@@ -371,4 +378,4 @@ HP_LEGACY_KEY="$legacy" node -e '
     console.log(`- Total pending: ${agg.pending}${agg.oldestPendingDays === null ? "" : `; Oldest pending: ${agg.oldestPendingDays} day(s)`}; Total swept: ${agg.sweptTotal} (${Object.entries(agg.swept).map(([k,v])=>`${k}:${v}`).join(", ") || "-"}); Artifacts skipped: ${agg.skipped}` +
       (agg.unwindowable ? `; Unwindowable events: ${agg.unwindowable}` : ""));
   }
-' "$base" "$json" "$since" "$until" "${keys[@]}"
+' "$base" "$json" "$since" "$until" ${keys[@]+"${keys[@]}"}

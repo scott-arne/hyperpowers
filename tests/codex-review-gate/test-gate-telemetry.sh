@@ -448,5 +448,16 @@ node -e 'const j=JSON.parse(process.argv[1]);const row=j.repos.find(r=>r.key===p
 mkdir -p "$XDG_CACHE_HOME/hyperpowers/ungated/stray/ledger.jsonl"
 rj="$( (cd "$lw" && bash "$GT" --json) 2>/dev/null )"; rrc=$?
 node -e 'const j=JSON.parse(process.argv[1]);process.exit(j.repos[0].pending===0?0:1)' "$rj" 2>/dev/null && [ "$rrc" -eq 0 ] && pass "a ledger path this pass cannot read is skipped, and the report still exits 0" || fail "a ledger path this pass cannot read is skipped, and the report still exits 0 (rc $rrc: $rj)"
+# --all over a cache root with no key directory: an empty report, never an
+# unbound-variable abort (bash 3.2 expands an empty array that way).
+empty_cache="$work/empty-cache"; mkdir -p "$empty_cache/hyperpowers"
+ej="$(XDG_CACHE_HOME="$empty_cache" bash "$GT" --all --json 2>&1)"; erc=$?
+node -e 'const j=JSON.parse(process.argv[1]);process.exit(Array.isArray(j.repos)&&j.repos.length===0?0:1)' "$ej" 2>/dev/null && [ "$erc" -eq 0 ] && pass "--all over a cache root with no keys is an empty report, not an abort" || fail "--all over a cache root with no keys is an empty report, not an abort (rc $erc: $ej)"
+# A ledger path under a key of the fleet that cannot be read is skipped, and
+# every other key is still reported.
+mkdir -p "$XDG_CACHE_HOME/hyperpowers/ungated/abcdef0123456789/ledger.jsonl"
+fj="$(bash "$GT" --all --json 2>/dev/null)"; frc=$?
+node -e 'const j=JSON.parse(process.argv[1]);process.exit(j.repos.find(r=>r.key===process.argv[2])?0:1)' "$fj" "$key" 2>/dev/null && [ "$frc" -eq 0 ] && pass "an unreadable ledger under a fleet key is skipped and the other keys still report" || fail "an unreadable ledger under a fleet key is skipped and the other keys still report (rc $frc: $fj)"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

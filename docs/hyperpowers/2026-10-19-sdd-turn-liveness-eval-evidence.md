@@ -14,7 +14,7 @@ control first.
 
 Spec: `docs/hyperpowers/specs/2026-10-19-sdd-turn-liveness-design.md`.
 Plan: `docs/hyperpowers/plans/2026-10-19-sdd-turn-liveness.md`, added with the
-spec in `f3700ea` and amended on `main` through `2266a99` as it ran.
+spec in `f3700ea` and amended on `main` through `5cbd271`.
 
 **Where the run artifacts live.** Every run, log, manifest and tally this
 note cites resolves under the hyperpowers-evals evidence tree,
@@ -79,7 +79,8 @@ A task boundary is a successful `TaskUpdate` completion, timestamped at its
 result. The two `killed` exclusions are turn ends cut by the observation
 window, not process kills. Part of the premature count is stops made after
 task-list items were left open and never closed later in the session. The
-window spans 14 Claude Code versions, 2.1.207 to 2.1.300, and six model ids.
+window spans 14 Claude Code versions, 2.1.207 to 2.1.300, and its records
+carry five model ids and the `<synthetic>` bucket.
 
 ## Scenario results
 
@@ -127,6 +128,12 @@ The pre-registered rule was kept rather than relabeled once the decision was
 visible. By the spec, the failure goes back to design and the P failure opens
 the Stop-hook follow-up with these runs as its evidence.
 
+One limit on that separation: the foreground rule covers dispatches, not the
+`SendMessage` resumes a fix round sends, which Claude Code runs in the
+background with no foreground option, and only 2 of the 26 archived runs used
+one, so W2's zero was measured on an arm that barely exercised that path (the
+campaign README's Limits).
+
 Six Corrections were made to the pinned analyzers, each recorded in the
 campaign README before the tally it affected: the uncapped transport void
 (1), the ledger mark written after a literal `printf` newline (2), the
@@ -169,4 +176,5 @@ redesign passes the rule.
 
 ## Zed checks
 
-Filled in by plan Task 14, which runs Z1 and Z2 with the human partner.
+Z1 and Z2 were not run. The release is held on the P failure, and both remain
+open prerequisites for 6.17.0 (spec Design §3).

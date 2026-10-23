@@ -290,6 +290,8 @@ status_only_change() {
   local p=$1
   git -C "$root" show "HEAD:$p" > "$tmp/own-head" 2>/dev/null || return 1
   [ -f "$root/$p" ] || return 1
+  # Section 4a can only rewrite a Status line that exists.
+  [ -n "$(existing_field "$root/$p" Status)" ] || return 1
   git -C "$root" show ":$p" > "$tmp/own-idx" 2>/dev/null || return 1
   drop_status "$tmp/own-head" "$tmp/own-head.body"
   drop_status "$root/$p" "$tmp/own-work.body"

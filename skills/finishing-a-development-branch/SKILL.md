@@ -175,7 +175,7 @@ keeps the staged set and the spec edit in place, and asks what to change (the
 skip was settled before any proposal was written, so `--undo` is not this
 path's tool). If they change their mind to a skip at that point, first take
 the accepted proposal back out of the spec and stage the spec again
-(`git add -- <spec>`), so `--undo` sees no later edit; record the proposal's
+(`GIT_LITERAL_PATHSPECS=1 git add -- <spec>`), so `--undo` sees no later edit; record the proposal's
 text in the hand-back, so their words are not lost; then follow the skip
 path. A skip ends the records for this branch:
 run `bash <this skill's directory>/scripts/decisions-compile --undo <spec> --plan <plan>` (without `--plan` when there

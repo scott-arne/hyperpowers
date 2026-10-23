@@ -1980,6 +1980,13 @@ write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
 1. **New choice.** Text.
 EOF
 commit_all "$repo" "the spec drops the supersession"
+# A previous target whose Status line was removed by hand: dropping the first
+# Status line from both sides leaves equal texts, but section 4a can only
+# rewrite a Status line that exists, so the record would be staged Status-less.
+grep -v '^- Status: ' "$repo/$target" > "$TEST_ROOT/no-status"
+cp "$TEST_ROOT/no-status" "$repo/$target"
+refuse_target "a previous Supersedes target whose Status line was removed by hand is refused before any write" "$target"
+git -C "$repo" restore --staged --worktree -- "$target"
 rm "$repo/$target"
 refuse_target "a previous Supersedes target deleted but not committed is refused" "$target"
 git -C "$repo" restore --staged --worktree -- "$target"

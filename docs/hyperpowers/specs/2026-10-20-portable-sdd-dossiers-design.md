@@ -166,6 +166,8 @@ A new branch gets one initial commit carrying four root files:
       # Regenerable on any host: briefs come from task-brief, packages from review-package.
       plans/*/task-*-brief.md
       plans/*/review-*.diff
+      # A copy an import left beside an entry it could not install: local to that host, for a human to merge.
+      plans/*/*.from-import
 
 - `.gitattributes`: `plans/*/progress.md merge=union`, so two hosts that both
   appended to one ledger merge without conflict markers.
@@ -464,7 +466,7 @@ source untouched and exits 2 with `status=import-failed`. The copied
 ledger's first line is rewritten to the repo-relative form when it holds an
 absolute path inside the plan repository. If the checkout already has a
 ledger, the candidate is left alone: `status=skipped reason=ledger-exists
-path=<candidate>`. Otherwise `status=moved from=<path>` or `status=none`.
+path=<candidate>`. Otherwise `status=moved from=<path>`, with `conflicts=<n>` appended when `n` destination entries differed from their legacy copies and were kept (the legacy copy of a report or review sits beside it as `<name>.from-import`, ignored by the branch, for a human to merge; a conflicting brief or review package regenerates and is not copied), or `status=none`.
 Idempotent: a second call prints `status=none`. Under `plain` the
 destination is the plain-cache workspace, the state branch is the first
 candidate when it holds `plans/<ws>` (materialized with `git archive`), and

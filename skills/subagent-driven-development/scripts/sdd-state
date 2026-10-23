@@ -742,19 +742,31 @@ blob_prefix_id() {
 # it at that offset, then the original length is overwritten in place.
 # Neither step truncates, and a racing append always lands beyond the
 # region being written, so it survives, at worst between the two parts.
+# extension_present <file> <staged> <live-size>: 0 when the staged
+# extension (the bytes beyond <live-size>) already sits in the file
+# somewhere past <live-size>, 1 when it does not, 3 when it cannot be read.
+# An unlocked writer's line can land at that offset between a crash and the
+# recovery, so a test pinned to the offset would append the extension a
+# second time. node reads both files whole; it is already required by this
+# helper's claim and import paths.
+extension_present() {
+  command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 3; }
+  node -e 'const fs=require("fs");try{const l=Number(process.argv[3]);process.exit(fs.readFileSync(process.argv[1]).subarray(l).includes(fs.readFileSync(process.argv[2]).subarray(l))?0:1);}catch(e){process.exit(3);}' "$1" "$2" "$3"
+}
 rewrite_finish() {
-  local jbase=$1 path live_size new_size file ext_size have want
+  local jbase=$1 path live_size new_size file ext_size present
   read -r live_size new_size path < "$jbase.journal" || return 2
   hp_contained "$CO" "$path" || return 2
   file="$CO/$path"
   [ -f "$jbase.staged" ] && [ -f "$file" ] || return 2
   ext_size=$((new_size - live_size))
   if [ "$ext_size" -gt 0 ]; then
-    have=$(tail -c +"$((live_size + 1))" "$file" | head -c "$ext_size" | git -C "$CO" hash-object --stdin)
-    want=$(tail -c +"$((live_size + 1))" "$jbase.staged" | git -C "$CO" hash-object --stdin)
-    if [ "$have" != "$want" ]; then
-      tail -c +"$((live_size + 1))" "$jbase.staged" >> "$file" || return 2
-    fi
+    extension_present "$file" "$jbase.staged" "$live_size"; present=$?
+    case "$present" in
+      0) ;;
+      1) tail -c +"$((live_size + 1))" "$jbase.staged" >> "$file" || return 2 ;;
+      *) return 2 ;;
+    esac
   fi
   if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = rewrite-after-extend ]; then hp_unlock; exit 99; fi
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in ledger-apply-before-overwrite) printf 'raced the overwrite\n' >> "$file" ;; esac

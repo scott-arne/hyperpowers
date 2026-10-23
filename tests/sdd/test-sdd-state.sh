@@ -1541,5 +1541,38 @@ out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 have17=$(git -C "$co_b17" hash-object "$wsf17_b/progress.md" 2>/dev/null)
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ -n "$want17" ] && [ "$have17" = "$want17" ]; then pass "the next sync leaves the new ledger byte-identical to the target blob, with nothing to snapshot over it"; else fail "the next sync leaves the new ledger byte-identical to the target blob, with nothing to snapshot over it (rc=$rc: $out: $(wc -c < "$wsf17_b/progress.md" | tr -d ' ') bytes)"; fi
 if ! ls "$co_b17"/plans/*/*.new.* >/dev/null 2>&1 && [ -z "$(git -C "$co_b17" status --porcelain -- plans/)" ]; then pass "no temporary copy is left behind and the checkout is clean"; else fail "no temporary copy is left behind and the checkout is clean ($(git -C "$co_b17" status --porcelain -- plans/ | tr '\n' ' '))"; fi
+
+echo ""
+echo "=== a rewrite recovery a writer's line raced ==="
+# The rewrite's presence test used to read the bytes at the recorded length.
+# An unlocked writer's line can land exactly there between the crash and
+# the recovery, and the extension was then appended a second time.
+make_pair p18
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+co_a18="$STATE_ROOT/$(state_key "$PAIR_A")"; co_b18="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa18=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa18/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null; wsb18="$co_b18/plans/$(basename "$wsa18")"
+# Leaves A positioned for a fast-forward onto B's merge, where the ledger
+# is rewritten rather than appended to.
+printf 'j6 A\n' >> "$wsa18/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+printf 'j6 B\n' >> "$wsb18/progress.md"; run_state "$PAIR_B" snapshot docs/plan.md >/dev/null
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null; git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_A" && HYPERPOWERS_TEST_CRASH_AT=rewrite-after-journal bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -f "$co_a18/.rewrite/$(basename "$wsa18").journal" ] && [ "$(grep -c '^j6 B$' "$wsa18/progress.md")" -eq 0 ]; then pass "the crash seam after the journal leaves the ledger at the length it recorded"; else fail "the crash seam after the journal leaves the ledger at the length it recorded (rc=$rc)"; fi
+# An unlocked writer appends exactly at that length, then the recovery is
+# killed between its two writes.
+printf 'raced the recovery\n' >> "$wsa18/progress.md"
+( cd "$PAIR_A" && HYPERPOWERS_TEST_CRASH_AT=rewrite-after-extend bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc2=$?
+# The last call finishes the rewrite. The apply itself stays unfinished
+# after it, because the ledger now carries the writer's line between the
+# target's two parts and no longer starts with what S committed; what this
+# section is about is that the extension is not appended a second time.
+out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc3=$?
+if [ "$rc2" -eq 99 ] && [ "$(grep -c '^j6 A$' "$wsa18/progress.md")" -eq 1 ]; then pass "the extension is appended once although a writer's line sits where it was expected"; else fail "the extension is appended once although a writer's line sits where it was expected (rc=$rc2/$rc3: $out: $(grep -c '^j6 A$' "$wsa18/progress.md") copies)"; fi
+if [ "$(grep -c '^raced the recovery$' "$wsa18/progress.md")" -eq 1 ] && [ "$(grep -c '^j6 B$' "$wsa18/progress.md")" -eq 1 ] && [ ! -e "$co_a18/.rewrite/$(basename "$wsa18").journal" ] && [ ! -e "$co_a18/.rewrite/$(basename "$wsa18").staged" ]; then pass "the writer's line and the remote's line survive once each and the journal is gone"; else fail "the writer's line and the remote's line survive once each and the journal is gone ($(cat "$wsa18/progress.md" | tr '\n' '|'))"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

@@ -133,7 +133,9 @@ hp_git_id() { # <repo-dir> <git args...>
 # `<lock>.takeover` serializes takeover attempts and is reclaimed when a
 # contender died inside it; exclusion does not depend on it. Readers never
 # take the lock.
-HP_LOCK_DIR=""
+# Sourcing the library twice must not forget a lock this shell already
+# holds, so the default is conditional.
+: "${HP_LOCK_DIR:=}"
 hp_write_owner() { # <file>
   printf 'session=%s\npid=%s\nhost=%s\ntime=%s\n' "$(hp_session_id)" "$$" "$(hostname)" "$(hp_utc_now)" > "$1"
 }
@@ -212,6 +214,8 @@ hp_lock_at() { # <lock-dir>
   # A fresh lock gets its owner here; a takeover already wrote it.
   if [ "$(sed -n 's/^pid=//p' "$lock/owner" 2>/dev/null)" != "$$" ]; then hp_write_owner "$lock/owner"; fi
   HP_LOCK_DIR=$lock
+  # These traps replace the caller's: a script with its own EXIT handler
+  # re-arms it after hp_lock and calls hp_unlock from it.
   trap 'hp_unlock' EXIT
   trap 'hp_unlock; exit 130' INT
   trap 'hp_unlock; exit 143' TERM
@@ -295,6 +299,9 @@ hp_commit_paths() { # [--remove] <checkout> <branch> <message> <path>...
       old=$(hp_zero_oid "$co")
     fi
     if git -C "$co" update-ref -m sdd "$ref" "$commit" "$old" 2>/dev/null; then
+      # The index refresh assumes <checkout> has <branch> checked out, which
+      # every caller guarantees (hp_ensure_checkout validates it); on any
+      # other HEAD it would stage the difference, so it is best-effort only.
       git -C "$co" reset -q -- "$@" 2>/dev/null || true
       rm -rf "$idxdir"; printf '%s\n' "$commit"; return 0
     fi

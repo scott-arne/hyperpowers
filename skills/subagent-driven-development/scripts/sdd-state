@@ -16,7 +16,8 @@
 # stdout: one line of space-separated key=value pairs, status= first; sync
 # adds a second line "merge=<command>" on diverged.
 # exit: 0 ok | 1 offline, offline-no-state, push-failed | 2 usage or internal
-#       (needs-sync, foreign branch, no-workspace, import-failed) | 3 diverged, busy |
+#       (needs-sync, foreign branch, no-workspace, import-failed) |
+#       3 diverged, busy, remote-finished |
 #       4 claim held by another session | 5 scan-failed | 6 open-claims |
 #       7 plain backend (handoff) | 8 plan-not-committed |
 #       9 wrong-repo, code-missing, plan-stale | 10 code-dirty | 11 detached-head | 12 shallow-source
@@ -693,7 +694,7 @@ cmd_prune() {
     gd=$(sed -n 's/^gitdir: //p' "$ck/.git" 2>/dev/null)
     case "$gd" in ''|/*) ;; *) gd="$ck/$gd" ;; esac
     if [ -z "$gd" ] || [ -d "$gd" ] || ! mv "$ck" "$ck.pruning-$$" 2>/dev/null; then hp_unlock; continue; fi
-    rm -rf "$ck.pruning-$$" "$ck.backend" "$ck.lock-history" "$ck.fetched"
+    rm -rf "$ck.pruning-$$" "$ck.backend" "$ck.lock-history" "$ck.fetched" "$ck.lock.takeover" "$ck".tmp-*
     hp_unlock
     dead_list="$dead_list,$key"
   done
@@ -1193,7 +1194,7 @@ cmd_verify() {
 # configured scan over every commit the push publishes, with a lease on the
 # remote tip the scan was computed against.
 cmd_handoff() {
-  local plan="" push=0 plan_ok=0 dirty_ok=0 code="" rel status_out dirty code_root code_branch code_sha plan_root plan_sha plan_branch extra="" record ledger out rc sha cmd range patch err pushto remote_line remote_tip
+  local plan="" push=0 plan_ok=0 dirty_ok=0 code="" rel status_out dirty line code_root code_branch code_sha plan_root plan_sha plan_branch extra="" record ledger out rc sha cmd range patch err pushto remote_line remote_tip
   while [ $# -gt 0 ]; do
     case "$1" in
       --push) push=1; shift ;;
@@ -1219,8 +1220,12 @@ cmd_handoff() {
   if [ "$dirty_ok" -eq 0 ]; then
     # A cleanliness check that could not run is not a clean tree.
     status_out=$(git -C "$code" status --porcelain 2>/dev/null) || { echo "sdd-state: git status failed in $code; the code tree's cleanliness could not be established" >&2; echo "status=error"; return 2; }
-    dirty=$(printf '%s\n' "$status_out" | grep . | head -n 3 | sed 's/^...//; s/ /%20/g' | tr '\n' ',')
-    if [ -n "$dirty" ]; then echo "status=code-dirty paths=${dirty%,}"; return 10; fi
+    dirty=""
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      dirty="$dirty,$(enc "${line#???}")"
+    done < <(printf '%s\n' "$status_out" | grep . | head -n 3)
+    if [ -n "$dirty" ]; then echo "status=code-dirty paths=${dirty#,}"; return 10; fi
   fi
   if [ "$BACKEND" != branch ]; then echo "status=plain"; return 7; fi
   # A detached checkout has no branch the other host could pull.

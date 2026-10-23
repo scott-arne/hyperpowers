@@ -502,8 +502,18 @@ render_spec() {  # the spec text with its Outcome line written or rewritten
 # the whole records directory, which is shared. A retry after a failed run
 # stages what that run wrote and never staged, because an owned path is
 # staged whether or not this run changed it.
+#
+# A superseded target that was deleted, with the deletion committed, stays in
+# the owned set (section 4a tolerates its absence), but `git add` on a path
+# known to neither the working tree nor the index is fatal. The filter runs
+# here, after the records are written, because a new record exists only then.
 stage_owned() {
-  git -C "$root" add -A -- "${owned_paths[@]}" "$spec_rel" || die3 "$spec_rel: git add failed; run the same command again to complete the staging"
+  local p live=()
+  for p in "${owned_paths[@]}"; do
+    [ -e "$root/$p" ] || git -C "$root" ls-files --error-unmatch -- "$p" > /dev/null 2>&1 || continue
+    live+=("$p")
+  done
+  git -C "$root" add -A -- "${live[@]}" "$spec_rel" || die3 "$spec_rel: git add failed; run the same command again to complete the staging"
 }
 
 # emit_paths: the compiler-owned paths whose staged content differs from

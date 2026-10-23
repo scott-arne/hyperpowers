@@ -1876,6 +1876,47 @@ printf '# Decision notes: %s/docs/other/specs/2026-10-19-twin-design.md\n\n## De
 run_compile "$repo" docs/other/specs/2026-10-19-twin-design.md --notes "$TEST_ROOT/notes-abs.md"
 if [ "$RC" -eq 0 ] && [ -z "$ERR" ] && grep -q '^Absolute spelling\.$' "$repo/docs/other/decisions/2026-10-19-one-elsewhere.md"; then pass "an absolute header path under the repository root still binds"; else fail "absolute header (rc $RC, err: $ERR)"; fi
 
+# --- 33. an owned path that exists nowhere never reaches git add -------------
+# Correction (2026-10-22): a prior Supersedes target that was deleted, with the
+# deletion committed, stays in the owned set (the supersession pass tolerates
+# its absence), but staging a path found in neither tree nor index is fatal.
+repo="$TEST_ROOT/gone-target"
+make_repo "$repo"
+write_spec "$repo" 2026-07-01-old-design.md <<'EOS'
+# Old
+
+## Decisions
+
+- **Old choice.** Text.
+EOS
+commit_all "$repo" "old spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-07-01-old-design.md
+commit_all "$repo" "old records"
+write_spec "$repo" 2026-08-01-new-design.md <<'EOS'
+# New
+
+## Decisions
+
+1. **New choice.** Text.
+   Supersedes: docs/hyperpowers/decisions/2026-07-01-old-choice.md
+EOS
+commit_all "$repo" "new spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+commit_all "$repo" "new records"
+rm "$repo/docs/hyperpowers/decisions/2026-07-01-old-choice.md"
+commit_all "$repo" "delete the target"
+write_spec "$repo" 2026-08-01-new-design.md <<'EOS'
+# New
+
+## Decisions
+
+1. **New choice.** Text.
+EOS
+commit_all "$repo" "spec drops the supersession"
+run_compile "$repo" docs/hyperpowers/specs/2026-08-01-new-design.md
+newrec="$repo/docs/hyperpowers/decisions/2026-08-01-new-choice.md"
+if [ "$RC" -eq 0 ] && ! printf '%s' "$ERR" | grep -q 'fatal' && ! grep -q '^- Supersedes:' "$newrec" && git -C "$repo" diff --cached --name-only | grep -q '2026-08-01-new-choice.md'; then pass "a deleted prior Supersedes target is tolerated: rewritten without the line and staged, no fatal"; else fail "gone target (rc $RC, err: $ERR)"; fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

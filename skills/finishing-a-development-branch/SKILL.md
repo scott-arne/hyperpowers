@@ -173,7 +173,10 @@ words. An approval leads to the one records commit below, which takes the
 spec too through the pathspec file; a withheld approval commits nothing,
 keeps the staged set and the spec edit in place, and asks what to change (the
 skip was settled before any proposal was written, so `--undo` is not this
-path's tool). A skip ends the records for this branch:
+path's tool). If they change their mind to a skip at that point, first take
+the accepted proposal back out of the spec and record its text in the
+hand-back, so `--undo` does not discard their words silently; then follow the
+skip path. A skip ends the records for this branch:
 run `bash <this skill's directory>/scripts/decisions-compile --undo <spec> --plan <plan>` (without `--plan` when there
 is none), record it in their words, make no commit, and run the option they
 chose. Otherwise commit:

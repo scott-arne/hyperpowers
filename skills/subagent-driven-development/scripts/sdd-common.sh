@@ -597,7 +597,7 @@ hp_materialize_plain() {
   fi
   if [ "$rc" -ne 0 ]; then
     rest=${refusal#* }
-    echo "sdd-dir: ${tip:0:7} on $br carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to materialize the plain workspace from it. Remove it on the host that committed it and commit the removal on the state branch, push, then run sdd-state sync (it fetches) and sdd-dir again" >&2
+    echo "sdd-dir: ${tip:0:7} on $br carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to materialize the plain workspace from it. Remove it on the host that committed it and commit the removal on the state branch, push, then fetch that branch here (git fetch $remote $br; under the plain backend sdd-state sync does not fetch) and run sdd-dir again" >&2
     return 2
   fi
   root=$(dirname "$(dirname "$dest")")

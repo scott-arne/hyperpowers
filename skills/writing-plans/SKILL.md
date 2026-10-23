@@ -19,7 +19,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Save plans to:** `docs/hyperpowers/plans/YYYY-MM-DD-<feature-name>.md`
 - (User preferences for plan location override this default)
-- The first time a plan or spec lands in a repository, run `scripts/docs-allowlist` from this skill's directory. It writes `docs/hyperpowers/.gitignore` so that only `specs/` and `plans/` are ever committed from that directory (run captures, probes, review output and ledgers stay out), and leaves an existing file alone. Commit it alongside the plan. If it prints `ignored-by`, the repository's own ignore rule excludes the whole directory: tell your human partner and ask whether to remove that rule before committing.
+- The first time a plan or spec lands in a repository, run `scripts/docs-allowlist` from this skill's directory. It writes `docs/hyperpowers/.gitignore` so that only `specs/`, `plans/` and `decisions/` are ever committed from that directory (run captures, probes, review output and ledgers stay out), and leaves an existing file alone. Commit it alongside the plan. If it prints `ignored-by`, the repository's own ignore rule excludes the whole directory: tell your human partner and ask whether to remove that rule before committing.
 
 ## Scope Check
 

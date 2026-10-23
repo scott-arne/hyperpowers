@@ -7,7 +7,7 @@ description: Use when implementation is complete, all tests pass, and you need t
 
 ## Overview
 
-**Core principle:** Verify tests → Detect environment → Present options → Execute choice → Clean up.
+**Core principle:** Record decisions and verify tests → Detect environment → Present options → Execute choice → Clean up.
 
 **Announce at start:** "I'm using the finishing-a-development-branch skill to complete this work."
 
@@ -61,7 +61,8 @@ has no records: for it, this step is the test run alone.
    comes from `../requesting-code-review/scripts/codex-review-dir` (one per
    finish; the extractor's output and the pathspec file `records.paths` live
    in it, whether or not an extractor is dispatched). Then
-   `bash <this skill's directory>/scripts/decisions-compile <spec> --dry-run`.
+   `bash <this skill's directory>/scripts/decisions-compile <spec> --dry-run`,
+   with `--plan <plan>` added when a plan was found.
    Exit 2 for a missing decisions list is the legacy-spec case: draft the
    `## Decisions` list from the spec's own text, one item per decision it
    states, show it to your human partner, and write it into the spec once
@@ -140,7 +141,8 @@ the compiler's own git calls are, so a bracket or star in a spec name
 matches only itself):
 
 ```bash
-paths=(); while IFS= read -r -d '' p; do paths+=("$p"); done < <dir>/records.paths
+PATHS_FILE=<dir>/records.paths
+paths=(); while IFS= read -r -d '' p; do paths+=("$p"); done < "$PATHS_FILE"
 GIT_LITERAL_PATHSPECS=1 git diff --cached -- "${paths[@]}"
 ```
 
@@ -155,8 +157,10 @@ dismiss it); then one line offering to skip the records for this branch; and
 only then the menu text exactly as written below. Your human partner answers
 once. An answer that names an option but leaves any proposal without a
 disposition is incomplete: ask for the missing dispositions and wait; nothing
-is written or committed until every proposal has one. Before executing their
-option: write each accepted proposal into the spec (an accepted undocumented
+is written or committed until every proposal has one. A skip is settled
+before any accepted proposal is written: an answer that both accepts a
+proposal and skips is incomplete, so ask which they mean. Unless they chose
+the skip, before executing their option: write each accepted proposal into the spec (an accepted undocumented
 decision is appended after the list's last item, never inserted, so the
 numbers the notes use stay with their records; an accepted supersession is a
 `Supersedes:` line on the item it belongs to),
@@ -164,8 +168,8 @@ commit that spec edit first (`git commit -m "docs: <spec filename without -desig
 the compiler with the same arguments, and because the staged set
 changed, show the new complete staged diff and ask only for its approval,
 not the dispositions again; record a dismissal in the hand-back in their
-words. A skip ends the records for this branch: with the spec committed as
-above, run `bash <this skill's directory>/scripts/decisions-compile --undo <spec> --plan <plan>` (without `--plan` when there
+words. A skip ends the records for this branch: the spec is never committed on
+this path, so run `bash <this skill's directory>/scripts/decisions-compile --undo <spec> --plan <plan>` (without `--plan` when there
 is none), record it in their words, make no commit, and run the option they
 chose. Otherwise commit:
 
@@ -174,7 +178,9 @@ GIT_LITERAL_PATHSPECS=1 git commit --pathspec-from-file=<dir>/records.paths --pa
 ```
 
 The message is that one line and nothing else: no second `-m`, no trailer, no
-attribution or `Co-Authored-By` line, whatever the harness suggests.
+attribution or `Co-Authored-By` line, whatever the harness suggests. An empty
+pathspec file means there is nothing to commit (the branch already carries
+its records): skip the commit and run the chosen option.
 
 The option runs only after that commit succeeds. If it fails (a hook, an
 index conflict, anything), show the failure, stop, and run the same commit

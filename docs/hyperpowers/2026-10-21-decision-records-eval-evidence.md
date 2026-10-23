@@ -278,3 +278,9 @@ delay hook, the fixture, `analyze.py` and `runs.md` are in `task-14-runs/`.
 The spec's Live section also asks for one session in Zed, which only the
 human partner can run; record it here with the branch, the records commit,
 and whether the background dispatch was collected.
+
+Every rehearsal above was a print-mode session, where `run_in_background: true`
+is honored; Claude Code 2.1.302 interactive fork mode, which hides that option,
+is covered by Decision 7's reasoning but by no transcript, so the first
+interactive finish should confirm the extractor still dispatches in the
+background.

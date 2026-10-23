@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# docs-allowlist: make a planning directory commit only its specs/ and plans/.
+# docs-allowlist: make a planning directory commit only its specs/, plans/ and decisions/.
 #
 # Usage: docs-allowlist [DIR]
 #   DIR defaults to <repository root>/docs/hyperpowers.

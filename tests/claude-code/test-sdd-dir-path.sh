@@ -488,6 +488,21 @@ mkdir -p "$legacy_ws"; printf '# SDD ledger — plan: plan.md\n' > "$legacy_ws/p
 out=$(cd "$TEST_ROOT/repo-legacy" && bash "$SDD_DIR_SCRIPT" plan.md 2>/dev/null)
 if [ "$out" = "$STATE_ROOT/$legacy_key/plans/plan-$legacy_hash8" ] && [ -f "$out/progress.md" ] && [ -L "$legacy_ws" ]; then pass "the legacy workspace moved into the checkout and left a symlink"; else fail "the legacy workspace moved into the checkout and left a symlink ($out)"; fi
 
+echo ""
+echo "Test: an import that leaves a legacy workspace in place is reported on stderr"
+make_repo "$TEST_ROOT/repo-skip"
+git -C "$TEST_ROOT/repo-skip" commit -q --allow-empty -m "initial"
+: > "$TEST_ROOT/repo-skip/plan.md"
+skip_key=$(state_key "$TEST_ROOT/repo-skip")
+skip_hash8=$(printf '%s' "plan.md" | git hash-object --stdin | cut -c1-8)
+dest_skip=$(cd "$TEST_ROOT/repo-skip" && bash "$SDD_DIR_SCRIPT" plan.md 2>/dev/null)
+printf '# SDD ledger — plan: plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$dest_skip/progress.md"
+legacy_skip="$XDG_CACHE_HOME/hyperpowers/sdd/$skip_key/plans/plan-$skip_hash8"
+mkdir -p "$legacy_skip"
+printf '# SDD ledger — plan: plan.md\nTask 7: complete (commits 5555555..6666666, review clean)\n' > "$legacy_skip/progress.md"
+err=$(cd "$TEST_ROOT/repo-skip" && bash "$SDD_DIR_SCRIPT" plan.md 2>&1 >/dev/null)
+if grep -q 'ledger-exists' < <(printf '%s\n' "$err") && [ -d "$legacy_skip" ]; then pass "sdd-dir reports an import that left a legacy workspace behind"; else fail "sdd-dir reports an import that left a legacy workspace behind (stderr: $err)"; fi
+
 if [ "$failures" -gt 0 ]; then
     echo "STATUS: FAILED ($failures failures)"
     exit 1

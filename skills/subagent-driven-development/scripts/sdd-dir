@@ -132,10 +132,16 @@ fi
 # failed import stops here: no caller may work in a workspace whose legacy
 # ledger is still elsewhere. Import's stderr stays visible: it reports an
 # abandoned or kept legacy copy there.
-bash "$SCRIPT_DIR/sdd-state" import "$plan" >/dev/null || {
+import_line=$(bash "$SCRIPT_DIR/sdd-state" import "$plan") || {
   echo "sdd-dir: importing a legacy workspace failed; run: sdd-state import $plan" >&2
   exit 2
 }
+# A skipped import is not a failure, but it leaves a legacy workspace whose
+# ledger lines are not in the one this caller is about to work in: say so,
+# because nothing else would.
+case "$import_line" in
+  status=skipped*) echo "sdd-dir: a legacy workspace was left where it is: $import_line" >&2 ;;
+esac
 
 # Keep the plan repository's plain root fresh: it holds pointers for other
 # repositories and the no-argument scratch, and another repository's reclaim

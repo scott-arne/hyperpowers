@@ -1301,5 +1301,22 @@ advance 'line three'
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -d "$co_b/plans/$(basename "$wsf")" ] && grep -q '^line three$' "$wsb/progress.md"; then pass "the next sync after that crash finishes the apply and keeps going"; else fail "the next sync after that crash finishes the apply and keeps going (rc=$rc: $out)"; fi
 
+echo ""
+echo "=== import recovery when the source outgrew the published copy ==="
+# A cutover interrupted after publication whose legacy source then gained a
+# report and a ledger line: the extra entries are installed, not skipped.
+i18="$TEST_ROOT/i18"; make_repo "$i18"; mkdir -p "$i18/docs"; : > "$i18/docs/plan.md"; git -C "$i18" add docs; git -C "$i18" commit -qm plan
+wsi18=$(ws_path "$i18" "$i18/docs/plan.md"); mkdir -p "$wsi18"
+legacy_i18="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i18")/plans/$(basename "$wsi18")"
+mkdir -p "$legacy_i18.importing-557"
+printf '# SDD ledger — plan: %s/docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\nTask 2: complete (commits 3333333..4444444, review clean)\n' "$i18" > "$legacy_i18.importing-557/progress.md"
+printf 'report one\n' > "$legacy_i18.importing-557/task-1-report.md"
+printf 'report two\n' > "$legacy_i18.importing-557/task-2-report.md"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsi18/progress.md"
+printf 'report one\n' > "$wsi18/task-1-report.md"
+out=$(run_state "$i18" import docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i18" ] && [ -L "$legacy_i18" ] && ! ls -d "$legacy_i18.importing-"* >/dev/null 2>&1; then pass "a published destination the source outgrew is finished, not reported as ledger-exists"; else fail "a published destination the source outgrew is finished, not reported as ledger-exists (rc=$rc: $out)"; fi
+if [ -f "$wsi18/task-2-report.md" ] && [ "$(sed -n 3p "$wsi18/progress.md")" = "Task 2: complete (commits 3333333..4444444, review clean)" ] && [ "$(head -n 1 "$wsi18/progress.md")" = "# SDD ledger — plan: docs/plan.md" ]; then pass "the entries the source gained after publication are installed, the ledger last"; else fail "the entries the source gained after publication are installed, the ledger last ($(cat "$wsi18/progress.md"))"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

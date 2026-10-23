@@ -11,6 +11,7 @@ REVW="$REPO_ROOT/skills/subagent-driven-development/task-reviewer-prompt.md"
 FIXP="$REPO_ROOT/skills/subagent-driven-development/fix-subagent-prompt.md"
 REREVW="$REPO_ROOT/skills/subagent-driven-development/re-review-prompt.md"
 WPLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
+FIN="$REPO_ROOT/skills/finishing-a-development-branch/SKILL.md"
 
 FAILURES=0
 
@@ -65,7 +66,7 @@ assert_contains "$SDD" "Decisions listing:" "ledger keeps the decisions listing"
 assert_contains "$SDD" "Decision extractor:" "ledger records the extractor"
 assert_contains "$SDD" "Decisions: none (no spec)" "a plan without a spec skips the decision path"
 assert_contains "$SDD" "full-branch package (\`scripts/review-package PLAN_FILE MERGE_BASE HEAD\`" "extractor reads a full-branch package"
-assert_contains "$SDD" "Before deleting it, copy the ledger's" "hand-off captured before the workspace is deleted"
+assert_contains "$SDD" "ledger's \`Decisions listing:\` and \`Decision extractor:\` lines (or its" "hand-off captured before the workspace is deleted"
 assert_contains "$SDD" "replacing the earlier copies; compose the replacement dispatch from those" "re-dispatch recopies the regenerated inputs"
 assert_contains "$SDD" "DONE or DONE_WITH_CONCERNS" "concerns status does not bypass the verify rule"
 # implementer template
@@ -162,9 +163,9 @@ fi
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "## Example Workflow" "example workflow carries its section header"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Using hyperpowers:finishing-a-development-branch" \
   "example workflow runs through to the finishing handoff"
-assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 — recorded for fix-round resumes" \
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes" \
   "example workflow records the implementer identity in the ledger"
-assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 — recorded for fix-round resumes" \
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes" \
   "example workflow records the identity on the task that enters the fix loop"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Re-run the covering command myself: 8/8 — matches the report" \
   "example fix-loop task re-runs the covering command before review"
@@ -392,6 +393,79 @@ assert_contains "$REREVW" "a declined finding is confirmed from its file:line ev
   "the re-review prompt scopes the covering-tests requirement"
 assert_contains "$SDD" "That precondition covers the findings the round fixed; a round that declines every finding is defined below." \
   "the covering-tests precondition is scoped where it first appears"
+
+# SKILL.md — the state branch (portable dossiers, 2026-10-20)
+assert_contains "$SDD" "run \`scripts/sdd-state sync PLAN_FILE\`" "setup syncs the state branch first"
+assert_contains "$SDD" "hyperpowers/state/<key>/plans/<plan-slug>-<hash8>/" "workspace path names the state checkout"
+assert_not_contains "$SDD" "hyperpowers/sdd/<per-repo-key>/plans/<plan-slug>-<hash8>/" "the plain-cache workspace path is gone"
+assert_contains "$SDD" "# SDD ledger — plan: <repo-relative plan path>" "identity line is repo-relative"
+assert_contains "$SDD" "Compare repo-relative paths" "resume compares repo-relative paths"
+assert_contains "$SDD" "session <sid>: mode <current-branch|new-branch|worktree> on <branch> at <toplevel> started <UTC time>" "session line shape"
+assert_contains "$SDD" "\$(date -u +%s)-\$RANDOM\$RANDOM" "session id fallback needs only bash"
+assert_contains "$SDD" "Then run \`scripts/sdd-state verify PLAN_FILE\`" "verify runs after the session line"
+assert_contains "$SDD" "scripts/sdd-state claim PLAN_FILE N --session <sid>" "claim before dispatch"
+assert_contains "$SDD" "take over (\`--takeover\`) only on their explicit yes" "takeover needs an explicit yes"
+assert_contains "$SDD" "(session <sid>, worktree <path>, branch <name>)" "implementer identity carries session, worktree, branch"
+assert_contains "$SDD" "never with the Edit tool" "append discipline when another session may be live"
+assert_contains "$SDD" "scripts/sdd-state snapshot PLAN_FILE" "snapshot cadence named"
+assert_contains "$SDD" "\`remote-finished plans=<ws,...>\` (exit 3)" "the remote-finished outcome stops and asks"
+assert_contains "$SDD" "\`detached-head\`" "a detached checkout is handled at hand-off"
+assert_contains "$SDD" "scripts/sdd-state handoff PLAN_FILE --push" "hand-off command named"
+assert_contains "$SDD" "never on your own initiative" "the push is on request only"
+assert_contains "$SDD" "scripts/sdd-state finish PLAN_FILE" "finish uses the helper"
+assert_contains "$SDD" "git -C <checkout> push <remote> <branch>" "the push command is spelled out"
+assert_not_contains "$SDD" "with \`rm -rf <workspace>\`" "finish no longer rm -rfs the workspace by hand"
+assert_not_contains "$SDD" "The 14-day reclaim in \`scripts/sdd-dir\`" "no automatic reclaim is promised"
+assert_contains "$SDD" "a session that finished its assigned tasks while other sessions' tasks are open reports that and stops" "completion barrier"
+
+assert_contains "$SDD" "anything else stops Setup until \`verify\` passes again" "every verify outcome but ok stops setup"
+assert_contains "$SDD" "\`busy\` (exit 3) when another session is writing the workspace" "finish busy is handled"
+assert_contains "$SDD" "git -C <that repository> switch -c <name>" "hand-off remediation targets the named repository"
+assert_contains "$SDD" "none of them is a hand-off, so report nothing as ready to pull" "failed hand-offs stop"
+assert_contains "$SDD" "A workspace in the list that is not this plan's belongs to another plan" "remote-finished routes by the workspace list"
+assert_contains "$SDD" "read its completion line, mark the task done, and never dispatch" "claim done skips the task"
+assert_contains "$SDD" "The scan only reads" "the ledger scan acts only after verify"
+assert_contains "$SDD" "Snapshot the workspace (scripts/sdd-state snapshot)" "the process graph snapshots after completion"
+
+assert_contains "$SDD" "set -o noclobber" "ledger creation is exclusive"
+assert_contains "$SDD" "both stop until the snapshot succeeds" "a failed snapshot stops the loop"
+
+# status=error has a home in every bullet that enumerates outcomes (final review, I4)
+assert_contains "$SDD" "Any other status, \`status=error\` (exit 2) among them, stops the run until \`sync\` succeeds" "sync has a catch-all for error"
+assert_contains "$SDD" "\`error\` (exit 2, the same exit as \`no-workspace\` and a different problem)" "claim separates error from no-workspace"
+assert_contains "$SDD" "Any other status stops the dispatch until \`claim\` succeeds" "claim has a catch-all"
+assert_contains "$SDD" "any status other than \`finished\` stops Finish until the command succeeds" "finish has a catch-all"
+assert_contains "$SDD" "\`snapshot ... push=none\` (exit 0) is no hand-off either" "a hand-off with no remote is not reported as one"
+
+# finishing-a-development-branch — the session mode (portable dossiers, 2026-10-20)
+assert_contains "$FIN" "A passed \`new-branch\` or \`worktree\` changes nothing here" "new-branch and worktree keep the environment rows"
+assert_contains "$FIN" "Skip this step when mode \`current-branch\` was passed and \`\$CURRENT_BRANCH\` is \`\$DEFAULT_BRANCH\`" "only the default-branch case skips the base step"
+assert_contains "$FIN" "ask your human partner which is the default before choosing a row" "a main-and-master tie asks"
+assert_contains "$FIN" "git push <remote> <branch>:<branch>" "the push names one remote and one refspec"
+# Turn liveness (spec 2026-10-19): a status message never ends a turn mid-plan,
+# long work is tracked, and Claude Code waits in the foreground.
+assert_contains "$SDD" "While the plan has tasks left, a turn ends in exactly three cases" \
+  "continuous execution names the three permitted turn ends"
+assert_contains "$SDD" "A message that names your next step is followed by that step's tool call in the same turn." \
+  "an announced step is taken in the same turn"
+assert_contains "$SDD" 'never start it with a trailing `&`, `nohup`, `setsid`, `disown`, or a script that detaches a process' \
+  "untracked launches are forbidden"
+assert_contains "$SDD" 'subagents with `run_in_background: false`' \
+  "Claude Code dispatches SDD subagents in the foreground"
+for template in "$IMPL" "$REVW" "$REREVW" "$FIXP" "$CODEREVW"; do
+  assert_contains "$template" 'run_in_background: false # Claude Code: dispatch in the foreground (SKILL.md "Waiting on subagents"); omit on harnesses without the flag' \
+    "the $(basename "$template") dispatch block carries the foreground flag"
+done
+assert_contains "$SDD" 'echo "exit=$?" > <out>.exit' \
+  "a long command writes its exit status to its own file whether it succeeds or fails"
+assert_contains "$SDD" "capped at the harness's maximum background lifetime (7200000 ms on Claude Code)" \
+  "the watch budget is capped at the background lifetime"
+assert_contains "$SDD" "stop the job through the harness, record the output tail in the ledger, and report BLOCKED" \
+  "an exhausted watch ends in BLOCKED"
+assert_contains "$SDD_RATIONALIZATIONS" "I've said what's next; I'll pick it up on the next turn" \
+  "rationalization row for the announced-step stop"
+assert_contains "$SDD_RATIONALIZATIONS" 'A trailing `&` keeps it out of my way' \
+  "rationalization row for the detached launch"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

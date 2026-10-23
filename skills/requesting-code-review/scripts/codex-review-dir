@@ -14,9 +14,10 @@
 # cases; a per-invocation `mktemp -d` cannot. So the caller runs this once at
 # gate start, captures the path, and reuses it for the whole gate.
 #
-# The git-dir-keyed parent is only for tidiness — it groups a repo's runs
-# together and mirrors sdd-dir's layout. Isolation comes from mktemp, not the
-# key.
+# The parent is keyed by the clone's common git directory (sdd-common.sh),
+# shared by every worktree of the clone, only for tidiness: it groups a
+# repository's runs together and mirrors sdd-dir's layout. Isolation comes
+# from mktemp, not the key.
 #
 # Field evidence this is a real bug, not a hypothetical: the prior flat path
 # hard-coded one shared ledger, `.../codex-review/codex-round-ledger.md`, for
@@ -40,12 +41,16 @@
 # dependency here.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=../../subagent-driven-development/scripts/sdd-common.sh
+. "$SCRIPT_DIR/../../subagent-driven-development/scripts/sdd-common.sh"
+
 git rev-parse --git-dir >/dev/null 2>&1 || {
   echo "codex-review-dir: not inside a git repository" >&2
   exit 2
 }
 
-key=$(printf '%s' "$(git rev-parse --absolute-git-dir)" | git hash-object --stdin)
-base="${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers/codex-review/${key}"
+key=$(hp_key .)
+base="$(hp_cache_root)/codex-review/${key}"
 mkdir -p "$base"
 mktemp -d "${base}/run-XXXXXXXX"

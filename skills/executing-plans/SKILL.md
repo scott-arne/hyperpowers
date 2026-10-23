@@ -18,7 +18,7 @@ Load plan, review critically, execute all tasks, report when complete.
 ## The Process
 
 ### Step 1: Load and Review Plan
-1. Ensure an isolated workspace: use hyperpowers:using-git-worktrees to create one or verify the existing one
+1. Settle where the work happens: use hyperpowers:using-git-worktrees, which detects an existing worktree or asks your human partner to choose between the current branch, a new branch in place, and a worktree, and reports the mode
 2. Read plan file
 3. Review critically - identify any questions or concerns about the plan
 4. If concerns: Raise them with your human partner before starting
@@ -37,7 +37,7 @@ For each task:
 
 After all tasks complete and verified:
 - Announce: "I'm using the finishing-a-development-branch skill to complete this work."
-- **REQUIRED SUB-SKILL:** Use hyperpowers:finishing-a-development-branch
+- **REQUIRED SUB-SKILL:** Use hyperpowers:finishing-a-development-branch, passing the mode using-git-worktrees reported in Step 1 (`current-branch`, `new-branch`, or `worktree`); the mode decides which menu it presents
 - Follow that skill to verify tests, present options, execute choice
 
 ## When to Stop and Ask for Help

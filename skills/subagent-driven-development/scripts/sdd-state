@@ -1,0 +1,1513 @@
+#!/usr/bin/env bash
+# sdd-state — lifecycle helper for the SDD state branch, the durable home of
+# a plan's dossier (ledger, reports, claims). Design and contracts:
+# docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md.
+#
+# Usage:
+#   sdd-state sync PLAN_FILE [--assume-absent]      (or: sync --repo DIR [--assume-absent])
+#   sdd-state verify PLAN_FILE [--code-repo DIR]
+#   sdd-state snapshot PLAN_FILE [-m MSG]
+#   sdd-state handoff PLAN_FILE [--push] [--plan-untracked-ok] [--code-dirty-ok] [--code-repo DIR]
+#   sdd-state finish PLAN_FILE [--force]
+#   sdd-state import PLAN_FILE
+#   sdd-state prune [--days N] [--apply] --repo DIR
+#   sdd-state claim PLAN_FILE N --session SID [--takeover]
+#
+# stdout: one line of space-separated key=value pairs, status= first; sync
+# adds a second line "merge=<command>" on diverged.
+# exit: 0 ok | 1 offline, offline-no-state, push-failed | 2 usage or internal
+#       (needs-sync, foreign branch, no-workspace, import-failed) |
+#       3 diverged, busy, remote-finished |
+#       4 claim held by another session | 5 scan-failed | 6 open-claims |
+#       7 plain backend (handoff) | 8 plan-not-committed |
+#       9 wrong-repo, code-missing, plan-stale | 10 code-dirty | 11 detached-head | 12 shallow-source
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=sdd-common.sh
+. "$SCRIPT_DIR/sdd-common.sh"
+
+# Set by remove_verified when it leaves a verified copy at its tomb.
+TOMB=""
+# Set once a leftover entry under plans/ has been named on stderr, so the
+# caller's three attempts do not repeat the same diagnosis.
+NAMED_LEFTOVER=0
+# The same, for a copy an interrupted removal stranded beside a workspace
+# that is occupied again.
+NAMED_TOMB=0
+
+usage() {
+  printf '%s\n' \
+    'usage: sdd-state <subcommand> ...' \
+    '  sync PLAN_FILE [--assume-absent]   |   sync --repo DIR [--assume-absent]' \
+    '  verify PLAN_FILE [--code-repo DIR]' \
+    '  snapshot PLAN_FILE [-m MSG]' \
+    '  handoff PLAN_FILE [--push] [--plan-untracked-ok] [--code-dirty-ok] [--code-repo DIR]' \
+    '  finish PLAN_FILE [--force]' \
+    '  import PLAN_FILE' \
+    '  prune [--days N] [--apply] --repo DIR' \
+    '  claim PLAN_FILE N --session SID [--takeover]' >&2
+  exit 2
+}
+
+PLAN=""; PLAN_DIR=""; REPO=""; WS=""; SLUG=""; BRANCH=""; REMOTE=""; CO=""; BACKEND=""; ROOT=""; WSDIR=""
+
+# Resolve PLAN_FILE without touching the checkout: sync fetches first.
+# REPO and REMOTE are consumed by the sync, verify and handoff subcommands.
+# shellcheck disable=SC2034
+resolve_plan_basic() {
+  PLAN=$1
+  PLAN_DIR=$(hp_plan_dir "$PLAN") || { echo "sdd-state: plan file is not inside a git repository: $PLAN" >&2; exit 2; }
+  REPO=$(hp_physical_dir "$(git -C "$PLAN_DIR" rev-parse --show-toplevel)")
+  WS=$(hp_plan_ws_name "$PLAN")
+  SLUG=${WS%-*}
+  BRANCH=$(hp_state_branch "$PLAN_DIR")
+  REMOTE=$(hp_state_remote "$PLAN_DIR")
+  CO=$(hp_checkout_path "$PLAN_DIR")
+}
+# Resolve and make sure the checkout (or the plain root) exists.
+resolve_plan() {
+  local ensure
+  resolve_plan_basic "$1"
+  ensure=$(hp_ensure_checkout "$PLAN_DIR") || exit 2
+  BACKEND=${ensure%% *}
+  ROOT=${ensure#* }
+  WSDIR="$ROOT/plans/$WS"
+}
+ledger_path() { printf '%s/progress.md\n' "$WSDIR"; }
+# One encoding for every path-valued stdout field: a space becomes %20.
+enc() { printf '%s' "$1" | sed 's/ /%20/g'; }
+owner_record() { # <sid>
+  local top b
+  # Test hook: a failed owner write, so the fail-closed paths are provable.
+  [ -z "${HYPERPOWERS_TEST_FAIL_OWNER_WRITE:-}" ] || return 1
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
+  b=$(git branch --show-current 2>/dev/null)
+  [ -n "$b" ] || b="detached@$(git rev-parse --short=7 HEAD 2>/dev/null || echo none)"
+  printf 'session=%s\nworktree=%s\nbranch=%s\nhost=%s\ntime=%s\n' "$1" "$top" "$b" "$(hostname)" "$(hp_utc_now)"
+}
+
+# --- snapshot ----------------------------------------------------------------
+cmd_snapshot() {
+  local plan="" msg="" out rc n
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -m) [ $# -ge 2 ] || usage; msg=$2; shift 2 ;;
+      -*) usage ;;
+      *) plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] || usage
+  resolve_plan "$plan"
+  if [ "$BACKEND" != branch ]; then echo "status=plain"; return 0; fi
+  [ -d "$WSDIR" ] || { echo "status=none"; return 0; }
+  [ -n "$msg" ] || msg="sdd $SLUG: snapshot $(hp_utc_now)"
+  hp_lock "$PLAN_DIR" || return 2
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  hp_contained "$CO" "plans/$WS" || { hp_unlock; echo "status=error"; return 2; }
+  out=$(hp_commit_paths "$CO" "$BRANCH" "$msg" "plans/$WS"); rc=$?
+  hp_unlock
+  [ "$rc" -eq 0 ] || { echo "status=error"; return 2; }
+  if [ "$out" = none ]; then echo "status=none"; return 0; fi
+  n=$(git -C "$CO" show --name-only --format= "$out" | grep -c .)
+  echo "status=snapshot sha=${out:0:7} files=$n"
+}
+
+# --- claim -------------------------------------------------------------------
+# The record is prepared in a temporary directory and published with one
+# rename(2), through node because a shell mv on macOS moves a directory into
+# an existing target instead of failing. A loser never sees a claim without
+# its owner file. Publication and takeover run under the repository lock,
+# the same lock finish holds while it reads the claims and removes the
+# workspace, so a claim can never slip in between those two steps.
+cmd_claim() {
+  local plan="" n="" sid="" takeover=0 claims target tmp rc owner since wt prev
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --takeover) takeover=1; shift ;;
+      -*) usage ;;
+      *) if [ -z "$plan" ]; then plan=$1; elif [ -z "$n" ]; then n=$1; else usage; fi; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$n" ] && [ -n "$sid" ] || usage
+  case "$n" in ''|*[!0-9]*) usage ;; esac
+  command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 2; }
+  resolve_plan "$plan"
+  claims="$WSDIR/claims"; target="$claims/task-$n"
+  # Everything below runs under the repository lock, the same lock finish
+  # holds while it reads the claims and removes the workspace: a claim can
+  # never slip in between those steps, and never resurrect a finished one.
+  # Every write is checked: a claim is reported only once its owner record
+  # is durable and names this session, because a caller that believes it
+  # owns a task it does not own duplicates work.
+  hp_lock "$PLAN_DIR" || return 2
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace task=$n"; return 2; fi
+  grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md"; rc=$?
+  if [ "$rc" -eq 0 ]; then hp_unlock; echo "status=done task=$n"; return 0; fi
+  if [ "$rc" -ne 1 ]; then hp_unlock; echo "status=error"; return 2; fi
+  hp_contained "$ROOT" "plans/$WS/claims" || { hp_unlock; echo "status=error"; return 2; }
+  mkdir -p "$claims" || { hp_unlock; echo "status=error"; return 2; }
+  if [ "$takeover" -eq 1 ] && [ -d "$target" ]; then
+    # New record first (invisible until the rename), then the history line,
+    # then the atomic replacement; a failure anywhere leaves the old owner.
+    if ! owner_record "$sid" > "$target/owner.new"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
+    prev=$(cat "$target/owner" 2>/dev/null)
+    if ! printf -- '--- superseded at %s\n%s\n' "$(hp_utc_now)" "$prev" >> "$target/owner.history"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
+    if ! mv -f "$target/owner.new" "$target/owner"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
+    if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
+    hp_unlock
+    echo "status=claimed task=$n takeover=1"; return 0
+  fi
+  tmp=$(mktemp -d "$claims/.tmp-XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
+  if ! owner_record "$sid" > "$tmp/owner"; then rm -rf "$tmp"; hp_unlock; echo "status=error"; return 2; fi
+  node -e 'const fs=require("fs");try{fs.renameSync(process.argv[1],process.argv[2]);}catch(e){process.exit(e.code==="ENOTEMPTY"||e.code==="EEXIST"?4:2);}' "$tmp" "$target"; rc=$?
+  if [ "$rc" -eq 0 ]; then
+    if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
+    hp_unlock; echo "status=claimed task=$n"; return 0
+  fi
+  rm -rf "$tmp"
+  if [ "$rc" -ne 4 ]; then hp_unlock; echo "status=error"; return 2; fi
+  # Read the holder's record while the lock still excludes takeovers and
+  # finish, so the fields come from one record.
+  owner=$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)
+  since=$(sed -n 's/^time=//p' "$target/owner" 2>/dev/null)
+  wt=$(sed -n 's/^worktree=//p' "$target/owner" 2>/dev/null)
+  hp_unlock
+  if [ -z "$owner" ]; then echo "status=error"; return 2; fi
+  if [ "$owner" = "$sid" ]; then echo "status=held task=$n owner=$owner own=1"; return 0; fi
+  echo "status=held task=$n owner=$owner since=$since worktree=$(enc "$wt")"
+  return 4
+}
+
+# --- import ------------------------------------------------------------------
+# Move a workspace an older plugin (or a plain-backend run) left in the plain
+# cache into place. Candidates resolve to their physical referents; the copy
+# is staged beside the destination, compared with the source by manifest, and
+# only then installed and the source replaced by a symlink. A failure leaves
+# the source untouched and no ledger in the destination, so the next call
+# retries instead of reporting ledger-exists.
+IDENTITY_PREFIX="# SDD ledger $(printf '\xe2\x80\x94') plan: "
+rewrite_identity_line() { # <ledger> <rel>: an absolute identity inside REPO, or ending in /<rel>, becomes <rel>
+  local first path tmp
+  first=$(head -n 1 "$1")
+  case "$first" in
+    "$IDENTITY_PREFIX"/*) path=${first#"$IDENTITY_PREFIX"} ;;
+    *) return 0 ;;
+  esac
+  case "$path" in
+    "$REPO"/*) [ "${path#"$REPO"/}" = "$2" ] || return 0 ;;
+    */"$2") [ ! -e "$path" ] || return 0 ;;
+    *) return 0 ;;
+  esac
+  tmp="$1.tmp.$$"
+  if ! { printf '%s%s\n' "$IDENTITY_PREFIX" "$2"; tail -n +2 "$1"; } > "$tmp" || ! mv -f "$tmp" "$1"; then rm -f "$tmp"; return 1; fi
+}
+# <dir> -> one line per entry: type, size or link target, path; sorted.
+tree_manifest() {
+  ( cd "$1" && find . -mindepth 1 \( -type f -o -type d -o -type l \) | LC_ALL=C sort | while IFS= read -r e; do
+      if [ -L "$e" ]; then printf 'l %s %s\n' "$(readlink "$e")" "$e"
+      elif [ -f "$e" ]; then printf 'f %s %s\n' "$(wc -c < "$e" | tr -d ' ')" "$e"
+      else printf 'd - %s\n' "$e"; fi
+    done )
+}
+# <manifest> <dst>: every line of <manifest> (tree_manifest output for the
+# staged copy) is present in dst with the same type and size.
+verify_subset() {
+  local line dst_manifest
+  dst_manifest=$(tree_manifest "$2")
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    grep -Fxq -- "$line" < <(printf '%s\n' "$dst_manifest") || return 1
+  done < <(printf '%s\n' "$1")
+  return 0
+}
+# <candidate>: an interrupted import leaves the source renamed aside as
+# <ref>.importing-<pid> and nothing at the legacy path (or a dangling
+# pointer). Put it back before the candidate is examined. Returns 0 when a
+# backup was put back, so the caller can finish a cutover that had already
+# published the destination. Runs under the lock.
+recover_import_backup() {
+  local t b
+  if [ -L "$1" ]; then t=$(readlink "$1"); else t=$1; fi
+  [ -e "$t" ] && return 1
+  for b in "$t".importing-*; do
+    [ -d "$b" ] || continue
+    mv "$b" "$t" 2>/dev/null && return 0
+  done
+  return 1
+}
+# <candidate> <backup> <ref> <stage> <installed>: undo an import that failed
+# after the source was renamed aside. <installed> is "" (nothing published),
+# "whole" (the destination was published by one rename) or "ledger" (entries
+# were installed into an existing destination). Leaves no ledger in the
+# destination, puts the source back, releases the lock and prints the
+# failure line; the caller returns 2.
+import_abort() {
+  [ -z "$4" ] || rm -rf "$4"
+  case "$5" in
+    whole) rm -rf "$dest" ;;
+    ledger) rm -f "$dest/progress.md" ;;
+  esac
+  [ ! -L "$3" ] || rm -f "$3"
+  if [ ! -e "$3" ]; then mv "$2" "$3" 2>/dev/null || echo "sdd-state: could not restore the legacy workspace; it is at $2" >&2; fi
+  if [ "$1" != "$3" ] && [ ! -e "$1" ] && [ ! -L "$1" ]; then ln -s "$3" "$1" 2>/dev/null || true; fi
+  hp_unlock
+  echo "status=import-failed from=$(enc "$1")"
+}
+# <dest-ledger> <source-ledger>: 0 when the destination's ledger body (from
+# its second line) is a prefix of the source's — the published copy, with
+# whatever the source was appended to with since. An empty body is a prefix
+# of anything, and head -c 0 is an error on BSD, so it answers first.
+ledger_body_prefix() {
+  local dbody
+  [ -f "$1" ] && [ -f "$2" ] || return 1
+  dbody=$(tail -n +2 "$1" | wc -c | tr -d ' ')
+  [ "$dbody" -gt 0 ] || return 0
+  cmp -s <(tail -n +2 "$1") <(tail -n +2 "$2" | head -c "$dbody")
+}
+# <ref> <dest>: 0 when the destination holds a published copy of the source:
+# every entry of the source other than the ledger is present with the same
+# type and size, and the destination's ledger body (from line 2) is a prefix
+# of the source's: identical, or the source gained an append after the copy
+# was taken. Sets published_prefix_size to the number of source-ledger bytes
+# the destination already holds (its first line plus the shared body), so
+# import_finish reconciles only the remainder. Used to finish a cutover that
+# was interrupted after publication.
+import_published() {
+  local rest dbody head1
+  rest=$(tree_manifest "$1" | grep -v ' \./progress\.md$')
+  verify_subset "$rest" "$2" || return 1
+  ledger_body_prefix "$2/progress.md" "$1/progress.md" || return 1
+  dbody=$(tail -n +2 "$2/progress.md" | wc -c | tr -d ' ')
+  head1=$(head -n 1 "$1/progress.md" | wc -c | tr -d ' ')
+  published_prefix_size=$((head1 + dbody))
+}
+# <candidate> <backup> <ref>: reconcile a ledger append that landed in the
+# source after it was copied (the ledger is append-only, so the new bytes
+# are added to the destination), verify that the two ledger bodies then
+# agree from their second line on and that nothing else changed, relink the
+# legacy path (or the pointer) to the destination and check it resolves
+# there, and remove the backup. Reconciliation runs before the relink so a
+# crash leaves the legacy path absent and the backup recoverable; any
+# failure or non-append change aborts with the source restored, and the next
+# import starts over from the current source. Reads src_ledger_size and
+# src_manifest_rest from the caller (both taken from the frozen copy).
+# Returns 2 after import_abort on failure.
+import_finish() {
+  local link now
+  now=$(wc -c < "$2/progress.md" 2>/dev/null | tr -d ' ')
+  if [ "${now:-0}" -gt "$src_ledger_size" ]; then
+    tail -c +"$((src_ledger_size + 1))" "$2/progress.md" >> "$dest/progress.md" || { import_abort "$1" "$2" "$3" "" "$installed"; return 2; }
+  fi
+  if ! cmp -s <(tail -n +2 "$2/progress.md" 2>/dev/null) <(tail -n +2 "$dest/progress.md") || [ "$(tree_manifest "$2" | grep -v ' \./progress\.md$')" != "$src_manifest_rest" ]; then
+    echo "sdd-state: the legacy workspace changed while it was imported; nothing was moved, run import again" >&2
+    import_abort "$1" "$2" "$3" "" "$installed"; return 2
+  fi
+  if [ -L "$1" ]; then link=$1; else link=$3; fi
+  if [ -n "${HYPERPOWERS_TEST_FAIL_RELINK:-}" ] || ! ln -sfn "$dest" "$link" 2>/dev/null || [ "$(hp_physical_dir "$link" 2>/dev/null)" != "$(hp_physical_dir "$dest")" ]; then
+    import_abort "$1" "$2" "$3" "" "$installed"; return 2
+  fi
+  rm -rf "$2" || echo "sdd-state: the imported source's backup could not be removed: $2" >&2
+  hp_unlock
+  if [ "${conflicts:-0}" -gt 0 ]; then echo "status=moved from=$(enc "$1") conflicts=$conflicts"; else echo "status=moved from=$(enc "$1")"; fi
+  return 0
+}
+cmd_import() {
+  local plan cache candidates c ref dest dest_phys seen="" stage e name rel stage_manifest backup link rc restored installed conflicts=0 dbody src_ledger_size src_manifest_rest published_prefix_size
+  [ $# -eq 1 ] || usage
+  plan=$1
+  command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 2; }
+  resolve_plan "$plan"
+  dest="$WSDIR"
+  rel=$(hp_plan_rel "$plan")
+  cache="$(hp_cache_root)/sdd"
+  if [ "$BACKEND" = plain ]; then
+    hp_lock "$PLAN_DIR" || return 2
+    if ! hp_materialize_plain "$PLAN_DIR" "$WS" "$dest"; then hp_unlock; echo "status=import-failed from=$(enc "$BRANCH")"; return 2; fi
+    hp_unlock
+  fi
+  candidates="$cache/$(hp_legacy_key "$PLAN_DIR")/plans/$WS"
+  # The cwd's unsuffixed legacy workspace qualifies only when the cwd is a
+  # worktree of the plan repository: another repository with a plan at the
+  # same relative path owns a workspace of the same name, and a cross-
+  # repository run before 6.16.0 left ambiguous copies that stay manual.
+  if git rev-parse --git-dir >/dev/null 2>&1 && [ "$(hp_key .)" = "$(hp_key "$PLAN_DIR")" ]; then
+    candidates="$candidates
+$cache/$(hp_legacy_key .)/plans/$WS"
+  fi
+  # Pointers carry the plan repository's key prefix as their suffix; only
+  # this repository's suffixes qualify, so another repository that happens
+  # to hold a plan at the same relative path is never touched. A dangling
+  # pointer qualifies too: its referent may be a backup an interrupted
+  # import left aside.
+  for c in "$cache"/*/plans/"$WS"+"$(hp_legacy_key "$PLAN_DIR" | cut -c1-8)" "$cache"/*/plans/"$WS"+"$(hp_key "$PLAN_DIR" | cut -c1-8)"; do
+    { [ -e "$c" ] || [ -L "$c" ]; } && candidates="$candidates
+$c"
+  done
+  if [ "$BACKEND" = branch ]; then
+    candidates="$candidates
+$cache/$(hp_key "$PLAN_DIR")/plans/$WS"
+  fi
+  # The lock is taken before any candidate is resolved or the destination is
+  # read, so two importers cannot both find the destination empty.
+  hp_lock "$PLAN_DIR" || return 2
+  dest_phys=$(hp_physical_dir "$dest" 2>/dev/null) || dest_phys=$dest
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    if recover_import_backup "$c"; then restored=1; else restored=0; fi
+    [ -e "$c" ] || continue
+    ref=$(hp_physical_dir "$c") || continue
+    [ "$ref" != "$dest_phys" ] || continue
+    case " $seen " in *" $ref "*) continue ;; esac
+    seen="$seen $ref"
+    [ -f "$ref/progress.md" ] || continue
+    if [ -f "$dest/progress.md" ]; then
+      # A cutover interrupted after publication left the source (just put
+      # back from its backup) beside a complete destination: finish it. The
+      # baseline is taken before the comparison, so a write that lands
+      # afterwards is reconciled, not blessed.
+      if [ "$restored" -eq 1 ]; then
+        src_ledger_size=$(wc -c < "$ref/progress.md" | tr -d ' ')
+        src_manifest_rest=$(tree_manifest "$ref" | grep -v ' \./progress\.md$')
+        if import_published "$ref" "$dest"; then
+          # The destination already holds this prefix of the source ledger;
+          # import_finish reconciles whatever the source gained after it.
+          src_ledger_size=$published_prefix_size
+          backup="$ref.importing-$$"
+          # The source's root is touched before anything is renamed aside, so the
+          # 14-day reclaim of plain-cache roots does not take the backup with it.
+          touch "$(dirname "$(dirname "$ref")")" 2>/dev/null || true
+          mv "$ref" "$backup" 2>/dev/null || { hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
+          import_finish "$c" "$backup" "$ref"; return $?
+        fi
+      fi
+      # The source can have outgrown the published copy by more than its
+      # ledger: an older controller still holding the legacy path writes a
+      # report too, and import_published's subset check then fails. While
+      # the destination's ledger is still a prefix of the source's, that is
+      # the same interrupted cutover, so it falls through to the cutover
+      # below, whose rc=4 branch installs the extra entries with the ledger
+      # last. Anything else is a destination this import must not touch.
+      if [ "$restored" -ne 1 ] || ! ledger_body_prefix "$dest/progress.md" "$ref/progress.md"; then
+        hp_unlock; echo "status=skipped reason=ledger-exists path=$(enc "$c")"; return 0
+      fi
+    fi
+    # The cutover is a transaction: the source is renamed aside first, so
+    # no new opener can write to it; the staged copy is verified against
+    # that quiesced tree; the legacy path is relinked only after the
+    # installed tree is verified; the backup goes last, after a late ledger
+    # append is reconciled. Any failure removes the installed ledger and
+    # puts the source back.
+    backup="$ref.importing-$$"
+    # The source's root is touched before anything is renamed aside, so the
+    # 14-day reclaim of plain-cache roots does not take the backup with it.
+    touch "$(dirname "$(dirname "$ref")")" 2>/dev/null || true
+    mv "$ref" "$backup" 2>/dev/null || { hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
+    stage="$dest.import-$$"
+    rm -rf "$stage"; mkdir -p "$stage"
+    if ! cp -a "$backup/." "$stage/" 2>/dev/null || [ "$(tree_manifest "$backup")" != "$(tree_manifest "$stage")" ]; then
+      import_abort "$c" "$backup" "$ref" "$stage" ""; return 2
+    fi
+    # The baseline comes from the staged copy, frozen at cp: every byte the
+    # source gains after the copy is outside it and gets reconciled.
+    src_ledger_size=$(wc -c < "$stage/progress.md" | tr -d ' ')
+    src_manifest_rest=$(tree_manifest "$stage" | grep -v ' \./progress\.md$')
+    if [ -n "${HYPERPOWERS_TEST_LATE_APPEND:-}" ]; then printf '%s\n' "$HYPERPOWERS_TEST_LATE_APPEND" >> "$backup/progress.md"; fi
+    if [ -n "${HYPERPOWERS_TEST_LATE_REPLACE:-}" ]; then printf '%s\n' "$HYPERPOWERS_TEST_LATE_REPLACE" > "$backup/progress.md"; fi
+    # The identity is rewritten in the stage, and the installed tree is
+    # verified against the stage's manifest, so the rewrite never reads as a
+    # size mismatch.
+    if ! rewrite_identity_line "$stage/progress.md" "$rel"; then import_abort "$c" "$backup" "$ref" "$stage" ""; return 2; fi
+    stage_manifest=$(tree_manifest "$stage")
+    installed=ledger
+    # Publish by rename(2): it replaces an absent or empty destination
+    # atomically and refuses a non-empty one, so the stage can never land
+    # inside a destination that filled up meanwhile (a shell mv would move
+    # it in); a refusal takes the per-entry path.
+    node -e 'const fs=require("fs");try{fs.renameSync(process.argv[1],process.argv[2]);}catch(e){process.exit(e.code==="ENOTEMPTY"||e.code==="EEXIST"?4:2);}' "$stage" "$dest"; rc=$?
+    if [ "$rc" -eq 0 ]; then
+      [ -f "$dest/progress.md" ] || { import_abort "$c" "$backup" "$ref" "" whole; return 2; }
+    elif [ "$rc" -eq 4 ]; then
+      # The destination already holds files, and a controller may be working
+      # in it: only entries it does not have are installed, the ledger last
+      # and by appending, so a failure leaves no ledger this import brought
+      # and never takes the destination's own.
+      [ ! -f "$dest/progress.md" ] || installed=""
+      for e in "$stage"/* "$stage"/.[!.]*; do
+        [ -e "$e" ] || [ -L "$e" ] || continue
+        name=${e##*/}
+        [ "$name" != progress.md ] || continue
+        { [ -e "$dest/$name" ] || [ -L "$dest/$name" ]; } || continue
+        if [ -L "$e" ] || [ -L "$dest/$name" ]; then
+          if [ -L "$e" ] && [ -L "$dest/$name" ] && [ "$(readlink "$e")" = "$(readlink "$dest/$name")" ]; then rm -rf "$e"; continue; fi
+        elif diff -r -q "$e" "$dest/$name" >/dev/null 2>&1; then
+          rm -rf "$e"; continue
+        fi
+        # The destination's entry was written after the copy this import is
+        # recovering: it stays, and the legacy one lands beside it, unless
+        # the branch ignores the name. A brief or a review package
+        # regenerates on any host and never travels, so no copy is kept.
+        conflicts=$((conflicts + 1))
+        if git -C "$CO" check-ignore -q "plans/$WS/$name" 2>/dev/null; then
+          rm -rf "$e"
+          echo "sdd-state: $dest/$name differs from the legacy copy, which is regenerable, not copied" >&2
+          continue
+        fi
+        rm -rf "$dest/$name.from-import"
+        if ! mv -f "$e" "$dest/$name.from-import" 2>/dev/null; then
+          cp -a "$e" "$dest/$name.from-import" || { import_abort "$c" "$backup" "$ref" "$stage" "$installed"; return 2; }
+          rm -rf "$e"
+        fi
+        echo "sdd-state: $dest/$name differs from the legacy copy and was kept; the legacy one is beside it at $dest/$name.from-import" >&2
+      done
+      # What is left in the stage is what this import installs, and what the
+      # destination is verified against; the ledger is checked by body.
+      stage_manifest=$(tree_manifest "$stage" | grep -v ' \./progress\.md$')
+      for e in "$stage"/* "$stage"/.[!.]*; do
+        [ -e "$e" ] || [ -L "$e" ] || continue
+        [ "${e##*/}" != progress.md ] || continue
+        if ! mv -f "$e" "$dest/" 2>/dev/null; then cp -a "$e" "$dest/" || { import_abort "$c" "$backup" "$ref" "$stage" "$installed"; return 2; }; fi
+      done
+      if [ -n "${HYPERPOWERS_TEST_DEST_APPEND:-}" ]; then printf '%s\n' "$HYPERPOWERS_TEST_DEST_APPEND" >> "$dest/progress.md"; fi
+      if [ -z "$installed" ]; then
+        # The destination's ledger is the live one: only the bytes the
+        # legacy ledger holds beyond it are appended.
+        dbody=$(tail -n +2 "$dest/progress.md" | wc -c | tr -d ' ')
+        if ! ledger_body_prefix "$dest/progress.md" "$stage/progress.md"; then
+          echo "sdd-state: $dest/progress.md was written to while the import ran and is no longer a prefix of the legacy ledger; the files only the legacy workspace held were moved into $dest, which kept its own ledger, and the legacy ledger is still at $ref/progress.md for a human to merge" >&2
+          import_abort "$c" "$backup" "$ref" "$stage" ""; return 2
+        fi
+        if [ "$(tail -n +2 "$stage/progress.md" | wc -c | tr -d ' ')" -gt "$dbody" ]; then
+          tail -n +2 "$stage/progress.md" | tail -c +"$((dbody + 1))" >> "$dest/progress.md" || { import_abort "$c" "$backup" "$ref" "$stage" ""; return 2; }
+        fi
+        rm -f "$stage/progress.md"
+      else
+        mv -f "$stage/progress.md" "$dest/progress.md" || { import_abort "$c" "$backup" "$ref" "$stage" "$installed"; return 2; }
+      fi
+      rm -rf "$stage"
+      if ! verify_subset "$stage_manifest" "$dest"; then import_abort "$c" "$backup" "$ref" "" "$installed"; return 2; fi
+    else
+      import_abort "$c" "$backup" "$ref" "$stage" ""; return 2
+    fi
+    import_finish "$c" "$backup" "$ref"; return $?
+  done < <(printf '%s\n' "$candidates")
+  hp_unlock
+  echo "status=none"
+}
+
+# --- finish ------------------------------------------------------------------
+# Task numbers that hold a claim but have no completion line in the ledger.
+open_claims() {
+  local d n open=""
+  for d in "$WSDIR"/claims/task-*/; do
+    [ -d "$d" ] || continue
+    n=${d%/}; n=${n##*/task-}
+    if ! grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md" 2>/dev/null; then open="$open,$n"; fi
+  done
+  printf '%s' "${open#,}"
+}
+# <dir> <tomb>: put a renamed-aside copy back. An unlocked writer may have
+# recreated the path meanwhile (the Write tool and mkdir -p create missing
+# parents), and mv onto an existing directory nests the copy inside it, so
+# whatever appeared is moved beside the restored copy first and named. The
+# path can also be recreated between that check and the mv; a nested copy
+# is then lifted back out.
+restore_tomb() {
+  local dir=$1 tomb=$2 aside="$1.reappeared-$$"
+  if [ -e "$dir" ] || [ -L "$dir" ]; then
+    mv "$dir" "$aside" 2>/dev/null && echo "sdd-state: $dir was recreated during its removal; the new files are at $aside" >&2
+  fi
+  # Still occupied: the copy stays at its tomb rather than nesting.
+  if [ -e "$dir" ] || [ -L "$dir" ]; then echo "sdd-state: $dir is occupied; the removed copy is at $tomb" >&2; return 1; fi
+  mv "$tomb" "$dir" || return 1
+  if [ -e "$dir/${tomb##*/}" ]; then
+    [ ! -e "$aside" ] || aside="$aside-2"
+    mv "$dir" "$aside" 2>/dev/null || return 1
+    mv "$aside/${tomb##*/}" "$dir" || return 1
+    echo "sdd-state: $dir was recreated during its removal; the new files are at $aside" >&2
+  fi
+  return 0
+}
+# <tomb>: delete a verified copy. A copy that survives the deletion is named;
+# the caller decides whether what remains goes back.
+discard_tomb() {
+  rm -rf "$1" 2>/dev/null
+  [ ! -e "$1" ] || { echo "sdd-state: could not delete the removed copy at $1" >&2; return 2; }
+  TOMB=""
+  return 0
+}
+# <dir> <tree-prefix> [keep]: remove a workspace directory only if it still
+# equals the committed tip. The directory is renamed aside first (atomic),
+# so a writer that opens the old path afterwards fails with ENOENT instead
+# of writing into a directory about to vanish; then every tracked entry is
+# compared by object id with the renamed copy (a symlink by its link text),
+# and any extra file or symlink that is not ignored counts as a change.
+# <tree-prefix> is "<tip>:plans/<ws>"; an empty prefix (plain backend)
+# compares the ledger's size with SIZE_BEFORE. Returns 0 when the copy was
+# verified: deleted, or with `keep` left at the tomb named in TOMB for the
+# caller to commit against and then discard_tomb. Returns 1 when the copy
+# changed or the path was recreated (the copy is restored, the caller is
+# busy) and 2 when the deletion itself failed (what remains is restored).
+remove_verified() {
+  local dir=$1 prefix=$2 keep=${3:-} tomb f committed live
+  TOMB=""
+  tomb="$(dirname "$dir")/.removing-$(basename "$dir")-$$"
+  # A tomb left by a killed run plus pid reuse would make mv nest the live
+  # workspace inside it: refuse instead.
+  [ ! -e "$tomb" ] || { echo "sdd-state: a copy from an earlier removal is in the way at $tomb" >&2; return 1; }
+  mv "$dir" "$tomb" 2>/dev/null || return 1
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = remove-after-rename ]; then hp_unlock; exit 99; fi
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+    remove-after-rename:*|remove-after-rename-changed:*)
+      # Test hook: an unlocked writer recreates the path after the rename;
+      # the -changed form had also appended to the ledger after the snapshot.
+      mkdir -p "$dir"; printf 'written after rename\n' > "$dir/${HYPERPOWERS_TEST_WRITER_AT#*:}"
+      case "$HYPERPOWERS_TEST_WRITER_AT" in remove-after-rename-changed:*) printf 'concurrent write\n' >> "$tomb/progress.md" ;; esac ;;
+  esac
+  if [ -z "$prefix" ]; then
+    if [ "$(wc -c < "$tomb/progress.md" 2>/dev/null | tr -d ' ')" != "${SIZE_BEFORE:-}" ]; then restore_tomb "$dir" "$tomb"; return 1; fi
+  else
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      committed=$(git -C "$CO" rev-parse "$prefix/$f" 2>/dev/null)
+      if [ -L "$tomb/$f" ]; then
+        live=$(printf '%s' "$(readlink "$tomb/$f")" | git -C "$CO" hash-object --stdin 2>/dev/null)
+      else
+        live=$(git -C "$CO" hash-object "$tomb/$f" 2>/dev/null)
+      fi
+      if [ "$committed" != "$live" ]; then restore_tomb "$dir" "$tomb"; return 1; fi
+    done < <(git -C "$CO" ls-tree -r --name-only "$prefix" 2>/dev/null)
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      git -C "$CO" cat-file -e "$prefix/$f" 2>/dev/null && continue
+      if ! git -C "$CO" check-ignore -q "plans/x/$f" 2>/dev/null; then restore_tomb "$dir" "$tomb"; return 1; fi
+    done < <(cd "$tomb" && find . \( -type f -o -type l \) | sed 's|^\./||')
+  fi
+  # Something recreated the path while the copy was verified: busy.
+  if [ -e "$dir" ] || [ -L "$dir" ]; then restore_tomb "$dir" "$tomb"; return 1; fi
+  TOMB=$tomb
+  [ -z "$keep" ] || return 0
+  discard_tomb "$tomb" || { restore_tomb "$dir" "$tomb"; return 2; }
+  return 0
+}
+cmd_finish() {
+  local plan="" force=0 open last commit rc t
+  while [ $# -gt 0 ]; do
+    case "$1" in --force) force=1; shift ;; -*) usage ;; *) [ -z "$plan" ] || usage; plan=$1; shift ;; esac
+  done
+  [ -n "$plan" ] || usage
+  resolve_plan "$plan"
+  hp_lock "$PLAN_DIR" || return 2
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  # A removal interrupted after its rename-aside left the dossier at
+  # plans/.removing-<ws>-<pid>. With the path free the copy comes back and
+  # finish proceeds; beside a new workspace it is named for a human to
+  # merge or delete, and finish refuses.
+  for t in "$(dirname "$WSDIR")/.removing-$(basename "$WSDIR")-"*; do
+    [ -d "$t" ] || continue
+    if [ -d "$WSDIR" ]; then
+      echo "sdd-state: a copy from an interrupted removal remains at $t; move its files back into $WSDIR or delete it" >&2
+      hp_unlock; echo "status=busy"; return 3
+    fi
+    restore_tomb "$WSDIR" "$t" || { hp_unlock; echo "status=error"; return 2; }
+  done
+  [ -d "$WSDIR" ] || { hp_unlock; echo "status=none"; return 0; }
+  hp_contained "$ROOT" "plans/$WS" || { hp_unlock; echo "status=error"; return 2; }
+  # The claims are read under the lock, so a claim published after a first
+  # look, or a takeover in flight, is seen before anything is removed.
+  open=$(open_claims)
+  if [ -n "$open" ] && [ "$force" -eq 0 ]; then hp_unlock; echo "status=open-claims tasks=$open"; return 6; fi
+  if [ "$BACKEND" != branch ]; then
+    SIZE_BEFORE=$(wc -c < "$WSDIR/progress.md" 2>/dev/null | tr -d ' ')
+    remove_verified "$WSDIR" ""; rc=$?
+    hp_unlock
+    case "$rc" in 0) echo "status=finished backend=plain"; return 0 ;; 1) echo "status=busy"; return 3 ;; *) echo "status=error"; return 2 ;; esac
+  fi
+  hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: snapshot before finish" "plans/$WS" >/dev/null || { hp_unlock; echo "status=error"; return 2; }
+  last=$(git -C "$CO" rev-parse "refs/heads/$BRANCH")
+  # Controllers append without the lock: the removal renames the directory
+  # aside and verifies it against the snapshot before deleting it.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+    finish-before-remove:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#finish-before-remove:}" ;;
+    finish-before-remove-link:*) ln -s progress.md "$CO/${HYPERPOWERS_TEST_WRITER_AT#finish-before-remove-link:}" ;;
+  esac
+  remove_verified "$WSDIR" "$last:plans/$WS" keep; rc=$?
+  case "$rc" in 0) ;; 1) hp_unlock; echo "status=busy"; return 3 ;; *) hp_unlock; echo "status=error"; return 2 ;; esac
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in finish-after-verify:*) mkdir -p "$WSDIR"; printf 'late\n' > "$WSDIR/${HYPERPOWERS_TEST_WRITER_AT#finish-after-verify:}" ;; esac
+  # The removal is committed from the tip's tree, never from the live path,
+  # so a workspace recreated after the verification neither enters the
+  # commit nor blocks it: it stays on disk, uncommitted, and is named. A
+  # commit that fails puts the verified copy back; only a committed removal
+  # deletes it, and a copy that survives the deletion is named on stderr.
+  commit=$(hp_commit_paths --remove "$CO" "$BRANCH" "sdd $SLUG: finish" "plans/$WS"); rc=$?
+  if [ "$rc" -ne 0 ]; then restore_tomb "$WSDIR" "$TOMB"; hp_unlock; echo "status=error"; return 2; fi
+  discard_tomb "$TOMB" || true
+  hp_unlock
+  if [ -d "$WSDIR" ]; then
+    echo "sdd-state: $WSDIR was recreated during finish; the removal is committed (last=$last) and the new files remain there, uncommitted" >&2
+    echo "status=error"; return 2
+  fi
+  echo "status=finished sha=${commit:0:7} last=$last push=$REMOTE/$BRANCH"
+}
+
+# --- prune -------------------------------------------------------------------
+# Lists, and with --apply removes, plan directories idle for N days (last
+# commit and newest file both older) and checkouts whose clone is gone. Never
+# runs implicitly.
+cmd_prune() {
+  local repo="" days=30 apply=0 repo_dir co br d name now cutoff c key list="" dead_list="" i tip gd ck
+  local plans=() dead=() tombs=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --days) [ $# -ge 2 ] || usage; days=$2; shift 2 ;;
+      --apply) apply=1; shift ;;
+      --repo) [ $# -ge 2 ] || usage; repo=$2; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$repo" ] || usage
+  case "$days" in ''|*[!0-9]*) usage ;; esac
+  days=$((10#$days))
+  repo_dir=$(hp_physical_dir "$repo") || usage
+  git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $repo" >&2; exit 2; }
+  if [ "$(hp_backend "$repo_dir")" = plain ]; then echo "status=plain"; return 0; fi
+  co=$(hp_checkout_path "$repo_dir"); br=$(hp_state_branch "$repo_dir")
+  now=$(date +%s); cutoff=$((now - days * 86400))
+  # <name> -> 0 when the plan directory is idle: last commit and newest file both older than N days.
+  idle() {
+    local lc
+    lc=$(git -C "$co" log -1 --format=%ct -- "plans/$1" 2>/dev/null)
+    [ -n "$lc" ] && [ "$lc" -lt "$cutoff" ] && [ -z "$(find "$co/plans/$1" -type f -mtime -"$days" 2>/dev/null | head -n 1)" ]
+  }
+  # With --apply the selection itself runs under the lock, and each candidate
+  # is revalidated right before its removal; a workspace that became active
+  # in between is kept and reported.
+  if [ "$apply" -eq 1 ]; then hp_lock "$repo_dir" || return 2; fi
+  if [ "$apply" -eq 1 ]; then CO=$co; BRANCH=$br; recover_apply || { hp_unlock; echo "status=error"; return 2; }; fi
+  if [ -e "$co/.git" ]; then
+    for d in "$co"/plans/*/; do
+      [ -d "$d" ] || continue
+      name=$(basename "$d")
+      idle "$name" || continue
+      plans[${#plans[@]}]=$name
+      list="$list,$(enc "$name")"
+    done
+  fi
+  # A checkout is dead when the directory its .git file names is gone. A
+  # relative gitdir (worktree.useRelativePaths) resolves against the
+  # checkout; an unparsable .git file is not evidence that the clone is gone.
+  for c in "$(hp_cache_root)"/state/*/; do
+    [ -f "$c.git" ] || continue
+    gd=$(sed -n 's/^gitdir: //p' "$c.git" 2>/dev/null)
+    [ -n "$gd" ] || continue
+    case "$gd" in /*) ;; *) gd="$c$gd" ;; esac
+    if [ ! -d "$gd" ]; then dead[${#dead[@]}]=$(basename "$c"); dead_list="$dead_list,$(basename "$c")"; fi
+  done
+  list=${list#,}; dead_list=${dead_list#,}
+  if [ "$apply" -eq 0 ]; then echo "status=listed plans=$list checkouts=$dead_list"; return 0; fi
+  local removed=() removed_paths=() kept_list="" removed_list=""
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in prune-before-remove:*) printf 'concurrent write\n' >> "$co/${HYPERPOWERS_TEST_WRITER_AT#prune-before-remove:}" ;; esac
+  CO=$co
+  tip=$(git -C "$co" rev-parse "refs/heads/$br")
+  i=0
+  while [ "$i" -lt "${#plans[@]}" ]; do
+    name=${plans[$i]}
+    if idle "$name" && remove_verified "$co/plans/$name" "$tip:plans/$name" keep; then
+      removed[${#removed[@]}]=$name; removed_paths[${#removed_paths[@]}]="plans/$name"; tombs[${#tombs[@]}]=$TOMB; removed_list="$removed_list,$(enc "$name")"
+    else
+      kept_list="$kept_list,$(enc "$name")"
+    fi
+    i=$((i + 1))
+  done
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in prune-after-verify:*) mkdir -p "$(dirname "$co/plans/${HYPERPOWERS_TEST_WRITER_AT#prune-after-verify:}")"; printf 'late\n' > "$co/plans/${HYPERPOWERS_TEST_WRITER_AT#prune-after-verify:}" ;; esac
+  # The copies outlive the commit: a commit that fails puts every one back.
+  if [ "${#removed[@]}" -gt 0 ]; then
+    if ! hp_commit_paths --remove "$co" "$br" "sdd: prune ${removed[*]}" "${removed_paths[@]}" >/dev/null; then
+      i=0
+      while [ "$i" -lt "${#tombs[@]}" ]; do restore_tomb "$co/plans/${removed[$i]}" "${tombs[$i]}"; i=$((i + 1)); done
+      hp_unlock; echo "status=error"; return 2
+    fi
+    i=0
+    while [ "$i" -lt "${#tombs[@]}" ]; do discard_tomb "${tombs[$i]}" || true; i=$((i + 1)); done
+  fi
+  hp_unlock
+  list=${removed_list#,}; kept_list=${kept_list#,}
+  # Each dead checkout goes under its own key's lock: the gitdir is re-read
+  # there (a clone restored since the scan keeps its checkout; a creator
+  # that arrived first is waited for and then seen), the checkout is renamed
+  # aside atomically and deleted with its sidecars, and the lock itself is
+  # the last thing to go. A lock that cannot be taken keeps the candidate.
+  dead_list=""
+  i=0
+  while [ "$i" -lt "${#dead[@]}" ]; do
+    key=${dead[$i]}; ck="$(hp_cache_root)/state/$key"; i=$((i + 1))
+    hp_lock_at "$ck.lock" || continue
+    gd=$(sed -n 's/^gitdir: //p' "$ck/.git" 2>/dev/null)
+    case "$gd" in ''|/*) ;; *) gd="$ck/$gd" ;; esac
+    if [ -z "$gd" ] || [ -d "$gd" ] || ! mv "$ck" "$ck.pruning-$$" 2>/dev/null; then hp_unlock; continue; fi
+    rm -rf "$ck.pruning-$$" "$ck.backend" "$ck.lock-history" "$ck.fetched" "$ck.lock.takeover" "$ck".tmp-*
+    hp_unlock
+    dead_list="$dead_list,$key"
+  done
+  dead_list=${dead_list#,}
+  echo "status=pruned plans=$list kept=$kept_list checkouts=$dead_list"
+}
+
+# --- sync --------------------------------------------------------------------
+tip_of() { git -C "$1" rev-parse -q --verify "$2^{commit}" 2>/dev/null || true; }
+short() { if [ -n "$1" ]; then printf '%s' "${1:0:7}"; else printf 'none'; fi; }
+age_of() { # <checkout> <sha>... -> seconds since the newest of them
+  local co=$1 newest=0 t s
+  shift
+  for s in "$@"; do
+    [ -n "$s" ] || continue
+    t=$(git -C "$co" log -1 --format=%ct "$s" 2>/dev/null || echo 0)
+    [ "$t" -gt "$newest" ] && newest=$t
+  done
+  if [ "$newest" -gt 0 ]; then echo $(( $(date +%s) - newest )); else echo 0; fi
+}
+# Commit every plan directory with pending tracked changes, so the working
+# tree equals the local tip and nothing local can be lost.
+snapshot_pending() {
+  local d name
+  for d in "$CO"/plans/*/; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    [ -n "$(git -C "$CO" status --porcelain -- "plans/$name" 2>/dev/null)" ] || continue
+    hp_commit_paths "$CO" "$BRANCH" "sdd $name: snapshot $(hp_utc_now)" "plans/$name" >/dev/null || return 2
+  done
+}
+# blob_prefix_id <file|-> <n>: the blob id of the first <n> bytes of a file
+# or of stdin. Callers never pass 0 (BSD head rejects it).
+blob_prefix_id() {
+  if [ "$1" = - ]; then head -c "$2" | git -C "$CO" hash-object --stdin; else head -c "$2" "$1" | git -C "$CO" hash-object --stdin; fi
+}
+# extension_present <file> <staged> <live-size>: 0 when the staged
+# extension (the bytes beyond <live-size>) already sits in the file
+# somewhere past <live-size>, 1 when it does not, 3 when it cannot be read.
+# An unlocked writer's line can land at that offset between a crash and the
+# recovery, so a test pinned to the offset would append the extension a
+# second time. node reads both files whole; it is already required by this
+# helper's claim and import paths.
+extension_present() {
+  command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 3; }
+  node -e 'const fs=require("fs");try{const l=Number(process.argv[3]);process.exit(fs.readFileSync(process.argv[1]).subarray(l).includes(fs.readFileSync(process.argv[2]).subarray(l))?0:1);}catch(e){process.exit(3);}' "$1" "$2" "$3"
+}
+# rewrite_finish <journal-base>: complete a journaled ledger rewrite from
+# whatever point it reached. The staged content and the original length are
+# on disk, so every step repeats safely: the extension (the staged bytes
+# beyond the original length) is appended unless the file already carries
+# it beyond that offset, then the original length is overwritten in place.
+# Neither step truncates, and a racing append always lands beyond the
+# region being written, so it survives, at worst between the two parts.
+rewrite_finish() {
+  local jbase=$1 path live_size new_size file ext_size present
+  read -r live_size new_size path < "$jbase.journal" || return 2
+  hp_contained "$CO" "$path" || return 2
+  file="$CO/$path"
+  [ -f "$jbase.staged" ] && [ -f "$file" ] || return 2
+  ext_size=$((new_size - live_size))
+  if [ "$ext_size" -gt 0 ]; then
+    extension_present "$file" "$jbase.staged" "$live_size"; present=$?
+    case "$present" in
+      0) ;;
+      1) tail -c +"$((live_size + 1))" "$jbase.staged" >> "$file" || return 2 ;;
+      *) return 2 ;;
+    esac
+  fi
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = rewrite-after-extend ]; then hp_unlock; exit 99; fi
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in ledger-apply-before-overwrite) printf 'raced the overwrite\n' >> "$file" ;; esac
+  head -c "$live_size" "$jbase.staged" | dd of="$file" bs=65536 conv=notrunc 2>/dev/null || return 2
+  rm -f "$jbase.journal" "$jbase.staged"
+  return 0
+}
+# ledger_apply <path> <S> <target>: bring one ledger from S to target
+# without replacing its inode or dropping a line a live writer appended.
+# When the target's blob extends S's, the new tail is appended, and skipped
+# when the file already ends with it, so a recovery never appends twice.
+# Otherwise (a merge, or a fast-forward onto another host's merge, reordered
+# lines) the file is rewritten in place to the target's content followed by
+# whatever it held beyond S's blob; the rewrite is journaled under .rewrite/
+# before its first write and finished by rewrite_finish, which appends the new
+# bytes and then overwrites the old length in place, so it never truncates,
+# repeats safely after a crash, and a racing append survives, at worst between
+# the two parts. A file that already starts with the target's content is
+# left alone. Returns 0; 5 when the file does not start with what S
+# committed (a local rewrite: the caller retries and ends busy); 2 on error.
+ledger_apply() {
+  local path=$1 S=$2 target=$3 file t_blob t_size s_blob s_size live_size suffix_size new_size jbase
+  file="$CO/$path"
+  jbase="$CO/.rewrite/$(basename "$(dirname "$file")")"
+  # A rewrite of this ledger interrupted earlier is finished before anything
+  # is judged about the file.
+  if [ -f "$jbase.journal" ]; then rewrite_finish "$jbase" || return 2; fi
+  t_blob=$(git -C "$CO" rev-parse -q --verify "$target:$path" 2>/dev/null) || return 2
+  t_size=$(git -C "$CO" cat-file -s "$t_blob" 2>/dev/null) || return 2
+  [ "$t_size" -gt 0 ] || return 0
+  s_blob=$(git -C "$CO" rev-parse -q --verify "$S:$path" 2>/dev/null || true)
+  s_size=0
+  if [ -n "$s_blob" ]; then s_size=$(git -C "$CO" cat-file -s "$s_blob" 2>/dev/null) || return 2; fi
+  live_size=$(wc -c < "$file" | tr -d ' ')
+  if [ "$live_size" -ge "$t_size" ] && [ "$(blob_prefix_id "$file" "$t_size")" = "$t_blob" ]; then return 0; fi
+  if [ "$live_size" -lt "$s_size" ]; then return 5; fi
+  if [ "$s_size" -gt 0 ] && [ "$(blob_prefix_id "$file" "$s_size")" != "$s_blob" ]; then return 5; fi
+  if [ "$t_size" -ge "$s_size" ] && { [ "$s_size" -eq 0 ] || [ "$(git -C "$CO" cat-file blob "$t_blob" | blob_prefix_id - "$s_size")" = "$s_blob" ]; }; then
+    suffix_size=$((t_size - s_size))
+    [ "$suffix_size" -gt 0 ] || return 0
+    if [ "$live_size" -ge "$t_size" ] && [ "$(tail -c "$suffix_size" "$file" | git -C "$CO" hash-object --stdin)" = "$(git -C "$CO" cat-file blob "$t_blob" | tail -c "$suffix_size" | git -C "$CO" hash-object --stdin)" ]; then return 0; fi
+    git -C "$CO" cat-file blob "$t_blob" | tail -c "$suffix_size" >> "$file" || return 2
+    return 0
+  fi
+  if [ -L "$CO/.rewrite" ]; then
+    echo "sdd-state: $CO/.rewrite is a symbolic link; refusing to journal a ledger rewrite through it" >&2
+    return 2
+  fi
+  mkdir -p "$CO/.rewrite" || return 2
+  { git -C "$CO" cat-file blob "$t_blob" && tail -c +"$((s_size + 1))" "$file"; } > "$jbase.staged.tmp" || { rm -f "$jbase.staged.tmp"; return 2; }
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in ledger-apply-before-rewrite) printf 'raced the rewrite\n' >> "$file" ;; esac
+  [ "$(wc -c < "$file" | tr -d ' ')" -eq "$live_size" ] || { rm -f "$jbase.staged.tmp"; return 5; }
+  new_size=$(wc -c < "$jbase.staged.tmp" | tr -d ' ')
+  if [ "$new_size" -lt "$live_size" ]; then
+    # A target shorter than the live file: the ledger shrank, which an
+    # append-only ledger never does; the truncating write is the fallback.
+    cat "$jbase.staged.tmp" > "$file" || { rm -f "$jbase.staged.tmp"; return 2; }
+    rm -f "$jbase.staged.tmp"
+    return 0
+  fi
+  # The rewrite is journaled before its first write (sizes first, the path
+  # last so a name with spaces reads back whole); a crash at any later point
+  # is finished by rewrite_finish from the staged content.
+  mv -f "$jbase.staged.tmp" "$jbase.staged" || { rm -f "$jbase.staged.tmp"; return 2; }
+  printf '%s %s %s\n' "$live_size" "$new_size" "$path" > "$jbase.journal.tmp" || { rm -f "$jbase.journal.tmp" "$jbase.staged"; return 2; }
+  mv -f "$jbase.journal.tmp" "$jbase.journal" || { rm -f "$jbase.journal.tmp" "$jbase.staged"; return 2; }
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = rewrite-after-journal ]; then hp_unlock; exit 99; fi
+  rewrite_finish "$jbase"
+}
+# apply_files <S> <target>: bring the working tree from S to target without
+# replacing a ledger. Added or modified ledgers go through ledger_apply; other
+# files are checked out; files the target deletes are removed, a ledger among
+# them through remove_verified. Any failure returns 2; a ledger rewritten
+# locally returns 5 (from ledger_apply); a changed ledger the target deletes
+# returns 6.
+apply_files() {
+  local S=$1 target=$2 path dir tmp half
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    hp_contained "$CO" "$path" || return 2
+    mkdir -p "$(dirname "$CO/$path")" || return 2
+    case "$path" in
+      plans/*/progress.md)
+        if [ -f "$CO/$path" ]; then
+          ledger_apply "$path" "$S" "$target" || return $?
+          if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-ledger-apply ]; then hp_unlock; exit 99; fi
+        else
+          # A ledger absent at S is materialized through a temporary file
+          # beside it and published with one link(2), never appended to in
+          # place: an interrupted append leaves a prefix that the next
+          # apply's ledger_apply extends with the whole blob (S has no blob
+          # to subtract), and the result reads as a valid ledger.
+          tmp="$CO/$path.new.$$"
+          rm -f "$tmp"
+          git -C "$CO" show "$target:$path" > "$tmp" || { rm -f "$tmp"; return 2; }
+          if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-mid-ledger-create ]; then
+            # Test hook: half the blob written, the publish never reached.
+            half=$(( $(wc -c < "$tmp" | tr -d ' ') / 2 ))
+            head -c "$half" "$tmp" > "$tmp.half" && mv -f "$tmp.half" "$tmp"
+            hp_unlock; exit 99
+          fi
+          if ln "$tmp" "$CO/$path" 2>/dev/null; then
+            rm -f "$tmp"
+          else
+            # A writer created the ledger between the check and the
+            # publish: reconcile with it instead of replacing it.
+            rm -f "$tmp"
+            [ -f "$CO/$path" ] || return 2
+            ledger_apply "$path" "$S" "$target" || return $?
+          fi
+        fi ;;
+      *) git -C "$CO" checkout -q "$target" -- "$path" || return 2 ;;
+    esac
+  done < <(git -C "$CO" diff --name-only --diff-filter=AM "$S" "$target")
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    hp_contained "$CO" "$path" || return 2
+    case "$path" in
+      plans/*/progress.md)
+        dir=$(dirname "$CO/$path")
+        if [ -d "$dir" ]; then remove_verified "$dir" "$S:plans/$(basename "$dir")" || return 6; fi ;;
+      *) rm -f "$CO/$path" 2>/dev/null; [ ! -e "$CO/$path" ] || return 2 ;;
+    esac
+  done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
+  return 0
+}
+# recover_apply: finish a sync that was interrupted after its marker went
+# down. A journaled ledger rewrite is finished first (it is self-contained).
+# With the branch still at the marker's S, the irreversible pre-ref steps
+# may already have run (the verified copies of ledgers the target deletes),
+# so the apply is completed, never undone: the ref moves to the target
+# (guarded), any copy still renamed aside goes, and the post-ref apply
+# follows. ledger_apply is idempotent, so a half-applied ledger is completed,
+# never appended to twice. The marker is a barrier: a malformed marker, a
+# branch that has left both S and the target, or a recovery that fails all
+# leave it in place and say so, and every publishing subcommand refuses
+# until the tree is repaired.
+recover_apply() {
+  local S="" target="" rc head j path tracked
+  # Both paths this helper writes at the checkout root are read below, the
+  # journals before anything else: a link at either one would have the
+  # recovery walk, and finish, whatever it points at.
+  if [ -L "$CO/.rewrite" ]; then
+    echo "sdd-state: $CO/.rewrite is a symbolic link; refusing to journal a ledger rewrite through it" >&2
+    return 2
+  fi
+  if [ -L "$CO/.sync-applying" ]; then
+    echo "sdd-state: $CO/.sync-applying is a symbolic link; refusing to write the sync marker through it" >&2
+    return 2
+  fi
+  # Defence in depth for a checkout created before the tree validation: the
+  # sidecars are this host's own interrupted state, so a branch that tracks
+  # one is carrying somebody else's, and the loop below would run it.
+  tracked=$(git -C "$CO" ls-tree --full-tree HEAD -- .sync-applying .rewrite 2>/dev/null) || tracked=""
+  if [ -n "$tracked" ]; then
+    echo "sdd-state: the state branch tracks a recovery sidecar at ${tracked#*$'\t'}; refusing to run recovery from committed files. Remove it from the branch on the host that committed it, push, then sync again" >&2
+    return 2
+  fi
+  # A new ledger interrupted between its temporary copy and its publish
+  # leaves that copy inside a workspace, where a snapshot would commit it.
+  rm -f "$CO"/plans/*/progress.md.new.* 2>/dev/null
+  for j in "$CO"/.rewrite/*.journal; do
+    [ -f "$j" ] || continue
+    rewrite_finish "${j%.journal}" || { echo "sdd-state: an interrupted ledger rewrite left $j and finishing it failed; check the ledger it names, then remove it and its .staged file" >&2; return 2; }
+  done
+  [ -f "$CO/.sync-applying" ] || return 0
+  read -r S target < "$CO/.sync-applying" 2>/dev/null || true
+  # Validated as commits this checkout knows, not by length: a repository
+  # with extensions.objectFormat = sha256 writes 64-character ids.
+  if ! git -C "$CO" cat-file -e "$S^{commit}" 2>/dev/null || ! git -C "$CO" cat-file -e "$target^{commit}" 2>/dev/null; then
+    echo "sdd-state: $CO/.sync-applying is not a valid sync marker; check the working tree under $CO, then remove the marker" >&2
+    return 2
+  fi
+  head=$(tip_of "$CO" "refs/heads/$BRANCH")
+  if [ "$head" = "$S" ] && [ "$S" != "$target" ]; then
+    hp_has_sentinel "$CO" "$target" || { echo "sdd-state: $CO/.sync-applying names a target without the state sentinel; check the working tree under $CO, then remove the marker" >&2; return 2; }
+    # The verified copies go before the ref moves, the order apply_target
+    # itself follows: a crash between the two would otherwise leave a tomb
+    # under plans/ that no later call for this plan revisits.
+    while IFS= read -r path; do
+      case "$path" in plans/*/progress.md) rm -rf "$CO/plans/.removing-$(basename "$(dirname "$path")")"-* ;; esac
+    done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
+    git -C "$CO" update-ref -m "sdd sync (recovered)" "refs/heads/$BRANCH" "$target" "$S" 2>/dev/null || { echo "sdd-state: an interrupted sync left $CO/.sync-applying and the branch could not be moved to its target; check the working tree under $CO, then remove the marker" >&2; return 2; }
+    if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = recover-after-update-ref ]; then hp_unlock; exit 99; fi
+    head=$target
+  fi
+  if [ "$head" != "$target" ]; then
+    echo "sdd-state: an interrupted sync left $CO/.sync-applying but the branch has moved from its target ($(short "$target") to $(short "$head")); check the working tree under $CO, then remove the marker" >&2
+    return 2
+  fi
+  git -C "$CO" reset -q 2>/dev/null
+  apply_files "$S" "$target"; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "sdd-state: an interrupted sync left $CO/.sync-applying and finishing it failed (rc=$rc); repair the working tree under $CO and run sdd-state sync again" >&2
+    return 2
+  fi
+  rm -f "$CO/.sync-applying"
+}
+# restore_tombs: put back every copy an interrupted removal renamed aside
+# whose workspace path is free again. finish and sdd-dir restore such a copy
+# for their own plan and nothing revisits one for another plan, so without
+# this the deleted tracked rows it leaves would hold every later sync on the
+# repository. A copy stranded beside a workspace that is occupied again is a
+# human's to merge: it stays, named once.
+restore_tombs() {
+  local t name
+  for t in "$CO"/plans/.removing-*; do
+    [ -d "$t" ] || continue
+    name=${t##*/}; name=${name#.removing-}; name=${name%-*}
+    if [ -e "$CO/plans/$name" ] || [ -L "$CO/plans/$name" ]; then
+      if [ "$NAMED_TOMB" -eq 0 ]; then
+        echo "sdd-state: a copy from an interrupted removal is at $t beside $CO/plans/$name; move its files back into $CO/plans/$name or delete the copy, then run sdd-state sync again" >&2
+        NAMED_TOMB=1
+      fi
+      continue
+    fi
+    # Only a workspace the branch still tracks comes back: its deleted
+    # rows are what would hold the apply. A copy left for a plan the branch
+    # does not know is a human's leftover and stays where it is.
+    git -C "$CO" cat-file -e "refs/heads/$BRANCH:plans/$name" 2>/dev/null || continue
+    restore_tomb "$CO/plans/$name" "$t" || {
+      if [ "$NAMED_TOMB" -eq 0 ]; then
+        echo "sdd-state: the copy an interrupted removal left at $t could not be put back at $CO/plans/$name; move its files back or delete the copy, then run sdd-state sync again" >&2
+        NAMED_TOMB=1
+      fi
+    }
+  done
+}
+# apply_target <S> <target>: 0 applied, 5 retry (a non-ledger file changed
+# before the ref moved, or the ref moved under us), 6 remote-finished (a
+# ledger the target deletes changed here; nothing moved), 7 apply incomplete
+# after the ref moved (the marker stays; the next call finishes it), 2 error.
+# Controllers write without the lock, so the working tree is live.
+apply_target() {
+  local S=$1 target=$2 pending line status path left refusal rest res dir rc i refused tombs=() dirs=()
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-apply:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-apply:}" ;; esac
+  if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = sync-before-apply ]; then
+    : > "$CO/.sync-paused"
+    while [ -e "$CO/.sync-pause" ]; do sleep 0.1; done
+    rm -f "$CO/.sync-paused"
+  fi
+  restore_tombs
+  pending=$(git -C "$CO" status --porcelain -- plans/ 2>/dev/null)
+  if [ -n "$pending" ]; then
+    refused=0
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      status=${line:0:2}; path=${line:3}
+      case "$status|$path" in
+        " M|plans/"*"/progress.md") continue ;;
+      esac
+      # A copy a killed removal left aside is not a concurrent write: it is
+      # cleared by finish, by sdd-dir and by the restore above, and
+      # treating it as one would wedge every later sync on this repository.
+      case "$path" in "plans/.removing-"*) continue ;; esac
+      # A tracked file missing from a workspace: the restore above left the
+      # copy that holds it only when the workspace is occupied again, and
+      # named it there, so nothing more is said about this row; telling a
+      # human to move or delete a file that is gone would be wrong.
+      case "$status|$path" in
+        " D|plans/"*)
+          left=${path#plans/}; left=${left%%/*}
+          if ! ls -d "$CO/plans/.removing-$left-"* >/dev/null 2>&1; then
+            [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is committed on the state branch but missing from the checkout and holds the apply; put it back or finish its plan, then run sdd-state sync again" >&2
+          fi
+          refused=1; continue ;;
+      esac
+      [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is not part of a plan workspace and holds the apply; inspect it, move or delete it, then run sdd-state sync again" >&2
+      refused=1
+    done < <(printf '%s\n' "$pending")
+    if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
+  fi
+  # The incoming tree is inspected whole before the checkout materializes
+  # any of it: the same validation the creation of a checkout runs, so a
+  # commit carrying a symbolic link, a submodule entry or a recovery sidecar
+  # is refused by either route. The refusal comes before anything is renamed
+  # or moved, so nothing is left half-applied.
+  rc=0; refusal=$(hp_tree_refusal "$CO" "$target") || rc=$?
+  # A tree that could not be read at all names no kind and no path, so it
+  # gets its own sentence rather than the refusal's two-word parse.
+  if [ "$rc" -eq 2 ]; then
+    echo "sdd-state: $target could not be read as a tree; refusing to apply it. Fetch the state branch again and retry; if it persists, the repository needs repair" >&2
+    return 2
+  fi
+  if [ "$rc" -ne 0 ]; then
+    rest=${refusal#* }
+    echo "sdd-state: $target carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to apply it. Remove it on the host that committed it and commit the removal on the state branch (snapshot does that for a path under plans/; a root-level one needs a commit on the branch itself), push, then sync again" >&2
+    return 2
+  fi
+  # Every path this apply touches must also be a real entry on disk: a link
+  # already there would take the writes below out of the cache.
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    hp_contained "$CO" "$path" || return 2
+  done < <(git -C "$CO" diff --name-only "$S" "$target")
+  # Ledgers the target deletes are a remote finish: every one is renamed
+  # aside and verified first, before the ref moves, so a line written up to
+  # the rename is caught; one refusal puts them all back and nothing has
+  # changed; only when every one verified are the copies discarded.
+  REMOTE_FINISHED=""
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-delete:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-delete:}" ;; esac
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in plans/*/progress.md) ;; *) continue ;; esac
+    dir=$(dirname "$CO/$path")
+    [ -d "$dir" ] || continue
+    remove_verified "$dir" "$S:plans/$(basename "$dir")" keep; rc=$?
+    case "$rc" in
+      0) dirs[${#dirs[@]}]=$dir; tombs[${#tombs[@]}]=$TOMB ;;
+      1) REMOTE_FINISHED="$REMOTE_FINISHED,$(enc "$(basename "$dir")")" ;;
+      *) i=0; while [ "$i" -lt "${#tombs[@]}" ]; do restore_tomb "${dirs[$i]}" "${tombs[$i]}"; i=$((i + 1)); done; return 2 ;;
+    esac
+  done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
+  restore_all() { local k=0; while [ "$k" -lt "${#tombs[@]}" ]; do restore_tomb "${dirs[$k]}" "${tombs[$k]}"; k=$((k + 1)); done; }
+  if [ -n "$REMOTE_FINISHED" ]; then
+    restore_all
+    REMOTE_FINISHED=${REMOTE_FINISHED#,}; return 6
+  fi
+  hp_has_sentinel "$CO" "$target" || { restore_all; return 2; }
+  # The marker goes down before anything irreversible: the verified copies
+  # are discarded only once it is on disk and read back, and the ref moves
+  # after that. A crash anywhere from here on is finished by recover_apply.
+  if [ -L "$CO/.sync-applying" ]; then
+    echo "sdd-state: $CO/.sync-applying is a symbolic link; refusing to write the sync marker through it" >&2
+    restore_all; return 2
+  fi
+  printf '%s %s\n' "$S" "$target" > "$CO/.sync-applying" || { rm -f "$CO/.sync-applying"; restore_all; return 2; }
+  [ "$(cat "$CO/.sync-applying" 2>/dev/null)" = "$S $target" ] || { rm -f "$CO/.sync-applying"; restore_all; return 2; }
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-marker ]; then hp_unlock; exit 99; fi
+  i=0; while [ "$i" -lt "${#tombs[@]}" ]; do discard_tomb "${tombs[$i]}" || true; i=$((i + 1)); done
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-discard ]; then hp_unlock; exit 99; fi
+  git -C "$CO" update-ref -m "sdd sync" "refs/heads/$BRANCH" "$target" "$S" 2>/dev/null || { rm -f "$CO/.sync-applying"; return 5; }
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-update-ref ]; then hp_unlock; exit 99; fi
+  git -C "$CO" reset -q 2>/dev/null
+  # The ref has moved: an attempt a live writer defeats is retried here,
+  # never by the caller's loop, whose snapshot would publish the
+  # half-applied tree over the target. Three defeats, or a ledger the
+  # target deletes reappearing, leave the marker for the next call to
+  # finish through recover_apply.
+  for _ in 1 2 3; do
+    apply_files "$S" "$target"; res=$?
+    [ "$res" -eq 5 ] || break
+  done
+  case "$res" in
+    0)
+      # A link that appeared under a path this apply touched (a writer
+      # between the checks above and the writes) fails it closed: the marker
+      # stays, and every later call refuses until the link is gone.
+      while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        hp_contained "$CO" "$path" || return 2
+      done < <(git -C "$CO" diff --name-only "$S" "$target")
+      rm -f "$CO/.sync-applying"; return 0 ;;
+    5|6) return 7 ;;
+    *) return "$res" ;;
+  esac
+}
+cmd_sync() {
+  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure
+  REMOTE_FINISHED=""
+  # remove_verified (Task 6) and recover_apply live in this file; sync, finish, handoff and snapshot share them.
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --assume-absent) assume=1; shift ;;
+      --repo) [ $# -ge 2 ] || usage; repo=$2; shift 2 ;;
+      -*) usage ;;
+      *) plan=$1; shift ;;
+    esac
+  done
+  if [ -n "$plan" ]; then
+    resolve_plan_basic "$plan"
+  elif [ -n "$repo" ]; then
+    PLAN_DIR=$(hp_physical_dir "$repo") || usage
+    git -C "$PLAN_DIR" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $repo" >&2; exit 2; }
+    BRANCH=$(hp_state_branch "$PLAN_DIR"); REMOTE=$(hp_state_remote "$PLAN_DIR"); CO=$(hp_checkout_path "$PLAN_DIR")
+  else
+    usage
+  fi
+  if [ "$(hp_backend "$PLAN_DIR")" = plain ]; then echo "status=plain"; return 0; fi
+  stamp=$(hp_stamp_path "$PLAN_DIR")
+  mkdir -p "$(dirname "$stamp")"
+  # Outcomes that end before reconciliation still ensure the checkout.
+  settle() { # <status> <exit>
+    # A refused tip (hostile tree) or a checkout this host cannot have is an
+    # error with a status line, not a silent exit: every subcommand prints
+    # exactly one.
+    ensure=$(hp_ensure_checkout "$PLAN_DIR") || { echo "status=error"; return 2; }
+    if [ "${ensure%% *}" != branch ]; then echo "status=plain"; return 0; fi
+    S=$(tip_of "$CO" "refs/heads/$BRANCH")
+    echo "status=$1 local=$(short "$S") remote=none age=$(age_of "$CO" "$S")"
+    return "$2"
+  }
+  if [ "$assume" -eq 1 ]; then : > "$stamp"; settle assumed-absent 0; return $?; fi
+  if ! hp_has_remote "$PLAN_DIR"; then : > "$stamp"; settle no-remote 0; return $?; fi
+  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 git -C "$PLAN_DIR" fetch -q "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?
+  if [ "$rc" -ne 0 ]; then
+    case "$err" in
+      *"couldn't find remote ref"*) : > "$stamp"; settle absent 0; return $? ;;
+    esac
+    S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")
+    # A default clone has the branch as a remote-tracking ref only; the
+    # checkout is built from it, which creates the local head.
+    if [ -z "$S" ] && [ -n "$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")" ]; then
+      hp_ensure_checkout "$PLAN_DIR" >/dev/null 2>&1 || true
+      S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")
+    fi
+    if [ -n "$S" ]; then
+      hp_ensure_checkout "$PLAN_DIR" >/dev/null 2>&1 || true
+      echo "status=offline local=$(short "$S") remote=$(short "$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")") age=$(age_of "$PLAN_DIR" "$S")"
+      return 1
+    fi
+    echo "status=offline-no-state local=none remote=none age=0"
+    return 1
+  fi
+  : > "$stamp"
+  # The remote tip is read once, here, and that sha alone is reconciled: a
+  # fetch by another process cannot swap in a different commit later.
+  R=$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")
+  [ -n "$R" ] || { echo "status=error"; return 2; }
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-pin:*) git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-pin:}" 2>/dev/null ;; esac
+  # A branch at the state name whose root lacks the exact sentinel belongs
+  # to someone else: it is never reconciled or written, and refs and files
+  # stay as they are.
+  if ! hp_has_sentinel "$PLAN_DIR" "$R"; then
+    S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")
+    echo "sdd-state: $REMOTE/$BRANCH exists but is not a hyperpowers state branch; set git config hyperpowers.stateBranch to another name" >&2
+    echo "status=foreign local=$(short "$S") remote=$(short "$R") age=$(age_of "$PLAN_DIR" "$R")"
+    return 2
+  fi
+  had_co=0; [ -e "$CO/.git" ] && had_co=1
+  ensure=$(hp_ensure_checkout "$PLAN_DIR") || { echo "status=error"; return 2; }
+  if [ "${ensure%% *}" != branch ]; then echo "status=plain"; return 0; fi
+  [ "$had_co" -eq 1 ] || created=created
+  hp_lock "$PLAN_DIR" || return 2
+  for _ in 1 2 3; do
+    recover_apply || { hp_unlock; echo "status=error"; return 2; }
+    snapshot_pending || { hp_unlock; echo "status=error"; return 2; }
+    S=$(tip_of "$CO" "refs/heads/$BRANCH")
+    if [ "$S" = "$R" ]; then
+      hp_unlock; echo "status=${created:-up-to-date} local=$(short "$S") remote=$(short "$R") age=$(age_of "$CO" "$S")"; return 0
+    fi
+    if git -C "$CO" merge-base --is-ancestor "$S" "$R" 2>/dev/null; then
+      target=$R; kind=fast-forwarded
+    elif git -C "$CO" merge-base --is-ancestor "$R" "$S" 2>/dev/null; then
+      hp_unlock; echo "status=ahead local=$(short "$S") remote=$(short "$R") age=$(age_of "$CO" "$S" "$R")"; return 0
+    else
+      if hp_git_version_at_least 2 38 && mt=$(git -C "$CO" merge-tree --write-tree "$S" "$R" 2>/dev/null); then
+        tree=$(printf '%s\n' "$mt" | head -n 1)
+        target=$(printf 'sdd: merge %s into %s\n' "$(short "$R")" "$(short "$S")" | hp_git_id "$CO" commit-tree "$tree" -p "$S" -p "$R") || { hp_unlock; echo "status=error"; return 2; }
+        hp_has_sentinel "$CO" "$target" || { hp_unlock; echo "status=error"; return 2; }
+        kind=merged
+      else
+        hp_unlock
+        echo "status=diverged local=$(short "$S") remote=$(short "$R") age=$(age_of "$CO" "$S" "$R")"
+        echo "merge=git -C $CO merge $REMOTE/$BRANCH"
+        return 3
+      fi
+    fi
+    apply_target "$S" "$target"; res=$?
+    if [ "$res" -eq 0 ]; then
+      hp_unlock; echo "status=$kind local=$(short "$target") remote=$(short "$R") age=$(age_of "$CO" "$target")"; return 0
+    fi
+    if [ "$res" -eq 6 ]; then
+      hp_unlock; echo "status=remote-finished plans=$REMOTE_FINISHED local=$(short "$S") remote=$(short "$R") age=$(age_of "$CO" "$S" "$R")"; return 3
+    fi
+    if [ "$res" -eq 7 ]; then
+      hp_unlock; echo "status=busy local=$(short "$target") remote=$(short "$R") age=$(age_of "$CO" "$target")"; return 3
+    fi
+    [ "$res" -eq 5 ] || { hp_unlock; echo "status=error"; return 2; }
+  done
+  hp_unlock
+  echo "status=busy local=$(short "$S") remote=$(short "$R") age=$(age_of "$CO" "$S" "$R")"
+  return 3
+}
+
+# --- verify ------------------------------------------------------------------
+# The repository identity recorded at hand-off: the lexicographically
+# smallest root commit of HEAD, stable across clones and hosts.
+root_of() { git -C "$1" rev-list --max-parents=0 HEAD 2>/dev/null | sort | head -n 1; }
+# <repo> <sha>: the commit exists, is unambiguous, and is reachable from HEAD.
+commit_present() {
+  git -C "$1" cat-file -e "$2^{commit}" 2>/dev/null && git -C "$1" merge-base --is-ancestor "$2" HEAD 2>/dev/null
+}
+# verify_ledger <ledger-copy> <code-repo>: the checks of verify over a
+# ledger already copied out from under the lock. Prints the status line and
+# returns its exit code; the caller removes the copy.
+verify_ledger() {
+  local ledger=$1 code=$2 line rec_root rec_sha="" rec_branch="" shas sha missing="" tasks plan_line plan_root plan_sha plan_branch
+  line=$(grep -E '^handoff: code root=' "$ledger" | tail -n 1)
+  if [ -n "$line" ]; then
+    rec_root=$(printf '%s' "$line" | sed -n 's/^handoff: code root=\([0-9a-f]*\) .*/\1/p')
+    rec_branch=$(printf '%s' "$line" | sed -n 's/^handoff: code root=[0-9a-f]* \(.*\)@[0-9a-f]* at .*/\1/p')
+    rec_sha=$(printf '%s' "$line" | sed -n 's/^handoff: code root=[0-9a-f]* .*@\([0-9a-f]*\) at .*/\1/p')
+    # A shallow clone's boundary commits read as roots: skip the identity
+    # comparison there and let commit presence speak.
+    if [ "$(git -C "$code" rev-parse --is-shallow-repository 2>/dev/null)" != true ] && [ "$(root_of "$code")" != "$rec_root" ]; then
+      echo "status=wrong-repo expected=${rec_root:0:7} repo=code"; return 9
+    fi
+  fi
+  # Both endpoints of every completion range, then the hand-off head.
+  shas=$(grep -Eo 'Task [0-9]+: complete \(commits [0-9a-f]+\.\.[0-9a-f]+' "$ledger" | sed 's/.*(commits //; s/\.\./ /')
+  tasks=$(printf '%s\n' "$shas" | grep -c .)
+  [ -n "$rec_sha" ] && shas="$shas $rec_sha"
+  for sha in $shas; do
+    case ",$missing," in *",${sha:0:7},"*) continue ;; esac
+    commit_present "$code" "$sha" || missing="$missing,${sha:0:7}"
+  done
+  if [ -n "$missing" ]; then echo "status=code-missing missing=${missing#,} branch=${rec_branch:-unknown}"; return 9; fi
+  plan_line=$(grep -E '^handoff: plan root=' "$ledger" | tail -n 1)
+  if [ -n "$plan_line" ]; then
+    plan_root=$(printf '%s' "$plan_line" | sed -n 's/^handoff: plan root=\([0-9a-f]*\) .*/\1/p')
+    plan_branch=$(printf '%s' "$plan_line" | sed -n 's/^handoff: plan root=[0-9a-f]* \(.*\)@[0-9a-f]*$/\1/p')
+    plan_sha=$(printf '%s' "$plan_line" | sed -n 's/^handoff: plan root=[0-9a-f]* .*@\([0-9a-f]*\)$/\1/p')
+    if [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" != true ] && [ "$(root_of "$REPO")" != "$plan_root" ]; then
+      echo "status=wrong-repo expected=${plan_root:0:7} repo=plan"; return 9
+    fi
+    commit_present "$REPO" "$plan_sha" || { echo "status=plan-stale sha=${plan_sha:0:7} branch=$plan_branch"; return 9; }
+  fi
+  echo "status=ok tasks=$tasks"
+}
+cmd_verify() {
+  local plan="" code="" ledger copy rc
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] || usage
+  resolve_plan "$plan"
+  if [ -z "$code" ]; then
+    code=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "sdd-state: not inside a code repository; pass --code-repo DIR" >&2; exit 2; }
+  fi
+  code=$(hp_physical_dir "$code") || { echo "sdd-state: no such directory: $code" >&2; exit 2; }
+  ledger=$(ledger_path)
+  # The ledger is read under the repository lock, after an interrupted sync
+  # has been finished, so a completion line that arrived with the last
+  # fetch is seen; a copy is what gets parsed, so the lock is short.
+  hp_lock "$PLAN_DIR" || exit 2
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  if [ ! -f "$ledger" ] && [ "$BACKEND" != branch ]; then
+    # Under the plain backend the dossier may still be on the state branch
+    # only: bring it into the plain cache before judging it absent.
+    mkdir -p "$ROOT" 2>/dev/null || true; touch "$ROOT" 2>/dev/null || true
+    hp_materialize_plain "$PLAN_DIR" "$WS" "$WSDIR" || { hp_unlock; echo "status=error"; return 2; }
+  fi
+  if [ ! -f "$ledger" ]; then hp_unlock; echo "status=ok tasks=0"; return 0; fi
+  copy=$(mktemp "${TMPDIR:-/tmp}/sdd-verify.XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
+  cp "$ledger" "$copy" || { rm -f "$copy"; hp_unlock; echo "status=error"; return 2; }
+  hp_unlock
+  verify_ledger "$copy" "$code"; rc=$?
+  rm -f "$copy"
+  return "$rc"
+}
+
+# --- handoff -----------------------------------------------------------------
+# Snapshot for another host. Refuses an uncommitted plan file (the
+# destination could not start), a dirty code tree (work would stay behind
+# unnoticed) and a shallow source (its oldest commit is a fetch boundary,
+# not the identity a full clone would compute); records the code
+# repository's identity, and the plan repository's when it differs, as one
+# write under the repository lock; pushes only with --push, after the
+# configured scan over every commit the push publishes, with a lease on the
+# remote tip the scan was computed against.
+cmd_handoff() {
+  local plan="" push=0 plan_ok=0 dirty_ok=0 code="" rel status_out dirty line code_root code_branch code_sha plan_root plan_sha plan_branch extra="" record ledger out rc sha cmd range patch err pushto remote_line remote_tip
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --push) push=1; shift ;;
+      --plan-untracked-ok) plan_ok=1; shift ;;
+      --code-dirty-ok) dirty_ok=1; shift ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] || usage
+  resolve_plan "$plan"
+  rel=$(hp_plan_rel "$plan")
+  if [ "$plan_ok" -eq 0 ]; then
+    if ! git -C "$REPO" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 || ! git -C "$REPO" diff --quiet HEAD -- "$rel" 2>/dev/null; then
+      echo "status=plan-not-committed file=$(enc "$rel")"; return 8
+    fi
+  fi
+  if [ -z "$code" ]; then
+    code=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "sdd-state: not inside a code repository; pass --code-repo DIR" >&2; exit 2; }
+  fi
+  code=$(hp_physical_dir "$code") || { echo "sdd-state: no such directory: $code" >&2; exit 2; }
+  if [ "$dirty_ok" -eq 0 ]; then
+    # A cleanliness check that could not run is not a clean tree.
+    status_out=$(git -C "$code" status --porcelain 2>/dev/null) || { echo "sdd-state: git status failed in $code; the code tree's cleanliness could not be established" >&2; echo "status=error"; return 2; }
+    dirty=""
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      dirty="$dirty,$(enc "${line#???}")"
+    done < <(printf '%s\n' "$status_out" | grep . | head -n 3)
+    if [ -n "$dirty" ]; then echo "status=code-dirty paths=${dirty#,}"; return 10; fi
+  fi
+  if [ "$BACKEND" != branch ]; then echo "status=plain"; return 7; fi
+  # A detached checkout has no branch the other host could pull.
+  code_branch=$(git -C "$code" branch --show-current 2>/dev/null)
+  [ -n "$code_branch" ] || { echo "status=detached-head repo=code"; return 11; }
+  if [ "$code" != "$REPO" ]; then
+    plan_branch=$(git -C "$REPO" branch --show-current 2>/dev/null)
+    [ -n "$plan_branch" ] || { echo "status=detached-head repo=plan"; return 11; }
+  fi
+  # A shallow clone's oldest commits are a fetch boundary, not the root a
+  # full clone computes; the identity it would record misleads verify there.
+  if [ "$(git -C "$code" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=code"; return 12; fi
+  if [ "$code" != "$REPO" ] && [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=plan"; return 12; fi
+  code_root=$(root_of "$code"); code_sha=$(git -C "$code" rev-parse HEAD 2>/dev/null)
+  [ -n "$code_root" ] && [ -n "$code_sha" ] || { echo "status=error"; return 2; }
+  record=$(printf 'handoff: code root=%s %s@%s at %s from %s' "$code_root" "$code_branch" "$code_sha" "$(hp_utc_now)" "$(hostname)")
+  if [ "$code" != "$REPO" ]; then
+    plan_root=$(root_of "$REPO"); plan_sha=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
+    [ -n "$plan_root" ] && [ -n "$plan_sha" ] || { echo "status=error"; return 2; }
+    record=$(printf '%s\nhandoff: plan root=%s %s@%s' "$record" "$plan_root" "$plan_branch" "$plan_sha")
+    extra=" plan=$plan_branch@${plan_sha:0:7}"
+  fi
+  # Everything that touches the dossier runs under the lock: an interrupted
+  # sync is finished first, the record goes in as one write, and the commit,
+  # the scan and the push follow with nothing else interleaving.
+  hp_lock "$PLAN_DIR" || return 2
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  # The dossier must be real files inside the checkout: a plans directory,
+  # workspace or ledger that is a symbolic link (one a fetched branch could
+  # carry) would send the writes below outside it. hp_contained is the one
+  # rule every writer shares.
+  hp_contained "$CO" "plans/$WS/progress.md" || { hp_unlock; echo "status=error"; return 2; }
+  mkdir -p "$WSDIR" || { hp_unlock; echo "status=error"; return 2; }
+  ledger=$(ledger_path)
+  if [ ! -f "$ledger" ]; then printf '%s%s\n' "$IDENTITY_PREFIX" "$rel" > "$ledger" || { hp_unlock; echo "status=error"; return 2; }; fi
+  printf '%s\n' "$record" >> "$ledger" || { hp_unlock; echo "status=error"; return 2; }
+  out=$(hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: handoff $(hp_utc_now)" "plans/$WS"); rc=$?
+  [ "$rc" -eq 0 ] || { hp_unlock; echo "status=error"; return 2; }
+  sha=$(git -C "$CO" rev-parse "refs/heads/$BRANCH")
+  if hp_has_remote "$PLAN_DIR"; then pushto="$REMOTE/$BRANCH"; else pushto=none; fi
+  if [ "$push" -eq 0 ] || [ "$pushto" = none ]; then
+    hp_unlock
+    echo "status=snapshot sha=${sha:0:7} code=$code_branch@${code_sha:0:7}$extra push=$pushto"; return 0
+  fi
+  # The remote tip is read now, from the remote itself, so the scan covers
+  # exactly the commits this push publishes, and the push carries a lease
+  # on that tip: a remote that moves in between is refused, never
+  # overwritten with history the scanner did not see.
+  remote_line=$(git -C "$CO" ls-remote --exit-code "$REMOTE" "refs/heads/$BRANCH" 2>/dev/null); rc=$?
+  case "$rc" in
+    0) remote_tip=$(printf '%s\n' "$remote_line" | cut -f1) ;;
+    2) remote_tip="" ;;
+    *) hp_unlock; echo "sdd-state: could not read $REMOTE" >&2; echo "status=push-failed sha=${sha:0:7}"; return 1 ;;
+  esac
+  if [ -n "$remote_tip" ] && ! git -C "$CO" merge-base --is-ancestor "$remote_tip" "$sha" 2>/dev/null; then
+    hp_unlock; echo "sdd-state: $REMOTE/$BRANCH has moved since the last sync; run sdd-state sync first" >&2; echo "status=push-failed sha=${sha:0:7}"; return 1
+  fi
+  cmd=$(git -C "$PLAN_DIR" config --get hyperpowers.prePushScan 2>/dev/null || true)
+  if [ -n "$cmd" ]; then
+    # Every commit the push publishes: the root commit's own patch, every
+    # commit the range reaches on any parent line, a merge as its diff
+    # against each parent, binary content as bytes.
+    if [ -n "$remote_tip" ]; then range="$remote_tip..$sha"; else range=$sha; fi
+    patch=$(mktemp "${TMPDIR:-/tmp}/sdd-scan.XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
+    if ! git -C "$CO" log --root -p --format= --no-color -m --text "$range" -- . > "$patch" 2>/dev/null; then rm -f "$patch"; hp_unlock; echo "status=scan-failed reason=git"; return 5; fi
+    if ! (cd "$CO" && HYPERPOWERS_SCAN_RANGE="$range" sh -c "$cmd" < "$patch" >&2); then rm -f "$patch"; hp_unlock; echo "status=scan-failed reason=scanner"; return 5; fi
+    rm -f "$patch"
+  fi
+  if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = handoff-after-scan ]; then
+    : > "$CO/.handoff-paused"
+    while [ -e "$CO/.handoff-pause" ]; do sleep 0.1; done
+    rm -f "$CO/.handoff-paused"
+  fi
+  if ! err=$(git -C "$CO" push -q --force-with-lease="refs/heads/$BRANCH:$remote_tip" "$REMOTE" "$sha:refs/heads/$BRANCH" 2>&1); then
+    hp_unlock
+    printf '%s\n' "$err" >&2
+    echo "status=push-failed sha=${sha:0:7}"; return 1
+  fi
+  hp_unlock
+  echo "status=pushed sha=${sha:0:7} code=$code_branch@${code_sha:0:7}$extra"
+}
+
+# --- dispatch ----------------------------------------------------------------
+sub=${1:-}
+[ -n "$sub" ] || usage
+shift
+case "$sub" in
+  snapshot) cmd_snapshot "$@" ;;
+  import) cmd_import "$@" ;;
+  claim) cmd_claim "$@" ;;
+  finish) cmd_finish "$@" ;;
+  prune) cmd_prune "$@" ;;
+  sync) cmd_sync "$@" ;;
+  verify) cmd_verify "$@" ;;
+  handoff) cmd_handoff "$@" ;;
+  *) usage ;;
+esac

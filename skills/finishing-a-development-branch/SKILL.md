@@ -116,6 +116,40 @@ GIT_COMMON=$(cd "$(git rev-parse --git-common-dir)" 2>/dev/null && pwd -P)
 WORKTREE_PATH=$(git rev-parse --show-toplevel)
 ```
 
+The skill that called you may pass the session's mode (`current-branch`,
+`new-branch`, or `worktree`): subagent-driven-development reads it from the
+ledger's `session` line before the workspace is finished, executing-plans
+carries it from the branch question. A passed `new-branch` or `worktree`
+changes nothing here: the environment rows below govern them as they do
+today. A passed `current-branch` selects one of the two `current-branch`
+rows and the environment rows do not apply to it; on the default branch it
+also skips Step 3 and Step 6, on any other branch Step 3 and Step 6 run as
+for the standard menu.
+The repository's default branch is the branch `refs/remotes/origin/HEAD`
+points at when that ref exists; otherwise whichever one of `main` and
+`master` exists as a local branch; when both exist, the one
+`init.defaultBranch` names, and when it names neither, ask your human
+partner which is the default before choosing a row; when neither exists,
+the `init.defaultBranch` value, otherwise `master`:
+
+```bash
+CURRENT_BRANCH=$(git branch --show-current)
+DEFAULT_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+if [ -z "$DEFAULT_BRANCH" ]; then
+  HAVE_MAIN=$(git show-ref --verify -q refs/heads/main && echo yes) || true
+  HAVE_MASTER=$(git show-ref --verify -q refs/heads/master && echo yes) || true
+  CONFIGURED=$(git config --get init.defaultBranch) || true
+  if [ "$HAVE_MAIN" = yes ] && [ "$HAVE_MASTER" = yes ]; then
+    case "$CONFIGURED" in main|master) DEFAULT_BRANCH=$CONFIGURED ;; *) DEFAULT_BRANCH="" ;; esac
+  elif [ "$HAVE_MAIN" = yes ]; then DEFAULT_BRANCH=main
+  elif [ "$HAVE_MASTER" = yes ]; then DEFAULT_BRANCH=master
+  else DEFAULT_BRANCH=${CONFIGURED:-master}
+  fi
+fi
+# An empty DEFAULT_BRANCH here means both branches exist and the config
+# names neither: ask before choosing a row.
+```
+
 This determines which menu to show and how cleanup works:
 
 | State | Menu | Cleanup |
@@ -123,12 +157,22 @@ This determines which menu to show and how cleanup works:
 | `GIT_DIR == GIT_COMMON` (normal repo) | Standard 3 options | No worktree to clean up |
 | `GIT_DIR != GIT_COMMON`, named branch | Standard 3 options | Provenance-based (see Step 6) |
 | `GIT_DIR != GIT_COMMON`, detached HEAD | Reduced 2 options (no merge) | Externally managed — leave in place |
+| mode `current-branch` passed, `$CURRENT_BRANCH` is `$DEFAULT_BRANCH` | Reduced 2 options (push, keep) | None: no branch and no worktree were created |
+| mode `current-branch` passed, any other branch | Standard 3 options | Option 1 deletes the merged branch as usual; no worktree to remove |
+| `$DEFAULT_BRANCH` is empty (both `main` and `master` exist, `init.defaultBranch` names neither) | Ask your human partner which is the default, then read this table again | Decided by the row their answer selects |
 
 ## Step 3: Determine Base Branch
 
-The base branch is the one Step 1 confirmed; when Step 1 had no spec and did
-not ask, confirm it here the same way (ask "This branch split from <your
-best guess> - is that correct?"). Confirm before merging: merging into the wrong base is expensive to undo.
+Skip this step when mode `current-branch` was passed and `$CURRENT_BRANCH`
+is `$DEFAULT_BRANCH`: there is no merge and no base to confirm. A
+`current-branch` session on any other branch needs its base like any
+feature branch.
+
+The base branch is the one Step 1 confirmed: whatever this work forked
+from, usually named in the plan, the conversation, or the branch's
+upstream. When Step 1 had no spec and did not ask, confirm it here the same
+way (ask "This branch split from <your best guess> - is that correct?").
+Confirm before merging: merging into the wrong base is expensive to undo.
 
 ## Step 4: Present Options
 
@@ -211,6 +255,17 @@ Implementation complete. What would you like to do?
 Which option?
 ```
 
+**Mode `current-branch` on the default branch — present exactly these 2 options:**
+
+```
+Implementation complete on <branch>. What would you like to do?
+
+1. Push <branch>
+2. Keep as-is (I'll handle it later)
+
+Which option?
+```
+
 **Detached HEAD — present exactly these 2 options:**
 
 ```
@@ -229,6 +284,18 @@ discard the work" below). Wait for their answer; the integration decision
 is theirs.
 
 ## Step 5: Execute Choice
+
+### Mode current-branch on the default branch
+
+The two-option menu above maps to: option 1 pushes exactly this branch,
+`git push <remote> <branch>:<branch>` (add `-u` when the branch has no
+upstream yet), where `<remote>` is the first of `git config
+branch.<branch>.pushRemote`, `git config remote.pushDefault`, `git config
+branch.<branch>.remote`, and `origin` that is set; no merge and no pull
+request; report the branch pushed and the remote. Option 2 is "Option 3:
+Keep As-Is" below, whose report names no worktree in this mode. Options 1
+and 2 of the standard menu do not apply, and Step 6 does not run: nothing
+was created.
 
 ### Option 1: Merge Locally
 
@@ -305,7 +372,7 @@ git branch -D <feature-branch>
 
 ## Step 6: Cleanup Workspace
 
-**Runs for Option 1 and confirmed discards.** Options 2 and 3 always
+**Runs for the standard menu's Option 1 and confirmed discards; never after the push-or-keep menu of mode `current-branch` on the default branch.** Options 2 and 3 always
 preserve the worktree. Both callers have already changed directory to the
 main repo root — worktree removal must run from outside the worktree —
 and use the `GIT_DIR`/`GIT_COMMON`/`WORKTREE_PATH` values captured in
@@ -354,6 +421,7 @@ place. If your platform provides a workspace-exit tool, use it.
 | 1. Merge locally | yes | - | - | yes |
 | 2. Create PR | - | yes | yes | - |
 | 3. Keep as-is | - | - | yes | - |
+| Push current branch (mode current-branch) | - | yes | n/a | - |
 | Discard (explicit request only) | - | - | - | yes (force) |
 
 ## Common Rationalizations

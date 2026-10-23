@@ -3,16 +3,19 @@
 ```
 You: I'm using Subagent-Driven Development to execute this plan.
 
-[Setup: worktree verified]
-[Read plan file once: docs/hyperpowers/plans/feature-plan.md, and the spec its **Spec:** header names]
-[Resolve workspace: scripts/sdd-dir docs/hyperpowers/plans/feature-plan.md — no ledger inside, fresh start]
+[Setup: branch question answered: worktree]
+[Resolve workspace: scripts/sdd-state sync docs/hyperpowers/plans/feature-plan.md → status=absent; scripts/sdd-dir docs/hyperpowers/plans/feature-plan.md — no ledger inside, fresh start]
 [Ledger: # SDD ledger — plan: docs/hyperpowers/plans/feature-plan.md]
+[Ledger: session 1f3a9c: mode worktree on feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
+[scripts/sdd-state verify docs/hyperpowers/plans/feature-plan.md → status=ok tasks=0]
+[Read plan file once: docs/hyperpowers/plans/feature-plan.md, and the spec its **Spec:** header names]
 [Create todos for all tasks]
 
 Task 1: Hook installation script (declared low)
 
+[scripts/sdd-state claim docs/hyperpowers/plans/feature-plan.md 1 --session 1f3a9c → status=claimed task=1]
 [Run task-brief for Task 1; dispatch implementer with brief + report paths + context]
-[Ledger: Task 1: implementer subagent-01f3 — recorded for fix-round resumes]
+[Ledger: Task 1: implementer subagent-01f3 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes]
 
 Implementer: "Before I begin - should the hook be installed at user or system level?"
 
@@ -32,11 +35,13 @@ Task reviewer: Spec ✅ - all requirements met, nothing extra.
 [Effective tier still low, plan gate reviewed the plan, no trigger fired: record the tier-skip event, skip the Codex task gate]
 [Write tier-skips.md in this plan's workspace — Task 1's skip, one line]
 [Ledger: Task 1: complete (commits a1b2c3d..d4e5f6a, review clean)]
+[scripts/sdd-state snapshot docs/hyperpowers/plans/feature-plan.md → status=snapshot sha=9e8d7c6 files=2]
 
 Task 2: Recovery modes (declared standard)
 
+[scripts/sdd-state claim docs/hyperpowers/plans/feature-plan.md 2 --session 1f3a9c → status=claimed task=2]
 [Run task-brief for Task 2; dispatch implementer with brief + report paths + context]
-[Ledger: Task 2: implementer subagent-7c42 — recorded for fix-round resumes]
+[Ledger: Task 2: implementer subagent-7c42 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes]
 
 Implementer: [No questions]
   - Added verify/repair modes
@@ -64,6 +69,7 @@ Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
 [Ledger: Task 2: fix round 1/5 (2 addressed, 0 declined, 0 open; commits d4e5f6a..b7c8d9e)]
 [Codex per-task gate over d4e5f6a..b7c8d9e — approved; that would have been round 2 of the same five]
 [Ledger: Task 2: complete (commits d4e5f6a..b7c8d9e, review clean)]
+[scripts/sdd-state snapshot docs/hyperpowers/plans/feature-plan.md → status=snapshot sha=5d4c3b2 files=3]
 
 ...
 
@@ -74,7 +80,7 @@ Final reviewer: All requirements met. Deferred minors triaged: none block merge.
 [Ledger: Decision extractor: task-9f2a -> <dir>/decision-notes.md]
 [Codex final code gate over the branch range, tier-skips.md among the dossier adjudications — approved]
 
-[Delete this plan's workspace — the record now lives in git]
+[Read my session line (mode worktree); scripts/sdd-state finish docs/hyperpowers/plans/feature-plan.md → status=finished sha=0a1b2c3 last=… push=origin/hyperpowers/state; test ! -d the workspace — the record lives on hyperpowers/state and in the code history]
 
 Done! Using hyperpowers:finishing-a-development-branch — plan, spec, and extractor task-9f2a with its notes path handed over.
 ```

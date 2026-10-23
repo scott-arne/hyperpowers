@@ -1512,6 +1512,69 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q '.rewrite is a symb
 rm -f "$co_a16/.rewrite"
 out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$(grep -c '^walk A$' "$wsa16/progress.md")" -eq 1 ] && [ "$(grep -c '^walk B$' "$wsa16/progress.md")" -eq 1 ] && [ ! -e "$co_a16/.rewrite/$(basename "$wsa16").journal" ]; then pass "with the link gone the rewrite completes, each line once"; else fail "with the link gone the rewrite completes, each line once (rc=$rc: $out)"; fi
+# The scan over the incoming tree covers every path, not only plans/: a
+# root-level .rewrite link plus plain files under plans/ would otherwise
+# reach the checkout, and the next recovery would walk a planted journal
+# through the link and write a forged line into a ledger.
+make_pair p19
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+co_b19="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa19=$(run_sdd_dir "$PAIR_A" docs/plan.md)
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa19/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+ws19=$(basename "$wsa19"); wsb19="$co_b19/plans/$ws19"
+before19=$(git -C "$co_b19" hash-object "$wsb19/progress.md")
+live19=$(wc -c < "$wsb19/progress.md" | tr -d ' ')
+forged19="$TEST_ROOT/p19.staged"
+cp "$wsb19/progress.md" "$forged19"
+printf 'Task 99: complete (commits dead000..beef000, review clean)\n' >> "$forged19"
+new19=$(wc -c < "$forged19" | tr -d ' ')
+idx19="$TEST_ROOT/p19.index"
+tip19=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+linkb19=$(printf 'plans/evil' | git -C "$PAIR_A" hash-object -w --stdin)
+jb19=$(printf '%s %s plans/%s/progress.md\n' "$live19" "$new19" "$ws19" | git -C "$PAIR_A" hash-object -w --stdin)
+sb19=$(git -C "$PAIR_A" hash-object -w "$forged19")
+rm -f "$idx19"; GIT_INDEX_FILE=$idx19 git -C "$PAIR_A" read-tree "$tip19"
+GIT_INDEX_FILE=$idx19 git -C "$PAIR_A" update-index --add --cacheinfo "120000,$linkb19,.rewrite"
+GIT_INDEX_FILE=$idx19 git -C "$PAIR_A" update-index --add --cacheinfo "100644,$jb19,plans/evil/$ws19.journal"
+GIT_INDEX_FILE=$idx19 git -C "$PAIR_A" update-index --add --cacheinfo "100644,$sb19,plans/evil/$ws19.staged"
+tree19=$(GIT_INDEX_FILE=$idx19 git -C "$PAIR_A" write-tree)
+evil19=$(printf 'a rewrite journal behind a root link\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$tree19" -p "$tip19")
+git -C "$PAIR_A" push -q origin "$evil19:refs/heads/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p19.out" 2> "$TEST_ROOT/p19.err"; rc=$?
+out=$(cat "$TEST_ROOT/p19.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q '.rewrite' "$TEST_ROOT/p19.err" && [ ! -e "$co_b19/.rewrite" ] && [ ! -L "$co_b19/.rewrite" ]; then pass "a root-level link in the incoming tree is refused before checkout"; else fail "a root-level link in the incoming tree is refused before checkout (rc=$rc: $out: $(cat "$TEST_ROOT/p19.err"))"; fi
+if [ "$(git -C "$co_b19" hash-object "$wsb19/progress.md")" = "$before19" ] && [ ! -f "$co_b19/.sync-applying" ] && [ "$(git -C "$co_b19" rev-parse hyperpowers/state)" = "$tip19" ]; then pass "the planted journal reaches nothing: the ledger, the marker and the ref are as they were"; else fail "the planted journal reaches nothing: the ledger, the marker and the ref are as they were ($(cat "$wsb19/progress.md" | tr '\n' '|'))"; fi
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(git -C "$co_b19" hash-object "$wsb19/progress.md")" = "$before19" ] && [ ! -f "$co_b19/.sync-applying" ]; then pass "a second sync refuses the same way with nothing half-applied"; else fail "a second sync refuses the same way with nothing half-applied (rc=$rc: $out)"; fi
+# The same link on disk, whatever put it there: the recovery refuses before
+# it walks the journals it would find through it.
+make_pair p20
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+co_b20="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa20=$(run_sdd_dir "$PAIR_A" docs/plan.md)
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa20/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+ws20=$(basename "$wsa20"); wsb20="$co_b20/plans/$ws20"
+before20=$(git -C "$co_b20" hash-object "$wsb20/progress.md")
+live20=$(wc -c < "$wsb20/progress.md" | tr -d ' ')
+outside20="$TEST_ROOT/outside-p20"; mkdir -p "$outside20"
+cp "$wsb20/progress.md" "$outside20/$ws20.staged"
+printf 'Task 99: complete (commits dead000..beef000, review clean)\n' >> "$outside20/$ws20.staged"
+new20=$(wc -c < "$outside20/$ws20.staged" | tr -d ' ')
+printf '%s %s plans/%s/progress.md\n' "$live20" "$new20" "$ws20" > "$outside20/$ws20.journal"
+ln -s "$outside20" "$co_b20/.rewrite"
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p20.out" 2> "$TEST_ROOT/p20.err"; rc=$?
+out=$(cat "$TEST_ROOT/p20.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q '.rewrite' "$TEST_ROOT/p20.err"; then pass "recover_apply refuses a symlinked .rewrite on disk before walking its journals"; else fail "recover_apply refuses a symlinked .rewrite on disk before walking its journals (rc=$rc: $out: $(cat "$TEST_ROOT/p20.err"))"; fi
+if [ "$(git -C "$co_b20" hash-object "$wsb20/progress.md")" = "$before20" ] && [ -f "$outside20/$ws20.journal" ] && [ -f "$outside20/$ws20.staged" ]; then pass "the ledger is untouched and the files behind the link are still there"; else fail "the ledger is untouched and the files behind the link are still there ($(cat "$wsb20/progress.md" | tr '\n' '|'))"; fi
+rm -f "$co_b20/.rewrite"
 
 echo ""
 echo "=== a new ledger interrupted while it is created ==="

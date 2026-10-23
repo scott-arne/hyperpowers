@@ -948,6 +948,17 @@ apply_files() {
 # until the tree is repaired.
 recover_apply() {
   local S="" target="" rc head j path
+  # Both paths this helper writes at the checkout root are read below, the
+  # journals before anything else: a link at either one would have the
+  # recovery walk, and finish, whatever it points at.
+  if [ -L "$CO/.rewrite" ]; then
+    echo "sdd-state: $CO/.rewrite is a symbolic link; refusing to journal a ledger rewrite through it" >&2
+    return 2
+  fi
+  if [ -L "$CO/.sync-applying" ]; then
+    echo "sdd-state: $CO/.sync-applying is a symbolic link; refusing to write the sync marker through it" >&2
+    return 2
+  fi
   # A new ledger interrupted between its temporary copy and its publish
   # leaves that copy inside a workspace, where a snapshot would commit it.
   rm -f "$CO"/plans/*/*.new.* 2>/dev/null
@@ -1062,12 +1073,13 @@ apply_target() {
     done < <(printf '%s\n' "$pending")
     if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
   fi
-  # A dossier holds plain files. The incoming tree is inspected before the
-  # checkout materializes it: a commit that carries plans/<ws>, or a file
-  # under it, as a symbolic link is refused whole, including a relative link
-  # a host committed inside its own workspace. The refusal comes before
+  # A dossier holds plain files, and so do the branch's root files. The
+  # incoming tree is inspected before the checkout materializes it: a commit
+  # that carries any path as a symbolic link is refused whole, including a
+  # relative link a host committed inside its own workspace and a root-level
+  # link at a path this helper itself writes. The refusal comes before
   # anything is renamed or moved, so nothing is left half-applied.
-  links=$(git -C "$CO" ls-tree -r "$target" -- plans | awk -F'\t' '$1 ~ /^120000 / {print $2}') || return 2
+  links=$(git -C "$CO" ls-tree -r "$target" | awk -F'\t' '$1 ~ /^120000 / {print $2}') || return 2
   if [ -n "$links" ]; then
     echo "sdd-state: $target carries a symbolic link at $(printf '%s\n' "$links" | head -n 1); refusing to apply it. Remove the link on the host that committed it, snapshot, push, then sync again" >&2
     return 2

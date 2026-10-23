@@ -639,8 +639,12 @@ extractor in the background, composed from
 copies, the plan, the spec, the `Decisions listing:` from the ledger, the
 index (`decisions/README.md` beside the spec's directory) when it exists, and
 `<dir>/decision-notes.md` as its output path. Record it in the ledger:
-`Decision extractor: <task id> -> <dir>/decision-notes.md`. It reads nothing
-inside the workspace, so Finish may delete the workspace while it runs;
+`Decision extractor: <task id> -> <dir>/decision-notes.md`. The dispatch is
+complete only when that line is in the ledger: write it before any other tool
+call, because after a compaction it is the only record of the task id and the
+notes path, and without it a resumed controller can neither collect nor stop
+the extractor. The extractor reads nothing inside the workspace, so Finish may
+delete the workspace while it runs;
 finishing-a-development-branch collects it after the full suite and never
 waits for it, and neither do you. On a harness with no tracked background
 subagent, skip the dispatch and note it in the ledger. If a Codex final-gate

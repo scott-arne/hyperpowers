@@ -323,6 +323,14 @@ pushes. The line also carries `local=<sha7|none> remote=<sha7|none>
 age=<seconds since the newer tip>`. `--assume-absent` exists for an offline
 fresh host whose human partner knows no remote dossier exists.
 
+The branch is content from other hosts, so a tree is inspected whole before
+any of it reaches disk: a tip or an incoming commit that carries a symbolic
+link, a submodule entry, or a recovery sidecar (`.sync-applying`, anything
+under `.rewrite/`) anywhere in its tree is refused entire, both when the
+checkout is created from it and when a commit is applied to an existing
+one, and `sdd-dir` refuses a workspace that holds a symbolic link rather
+than printing a path the writers would follow out of the cache.
+
 Controllers and subagents write ledger and report files without the lock,
 so reconciliation treats the working tree as live. After computing the
 target tree (fast-forward or merge) and before touching any file, it

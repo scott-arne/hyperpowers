@@ -236,6 +236,10 @@ if [ -f "$repo/docs/hyperpowers/decisions/2026-05-05-same-title.md" ] && [ -f "$
 else
     fail "same-spec collision (got: $(ls "$repo/docs/hyperpowers/decisions"))"
 fi
+# Each spec's records are committed before the next spec compiles: another
+# compile's staged records are a foreign change under the records directory
+# (§31), so the collision under test is a committed name, not a staged one.
+commit_all "$repo" "one's records"
 run_compile "$repo" docs/hyperpowers/specs/2026-05-05-two-design.md
 if [ "$RC" -eq 0 ] && [ -f "$repo/docs/hyperpowers/decisions/2026-05-05-same-title-1.md" ]; then
     pass "another spec's same-date same-title decision takes its own number suffix"
@@ -249,10 +253,10 @@ write_spec "$repo" 2026-05-05-three-design.md <<'EOF'
 
 - **Same title.** A fourth whose suffixed name is taken too.
 EOF
-# Committed (the records are left staged), so the refusal under test is the
-# collision and not an uncommitted spec.
-git -C "$repo" add docs/hyperpowers/specs/2026-05-05-three-design.md
-git -C "$repo" commit -q -m "third spec" -- docs/hyperpowers/specs/2026-05-05-three-design.md
+# The spec and the second compile's records are committed, so the refusal
+# under test is the collision and neither an uncommitted spec nor a foreign
+# change under the records directory.
+commit_all "$repo" "third spec and two's records"
 run_compile "$repo" docs/hyperpowers/specs/2026-05-05-three-design.md
 if [ "$RC" -eq 2 ]; then pass "a third collision exits 2 asking for a distinct title"; else fail "third collision (rc $RC)"; fi
 case "$ERR" in *"distinct title"*) pass "collision message names the remedy" ;; *) fail "collision message (got: $ERR)" ;; esac
@@ -342,6 +346,8 @@ case "$ERR" in "root-design.md: the spec must live in a subdirectory of the repo
 if [ ! -e "$TEST_ROOT/decisions" ] && [ -z "$(git -C "$repo" status --porcelain)" ]; then pass "a root-level spec writes nothing"; else fail "root-level spec wrote something"; fi
 
 # --- 10. a hand-made file at a record's name is never overwritten -----------------
+# The hand-made file is committed, because a foreign change left uncommitted
+# under the records directory is refused by the ownership preflight (§31).
 repo="$TEST_ROOT/handmade"
 make_repo "$repo"
 write_spec "$repo" 2026-09-09-hand-design.md <<'EOF'
@@ -353,9 +359,11 @@ write_spec "$repo" 2026-09-09-hand-design.md <<'EOF'
 EOF
 commit_all "$repo" "spec"
 run_compile "$repo" docs/hyperpowers/specs/2026-09-09-hand-design.md
+commit_all "$repo" "records"
 hand="$repo/docs/hyperpowers/decisions/2026-09-09-taken-name.md"
 rm "$hand"
 printf '# Other\n\n- Status: accepted\n- Spec: docs/hyperpowers/specs/other.md (decision 1)\n- Recorded: 2026-09-01\n\n## Decision\n\nHand made.\n' > "$hand"
+commit_all "$repo" "a hand-made file takes the record's name"
 cp "$hand" "$TEST_ROOT/hand.before"
 run_compile "$repo" docs/hyperpowers/specs/2026-09-09-hand-design.md
 if [ "$RC" -eq 0 ] && [ -f "$repo/docs/hyperpowers/decisions/2026-09-09-taken-name-1.md" ] && cmp -s "$hand" "$TEST_ROOT/hand.before"; then
@@ -1506,8 +1514,14 @@ write_spec "$repo" 2026-10-19-two-design.md <<'EOF'
 - **Beta choice.** Text.
 EOF
 commit_all "$repo" "two specs"
+# The second compile would refuse the first's staged records as a foreign
+# change (§31), so the state is built by committing the first compile and
+# taking the commit back once the second has run: the index and the working
+# tree are what two compiles in a row used to leave.
 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-one-design.md
+commit_all "$repo" "one's records"
 run_compile "$repo" docs/hyperpowers/specs/2026-10-19-two-design.md
+git -C "$repo" reset -q --soft HEAD^
 before_status=$(git -C "$repo" status --porcelain -uall)
 sum_one=$(cksum < "$repo/docs/hyperpowers/decisions/2026-10-19-alpha-choice.md")
 sum_two=$(cksum < "$repo/docs/hyperpowers/decisions/2026-10-19-beta-choice.md")
@@ -1762,6 +1776,105 @@ case "$OUT" in
     *"(decision 4: Aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo)"*) pass "a multibyte word straddling the limit is dropped whole, no byte split" ;;
     *) fail "multibyte title (got: $OUT)" ;;
 esac
+
+# --- 31. a foreign change under the records directory is refused -------------
+# Correction (2026-10-22): the final whole-branch gate found that the staging
+# and the approval diff covered the whole records directory, so a change this
+# compile does not own rode into its records commit. The directory is shared:
+# only the records this compile writes, the targets whose Status line it
+# rewrites and the index are its own.
+repo="$TEST_ROOT/foreign"
+make_repo "$repo"
+write_spec "$repo" 2026-07-01-old-design.md <<'EOF'
+# Old
+
+## Decisions
+
+- **Alpha choice.** A.
+- **Beta choice.** B.
+EOF
+commit_all "$repo" "old spec"
+run_compile "$repo" docs/hyperpowers/specs/2026-07-01-old-design.md
+commit_all "$repo" "old records"
+write_spec "$repo" 2026-08-01-new-design.md <<'EOF'
+# New
+
+## Decisions
+
+- **Fresh choice.** Text.
+EOF
+commit_all "$repo" "new spec"
+new_spec=docs/hyperpowers/specs/2026-08-01-new-design.md
+alpha=docs/hyperpowers/decisions/2026-07-01-alpha-choice.md
+beta=docs/hyperpowers/decisions/2026-07-01-beta-choice.md
+# refuse_foreign LABEL PATH: the compile exits 2 naming PATH, and git status
+# is exactly what it was before the run.
+refuse_foreign() {
+    local before after msg_ok
+    before=$(git -C "$repo" status --porcelain -uall)
+    run_compile "$repo" "$new_spec"
+    after=$(git -C "$repo" status --porcelain -uall)
+    case "$ERR" in "$new_spec: $2 is changed under docs/hyperpowers/decisions but is not this compile's to write; commit, stash or discard it before the records compile") msg_ok=1 ;; *) msg_ok=0 ;; esac
+    if [ "$RC" -eq 2 ] && [ "$msg_ok" = 1 ] && [ "$before" = "$after" ]; then pass "$1"; else fail "$1 (rc $RC, err: $ERR, status before: $before, after: $after)"; fi
+}
+printf 'a line nobody compiled\n' >> "$repo/$alpha"
+refuse_foreign "a foreign modified record is refused before any write" "$alpha"
+git -C "$repo" restore --staged --worktree -- "$alpha"
+rm "$repo/$beta"
+refuse_foreign "a foreign deleted record is refused" "$beta"
+git -C "$repo" restore --staged --worktree -- "$beta"
+printf 'scratch\n' > "$repo/docs/hyperpowers/decisions/scratch.md"
+refuse_foreign "a foreign untracked file under decisions/ is refused" docs/hyperpowers/decisions/scratch.md
+rm -f "$repo/docs/hyperpowers/decisions/scratch.md"
+printf 'a separately staged edit\n' >> "$repo/$alpha"
+git -C "$repo" add -- "$alpha"
+refuse_foreign "a foreign record staged separately is refused" "$alpha"
+git -C "$repo" restore --staged --worktree -- "$alpha"
+if [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "fixture: the four foreign changes are undone"; else fail "foreign fixture (status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+run_compile "$repo" "$new_spec"
+staged=$(git -C "$repo" diff --cached --name-only | sort | tr '\n' ' ')
+expected="docs/hyperpowers/decisions/2026-08-01-fresh-choice.md docs/hyperpowers/decisions/README.md docs/hyperpowers/specs/2026-08-01-new-design.md "
+if [ "$RC" -eq 0 ] && [ "$staged" = "$expected" ]; then pass "with the directory clean the compile stages its own record, the index and the spec"; else fail "clean compile (rc $RC, err: $ERR, staged: $staged)"; fi
+# A record this compile owns, left unstaged by a failed earlier run, is not
+# foreign: the retry stages it.
+git -C "$repo" reset -q -- docs/hyperpowers/decisions/2026-08-01-fresh-choice.md
+run_compile "$repo" "$new_spec"
+if [ "$RC" -eq 0 ] && git -C "$repo" diff --cached --name-only | grep -q '2026-08-01-fresh-choice.md'; then pass "an own record left unstaged by an earlier run is staged by the retry, not refused"; else fail "own unstaged record (rc $RC, err: $ERR, staged: $(git -C "$repo" diff --cached --name-only | tr '\n' ' '))"; fi
+# The index is the compiler's own file however it was left: a hand edit is
+# rewritten, not refused.
+commit_all "$repo" "new records"
+printf 'drift\n' >> "$repo/docs/hyperpowers/decisions/README.md"
+run_compile "$repo" "$new_spec"
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "a hand-edited index is this compile's to rewrite"; else fail "index ownership (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+
+# --- 32. notes are bound to the spec by its repository path ------------------
+# Correction (2026-10-22): the final whole-branch gate found that the notes
+# file's first line was matched to the spec by basename, so notes written for
+# a same-named spec in another directory were applied by decision number.
+repo="$TEST_ROOT/notes-twin"
+make_repo "$repo"
+mkdir -p "$repo/docs/other/specs"
+write_spec "$repo" 2026-10-19-twin-design.md <<'EOF'
+# Twin here
+
+## Decisions
+
+- **One here.** Text.
+EOF
+printf '# Twin elsewhere\n\n## Decisions\n\n- **One elsewhere.** Text.\n' > "$repo/docs/other/specs/2026-10-19-twin-design.md"
+commit_all "$repo" "two same-named specs"
+printf '# Decision notes: docs/other/specs/2026-10-19-twin-design.md\n\n## Decision 1\nNotes for the other twin.\n' > "$TEST_ROOT/notes-twin.md"
+run_compile "$repo" docs/hyperpowers/specs/2026-10-19-twin-design.md --notes "$TEST_ROOT/notes-twin.md"
+case "$ERR" in "notes ignored: first line names docs/other/specs/2026-10-19-twin-design.md, not docs/hyperpowers/specs/2026-10-19-twin-design.md") msg_ok=1 ;; *) msg_ok=0 ;; esac
+if [ "$RC" -eq 0 ] && [ "$msg_ok" = 1 ]; then pass "notes naming a same-named spec in another directory are ignored, both paths named"; else fail "twin notes (rc $RC, err: $ERR)"; fi
+if grep -q '^Nothing recorded\.$' "$repo/docs/hyperpowers/decisions/2026-10-19-one-here.md"; then pass "the compiled spec's record keeps Nothing recorded"; else fail "twin record body (got: $(sed -n '/^## What/,$p' "$repo/docs/hyperpowers/decisions/2026-10-19-one-here.md" | tr '\n' ' '))"; fi
+if grep -rq 'Notes for the other twin' "$repo/docs"; then fail "the other twin's notes reached a record"; else pass "no part of the other twin's notes reached a record"; fi
+commit_all "$repo" "records here"
+run_compile "$repo" docs/other/specs/2026-10-19-twin-design.md --notes "$TEST_ROOT/notes-twin.md"
+if [ "$RC" -eq 0 ] && [ -z "$ERR" ] && grep -q '^Notes for the other twin\.$' "$repo/docs/other/decisions/2026-10-19-one-elsewhere.md"; then pass "the same notes file applies to the spec its first line names"; else fail "other twin notes (rc $RC, err: $ERR, files: $(ls "$repo/docs/other/decisions" 2>/dev/null))"; fi
+printf '# Decision notes: %s/docs/other/specs/2026-10-19-twin-design.md\n\n## Decision 1\nAbsolute spelling.\n' "$repo" > "$TEST_ROOT/notes-abs.md"
+run_compile "$repo" docs/other/specs/2026-10-19-twin-design.md --notes "$TEST_ROOT/notes-abs.md"
+if [ "$RC" -eq 0 ] && [ -z "$ERR" ] && grep -q '^Absolute spelling\.$' "$repo/docs/other/decisions/2026-10-19-one-elsewhere.md"; then pass "an absolute header path under the repository root still binds"; else fail "absolute header (rc $RC, err: $ERR)"; fi
 
 # >>> later tasks append their checks above this line <<<
 

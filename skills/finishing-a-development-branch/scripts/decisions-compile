@@ -11,7 +11,8 @@
 #        decisions-compile --undo SPEC [--plan PLAN]
 #        decisions-compile --reindex RECORDS_DIR
 # Exit 2: an input problem (no spec, no decisions list, an unresolvable
-# filename collision); nothing has been written. Exit 3: a write failure
+# filename collision, a change under decisions/ this compile does not own);
+# nothing has been written. Exit 3: a write failure
 # after validation; the files written so far are idempotent, so running the
 # same command again completes the write.
 # Exit 3: a git operation failed after the files were written; running the
@@ -359,15 +360,20 @@ render_record() {  # N -> the record text
 # been given. A decision the file does not mention keeps its section.
 notes_valid=false
 load_notes() {
-  local f=$1 n reason="" first
+  local f=$1 n reason="" first hdr
   [ -f "$f" ] || { echo "notes ignored: no such file: $f" >&2; return 0; }
   first=$(head -n 1 "$f" 2>/dev/null) || { echo "notes ignored: cannot read $f" >&2; return 0; }
   case "$first" in
     "# Decision notes: "*) ;;
     *) echo "notes ignored: first line is not \"# Decision notes: <spec path>\"" >&2; return 0 ;;
   esac
-  if [ "$(basename "${first#\# Decision notes: }")" != "$(basename "$spec_abs")" ]; then
-    echo "notes ignored: first line names $(basename "${first#\# Decision notes: }"), not $(basename "$spec_abs")" >&2; return 0
+  # The whole path binds, not its basename: notes written for a same-named
+  # spec in another directory would otherwise be applied by decision number.
+  # An absolute spelling of the same file is the same spec.
+  hdr=${first#\# Decision notes: }
+  case "$hdr" in "$root"/*) hdr=${hdr#"$root"/} ;; esac
+  if [ "$hdr" != "$spec_rel" ]; then
+    echo "notes ignored: first line names $hdr, not $spec_rel" >&2; return 0
   fi
   rm -f "$tmp"/note-*.txt "$tmp/notes-bad" "$tmp/notes-counts"
   # One pass over the whole file with explicit state and no early exit, so a
@@ -492,16 +498,18 @@ render_spec() {  # the spec text with its Outcome line written or rewritten
   fi
 }
 
-# stage_owned: everything under the records directory plus the spec, so a
-# retry after a failed run stages what that run wrote and never staged.
+# stage_owned: the paths this compile owns (section 3b) plus the spec, never
+# the whole records directory, which is shared. A retry after a failed run
+# stages what that run wrote and never staged, because an owned path is
+# staged whether or not this run changed it.
 stage_owned() {
-  git -C "$root" add -A -- "$records_rel" "$spec_rel" || die3 "$spec_rel: git add failed; run the same command again to complete the staging"
+  git -C "$root" add -A -- "${owned_paths[@]}" "$spec_rel" || die3 "$spec_rel: git add failed; run the same command again to complete the staging"
 }
 
 # emit_paths: the compiler-owned paths whose staged content differs from
 # HEAD, NUL-delimited into --paths-file and space-joined on stdout.
 emit_paths() {
-  git -C "$root" diff --cached --name-only --no-renames -z -- "$records_rel" "$spec_rel" ${plan_rel:+"$plan_rel"} > "$tmp/paths.z" || die3 "$spec_rel: git diff --cached failed"
+  git -C "$root" diff --cached --name-only --no-renames -z -- "${owned_paths[@]}" "$spec_rel" ${plan_rel:+"$plan_rel"} > "$tmp/paths.z" || die3 "$spec_rel: git diff --cached failed"
   if [ -n "$paths_file" ]; then
     # Atomic, so a reader never sees a half-written pathspec.
     if ! { cp "$tmp/paths.z" "$paths_file.tmp.$$" && mv -f "$paths_file.tmp.$$" "$paths_file"; }; then
@@ -749,6 +757,34 @@ if $dry_run; then
   echo "paths: $(tr '\n' ' ' < "$tmp/would-stage" | sed 's/ $//')"
   exit 0
 fi
+
+# --- 3b. the paths this compile owns -------------------------------------------
+# The records directory is shared, and the staging and the approval diff cover
+# it, so a change this compile did not make would ride into the records commit
+# under this spec's message. Owned: the records it is about to write (whether
+# new or re-run, so a retry after a failed run still completes), the
+# supersession targets whose Status line it rewrites, and the index. Anything
+# else there that differs from HEAD or is untracked is refused before the
+# first write, with nothing changed.
+{
+  printf '%s\n' "$index_rel"
+  for ((n = 1; n <= count; n++)); do
+    printf '%s\n' "$records_rel/${files[n]}" "${sup_of[n]:-}" "${prev_sup[n]:-}"
+  done
+} | awk 'length' | sort -u > "$tmp/owned"
+# Three passes, because a change staged and then reverted in the working tree
+# shows only in the second: the working tree against HEAD, the index against
+# HEAD, then the untracked files. Each reads the state only; nothing is
+# written, so a git failure here is still exit 2.
+git -C "$root" diff --name-only --no-renames -z HEAD -- "$records_rel" > "$tmp/dirty.z" || die2 "$spec_rel: cannot read the state of $records_rel"
+git -C "$root" diff --cached --name-only --no-renames -z -- "$records_rel" >> "$tmp/dirty.z" || die2 "$spec_rel: cannot read the staged state of $records_rel"
+git -C "$root" ls-files --others --exclude-standard -z -- "$records_rel" >> "$tmp/dirty.z" || die2 "$spec_rel: cannot list the untracked files of $records_rel"
+while IFS= read -r -d '' p; do
+  if grep -q -F -x -e "$p" "$tmp/owned"; then continue; fi
+  die2 "$spec_rel: $p is changed under $records_rel but is not this compile's to write; commit, stash or discard it before the records compile"
+done < "$tmp/dirty.z"
+owned_paths=()
+while IFS= read -r p; do owned_paths+=("$p"); done < "$tmp/owned"
 
 # --- 4. records ---------------------------------------------------------------
 

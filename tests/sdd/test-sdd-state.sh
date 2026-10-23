@@ -1574,5 +1574,38 @@ printf 'raced the recovery\n' >> "$wsa18/progress.md"
 out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc3=$?
 if [ "$rc2" -eq 99 ] && [ "$(grep -c '^j6 A$' "$wsa18/progress.md")" -eq 1 ]; then pass "the extension is appended once although a writer's line sits where it was expected"; else fail "the extension is appended once although a writer's line sits where it was expected (rc=$rc2/$rc3: $out: $(grep -c '^j6 A$' "$wsa18/progress.md") copies)"; fi
 if [ "$(grep -c '^raced the recovery$' "$wsa18/progress.md")" -eq 1 ] && [ "$(grep -c '^j6 B$' "$wsa18/progress.md")" -eq 1 ] && [ ! -e "$co_a18/.rewrite/$(basename "$wsa18").journal" ] && [ ! -e "$co_a18/.rewrite/$(basename "$wsa18").staged" ]; then pass "the writer's line and the remote's line survive once each and the journal is gone"; else fail "the writer's line and the remote's line survive once each and the journal is gone ($(cat "$wsa18/progress.md" | tr '\n' '|'))"; fi
+
+echo ""
+echo "=== import recovery must not overwrite what the destination holds ==="
+# The prefix recovery installs the legacy entries into a destination a
+# controller is already working in: a report it revised must survive, and
+# its ledger must be appended to, never replaced.
+i19="$TEST_ROOT/i19"; make_repo "$i19"; mkdir -p "$i19/docs"; : > "$i19/docs/plan.md"; git -C "$i19" add docs; git -C "$i19" commit -qm plan
+ws19=$(ws_path "$i19" "$i19/docs/plan.md"); mkdir -p "$ws19"
+legacy19="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i19")/plans/$(basename "$ws19")"
+mkdir -p "$legacy19.importing-558"
+printf '# SDD ledger — plan: %s/docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\nTask 2: complete (commits 3333333..4444444, review clean)\n' "$i19" > "$legacy19.importing-558/progress.md"
+printf 'report one\n' > "$legacy19.importing-558/task-1-report.md"
+printf 'report two\n' > "$legacy19.importing-558/task-2-report.md"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$ws19/progress.md"
+printf 'report one, revised where the dossier lives now\n' > "$ws19/task-1-report.md"
+out=$(run_state "$i19" import docs/plan.md 2> "$TEST_ROOT/i19.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy19 conflicts=1" ]; then pass "the recovery reports what it moved and how many entries it could not"; else fail "the recovery reports what it moved and how many entries it could not (rc=$rc: $out)"; fi
+if [ "$(cat "$ws19/task-1-report.md")" = "report one, revised where the dossier lives now" ] && [ "$(cat "$ws19/task-1-report.md.from-import")" = "report one" ] && grep -q 'task-1-report.md.from-import' "$TEST_ROOT/i19.err"; then pass "a destination report the source also carries survives and the legacy copy is beside it"; else fail "a destination report the source also carries survives and the legacy copy is beside it ($(cat "$ws19/task-1-report.md"): $(cat "$TEST_ROOT/i19.err"))"; fi
+if [ -f "$ws19/task-2-report.md" ] && [ "$(grep -c '^Task 2: complete' "$ws19/progress.md")" -eq 1 ] && [ "$(grep -c '^Task 1: complete' "$ws19/progress.md")" -eq 1 ] && [ "$(head -n 1 "$ws19/progress.md")" = "# SDD ledger — plan: docs/plan.md" ]; then pass "the entries the destination lacked are installed and the ledger keeps each line once"; else fail "the entries the destination lacked are installed and the ledger keeps each line once ($(cat "$ws19/progress.md" | tr '\n' '|'))"; fi
+# A line written into the destination's ledger while the recovery runs:
+# it is never replaced, and an abort leaves it where it was written.
+i20="$TEST_ROOT/i20"; make_repo "$i20"; mkdir -p "$i20/docs"; : > "$i20/docs/plan.md"; git -C "$i20" add docs; git -C "$i20" commit -qm plan
+ws20=$(ws_path "$i20" "$i20/docs/plan.md"); mkdir -p "$ws20"
+legacy20="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i20")/plans/$(basename "$ws20")"
+mkdir -p "$legacy20.importing-559"
+printf '# SDD ledger — plan: %s/docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\nTask 2: complete (commits 3333333..4444444, review clean)\n' "$i20" > "$legacy20.importing-559/progress.md"
+printf 'report one\n' > "$legacy20.importing-559/task-1-report.md"
+printf 'report two\n' > "$legacy20.importing-559/task-2-report.md"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$ws20/progress.md"
+printf 'report one\n' > "$ws20/task-1-report.md"
+out=$(cd "$i20" && HYPERPOWERS_TEST_DEST_APPEND='Task 9: complete (commits 7777777..8888888, review clean)' bash "$SDD_STATE" import docs/plan.md 2> "$TEST_ROOT/i20.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "${out%% *}" = "status=import-failed" ] && grep -q '^Task 9: complete' "$ws20/progress.md" && grep -q '^Task 1: complete' "$ws20/progress.md"; then pass "a ledger line written into the destination during the recovery is neither replaced nor deleted"; else fail "a ledger line written into the destination during the recovery is neither replaced nor deleted (rc=$rc: $out: $(cat "$ws20/progress.md" | tr '\n' '|'))"; fi
+if [ -f "$legacy20/progress.md" ] && grep -q '^Task 2: complete' "$legacy20/progress.md" && ! ls -d "$legacy20.importing-"* >/dev/null 2>&1; then pass "the legacy source is put back whole for the next import"; else fail "the legacy source is put back whole for the next import"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

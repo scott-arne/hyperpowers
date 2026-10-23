@@ -299,23 +299,23 @@ import_finish() {
   local link now
   now=$(wc -c < "$2/progress.md" 2>/dev/null | tr -d ' ')
   if [ "${now:-0}" -gt "$src_ledger_size" ]; then
-    tail -c +"$((src_ledger_size + 1))" "$2/progress.md" >> "$dest/progress.md" || { import_abort "$1" "$2" "$3" "" ledger; return 2; }
+    tail -c +"$((src_ledger_size + 1))" "$2/progress.md" >> "$dest/progress.md" || { import_abort "$1" "$2" "$3" "" "$installed"; return 2; }
   fi
   if ! cmp -s <(tail -n +2 "$2/progress.md" 2>/dev/null) <(tail -n +2 "$dest/progress.md") || [ "$(tree_manifest "$2" | grep -v ' \./progress\.md$')" != "$src_manifest_rest" ]; then
     echo "sdd-state: the legacy workspace changed while it was imported; nothing was moved, run import again" >&2
-    import_abort "$1" "$2" "$3" "" ledger; return 2
+    import_abort "$1" "$2" "$3" "" "$installed"; return 2
   fi
   if [ -L "$1" ]; then link=$1; else link=$3; fi
   if [ -n "${HYPERPOWERS_TEST_FAIL_RELINK:-}" ] || ! ln -sfn "$dest" "$link" 2>/dev/null || [ "$(hp_physical_dir "$link" 2>/dev/null)" != "$(hp_physical_dir "$dest")" ]; then
-    import_abort "$1" "$2" "$3" "" ledger; return 2
+    import_abort "$1" "$2" "$3" "" "$installed"; return 2
   fi
   rm -rf "$2" || echo "sdd-state: the imported source's backup could not be removed: $2" >&2
   hp_unlock
-  echo "status=moved from=$(enc "$1")"
+  if [ "${conflicts:-0}" -gt 0 ]; then echo "status=moved from=$(enc "$1") conflicts=$conflicts"; else echo "status=moved from=$(enc "$1")"; fi
   return 0
 }
 cmd_import() {
-  local plan cache candidates c ref dest dest_phys seen="" stage e rel stage_manifest backup link rc restored src_ledger_size src_manifest_rest published_prefix_size
+  local plan cache candidates c ref dest dest_phys seen="" stage e name rel stage_manifest backup link rc restored installed conflicts=0 dbody src_ledger_size src_manifest_rest published_prefix_size
   [ $# -eq 1 ] || usage
   plan=$1
   command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 2; }
@@ -421,6 +421,7 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
     # size mismatch.
     if ! rewrite_identity_line "$stage/progress.md" "$rel"; then import_abort "$c" "$backup" "$ref" "$stage" ""; return 2; fi
     stage_manifest=$(tree_manifest "$stage")
+    installed=ledger
     # Publish by rename(2): it replaces an absent or empty destination
     # atomically and refuses a non-empty one, so the stage can never land
     # inside a destination that filled up meanwhile (a shell mv would move
@@ -429,16 +430,57 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
     if [ "$rc" -eq 0 ]; then
       [ -f "$dest/progress.md" ] || { import_abort "$c" "$backup" "$ref" "" whole; return 2; }
     elif [ "$rc" -eq 4 ]; then
-      # The destination already holds regenerable files: install the staged
-      # entries one by one, the ledger last, so a failure leaves no ledger.
+      # The destination already holds files, and a controller may be working
+      # in it: only entries it does not have are installed, the ledger last
+      # and by appending, so a failure leaves no ledger this import brought
+      # and never takes the destination's own.
+      [ ! -f "$dest/progress.md" ] || installed=""
       for e in "$stage"/* "$stage"/.[!.]*; do
         [ -e "$e" ] || [ -L "$e" ] || continue
-        [ "$(basename "$e")" != progress.md ] || continue
-        if ! mv -f "$e" "$dest/" 2>/dev/null; then cp -a "$e" "$dest/" || { import_abort "$c" "$backup" "$ref" "$stage" ledger; return 2; }; fi
+        name=${e##*/}
+        [ "$name" != progress.md ] || continue
+        { [ -e "$dest/$name" ] || [ -L "$dest/$name" ]; } || continue
+        if [ -L "$e" ] || [ -L "$dest/$name" ]; then
+          if [ -L "$e" ] && [ -L "$dest/$name" ] && [ "$(readlink "$e")" = "$(readlink "$dest/$name")" ]; then rm -rf "$e"; continue; fi
+        elif diff -r -q "$e" "$dest/$name" >/dev/null 2>&1; then
+          rm -rf "$e"; continue
+        fi
+        # The destination's entry was written after the copy this import is
+        # recovering: it stays, and the legacy one lands beside it.
+        conflicts=$((conflicts + 1))
+        rm -rf "$dest/$name.from-import"
+        if ! mv -f "$e" "$dest/$name.from-import" 2>/dev/null; then
+          cp -a "$e" "$dest/$name.from-import" || { import_abort "$c" "$backup" "$ref" "$stage" "$installed"; return 2; }
+          rm -rf "$e"
+        fi
+        echo "sdd-state: $dest/$name differs from the legacy copy and was kept; the legacy one is beside it at $dest/$name.from-import" >&2
       done
-      mv -f "$stage/progress.md" "$dest/progress.md" || { import_abort "$c" "$backup" "$ref" "$stage" ledger; return 2; }
+      # What is left in the stage is what this import installs, and what the
+      # destination is verified against; the ledger is checked by body.
+      stage_manifest=$(tree_manifest "$stage" | grep -v ' \./progress\.md$')
+      for e in "$stage"/* "$stage"/.[!.]*; do
+        [ -e "$e" ] || [ -L "$e" ] || continue
+        [ "${e##*/}" != progress.md ] || continue
+        if ! mv -f "$e" "$dest/" 2>/dev/null; then cp -a "$e" "$dest/" || { import_abort "$c" "$backup" "$ref" "$stage" "$installed"; return 2; }; fi
+      done
+      if [ -n "${HYPERPOWERS_TEST_DEST_APPEND:-}" ]; then printf '%s\n' "$HYPERPOWERS_TEST_DEST_APPEND" >> "$dest/progress.md"; fi
+      if [ -z "$installed" ]; then
+        # The destination's ledger is the live one: only the bytes the
+        # legacy ledger holds beyond it are appended.
+        dbody=$(tail -n +2 "$dest/progress.md" | wc -c | tr -d ' ')
+        if ! ledger_body_prefix "$dest/progress.md" "$stage/progress.md"; then
+          echo "sdd-state: $dest/progress.md was written to during the import and is no longer a prefix of the legacy ledger; nothing was moved, run import again" >&2
+          import_abort "$c" "$backup" "$ref" "$stage" ""; return 2
+        fi
+        if [ "$(tail -n +2 "$stage/progress.md" | wc -c | tr -d ' ')" -gt "$dbody" ]; then
+          tail -n +2 "$stage/progress.md" | tail -c +"$((dbody + 1))" >> "$dest/progress.md" || { import_abort "$c" "$backup" "$ref" "$stage" ""; return 2; }
+        fi
+        rm -f "$stage/progress.md"
+      else
+        mv -f "$stage/progress.md" "$dest/progress.md" || { import_abort "$c" "$backup" "$ref" "$stage" "$installed"; return 2; }
+      fi
       rm -rf "$stage"
-      if ! verify_subset "$stage_manifest" "$dest"; then import_abort "$c" "$backup" "$ref" "" ledger; return 2; fi
+      if ! verify_subset "$stage_manifest" "$dest"; then import_abort "$c" "$backup" "$ref" "" "$installed"; return 2; fi
     else
       import_abort "$c" "$backup" "$ref" "$stage" ""; return 2
     fi

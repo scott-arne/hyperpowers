@@ -641,7 +641,8 @@ keep-as-is all carry it. The Common Rationalizations table gains one row:
   carries a `## Decisions` section in the shape of Design §1, required.
 - **writing-plans**, `skills/writing-plans/SKILL.md`. One sentence beside the
   existing grounding rule: a correction paragraph added during execution
-  that alters a decision names it, `Correction (<date>), decision <N>:`.
+  that alters a decision names it, `Correction (<date>), decision <N>
+  (<title>):`.
 - **subagent-driven-development**: Design §4.
 - **finishing-a-development-branch**: Design §5, plus the new `scripts/` and
   prompt file.

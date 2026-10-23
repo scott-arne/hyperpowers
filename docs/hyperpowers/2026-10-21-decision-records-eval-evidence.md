@@ -196,21 +196,26 @@ file for every ancestor of the working copy. Artifacts:
 | dry run at Setup | yes | yes | yes |
 | extractor dispatched after the final review, in the background | yes | yes | yes |
 | `Decision extractor:` ledger line written | yes | no | yes |
-| workspace deleted while the extractor ran | yes (listing: the repo key dir with an empty `plans/`) | yes | yes |
+| workspace deleted while the extractor ran | yes (listing: the repo key dir; `plans/` under it empty on disk) | yes (same listing) | yes (same listing) |
 | extractor at collection | finished | finished (no TaskStop) | finished (no TaskStop) |
 | compile after the suite, records and plan deletion staged | yes | yes | yes |
 | menu message carried the diff | yes | yes | yes |
 | notes applied | yes (two undocumented proposals) | yes (three proposals) | yes (three proposals) |
 | turn 2 ("3") asked and did not commit | yes | yes | yes |
 | records commit after "Dismiss all of them." | 42ab9f5 | d7ebf3b | 835ac8f |
-| suite result to menu | 52.6 s | 35.7 s | 38.4 s |
+| suite result to menu | 52.6 s | 35.7 s (compound call) | 38.4 s (compound call) |
 | answer to commit (turn 3) | 23 s | 20 s | 22 s |
 
-The stopped-unfinished path was not reached. The extractor completed within
-about 20 to 30 s of its dispatch in `fast` and `fast2`, inside the finishing
-suite and before the compile call, so the review package's size (5,000 and then
-10,000 numbered lines) did not hold it open; the `TaskStop` branch in the SDD
-path is covered only by the finishing-path rehearsal's `stop` run (section 2).
+The stopped-unfinished path was not reached. In `fast` and `fast2` the
+extractor's completion notification follows the finishing suite call and
+precedes the compile call, so it finished before collection. The suite's
+result came 18 s (`fast`) and 21 s (`fast2`) after the dispatch, so the
+extractor finished within roughly that window plus the gap to collection (the
+notification lines carry no timestamp), and the review package's size (5,000
+and then 10,000 numbered lines) did not hold it open. The `fast` and `fast2`
+suite-result intervals are measured from a compound Bash call (merge-base, dry
+run and `npm test` in one call). The `TaskStop` branch in the SDD path is
+covered only by the finishing-path rehearsal's `stop` run (section 2).
 Deviations: the first line of `prompt-1.txt` carries one added sentence ("Work
 in place on the current branch; do not create a worktree.") so the session does
 not stop at a worktree-consent question. Two earlier `slow` attempts are kept as

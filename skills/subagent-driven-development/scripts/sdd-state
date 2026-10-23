@@ -777,13 +777,6 @@ snapshot_pending() {
 blob_prefix_id() {
   if [ "$1" = - ]; then head -c "$2" | git -C "$CO" hash-object --stdin; else head -c "$2" "$1" | git -C "$CO" hash-object --stdin; fi
 }
-# rewrite_finish <journal-base>: complete a journaled ledger rewrite from
-# whatever point it reached. The staged content and the original length are
-# on disk, so every step repeats safely: the extension (the staged bytes
-# beyond the original length) is appended unless the file already carries
-# it at that offset, then the original length is overwritten in place.
-# Neither step truncates, and a racing append always lands beyond the
-# region being written, so it survives, at worst between the two parts.
 # extension_present <file> <staged> <live-size>: 0 when the staged
 # extension (the bytes beyond <live-size>) already sits in the file
 # somewhere past <live-size>, 1 when it does not, 3 when it cannot be read.
@@ -795,6 +788,13 @@ extension_present() {
   command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 3; }
   node -e 'const fs=require("fs");try{const l=Number(process.argv[3]);process.exit(fs.readFileSync(process.argv[1]).subarray(l).includes(fs.readFileSync(process.argv[2]).subarray(l))?0:1);}catch(e){process.exit(3);}' "$1" "$2" "$3"
 }
+# rewrite_finish <journal-base>: complete a journaled ledger rewrite from
+# whatever point it reached. The staged content and the original length are
+# on disk, so every step repeats safely: the extension (the staged bytes
+# beyond the original length) is appended unless the file already carries
+# it beyond that offset, then the original length is overwritten in place.
+# Neither step truncates, and a racing append always lands beyond the
+# region being written, so it survives, at worst between the two parts.
 rewrite_finish() {
   local jbase=$1 path live_size new_size file ext_size present
   read -r live_size new_size path < "$jbase.journal" || return 2

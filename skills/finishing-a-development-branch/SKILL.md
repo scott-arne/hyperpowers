@@ -57,9 +57,9 @@ the `init.defaultBranch` value, otherwise `master`:
 CURRENT_BRANCH=$(git branch --show-current)
 DEFAULT_BRANCH=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
 if [ -z "$DEFAULT_BRANCH" ]; then
-  HAVE_MAIN=$(git show-ref --verify -q refs/heads/main && echo yes)
-  HAVE_MASTER=$(git show-ref --verify -q refs/heads/master && echo yes)
-  CONFIGURED=$(git config --get init.defaultBranch)
+  HAVE_MAIN=$(git show-ref --verify -q refs/heads/main && echo yes) || true
+  HAVE_MASTER=$(git show-ref --verify -q refs/heads/master && echo yes) || true
+  CONFIGURED=$(git config --get init.defaultBranch) || true
   if [ "$HAVE_MAIN" = yes ] && [ "$HAVE_MASTER" = yes ]; then
     case "$CONFIGURED" in main|master) DEFAULT_BRANCH=$CONFIGURED ;; *) DEFAULT_BRANCH="" ;; esac
   elif [ "$HAVE_MAIN" = yes ]; then DEFAULT_BRANCH=main
@@ -80,6 +80,7 @@ This determines which menu to show and how cleanup works:
 | `GIT_DIR != GIT_COMMON`, detached HEAD | Reduced 2 options (no merge) | Externally managed — leave in place |
 | mode `current-branch` passed, `$CURRENT_BRANCH` is `$DEFAULT_BRANCH` | Reduced 2 options (push, keep) | None: no branch and no worktree were created |
 | mode `current-branch` passed, any other branch | Standard 3 options | Option 1 deletes the merged branch as usual; no worktree to remove |
+| `$DEFAULT_BRANCH` is empty (both `main` and `master` exist, `init.defaultBranch` names neither) | Ask your human partner which is the default, then read this table again | Decided by the row their answer selects |
 
 ## Step 3: Determine Base Branch
 

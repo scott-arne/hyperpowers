@@ -194,8 +194,8 @@ The human partner was asked on 2026-10-22 to run these four commands on bergen,
 from a checkout of `portable-sdd-dossiers` inside a Claude Code session, and to
 paste the output. The branch was pushed to origin for that purpose (the ref is
 at `777a392`; the commits after it are documentation only). No output has
-arrived, so each row below is awaiting that run (requested 2026-10-22; the
-branch is on origin at 777a392). A failing suite there is a plan conflict to
+arrived, so each row below is awaiting that run (requested 2026-10-22). A
+failing suite there is a plan conflict to
 surface to the human partner, not a value to guess. This host runs git 2.56;
 bergen's version is the first row.
 
@@ -250,9 +250,10 @@ with it allowed. The numbers and their limits are in the
 
 ### Open items
 
-Eight ungated events from this plan's task gates await the final whole-branch
+Nine ungated events from this plan's task gates await the final whole-branch
 gate, which the controller sweeps before the hand-back. Release readiness is
 conditional on that gate passing.
+
 The three slots marked not observed above (the four bergen checks counted as
 one, the work-repository dry run, and Edit in the default mode) are release
 inputs still open; the hand-back lists them.
@@ -270,12 +271,15 @@ an explicit waiver, and once this release is sequenced against the
 `sdd-turn-liveness` plan. The version is `6.17.0` (the human partner chose it:
 this plan ships first). At release time the CHANGELOG's `## Unreleased` heading
 becomes `## 6.17.0 (<date>)`, with the date of the release day, before the bump.
-Pushes happen only on the human partner's go, which running this block is.
+Pushes happen only on the human partner's go, which running this block is. The
+block is written for the macOS laptop that holds the main checkout, where
+in-place `sed` takes an empty backup suffix (`sed -i ''`); on a GNU host the
+flag is `sed -i` alone.
 
 ```bash
 # in the hyperpowers main checkout, after the branch is merged: a clean tree first
 git status --short            # must print nothing
-sed -i '' 's/^## Unreleased$/## 6.17.0 (<date>)/' CHANGELOG.md   # <date>: the release day, YYYY-MM-DD
+sed -i '' "s/^## Unreleased\$/## 6.17.0 ($(date +%F))/" CHANGELOG.md   # the release day, YYYY-MM-DD
 git status --short            # now exactly " M CHANGELOG.md"
 bash scripts/bump-version.sh 6.17.0
 git add CHANGELOG.md package.json .claude-plugin/plugin.json .cursor-plugin/plugin.json .codex-plugin/plugin.json .kimi-plugin/plugin.json .claude-plugin/marketplace.json

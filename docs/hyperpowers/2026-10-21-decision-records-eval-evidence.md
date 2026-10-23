@@ -181,55 +181,75 @@ parameter existed, without ancestor excludes (the host CLAUDE.md loaded);
 
 ## 3. SDD-path rehearsal
 
-Three counted print-mode Claude Code sessions (model claude-opus-5-5, CC
+Four counted print-mode Claude Code sessions (model claude-opus-5-5, CC
 2.1.302) executing a one-task plan in the fixture with the decision-records
-worktree (HEAD 3f9aca9) as the plugin. Every session ran with
-`XDG_CACHE_HOME` set to a per-run directory (so the SDD workspace, ledger and
-review dirs are visible), `HYPERPOWERS_PLUGINS_FILE=/nonexistent` (the Codex
-preflight finds no plugin, so the gates degrade) and the `claudeMdExcludes`
-file for every ancestor of the working copy. Artifacts:
+worktree as the plugin (HEAD 3f9aca9 for `slow`, `fast` and `fast2`; HEAD
+2db0cf0, which adds the SDD text's ledger sentence, for `stop`). Every session
+ran with `XDG_CACHE_HOME` set to a per-run directory (so the SDD workspace,
+ledger and review dirs are visible), `HYPERPOWERS_PLUGINS_FILE=/nonexistent`
+(the Codex preflight finds no plugin, so the gates degrade) and the
+`claudeMdExcludes` file for every ancestor of the working copy. Artifacts:
 `evidence/2026-10-21-decision-records/task-14-runs/` in hyperpowers-evals
-(commit 5d7c69311).
+(commit 5d7c69311 for `slow`, `fast`, `fast2` and the void attempts; commit
+pending in hyperpowers-evals for `stop`, the delay hook, the launcher's
+`EXTRACTOR_DELAY` parameter and the manifest).
 
-| Check | slow (120 s suite) | fast (instant suite) | fast2 (instant, 10,000-line padding) |
-|---|---|---|---|
-| dry run at Setup | yes | yes | yes |
-| extractor dispatched after the final review, in the background | yes | yes | yes |
-| `Decision extractor:` ledger line written | yes | no | yes |
-| workspace deleted while the extractor ran | yes (listing: the repo key dir; `plans/` under it empty on disk) | yes (same listing) | yes (same listing) |
-| extractor at collection | finished | finished (no TaskStop) | finished (no TaskStop) |
-| compile after the suite, records and plan deletion staged | yes | yes | yes |
-| menu message carried the diff | yes | yes | yes |
-| notes applied | yes (two undocumented proposals) | yes (three proposals) | yes (three proposals) |
-| turn 2 ("3") asked and did not commit | yes | yes | yes |
-| records commit after "Dismiss all of them." | 42ab9f5 | d7ebf3b | 835ac8f |
-| suite result to menu | 52.6 s | 35.7 s (compound call) | 38.4 s (compound call) |
-| answer to commit (turn 3) | 23 s | 20 s | 22 s |
+| Check | slow (120 s suite) | fast (instant suite) | fast2 (instant, 10,000-line padding) | stop (instant, extractor delayed 180 s by a Read hook) |
+|---|---|---|---|---|
+| dry run at Setup | yes | yes | yes | yes |
+| extractor dispatched after the final review, in the background | yes | yes | yes | yes |
+| `Decision extractor:` ledger line written | yes | no | yes | yes (the call right after the dispatch) |
+| workspace deleted while the extractor ran | yes (listing: the repo key dir; `plans/` under it empty on disk) | yes (same listing) | yes (same listing) | yes (same listing; deleted 6 s after the dispatch) |
+| extractor at collection | finished | finished (no TaskStop) | finished (no TaskStop) | stopped unfinished (TaskStop seen, notification status `stopped`) |
+| compile after the suite, records and plan deletion staged | yes | yes | yes | yes |
+| menu message carried the diff | yes | yes | yes | yes |
+| notes applied | yes (two undocumented proposals) | yes (three proposals) | yes (three proposals) | no (Nothing recorded.) |
+| turn 2 ("3") asked and did not commit | yes | yes | yes | not applicable: no proposals, "3" committed |
+| records commit | 42ab9f5 (turn 3) | d7ebf3b (turn 3) | 835ac8f (turn 3) | f1773a8 (turn 2) |
+| suite result to menu | 52.6 s | 35.7 s (compound call) | 38.4 s (compound call) | 30.6 s (compound call) |
+| answer to commit | 23 s (turn 3) | 20 s (turn 3) | 22 s (turn 3) | 10 s (turn 2) |
 
-The stopped-unfinished path was not reached. In `fast` and `fast2` the
-extractor's completion notification follows the finishing suite call and
-precedes the compile call, so it finished before collection. The suite's
-result came 18 s (`fast`) and 21 s (`fast2`) after the dispatch, so the
-extractor finished within roughly that window plus the gap to collection (the
-notification lines carry no timestamp), and the review package's size (5,000
-and then 10,000 numbered lines) did not hold it open. The `fast` and `fast2`
-suite-result intervals are measured from a compound Bash call (merge-base, dry
-run and `npm test` in one call). The `TaskStop` branch in the SDD path is
-covered only by the finishing-path rehearsal's `stop` run (section 2).
+The stopped-unfinished path was reached in `stop`, in the SDD-specific order
+the transcript timestamps give: dispatch 00:37:41Z, the `Decision extractor:`
+ledger line and the workspace `rm -rf` in the next call (00:37:48Z), suite
+result 00:37:57Z (15 s after the dispatch), `TaskStop` 00:38:01Z, compile
+00:38:06Z, hand-back 00:38:27Z. No completion notification for the extractor
+came before the `TaskStop`; its notification carried status `stopped`; both
+records read `Nothing recorded.`; the hand-back said the decision-notes agent
+was stopped before it finished and the records were compiled without notes;
+the menu carried the literal `diff --git` lines for both records, the README,
+the spec and the plan; the records commit body is one line. The review
+package's size did not hold the extractor open in `fast` and `fast2`: its
+completion notification follows the suite call and precedes the compile call
+there (the suite's result came 18 s and 21 s after the dispatch; notification
+lines carry no timestamp), at both paddings. `stop` therefore added `EXTRACTOR_DELAY=180`, a
+PreToolUse hook on Read meant to sleep before a read of a review package. The
+hook did not fire: the extractor read the package with Bash `cat`, never the
+Read tool, so the matcher never matched. The stop in `stop` was a close race,
+not the delay: the extractor wrote its notes file at 00:37:59Z, 2 s before the
+`TaskStop`, and was stopped before its final message. The path the skills
+describe held (stopped agent, unfinished notes ignored), but this rehearsal
+does not show a controller stopping an extractor that is clearly mid-work; a
+hook matching Bash reads, or a slower extractor model, would.
+The SDD text gained one sentence after `fast` skipped the `Decision
+extractor:` ledger line: the dispatch is complete only when that line is in
+the ledger, written before any other tool call, because after a compaction it
+is the only record of the task id and the notes path. One of the three earlier
+runs skipped the line and two wrote it; `stop`, run on the amended text, wrote
+it in the call right after the dispatch. Four sessions cannot show that the
+sentence makes the line always appear.
 Deviations: the first line of `prompt-1.txt` carries one added sentence ("Work
 in place on the current branch; do not create a worktree.") so the session does
 not stop at a worktree-consent question. Two earlier `slow` attempts are kept as
 `slow-void1` and `slow-void2`: both were fixture defects (the plan's sample
 file was read by nothing; then the plan's own code carried a missing-file bug
 and a circular assertion that the final review rightly raised), and the plan
-was revised twice. In `fast` the session skipped the `Decision extractor:`
-ledger line the SDD text asks for (dispatch, background flag and ordering
-otherwise held); `slow` and `fast2` wrote it. Because the extractor proposed
-undocumented decisions in every counted run, the bare "3" never committed, as
-the Step 4 amendment requires, and the third turn, "Dismiss all of them.",
+was revised twice. Because the extractor proposed undocumented decisions in
+each of the three finished-extractor runs, the bare "3" never committed there,
+as the Step 4 amendment requires, and the third turn, "Dismiss all of them.",
 drew the one-line records commit. The implementer subagents' commits carry a
 `Co-Authored-By` trailer that is not in the skills' text. `run-sdd.sh`, the
-fixture, `analyze.py` and `runs.md` are in `task-14-runs/`.
+delay hook, the fixture, `analyze.py` and `runs.md` are in `task-14-runs/`.
 
 ## 4. Post-landing checks still owed
 

@@ -1358,5 +1358,41 @@ out=$(run_state "$i18" import docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i18" ] && [ -L "$legacy_i18" ] && ! ls -d "$legacy_i18.importing-"* >/dev/null 2>&1; then pass "a published destination the source outgrew is finished, not reported as ledger-exists"; else fail "a published destination the source outgrew is finished, not reported as ledger-exists (rc=$rc: $out)"; fi
 if [ -f "$wsi18/task-2-report.md" ] && [ "$(sed -n 3p "$wsi18/progress.md")" = "Task 2: complete (commits 3333333..4444444, review clean)" ] && [ "$(head -n 1 "$wsi18/progress.md")" = "# SDD ledger — plan: docs/plan.md" ]; then pass "the entries the source gained after publication are installed, the ledger last"; else fail "the entries the source gained after publication are installed, the ledger last ($(cat "$wsi18/progress.md"))"; fi
 
+
+echo ""
+echo "=== sync recovery in a sha256 repository ==="
+# The sync marker holds two object ids. A repository with
+# extensions.objectFormat = sha256 writes 64-character ids, so a marker
+# validated by length would be rejected there and recovery would never run.
+# The pair is built by hand: make_pair creates sha1 repositories.
+p13_remote="$TEST_ROOT/p13.git"
+git init -q --bare -b main --object-format=sha256 "$p13_remote"
+p13_a="$TEST_ROOT/hostA/p13"; mkdir -p "$(dirname "$p13_a")"
+git clone -q "$p13_remote" "$p13_a" 2>/dev/null
+git -C "$p13_a" config user.name "Host A"; git -C "$p13_a" config user.email "a@example.com"
+git -C "$p13_a" commit -q --allow-empty -m "initial"
+git -C "$p13_a" push -q origin main 2>/dev/null
+p13_b="$TEST_ROOT/hostB/p13"; mkdir -p "$(dirname "$p13_b")"
+git clone -q "$p13_remote" "$p13_b" 2>/dev/null
+git -C "$p13_b" config user.name "Host B"; git -C "$p13_b" config user.email "b@example.com"
+mkdir -p "$p13_a/docs"; : > "$p13_a/docs/plan.md"; git -C "$p13_a" add docs; git -C "$p13_a" commit -qm plan; git -C "$p13_a" push -q origin main 2>/dev/null
+git -C "$p13_b" pull -q origin main 2>/dev/null
+if [ "$(git -C "$p13_a" rev-parse --show-object-format)" = sha256 ] && [ "$(git -C "$p13_b" rev-parse --show-object-format)" = sha256 ]; then pass "the fixture pair uses sha256 object ids"; else fail "the fixture pair uses sha256 object ids"; fi
+co13_b="$STATE_ROOT/$(state_key "$p13_b")"
+run_state "$p13_a" sync docs/plan.md >/dev/null
+ws13=$(run_sdd_dir "$p13_a" docs/plan.md)
+printf '# SDD ledger — plan: docs/plan.md\n' > "$ws13/progress.md"
+run_state "$p13_a" snapshot docs/plan.md >/dev/null; git -C "$p13_a" push -q origin hyperpowers/state 2>/dev/null
+run_state "$p13_b" sync docs/plan.md >/dev/null
+ws13b="$co13_b/plans/$(basename "$ws13")"
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$ws13/progress.md"
+run_state "$p13_a" snapshot docs/plan.md >/dev/null; git -C "$p13_a" push -q origin hyperpowers/state 2>/dev/null
+( cd "$p13_b" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+m13_s=""; m13_t=""; read -r m13_s m13_t < "$co13_b/.sync-applying" 2>/dev/null
+if [ "$rc" -eq 99 ] && [ "${#m13_s}" -eq 64 ] && [ "${#m13_t}" -eq 64 ]; then pass "the crash seam leaves a marker holding two 64-character ids"; else fail "the crash seam leaves a marker holding two 64-character ids (rc=$rc, '$m13_s $m13_t')"; fi
+run_state "$p13_b" sync docs/plan.md > "$TEST_ROOT/p13.out" 2> "$TEST_ROOT/p13.err"; rc=$?
+out=$(cat "$TEST_ROOT/p13.out")
+case "${out%% *}" in status=up-to-date|status=fast-forwarded) ff13=1 ;; *) ff13=0 ;; esac
+if [ "$rc" -eq 0 ] && [ "$ff13" -eq 1 ] && [ ! -f "$co13_b/.sync-applying" ] && grep -q '^Task 1: complete' "$ws13b/progress.md"; then pass "an interrupted apply in a sha256 repository is recovered and the marker is gone"; else fail "an interrupted apply in a sha256 repository is recovered and the marker is gone (rc=$rc: $out: $(cat "$TEST_ROOT/p13.err"))"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

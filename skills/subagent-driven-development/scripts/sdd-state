@@ -870,7 +870,9 @@ recover_apply() {
   done
   [ -f "$CO/.sync-applying" ] || return 0
   read -r S target < "$CO/.sync-applying" 2>/dev/null || true
-  if [ "$(printf '%s\n%s\n' "$S" "$target" | grep -Ec '^[0-9a-f]{40}$')" -ne 2 ]; then
+  # Validated as commits this checkout knows, not by length: a repository
+  # with extensions.objectFormat = sha256 writes 64-character ids.
+  if ! git -C "$CO" cat-file -e "$S^{commit}" 2>/dev/null || ! git -C "$CO" cat-file -e "$target^{commit}" 2>/dev/null; then
     echo "sdd-state: $CO/.sync-applying is not a valid sync marker; check the working tree under $CO, then remove the marker" >&2
     return 2
   fi

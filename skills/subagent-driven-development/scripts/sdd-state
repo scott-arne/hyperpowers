@@ -446,8 +446,15 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
           rm -rf "$e"; continue
         fi
         # The destination's entry was written after the copy this import is
-        # recovering: it stays, and the legacy one lands beside it.
+        # recovering: it stays, and the legacy one lands beside it, unless
+        # the branch ignores the name. A brief or a review package
+        # regenerates on any host and never travels, so no copy is kept.
         conflicts=$((conflicts + 1))
+        if git -C "$CO" check-ignore -q "plans/$WS/$name" 2>/dev/null; then
+          rm -rf "$e"
+          echo "sdd-state: $dest/$name differs from the legacy copy, which is regenerable, not copied" >&2
+          continue
+        fi
         rm -rf "$dest/$name.from-import"
         if ! mv -f "$e" "$dest/$name.from-import" 2>/dev/null; then
           cp -a "$e" "$dest/$name.from-import" || { import_abort "$c" "$backup" "$ref" "$stage" "$installed"; return 2; }

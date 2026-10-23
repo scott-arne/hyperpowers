@@ -77,7 +77,9 @@ if [ "$(git -C "$r1" rev-list --count hyperpowers/state 2>/dev/null)" = 1 ]; the
 if [ "$(git -C "$r1" show hyperpowers/state:.hyperpowers-state 2>/dev/null)" = "hyperpowers-state 1" ]; then pass "the sentinel is committed with its exact content"; else fail "the sentinel is committed with its exact content"; fi
 expected_ignore='# Regenerable on any host: briefs come from task-brief, packages from review-package.
 plans/*/task-*-brief.md
-plans/*/review-*.diff'
+plans/*/review-*.diff
+# A copy an import left beside an entry it could not install: local to that host, for a human to merge.
+plans/*/*.from-import'
 if [ "$(git -C "$r1" show hyperpowers/state:.gitignore 2>/dev/null)" = "$expected_ignore" ]; then pass ".gitignore keeps briefs and packages local"; else fail ".gitignore keeps briefs and packages local"; fi
 if [ "$(git -C "$r1" show hyperpowers/state:.gitattributes 2>/dev/null)" = "plans/*/progress.md merge=union" ]; then pass ".gitattributes gives the ledger the union driver"; else fail ".gitattributes gives the ledger the union driver"; fi
 if [ -f "$co1/README.md" ] && grep -q 'never merged into a code branch' "$co1/README.md"; then pass "README names the branch's purpose"; else fail "README names the branch's purpose"; fi
@@ -1688,5 +1690,26 @@ out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
 run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
 if [ "$rc" -eq 0 ] && [ "${out%% *}" != "status=busy" ] && [ -f "$wsa21/notes.new.md" ] && [ "$(cat "$wsa21/notes.new.md")" = "notes a controller keeps" ]; then pass "a dossier file whose name holds .new. survives a sync and a snapshot"; else fail "a dossier file whose name holds .new. survives a sync and a snapshot (rc=$rc: $out)"; fi
 if git -C "$co_a21" cat-file -e "refs/heads/hyperpowers/state:plans/$(basename "$wsa21")/notes.new.md" 2>/dev/null && [ -z "$(git -C "$co_a21" status --porcelain -- plans/)" ]; then pass "it stays tracked on the branch and the checkout is clean"; else fail "it stays tracked on the branch and the checkout is clean ($(git -C "$co_a21" status --porcelain -- plans/ | tr '\n' ' '))"; fi
+
+echo ""
+echo "=== import conflicts stay local to the host that found them ==="
+# A copy beside a destination entry is for a human on this host to merge:
+# the branch ignores it, and a regenerable entry gets no copy at all.
+i21="$TEST_ROOT/i21"; make_repo "$i21"; mkdir -p "$i21/docs"; : > "$i21/docs/plan.md"; git -C "$i21" add docs; git -C "$i21" commit -qm plan
+ws21=$(ws_path "$i21" "$i21/docs/plan.md"); mkdir -p "$ws21"
+co21="$STATE_ROOT/$(state_key "$i21")"
+legacy21="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i21")/plans/$(basename "$ws21")"
+mkdir -p "$legacy21.importing-560"
+printf '# SDD ledger — plan: %s/docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\nTask 2: complete (commits 3333333..4444444, review clean)\n' "$i21" > "$legacy21.importing-560/progress.md"
+printf 'report one\n' > "$legacy21.importing-560/task-1-report.md"
+printf 'brief one\n' > "$legacy21.importing-560/task-1-brief.md"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$ws21/progress.md"
+printf 'report one, revised where the dossier lives now\n' > "$ws21/task-1-report.md"
+printf 'brief one, regenerated here\n' > "$ws21/task-1-brief.md"
+out=$(run_state "$i21" import docs/plan.md 2> "$TEST_ROOT/i21.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy21 conflicts=2" ]; then pass "both conflicting entries are reported"; else fail "both conflicting entries are reported (rc=$rc: $out: $(cat "$TEST_ROOT/i21.err"))"; fi
+if [ ! -e "$ws21/task-1-brief.md.from-import" ] && [ "$(cat "$ws21/task-1-brief.md")" = "brief one, regenerated here" ] && grep -q 'regenerable, not copied' "$TEST_ROOT/i21.err"; then pass "a regenerable entry the branch ignores gets no copy and is named as such"; else fail "a regenerable entry the branch ignores gets no copy and is named as such ($(cat "$TEST_ROOT/i21.err"))"; fi
+run_state "$i21" snapshot docs/plan.md >/dev/null
+if [ -f "$ws21/task-1-report.md.from-import" ] && git -C "$co21" check-ignore -q "plans/$(basename "$ws21")/task-1-report.md.from-import" && ! git -C "$co21" cat-file -e "refs/heads/hyperpowers/state:plans/$(basename "$ws21")/task-1-report.md.from-import" 2>/dev/null && [ -z "$(git -C "$co21" status --porcelain | grep -F '.from-import')" ]; then pass "a report's copy stays beside it, ignored by the branch, uncommitted and out of the status"; else fail "a report's copy stays beside it, ignored by the branch, uncommitted and out of the status ($(git -C "$co21" status --porcelain | tr '\n' ' '))"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

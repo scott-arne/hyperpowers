@@ -173,6 +173,8 @@ a ledger file, not only in todos.
   reports `diverged` for their merge) or to discard them. A workspace in
   the list that is not this plan's belongs to another plan: report its
   name and stop without reading or changing it.
+  Any other status, `status=error` (exit 2) among them, stops the run until
+  `sync` succeeds; show its stderr line.
 - Check for this plan's ledger at `<workspace>/progress.md` — this plan's
   workspace only, never a sibling's. The workspace is the plan's identity:
   `scripts/sdd-dir` maps a plan to ONE directory whatever path form you
@@ -250,7 +252,11 @@ a ledger file, not only in todos.
   `scan-failed` (exit 5: the pre-push scan named in `hyperpowers.prePushScan`
   rejected the range; show its output and ask) and `push-failed` (exit 1:
   the remote moved or could not be reached; run `sync` first, then retry):
-  none of them is a hand-off, so report nothing as ready to pull. On
+  none of them is a hand-off, so report nothing as ready to pull.
+  `snapshot ... push=none` (exit 0) is no hand-off either: the plan
+  repository has no remote, so the record is committed on this host and
+  nothing left it; report it as a local snapshot and ask your human partner
+  for a remote if the dossier has to travel. On
   `pushed`, list the branches named in `code=` and, when present, `plan=`
   for your human partner to push here and pull there. You push none of
   them unless asked.
@@ -373,7 +379,10 @@ and fix-round diffs need it.
   ledger; read its completion line, mark the task done, and never dispatch
   it. `no-workspace` (exit 2): the workspace is gone (finished or pruned
   elsewhere); stop, run `sync`, and re-read the ledger before anything
-  else. `held` by another session: do not take the next task on your own
+  else. `error` (exit 2, the same exit as `no-workspace` and a different
+  problem): a read or a write failed, so the task is not claimed and `sync`
+  is not the answer; stop and show the stderr line.
+  `held` by another session: do not take the next task on your own
   initiative; which tasks may run concurrently is not yet decided, and
   skipping ahead would decide it by accident. Tell your human partner who
   holds the task and since when, and ask whether to take it over; take over
@@ -382,6 +391,8 @@ and fix-round diffs need it.
   still working, wait for their instruction. The exception is a task list
   your human partner assigned this session (`session <sid>: tasks ...`):
   work only those tasks, and report a held task in your list the same way.
+  Any other status stops the dispatch until `claim` succeeds; show its
+  stderr line.
 - Record the implementer's agent identity from the dispatch result in the
   ledger's task entry
   (`Task <N>: implementer <agent-id-or-name> (session <sid>, worktree <path>, branch <name>)`) —
@@ -756,7 +767,10 @@ When the final whole-branch review is clean and its fixes are merged:
    removes the plan's directory, commits the removal to the state branch,
    and prints `last=<sha>`, the commit that still holds the dossier, and
    `push=<remote>/<branch>`; on the plain backend it prints `backend=plain`
-   instead, and there is nothing to push.
+   instead, and there is nothing to push. `none` means there was no
+   workspace to remove, and `error` (exit 2) that the removal or its commit
+   failed: any status other than `finished` stops Finish until the command
+   succeeds; show its stderr line.
 3. **Verify deletion** with `test ! -d "<workspace>"` to confirm it is gone.
    The push command is `git -C <checkout> push <remote> <branch>`, the
    checkout being the parent of the `plans/` directory `sdd-dir` printed;

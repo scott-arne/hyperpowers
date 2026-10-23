@@ -423,6 +423,13 @@ assert_contains "$SDD" "Snapshot the workspace (scripts/sdd-state snapshot)" "th
 assert_contains "$SDD" "set -o noclobber" "ledger creation is exclusive"
 assert_contains "$SDD" "both stop until the snapshot succeeds" "a failed snapshot stops the loop"
 
+# status=error has a home in every bullet that enumerates outcomes (final review, I4)
+assert_contains "$SDD" "Any other status, \`status=error\` (exit 2) among them, stops the run until \`sync\` succeeds" "sync has a catch-all for error"
+assert_contains "$SDD" "\`error\` (exit 2, the same exit as \`no-workspace\` and a different problem)" "claim separates error from no-workspace"
+assert_contains "$SDD" "Any other status stops the dispatch until \`claim\` succeeds" "claim has a catch-all"
+assert_contains "$SDD" "any status other than \`finished\` stops Finish until the command succeeds" "finish has a catch-all"
+assert_contains "$SDD" "\`snapshot ... push=none\` (exit 0) is no hand-off either" "a hand-off with no remote is not reported as one"
+
 # finishing-a-development-branch — the session mode (portable dossiers, 2026-10-20)
 assert_contains "$FIN" "A passed \`new-branch\` or \`worktree\` changes nothing here" "new-branch and worktree keep the environment rows"
 assert_contains "$FIN" "Skip this step when mode \`current-branch\` was passed and \`\$CURRENT_BRANCH\` is \`\$DEFAULT_BRANCH\`" "only the default-branch case skips the base step"

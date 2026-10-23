@@ -21,6 +21,8 @@
 7. **A command Claude Code moves to the background on its own is a tracked launch.** Spec Design §2 defines "live" by the two launch results "Async agent launched" and "Command running in background with ID". Claude Code also moves a foreground Bash call that outlives its timeout to the background by itself; the result then starts "Command did not complete within its <N>s timeout and was moved to the background", and the job's end arrives as a completion notice naming the same tool-use id, like any tracked job (about 800 such results on this host). The shared module counts that result as a shell launch, so a stop while such a job runs is a live-work turn end (W2), not a premature stop (P). F is unaffected: a four-minute soak run with the two-minute default timeout still fails it on its timeout and its elapsed time. Approved by the human partner on 2026-10-20, during Task 3's review; applied as Task 4's first step because Task 3 had closed.
 8. **An agent resumed with `SendMessage` is a tracked launch.** Spec Design §2 defines "live" by the two launch results, while the spec's Problem section, the investigation this work answers, describes a premature stop as a turn end "with no subagent or background command running". When the controller resumes a finished agent with `SendMessage`, Claude Code runs it in the background and returns a successful result whose message says "Resuming agent …" or "… resumed … in the background with your message"; the agent's end arrives as a completion notice naming the `SendMessage` tool-use id, like any tracked job (3257 such results on this host; SDD's fix rounds 1-3 resume the implementer this way). The shared module counts that result as an agent launch, so a stop while a resumed agent works is a live-work turn end (W2 in the scenario), not a premature stop (P). Task 7's review found that waits on resumed agents made up about 41% of the premature stops in the three sessions it probed. Approved by the human partner on 2026-10-21, during Task 7's review; applied as Task 7's first step, and the field baseline is re-recorded under it.
 9. **The scenario session runs without Claude Code's fork mode, and with the task tools on, as the field does.** Spec Design §2 pins the Coding-Agent's environment by its provenance fields but not by Claude Code's subagent mode. Claude Code 2.1.302 runs subagents in fork mode by default in an interactive terminal (quorum's sessions): the Agent tool then has no `run_in_background` parameter and every dispatch runs in the background. Print and SDK sessions, which include the human partner's Zed sessions (`entrypoint: sdk-ts`), run without fork mode and honor `run_in_background: false`. Task 9's smoke found every dispatch backgrounded in both arms for that reason, so neither arm could keep a turn open while a subagent ran. The scenario's `checks.sh` therefore sets `CLAUDE_CODE_FORK_SUBAGENT=0` (documented) and `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` through a `# claude-env:` directive whose keys the harness allowlists; the launcher still drops every other inherited Claude variable. Approved by the human partner on 2026-10-21, during Task 9 (the task-tools opt-in, then the fork-mode spike); applied in Task 9 Steps 3b and 3c.
+10. **A Gauntlet lost to a host transport failure is an instrument void, outside the cap.** Spec Design §2 and the Global Constraints count every non-pass, non-fail outcome other than a setup failure toward the cap of three replacements per arm, "API or harness failure" included, because a discarded run is usually a re-roll of behavior that was observed. On 2026-10-22 at about 04:39Z the host lost name resolution for its proxy for a few minutes; the Gauntlet-Agent of all five second-wave control rows (p6-p10) exited with `ECONNRESET` or `getaddrinfo ENOTFOUND` before writing a result, 11 to 15 minutes into runs that take 50 to 75, and quorum recorded each as `investigate` with the summary "gauntlet exited (status 1) without writing a result". No behavior was observed to completion and nothing was re-rolled, yet the five rows exhausted the cap and stopped the arm at four valid runs. A `void-grader` whose Gauntlet record carries no result and whose recorded stderr names a transport error (`ECONNRESET`, `ENOTFOUND`, `ETIMEDOUT`, `ECONNREFUSED`) is therefore `void-transport`: relaunched as an `r<n>` row like a setup void, outside the cap, in both arms alike. A Gauntlet `investigate` with a written result, p5's kind, stays a capped void. Recorded as Correction 1 in the campaign README and applied in Task 11 Step 0 before any relaunch. Approved by the human partner on 2026-10-21 (local), during Task 11.
+11. **The dispatch templates carry the foreground flag.** Spec Design §1 said nothing changes in the implementer and reviewer prompt templates. The Task 9 smoke (p2, p3) showed the treatment controller dispatching subagents without `run_in_background: false` while SKILL.md alone stated the rule, so the four SDD dispatch templates (`implementer-prompt.md`, `task-reviewer-prompt.md`, `re-review-prompt.md`, `fix-subagent-prompt.md`) and `requesting-code-review/code-reviewer.md` carry the flag at their dispatch lines, pinned by `tests/sdd/test-sdd-contract.sh` (Task 9 Step 3b, approved by the human partner on 2026-10-21; applied in c353fc7). The spec's Design §1 sentence is amended to match; recorded here after the final review named the gap.
 
 ## Global Constraints
 
@@ -30,10 +32,10 @@
 - Harness path set, identical in `measure-launch.sh` and `tally.py` (the evals_clean set): `src coding-agents package.json bun.lock bunfig.toml tsconfig.json container scripts/evals-container scenarios fixtures`. The clean-harness settings (the `claudeMdExcludes` list, the `AGENTS.md` exclusion, the launch-environment cleaning) are harness code inside that set, so harness-path identity with the pin is what pins them.
 - Arms: control root `/Users/johnss51/.cache/hyperpowers/sdd-turn-liveness/hp-control` (detached worktree at `v6.16.1`); treatment root `/Users/johnss51/.cache/hyperpowers/sdd-turn-liveness/hp-treatment` (detached worktree at the hyperpowers commit Task 1 makes). Both are created with `git -C /Users/johnss51/Development/agents/hyperpowers worktree add --detach <path> <commit>` and never edited.
 - Campaign pin (spec Design §2), one value per key in `manifest.tsv`: `harness` (evals commit), `control`, `treatment` (root commits), `control_root`, `treatment_root`, `model claude-opus-5-5` (the Coding-Agent, through `ANTHROPIC_MODEL`), `cc` (Claude Code version), `cc_path` (the resolved `claude` binary), `provider vertex`, `subagent_models claude-opus-5-5,claude-sonnet-5-5,claude-haiku-4-5-20251001`, `codex absent`, `task_tools on` (`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, matching the field sessions). Every launch also exports `DISABLE_AUTOUPDATER=1`. A run's recorded models must be non-empty, include the pinned Coding-Agent model and lie inside the allowed set (deviation 4). Codex absence is affirmative: the scenario's two pre-checks passed (the agent's config directory exists, and its plugin registry is either absent, which means no plugin is installed, or readable without a `codex@openai-codex` entry; no `plugins/cache/openai-codex` directory exists), and no main-session command invoked the companion.
-- Void rules: harness setup failure, relaunched, no cap; every other non-pass, non-fail outcome (grader exit without a result, API or harness failure, anything unrecognized), replaced, at most three such replacements per arm combined; a run with a provenance mismatch, voided, replaced, and counted toward the same cap (the agent ran, so discarding it is the kind of re-roll the cap limits); a Claude Code version change (in a run, or caught by a launcher's preflight) restarts both arms under a new pin. Replacement rows are added to `manifest.tsv` as `r<n>` rows and launched through `launch-all.sh` like any other row.
+- Void rules: harness setup failure, relaunched, no cap; a Gauntlet lost to a transport failure before it wrote a result (`void-transport`: the recorded stderr names `ECONNRESET`, `ENOTFOUND`, `ETIMEDOUT` or `ECONNREFUSED`), relaunched, no cap (deviation 10); every other non-pass, non-fail outcome (grader exit without a result, API or harness failure, anything unrecognized), replaced, at most three such replacements per arm combined; a run with a provenance mismatch, voided, replaced, and counted toward the same cap (the agent ran, so discarding it is the kind of re-roll the cap limits); a Claude Code version change (in a run, or caught by a launcher's preflight) restarts both arms under a new pin. Replacement rows are added to `manifest.tsv` as `r<n>` rows and launched through `launch-all.sh` like any other row.
 - Decision-rule thresholds, verbatim from the spec: W1 pooled foreground share ≥ 0.9; W2 at most one live-work turn end across treatment's ten runs; F both slow-command measures pass in at least nine of ten treatment runs; U no untracked launches; P (if control has at least one premature stop) treatment's total lower than control's and at least nine treatment runs with none, else unmeasured; R at least seven successful treatment runs and no more than one fewer than control.
 - Watch budget values, verbatim: three times the stated runtime, or 60 minutes when none is stated, capped at 7200000 ms; foreground calls at most 600000 ms; launch form `<command> > <out> 2>&1; echo "exit=$?" > <out>.exit` (amended 2026-10-20 after Task 1's Codex gate: a marker in the output file could be spoofed by the command's own output; the human partner chose the separate file).
-- Commit messages follow each repository's `type(scope): sentence` style (`fix(sdd): …`, `test(evidence): …`, `docs(evidence): …`); no attribution lines of any kind. Before every commit the staged diff passes `git diff --cached | python3 ~/.claude/scripts/realval-scan.py` with `hits: 0`. No committed file carries transcript text from this host's sessions, the proxy host, the `NO_PROXY` list or the GCP project id.
+- Commit messages follow each repository's `type(scope): sentence` style (`fix(sdd): …`, `test(evidence): …`, `docs(evidence): …`); no attribution lines of any kind. Before every commit the staged diff passes `git diff --cached | python3 ~/.claude/scripts/realval-scan.py` with `hits: 0`. No committed file carries transcript text from this host's sessions, the proxy host, the `NO_PROXY` list or the GCP project id. A resolver error recorded by a launch log or a run record (`getaddrinfo ENOTFOUND <host>`, from a Gauntlet-Agent lost to a host network failure) names the proxy host alone: before staging, replace that hostname with `<proxy-host>` in every affected file and keep the error code, which `analyze.void_kind` reads; the leak scanner's bare-host needle (added 2026-10-22 after the control arm committed the host in four files) must read `hits: 0` (Task 11 fix round 1).
 - Evals: `bun run check` runs before every evals commit; in the nested worktree seven pre-existing failures are known (the `evals/..` path assumption and the host having `claude` on `PATH`), recorded at Before Task 1 and compared, never newly introduced. Python files pass `ruff check` and `mypy` (both on `PATH`).
 - Hyperpowers: the documented offline set (`docs/testing.md:50-55`) passes at Task 1's commit, one suite per `bash` call, through the script in Task 1 Step 7.
 - Live runs (Task 2's elicitation, Tasks 9, 11 and 12) run outside the Bash sandbox: quorum's `git init` fails inside it with "Operation not permitted". Each live command is tried once inside the sandbox; on that signature it is rerun with the sandbox disabled.
@@ -1939,6 +1941,8 @@ class Measure(unittest.TestCase):
             f"D={folder}; echo 'Task 6: complete' >> \"${{D}}/progress.md\"",
             f"cat <<'EOF' >> {LEDGER}\nTask 6: complete (abc123)\nEOF",
             f"printf 'Task 6: complete (abc123)\\n' | tee -a {LEDGER} > /dev/null",
+            # The control arm's r5 and r6 wrote the mark after a literal \n (README Correction 2).
+            f"printf 'test_soak_long: Ran 1 test in 720.037s OK\\nTask 6: complete (abc123)\\n' >> {LEDGER}",
             # A path set by command substitution cannot be resolved statically.
             "W=$(cat /tmp/claude/b2b/sdd-dir.txt); cat >> \"$W/progress.md\" <<'EOF'\n- Task 6: complete (abc123)\nEOF",
             "D=\"$(bash scripts/sdd-dir plan.md)\"\necho 'Task 6: complete' >> \"$D/progress.md\"",
@@ -2315,7 +2319,10 @@ from liveness import (
 
 LAST_TASK = 6
 TASK_LINE = re.compile(r"^Task (\d+): complete\b", re.MULTILINE)
-MARK = re.compile(r"\bTask (\d+): complete\b")
+# A mark may follow a literal backslash escape inside a printf or echo -e
+# argument ("...OK\nTask 6: complete"), where "n" sits before "Task" and no
+# word boundary exists; the escape counts as a boundary (README Correction 2).
+MARK = re.compile(r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))Task (\d+): complete\b")
 LEDGER_FILE = "progress.md"
 SHORT_SOAK = "test_soak_short"
 LONG_SOAK = "test_soak_long"
@@ -4906,6 +4913,102 @@ Hyperpowers: `git add docs/hyperpowers/2026-10-19-sdd-turn-liveness-eval-evidenc
 
 `Assumption: premature stops reproduce in a short, fresh session, validate via this arm's premature total, before Task 12. A total of 0 is not a plan conflict: P becomes unmeasured, as the spec's rule says.`
 
+- [ ] **Step 0: The transport void (plan deviation 10, README Correction 1)**
+
+Deviation 10 was approved during this task, after the second wave's five rows were lost to a host network failure (its text has the facts). It lands as its own commit before any relaunch, because the README's Analyzer pins make every analyzer change a Correction "recorded before the tally it affects".
+
+In `test_analyze.py`, extend `test_void_kinds_fail_closed` (class `Measure`) with these assertions, placed after the existing `void-grader` assertion:
+
+```text
+        lost = {
+            "final": "indeterminate",
+            "gauntlet": {
+                "status": "investigate",
+                "summary": "gauntlet exited (status 1) without writing a result",
+                "reasoning": 'gauntlet stderr (tail): {"error":{"message":"getaddrinfo ENOTFOUND proxy.example"}}',
+            },
+        }
+        self.assertEqual(analyze.void_kind(lost), "void-transport")
+        reset = {**lost, "gauntlet": {**lost["gauntlet"], "reasoning": 'gauntlet stderr (tail): {"error":{"message":"ECONNRESET: The socket connection was closed unexpectedly."}}'}}
+        self.assertEqual(analyze.void_kind(reset), "void-transport")
+        judged = {**lost, "gauntlet": {**lost["gauntlet"], "reasoning": "the agent never answered"}}
+        self.assertEqual(analyze.void_kind(judged), "void-grader")
+```
+
+In `test_tally.py`, add this test to the `Evaluate` class after `test_setup_void_is_not_counted` (four transport voids and a PASS prove they sit outside the cap of three):
+
+```text
+    def test_transport_void_is_not_counted(self) -> None:
+        lost = {
+            "status": "investigate",
+            "summary": "gauntlet exited (status 1) without writing a result",
+            "reasoning": 'gauntlet stderr (tail): {"error":{"message":"ECONNRESET: The socket connection was closed unexpectedly."}}',
+        }
+        for n in range(4):
+            make_run(self.c.results, f"control-t{n}", [], plugin_dir=ROOTS["control"], final="indeterminate", gauntlet=lost)
+            self.c.launch("control", f"r{n + 1}", [f"control-t{n}"])
+        self.c.arm("control", 10, control_records, STOPS)
+        self.c.arm("treatment", 10, treatment_records)
+        rows, d = self.c.evaluate()
+        self.assertEqual({r["status"] for r in rows if r["run_id"].startswith("control-t")}, {"void-transport"})
+        self.assertEqual(d["decision"], "PASS")
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py evidence/2026-10-19-sdd-turn-liveness/test_tally.py` — Expected: both new assertions FAIL (`void-grader` where `void-transport` is expected; `INCOMPLETE` where `PASS` is expected).
+
+In `analyze.py`, add a module constant beside the other module constants (after `LONG_MIN_ELAPSED_S`):
+
+```text
+TRANSPORT_ERRORS = ("ECONNRESET", "ENOTFOUND", "ETIMEDOUT", "ECONNREFUSED")
+```
+
+and replace the `void-grader` branch of `void_kind` with:
+
+```text
+    if gauntlet.get("status") == "investigate" and "without writing a result" in str(gauntlet.get("summary") or ""):
+        # The Gauntlet-Agent died before grading. When its recorded stderr names
+        # a transport error the host lost its network and no behavior was
+        # observed to completion, so the attempt is outside the cap (plan
+        # deviation 10); any other grader exit stays a capped void.
+        if any(code in str(gauntlet.get("reasoning") or "") for code in TRANSPORT_ERRORS):
+            return "void-transport"
+        return "void-grader"
+```
+
+In `tally.py`, add after `VOID_CAP = 3`:
+
+```text
+UNCAPPED_VOIDS = ("void-setup", "void-transport")
+```
+
+and replace, in `evaluate`:
+
+```text
+            elif m["void"] == "void-setup":
+                row["status"] = "void-setup"
+```
+
+with:
+
+```text
+            elif m["void"] in UNCAPPED_VOIDS:
+                # No agent behavior was observed to completion: a setup failure
+                # started none, a transport failure lost the grader (deviation 10).
+                row["status"] = m["void"]
+```
+
+If either module's docstring enumerates the void statuses, add `void-transport` beside `void-setup` there. Run the four suites: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_liveness.py evidence/2026-10-19-sdd-turn-liveness/test_analyze.py evidence/2026-10-19-sdd-turn-liveness/test_tally.py evidence/2026-10-19-sdd-turn-liveness/test_field.py` — Expected: `OK`. Ruff and mypy on `analyze.py` and `tally.py`.
+
+In `README.md`, add to the "Void rules" list, after its first item: `- A Gauntlet lost to a transport failure before it wrote a result is \`void-transport\`: relaunched, no cap (Correction 1, plan deviation 10).` and insert a `## Corrections` section immediately before `## Results`:
+
+```text
+## Corrections
+
+1. 2026-10-22, before the control arm's first relaunch (plan deviation 10). `analyze.void_kind` names a new void, `void-transport`: a Gauntlet exit without a result whose recorded stderr names a transport error (`ECONNRESET`, `ENOTFOUND`, `ETIMEDOUT`, `ECONNREFUSED`); `tally.evaluate` relaunches it outside the cap, like `void-setup`. Reason: at about 04:39Z the host lost name resolution for its proxy for a few minutes, the Gauntlet-Agent of all five second-wave control rows (p6-p10) exited with `ECONNRESET` or `getaddrinfo ENOTFOUND` 11 to 15 minutes into the runs, and the five rows exhausted the cap of three with no agent behavior observed to completion and nothing re-rolled. The rule is symmetric across arms; a Gauntlet `investigate` with a written result stays a capped void. Pins after the Correction: `analyze.py` `<blob>`, `tally.py` `<blob>` (`liveness.py` unchanged).
+```
+
+Fill each `<blob>` with `git hash-object` of the final file before committing and confirm after the commit with `git rev-parse HEAD:evidence/2026-10-19-sdd-turn-liveness/<f>`. Stage `analyze.py`, `tally.py`, `test_analyze.py`, `test_tally.py`, `README.md`; leak scan; commit `fix(evidence): a grader lost to a transport failure is an uncapped void`. Then run `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py`: the five outage rows read `void-transport`, the cap reason is gone, and the control arm wants six more valid runs. Relaunch the five transport-void rows as `r1`-`r5` by Step 2's procedure (one view `manifest-control-r1.tsv`, log `logs/campaign-control-r1.out`, concurrency 5) before any capped replacement; p5 stays the arm's first capped void.
+
 - [ ] **Step 1: Launch the ten control rows**
 
 From the evals worktree, with `ANTHROPIC_MODEL=claude-opus-5-5 CLAUDE_CODE_ENABLE_TODO_TOOLS=1` exported, write a launch view holding the pins and only the control rows (`awk -F '\t' 'NF == 2 || $1 == "control"' evidence/2026-10-19-sdd-turn-liveness/manifest.tsv > evidence/2026-10-19-sdd-turn-liveness/manifest-control.tsv`), then launch detached (unsandboxed):
@@ -4915,7 +5018,7 @@ Watch with `wait-done.sh … logs/campaign-control.out 9` in foreground calls of
 
 - [ ] **Step 2: Replace voids under the rules**
 
-Run `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` (it prints every row; the decision reads INCOMPLETE until the treatment arm exists). For each control row with status `void-setup`, `void-grader`, `void-other`, `no-verdict`, `launch-failed`, `void-provenance`, `preflight-refused` or `no-run` (fix the refusal's cause first; the log names it), append one replacement row `control sdd-turn-liveness 1 r<n> default` to `manifest.tsv`, write a launch view of the pins plus only the new rows (`manifest-control-r<k>.tsv`), and launch it the same detached way into `logs/campaign-control-r<k>.out`, watched with `wait-done.sh`. Stop at the cap of three capped voids: every status above counts toward it except `void-setup` and `preflight-refused`. A `restart` row, or a log with `preflight=cc`, stops the campaign: report to the human partner.
+Run `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` (it prints every row; the decision reads INCOMPLETE until the treatment arm exists). For each control row with status `void-setup`, `void-transport`, `void-grader`, `void-other`, `no-verdict`, `launch-failed`, `void-provenance`, `preflight-refused` or `no-run` (fix the refusal's cause first; the log names it), append one replacement row `control sdd-turn-liveness 1 r<n> default` to `manifest.tsv`, write a launch view of the pins plus only the new rows (`manifest-control-r<k>.tsv`), and launch it the same detached way into `logs/campaign-control-r<k>.out`, watched with `wait-done.sh`. Stop at the cap of three capped voids: every status above counts toward it except `void-setup`, `void-transport` and `preflight-refused`. A `restart` row, or a log with `preflight=cc`, stops the campaign: report to the human partner.
 
 - [ ] **Step 3: Adjudicate and archive**
 
@@ -4924,6 +5027,156 @@ For every counted control candidate whose label is `unadjudicated`, read its clo
 - [ ] **Step 4: Commit**
 
 Stage per `evidence/README.md` (including `home/.cache/hyperpowers/`), post-check, leak scan, `bun run check`, commit `test(evidence): the sdd-turn-liveness control arm, ten valid runs at v6.16.1`.
+
+- [ ] **Step 5: Correction 2, the mark after a literal printf newline**
+
+Approved by the human partner on 2026-10-22 after this arm's report: two counted control runs (r5 `…-b041`, r6 `…-31fe`) wrote their last ledger mark as `printf '…OK\nTask 6: complete (…)' >> progress.md`, where `\n` is two literal characters in the command text, so `n` sits directly before `Task` and the pinned `\bTask (\d+): complete\b` never matches; both runs read as incomplete and unsuccessful for that reason alone. It lands as its own commit before any treatment tally, recomputed from the archive, no run repeated.
+
+In `test_analyze.py`, add this spelling to the positive tuple of `test_bash_ledger_writes_in_every_shell_spelling`, after the `printf … | tee -a` case (the Task 4 block above now carries it):
+
+```text
+            # The control arm's r5 and r6 wrote the mark after a literal \n (README Correction 2).
+            f"printf 'test_soak_long: Ran 1 test in 720.037s OK\\nTask 6: complete (abc123)\\n' >> {LEDGER}",
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py -k every_shell_spelling` — Expected: FAIL on the new spelling (`plan_complete` false). Then replace the `MARK` line in `analyze.py` with the Task 4 block's new text:
+
+```text
+# A mark may follow a literal backslash escape inside a printf or echo -e
+# argument ("...OK\nTask 6: complete"), where "n" sits before "Task" and no
+# word boundary exists; the escape counts as a boundary (README Correction 2).
+MARK = re.compile(r"(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))Task (\d+): complete\b")
+```
+
+Run the four suites (`test_liveness.py test_analyze.py test_tally.py test_field.py`) — Expected: `OK`; ruff and mypy on `analyze.py`. Run `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` and confirm: r5 and r6 now read `success=True`, p2 and r1 still `success=False`, every other control field unchanged, control successes 8 of 10.
+
+In `README.md`, append to the `## Corrections` list:
+
+```text
+2. 2026-10-22, after the control arm's commit and before any treatment tally. `analyze.MARK` becomes `(?:(?<![A-Za-z0-9_])|(?<=\\[nrt]))Task (\d+): complete\b`: a ledger mark written after a literal backslash escape in a `printf` argument (`'…OK\nTask 6: complete'`) has `n` directly before `Task`, so the pinned `\b` never matched and the run read as incomplete. Found by the control arm's implementer in r5 (`…-b041`) and r6 (`…-31fe`); with the corrected pattern both read plan-complete and successful, control's success count moves from 6 to 8 of 10 (p2 and r1 stay unsuccessful for other reasons), and no other field changes. Recomputed from the archive; no run was repeated. Pin after the Correction: `analyze.py` `<blob>` (`liveness.py` and `tally.py` unchanged).
+```
+
+Fill `<blob>` with `git hash-object` of the final `analyze.py` and confirm after the commit with `git rev-parse HEAD:evidence/2026-10-19-sdd-turn-liveness/analyze.py`. Stage `analyze.py`, `test_analyze.py`, `README.md`; leak scan; commit `fix(evidence): a ledger mark after a literal printf newline is read`. Append the recomputed per-row table and the control success count to this task's report.
+
+- [ ] **Step 6: Correction 3, the archive contract, and the recorded suite run (Codex gate round 1)**
+
+Approved by the human partner on 2026-10-22 after this task's Codex gate. Three findings against text approved earlier in the task: (1) `void_kind` names a no-result record from the Gauntlet summary's wording, so a written `investigate` whose text carried the phrase and a transport code would escape the cap, although quorum marks a synthesized no-result record structurally (`gauntlet.run_id` is null; every written result carries its run id); (2) Step 5's pattern credits a literal `\n`, `\r` or `\t` wherever it sits, so plain `echo 'x\nTask 6: complete'`, a `printf '%s'` argument, an even run of backslashes and a heredoc body all read as a mark the shell never wrote; (3) `evidence/README.md` step 4 requires a `result.json` per archived run, which a run whose Gauntlet wrote none cannot have, and the arm was committed with that post-check exiting 1. Two commits, then the suite run on the final tree.
+
+First the tests. In `test_analyze.py`, `test_bash_ledger_writes_in_every_shell_spelling`: add to the positive tuple, after Step 5's printf case:
+
+```text
+            # Correction 3: the forms whose escapes the shell interprets.
+            f"printf \"soak OK\\nTask 6: complete (abc123)\\n\" >> {LEDGER}",
+            f"echo -e 'soak OK\\nTask 6: complete' >> {LEDGER}",
+            f"printf $'soak OK\\nTask 6: complete\\n' >> {LEDGER}",
+            f"printf 'soak OK\\\\\\nTask 6: complete\\n' >> {LEDGER}",
+```
+
+and to the negative tuple, after the `# Task 6: complete` comment case:
+
+```text
+            # Correction 3: a literal backslash the shell never interprets marks nothing.
+            f"echo 'soak OK\\nTask 6: complete' >> {LEDGER}",
+            f"printf '%s\\n' 'soak OK\\nTask 6: complete' >> {LEDGER}",
+            f"printf 'soak OK\\\\nTask 6: complete\\n' >> {LEDGER}",
+            f"cat >> {LEDGER} <<'EOF'\nsoak OK\\nTask 6: complete\nEOF",
+```
+
+(In the source these are f-strings: `\\n` is a literal backslash-n in the command text, `\\\\n` two backslashes and n, `\\\\\\n` three.) In `test_void_kinds_fail_closed`, after the `judged` assertion:
+
+```text
+        written = {**lost, "gauntlet": {**lost["gauntlet"], "run_id": "sdd-turn-liveness_x_r1"}}
+        self.assertEqual(analyze.void_kind(written), "void-other")
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py -k every_shell_spelling -k void_kinds` — Expected: FAIL (the plain-echo, `%s`, even-run and heredoc spellings read as marks; `written` reads `void-transport`).
+
+Then `analyze.py`. Add after the `UNICODE_QUOTES` line:
+
+```text
+PRINTF_FORMAT = re.compile(r"\bprintf\s+(?:-v\s+\w+\s+)?(?:--\s+)?('[^']*'|\"(?:\\.|[^\"\\])*\")")
+ECHO_E = re.compile(r"\becho\s+((?:-[a-zA-Z]+\s+)+)")
+ANSI_C = re.compile(r"\$'((?:\\.|[^'\\])*)'")
+ESCAPE = re.compile(r"(?<!\\)((?:\\\\)*)\\([nrt])")
+ESCAPES = {"n": "\n", "r": "\r", "t": "\t"}
+```
+
+Replace the `MARK` line and its three comment lines from Step 5 with the original line:
+
+```text
+MARK = re.compile(r"\bTask (\d+): complete\b")
+```
+
+Insert immediately before `def _ledger_marks(call: Call) -> set[int]:`:
+
+```text
+def _unescape(text: str, double_quoted: bool = False) -> str:
+    """The text as printf or echo -e emits it.
+
+    An odd run of backslashes before n, r or t ends in that character; an
+    even run stays literal. Bash halves backslash pairs inside double quotes
+    before the command sees them.
+    """
+    if double_quoted:
+        text = text.replace("\\\\", "\\")
+    return ESCAPE.sub(lambda m: m.group(1) + ESCAPES[m.group(2)], text)
+
+
+def _requote(quoted: str) -> str:
+    return quoted[0] + _unescape(quoted[1:-1], quoted[0] == '"') + quoted[0]
+
+
+def _interpret_escapes(segment: str) -> str:
+    """The segment with the escapes the shell interprets written out.
+
+    Three forms turn a literal ``\n`` into a newline: a printf format string,
+    the arguments of ``echo -e``, and ``$'...'`` quoting. Everywhere else (plain
+    echo, a printf ``%s`` argument, a heredoc body) the two characters reach the
+    ledger as they are and mark nothing. Correction 3 (Codex gate, Task 11): the
+    earlier pattern credited every literal escape.
+    """
+    out = segment
+    for match in PRINTF_FORMAT.finditer(segment):
+        out = out.replace(match.group(1), _requote(match.group(1)), 1)
+    echo = ECHO_E.search(segment)
+    if echo and "e" in echo.group(1) and "E" not in echo.group(1):
+        head, tail = out[: echo.end()], out[echo.end():]
+        out = head + QUOTED.sub(lambda m: _requote(m.group(0)), tail)
+    return ANSI_C.sub(lambda m: "$'" + _unescape(m.group(1)) + "'", out)
+
+
+```
+
+In `_ledger_marks`' Bash branch replace `written.append(segment)` with `written.append(_interpret_escapes(segment))` (heredoc bodies stay literal). In `void_kind`, replace the condition line of the no-result branch:
+
+```text
+    if gauntlet.get("status") == "investigate" and "without writing a result" in str(gauntlet.get("summary") or ""):
+```
+
+with:
+
+```text
+    # Quorum synthesizes the gauntlet record with run_id None when the
+    # Gauntlet-Agent exits without a result; a written result carries its run
+    # id and stays a capped void whatever its text says (Correction 3).
+    if (
+        gauntlet.get("status") == "investigate"
+        and gauntlet.get("run_id") is None
+        and "without writing a result" in str(gauntlet.get("summary") or "")
+    ):
+```
+
+Run the four suites — Expected: `OK`; ruff and mypy on `analyze.py`; `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` — Expected: every control field unchanged from Step 5 (r5 and r6 wrote their marks in `printf` format strings; p6-p10 keep `run_id` null), successes 8 of 10. Append to the README `## Corrections` list:
+
+```text
+3. 2026-10-22, before any treatment tally (Task 11's Codex gate). Two analyzer changes in one commit. `analyze.void_kind` names `void-grader` or `void-transport` only for the record quorum synthesizes when the Gauntlet-Agent exits without a result (`gauntlet.run_id` null); a written result stays `void-other`, capped, whatever its text says. Ledger marks: `MARK` returns to `\bTask (\d+): complete\b`, and the Bash branch of `_ledger_marks` first writes out the escapes the shell interprets, in a `printf` format string, the arguments of `echo -e` and `$'…'` quoting, an odd run of backslashes producing the character and an even run staying literal; Correction 2's pattern had credited every literal `\n`, `\r` or `\t`, including plain `echo`, a `printf '%s'` argument, an even run and a heredoc body. Recomputed from the archive: no control field changes (r5 and r6 wrote their marks in `printf` format strings). Pin after the Correction: `analyze.py` `<blob>` (`liveness.py` and `tally.py` unchanged).
+```
+
+Fill `<blob>` as before. Stage `analyze.py`, `test_analyze.py`, `README.md`; leak scan; commit `fix(evidence): ledger marks follow the shell's escape rules and a written grader result stays capped`.
+
+Second commit, the archive contract. In `evidence/README.md` "Before committing a run", replace step 4's first sentence ("Post-check the staged tree across both layouts: every run has at least one transcript and one `result.json`, and there are no gitlinks.") with: "Post-check the staged tree across both layouts: every run has at least one transcript; a run whose Gauntlet wrote a result has one `result.json`, and a run whose Gauntlet wrote none (`gauntlet.run_id` is null in its `verdict.json`: a setup or transport void) has that `verdict.json`, the Gauntlet's `run.jsonl` event stream and, when the Gauntlet left one, its `gauntlet-stderr.log` instead; and there are no gitlinks." Re-run the post-check you ran in Step 4 with that rule (the five transport voids pass on `verdict.json` + `run.jsonl` + `gauntlet-stderr.log`; the eleven graded runs on `result.json`) and paste its output, exit 0, into this task's report. Leak scan; commit `docs(evidence): the archive post-check accepts a run whose Gauntlet wrote no result`.
+
+Finally `bun run check` on the final tree; record its counts in the report (the two tilde-expansion EPERM failures are the sandbox baseline).
 
 ---
 
@@ -4941,9 +5194,28 @@ Stage per `evidence/README.md` (including `home/.cache/hyperpowers/`), post-chec
 - Consumes: everything above.
 - Produces: the decision Task 13 reads.
 
+- [ ] **Step 0: Correction 4, `echo -e` located in the interpreted segment**
+
+Approved by the human partner on 2026-10-22 after Task 11's fix round 3 re-review. `_interpret_escapes` finds `echo -e` with `ECHO_E.search(segment)` but slices `out`, which an interpreted `printf` format earlier in the same pipeline has already shortened, so the split lands inside the echo's argument and the mark is lost (a false negative; no control run has the shape). It lands as its own commit before the treatment arm launches.
+
+In `test_analyze.py`, add to the positive tuple of `test_bash_ledger_writes_in_every_shell_spelling`, after the Correction 3 spellings:
+
+```text
+            # Correction 4: an interpreted printf format before an echo -e in one pipeline.
+            f"printf 'soak OK\\n' | tee -a /dev/null | echo -e 'ok\\nTask 6: complete' >> {LEDGER}",
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py -k every_shell_spelling` — Expected: FAIL on that spelling (`plan_complete` false). In `analyze.py`, `_interpret_escapes`, replace `echo = ECHO_E.search(segment)` with `echo = ECHO_E.search(out)`. Run the four suites — Expected: `OK`; ruff and mypy on `analyze.py`; `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` — Expected: every control field unchanged, successes 8 of 10. Append to the README `## Corrections` list:
+
+```text
+4. 2026-10-22, before the treatment arm's launch (Task 12 Step 0). `_interpret_escapes` located `echo -e` in the original segment but sliced the text an interpreted `printf` format earlier in the same pipeline had already shortened, so such a segment lost its mark (a false negative found by Task 11's re-review; no control run has the shape). It now locates `echo -e` in the interpreted text. Recomputed from the archive: no control field changes. Pin after the Correction: `analyze.py` `<blob>` (`liveness.py` and `tally.py` unchanged).
+```
+
+Fill `<blob>` as before. Stage `analyze.py`, `test_analyze.py`, `README.md`; leak scan; commit `fix(evidence): echo -e is located in the interpreted segment`.
+
 - [ ] **Step 1: Launch, replace voids, adjudicate, archive**
 
-Exactly Task 11 Steps 1-3 with `treatment` in place of `control` (`manifest-treatment.tsv`, `logs/campaign-treatment.out`, `task-12-runs`).
+Exactly Task 11 Steps 1-3 with `treatment` in place of `control` (`manifest-treatment.tsv`, `logs/campaign-treatment.out`, `task-12-runs`). Before Step 4's staging, apply the Global Constraints' redaction rule to any transport void's launch log and run record (the hostname in `getaddrinfo ENOTFOUND <host>` becomes `<proxy-host>`); the control arm's `…-b7be` record shows the shape.
 
 - [ ] **Step 2: Tally**
 
@@ -4960,6 +5232,311 @@ Expected: a `decision:` line reading PASS or FAIL. UNADJUDICATED means Step 1's 
 
 Evals: stage per `evidence/README.md` (runs, logs, `tally.txt`, README, the experiment entry), post-check, leak scan, `bun run check`, commit `test(evidence): the sdd-turn-liveness treatment arm and the pre-registered decision`.
 Hyperpowers: leak scan, commit `docs(hyperpowers): the SDD turn liveness scenario results`.
+
+- [ ] **Step 5: Correction 5, paths resolved through `cd` and shell variables; the decision re-tallied**
+
+Approved by the human partner on 2026-10-22 after the first treatment tally. The analyzer paired a long-job watch to its launch by the literal output path (`out_file in command`) and read a Bash ledger write only when its expanded target was an absolute SDD path. Treatment p8 watched through `W=<dir>; … "$W/soak-long.out.exit"` and treatment p10 through `cd <dir> && … soak-long.out.exit`; p10 also wrote its Task 1-5 marks after `cd <ledger dir>`. All three were missed, so both runs read `long_ok` false and p10 read plan-incomplete, although each watched a tracked background launch to `exit=0` 720 s later with no turn end between. The same decision kept the pre-registered rule for p8: its `Task 6: soak_long OK (…) ; complete (…)` line is not the canonical mark, so p8 stays plan-incomplete and its end-of-run closing stays the treatment's one premature stop; the decision therefore stays FAIL on P. Three commits: the Correction, the re-tallied evals record, the hyperpowers note.
+
+Tests first. In `test_analyze.py`, `test_bash_ledger_writes_in_every_shell_spelling`, add to the positive tuple after the Correction 4 spelling:
+
+```text
+            # Correction 5: the ledger named relative to a cd into its directory.
+            f"cd {folder} && printf '%s\\n' 'Task 6: complete (abc123)' >> progress.md",
+            f"cd {folder} && cat >> progress.md <<'EOF'\nTask 6: complete (abc123)\nEOF",
+            f"D={folder}; cd \"$D\" && echo 'Task 6: complete' >> progress.md",
+```
+
+and to the negative tuple after the Correction 3 spellings:
+
+```text
+            # Correction 5: a relative ledger name with no cd, or after a cd elsewhere, is not the ledger.
+            "echo 'Task 6: complete' >> progress.md",
+            "cd /elsewhere && echo 'Task 6: complete' >> progress.md",
+```
+
+Add this test to the `Measure` class after `test_long_job_watch_must_read_its_own_exit_file`:
+
+```text
+    def test_long_job_watch_names_its_file_through_a_variable_or_a_cd(self) -> None:
+        # The launch writes /tmp/long.out (LONG_CMD); treatment p8 and p10 watched this way.
+        for n, watch in enumerate((
+            'W=/tmp; for i in $(seq 1 58); do [ -f "$W/long.out.exit" ] && break; sleep 10; done; cat "$W/long.out.exit"; tail -5 "$W/long.out"',
+            "cd /tmp && for i in $(seq 1 58); do [ -f long.out.exit ] && break; sleep 10; done; cat long.out.exit; tail -5 long.out",
+        )):
+            records = long_job()
+            for rec in records:
+                for use in liveness.tool_uses(rec):
+                    if use.get("id") == "b4":
+                        use["input"]["command"] = watch
+            self.assertTrue(self.run_of(f"w{n}", records)["long_ok"], watch)
+        records = long_job()
+        for rec in records:
+            for use in liveness.tool_uses(rec):
+                if use.get("id") == "b4":
+                    use["input"]["command"] = "cd /elsewhere && cat long.out.exit"
+        self.assertFalse(self.run_of("w9", records)["long_ok"])
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py -k every_shell_spelling -k names_its_file` — Expected: FAIL (the three `cd` ledger spellings and the two watches read as misses).
+
+Then `analyze.py`. Add after the `VAR_REF` line:
+
+```text
+CD = re.compile(r"^\s*cd\s+(['\"]?)([^\s'\"]+)\1\s*$")
+```
+
+Insert immediately before `def _writes_ledger(command: str, env: Mapping[str, str]) -> bool:`:
+
+```text
+def _cwd_segments(command: str, env: Mapping[str, str]) -> list[tuple[str, str | None]]:
+    """Each ``;``/``&&`` segment with the directory a preceding ``cd`` put it in (None before any ``cd``)."""
+    out: list[tuple[str, str | None]] = []
+    cwd: str | None = None
+    for segment in _segments(_strip_heredocs(command), pipes=False):
+        out.append((segment, cwd))
+        move = CD.match(segment)
+        if move:
+            cwd = _expand(move.group(2), env)
+    return out
+
+
+def _names_file(command: str, path: str) -> bool:
+    """Whether a command refers to ``path``: literally, through a shell variable, or by name after a ``cd`` into its directory.
+
+    Treatment p8 watched its long soak through ``W=<dir>; … "$W/soak-long.out.exit"``
+    and p10 through ``cd <dir> && … soak-long.out.exit`` (README Correction 5).
+    """
+    env = _assignments(command)
+    expanded = _expand(command, env)
+    if path in expanded:
+        return True
+    parent, name = str(Path(path).parent), Path(path).name
+    return name in expanded and any(cwd == parent for _, cwd in _cwd_segments(command, env))
+
+
+```
+
+Change `_writes_ledger`'s signature to `def _writes_ledger(command: str, env: Mapping[str, str], cwd: str | None = None) -> bool:`, add to its docstring the sentence "A relative target is joined to the directory a preceding ``cd`` chose (``cwd``), the way treatment p10 wrote its marks (Correction 5).", and replace its loop body's first line `path = _expand(match.group(2), env)` with:
+
+```text
+        path = _expand(match.group(2), env)
+        if cwd and not path.startswith(("/", "$")):
+            path = f"{cwd.rstrip('/')}/{path}"
+```
+
+In `_ledger_marks`' Bash branch replace the block from `env = _assignments(command)` through `written.append(_interpret_escapes(segment))` with:
+
+```text
+        env = _assignments(command)
+        located = _cwd_segments(command, env)
+        written: list[str] = []
+        for match in HEREDOC.finditer(command):
+            pipeline = _heredoc_command(command, match)
+            cwd = next((c for s, c in located if s.strip() == pipeline.strip()), None)
+            if _writes_ledger(pipeline, env, cwd):
+                written.append(match.group(3))
+        for segment, cwd in located:
+            if _writes_ledger(segment, env, cwd):
+                written.append(_interpret_escapes(segment))
+```
+
+In the long-job loop the watch is matched against the launch's output path resolved with the launch's own assignments, because a launch may name its output through a variable it sets in the same command (`> $W/soak-long.out`, treatment p3); the literal test stays as a disjunct so no run loses a match. Insert after `out_file = target.group(2) if target else None`:
+
+```text
+            # A launch may name its own output through a variable it sets in
+            # the same command ("> $W/soak-long.out", treatment p3), so the
+            # path a watch is matched against is resolved first; a watch that
+            # spells it the same unexpanded way still matches literally.
+            resolved = _expand(out_file, _assignments(command)) if out_file else ""
+```
+
+and replace `if out_file in str(later.inp.get("command", "")) and "exit=" in later.result:` with:
+
+```text
+                watch = str(later.inp.get("command", ""))
+                if (out_file in watch or _names_file(watch, resolved)) and "exit=" in later.result:
+```
+
+Add this test after `test_long_job_watch_names_its_file_through_a_variable_or_a_cd`:
+
+```text
+    def test_long_job_launch_names_its_output_through_a_variable(self) -> None:
+        # Treatment p3 set W in the launch ("> $W/soak-long.out") and watched
+        # the same way, so the path a watch is matched against is resolved
+        # with the launch's own assignments (README Correction 5).
+        records = long_job()
+        launch = 'W=/tmp; python3 -m unittest tests.test_soak_long -v > $W/long.out 2>&1; echo "exit=$?" > $W/long.out.exit'
+        watch = 'W=/tmp; for i in $(seq 1 58); do test -f $W/long.out.exit && break; sleep 5; done; cat $W/long.out.exit; tail -4 $W/long.out'
+        for rec in records:
+            for use in liveness.tool_uses(rec):
+                if use.get("id") == "b2":
+                    use["input"]["command"] = launch
+                if use.get("id") == "b4":
+                    use["input"]["command"] = watch
+        self.assertTrue(self.run_of("w10", records)["long_ok"])
+```
+
+Run the four suites — Expected: `OK`; ruff and mypy on `analyze.py`; `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py` — Expected: control unchanged (10 counted, 8 successes, premature 1); treatment p8 and p10 `long=True`, F 10 of 10, p10 `plan_complete` true, p8 still plan-incomplete with `premature=1`, decision FAIL with P the only failing criterion. Append to the README `## Corrections` list:
+
+```text
+5. 2026-10-22, after the treatment arm's first tally and before the decision of record. The analyzer paired a long-job watch to its launch by the literal output path and read a Bash ledger write only when its target was an absolute SDD path, so a watch that names the exit file through a shell variable (`W=<dir>; … "$W/soak-long.out.exit"`, treatment p8) or by name after `cd <dir>` (treatment p10), and ledger marks written after `cd <ledger dir>` (treatment p10, Tasks 1-5), were missed: both runs read `long_ok` false and p10 read plan-incomplete, although each watched a tracked background launch to `exit=0` 720 s later with no turn end between. `_names_file` and `_cwd_segments` now resolve shell-variable assignments and `cd` prefixes for both recognizers, and the launch's own output path is resolved with its own assignments before the watch is matched (treatment p3 launched with `> $W/soak-long.out`); the literal match stays as a disjunct, so no run loses a match. Recomputed from the archives: control unchanged; treatment F 10 of 10 and p10 plan-complete; the decision is unchanged, FAIL on P: p8's last ledger line reads `Task 6: soak_long OK (…) ; complete (…)`, not the canonical `Task 6: complete`, so p8 stays plan-incomplete and its end-of-run closing stays the treatment's premature stop, by the human partner's decision to keep the pre-registered rule. Pin after the Correction: `analyze.py` `<blob>` (`liveness.py` and `tally.py` unchanged).
+```
+
+Fill `<blob>` as before. Stage `analyze.py`, `test_analyze.py`, `README.md`; leak scan; commit `fix(evidence): watch and ledger paths resolve through cd and shell variables`.
+
+Then re-record. Re-run Step 2's tally command into `tally.txt`. Update the README "Results" section, the experiment entry and the hyperpowers note with the recomputed numbers (every number from the new `tally.txt`), and give the Limits list these entries in plain words: F's two misses before Correction 5 were recognizer artifacts, not run behavior; P's failure rests on one treatment run (p8) whose controller wrote a non-canonical Task 6 ledger line and whose last turn end came after the finishing question and the merge, with a note about untracked `__pycache__` files, adjudicated `neither`; the pre-registered rule was kept by the human partner rather than relabeled or widened after the decision was visible; by the spec, the failure goes back to design and the P failure opens the Stop-hook follow-up with these runs as its evidence. Post-check unchanged (no new runs). Leak scan; `bun run check`; commit evals `docs(evidence): the sdd-turn-liveness decision re-tallied under Correction 5`; hyperpowers `docs(hyperpowers): the SDD turn liveness scenario results under Correction 5`.
+
+- [ ] **Step 6: Correction 6, control flow and segment binding in the recognizers (Codex gate round 1)**
+
+Approved by the human partner on 2026-10-22 after this task's Codex gate. Correction 5's recognizers are fail-open in two ways: `_cwd_segments` applies a `cd` to every later segment whatever operator joins them, so `cd <ledger dir> || echo 'Task 6: complete' >> progress.md` (the write runs only when the `cd` failed) is credited; and `_names_file` accepts the file's basename anywhere in the command when any segment's cwd is the directory, so `echo long.out.exit; cd /tmp; echo exit=0` and `cd /tmp && cd /elsewhere && cat long.out.exit` match `/tmp/long.out`. No run in either arm has these shapes. One analyzer commit, a re-tally that must come out identical, and the Correction count in the three records.
+
+Tests first. In `test_analyze.py`, add to the positive tuple of `test_bash_ledger_writes_in_every_shell_spelling`, after the Correction 5 spellings:
+
+```text
+            # Correction 6: a cd joined by a semicolon still carries.
+            f"cd {folder}; echo 'Task 6: complete' >> progress.md",
+```
+
+and to the negative tuple after the Correction 5 negatives:
+
+```text
+            # Correction 6: the || branch runs only when the cd failed.
+            f"cd {folder} || echo 'Task 6: complete' >> progress.md",
+```
+
+Replace the negative tail of `test_long_job_watch_names_its_file_through_a_variable_or_a_cd` (from `records = long_job()` after the positive loop to the end of the method) with:
+
+```text
+        for n, watch in enumerate((
+            "cd /elsewhere && cat long.out.exit",
+            # Correction 6: the name must sit in a segment the cd put in the file's directory.
+            "echo long.out.exit; cd /tmp; echo exit=0",
+            "cd /tmp && cd /elsewhere && cat long.out.exit",
+        )):
+            records = long_job()
+            for rec in records:
+                for use in liveness.tool_uses(rec):
+                    if use.get("id") == "b4":
+                        use["input"]["command"] = watch
+            self.assertFalse(self.run_of(f"x{n}", records)["long_ok"], watch)
+```
+
+Add this test to the `Measure` class after `test_long_job_launch_names_its_output_through_a_variable`:
+
+```text
+    def test_split_ops_records_the_operators(self) -> None:
+        self.assertEqual(
+            analyze._split_ops("a; b && c || d | e\nf"),
+            [("", "a"), (";", " b "), ("&&", " c "), ("||", " d "), ("|", " e"), (";", "f")],
+        )
+        self.assertEqual(analyze._split_ops("a | b", pipes=False), [("", "a | b")])
+```
+
+Run: `python3 -m unittest evidence/2026-10-19-sdd-turn-liveness/test_analyze.py -k every_shell_spelling -k names_its_file -k split_ops` — Expected: FAIL (the `||` ledger spelling is credited, the two watches match, `_split_ops` does not exist).
+
+Then `analyze.py`. Replace `_segments` (the whole function) with:
+
+```text
+def _split_ops(command: str, pipes: bool = True) -> list[tuple[str, str]]:
+    """Split a command at ``;``, ``&&``, ``||`` and newlines outside quotes, and at ``|`` when ``pipes``.
+
+    Each segment comes with the operator that introduced it: ``""`` for the
+    first, ``;`` for a semicolon or a newline, ``&&``, ``||``, or ``|``.
+    Comments are dropped, and a backslash keeps the next character (a quote
+    or a newline) inside the current segment.
+    """
+    out: list[tuple[str, str]] = []
+    current: list[str] = []
+    op = ""
+    quote = ""
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if quote:
+            if ch == "\\" and quote == '"':
+                current.append(command[i : i + 2])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch == "\\":
+            current.append(command[i : i + 2])
+            i += 2
+            continue
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "#" and (i == 0 or command[i - 1] in " \t\n;&|("):
+            end = command.find("\n", i)
+            i = len(command) if end < 0 else end
+            continue
+        elif ch in ";\n" or command.startswith(("&&", "||"), i) or (pipes and ch == "|"):
+            out.append((op, "".join(current)))
+            current = []
+            if command.startswith(("&&", "||"), i):
+                op = command[i : i + 2]
+                i += 2
+            else:
+                op = ";" if ch in ";\n" else "|"
+                i += 1
+            continue
+        current.append(ch)
+        i += 1
+    out.append((op, "".join(current)))
+    return out
+
+
+def _segments(command: str, pipes: bool = True) -> list[str]:
+    """The segments of ``_split_ops`` without their operators."""
+    return [segment for _, segment in _split_ops(command, pipes)]
+```
+
+Replace `_cwd_segments` with:
+
+```text
+def _cwd_segments(command: str, env: Mapping[str, str]) -> list[tuple[str, str | None]]:
+    """Each ``;``/``&&``/``||`` segment with the directory a preceding ``cd`` put it in.
+
+    None before any ``cd``. A ``cd`` joined by ``;`` or ``&&`` is taken to have
+    succeeded; a segment introduced by ``||`` runs only when the command before
+    it failed, so it gets no directory, and a ``cd`` inside it leaves the
+    directory unknown for what follows (Correction 6).
+    """
+    out: list[tuple[str, str | None]] = []
+    cwd: str | None = None
+    for op, segment in _split_ops(_strip_heredocs(command), pipes=False):
+        branch = op == "||"
+        out.append((segment, None if branch else cwd))
+        move = CD.match(segment)
+        if move:
+            cwd = None if branch else _expand(move.group(2), env)
+    return out
+```
+
+Replace `_names_file` with:
+
+```text
+def _names_file(command: str, path: str) -> bool:
+    """Whether a command refers to ``path``: literally, through a shell variable, or by name in a segment a ``cd`` put in its directory.
+
+    Treatment p8 watched its long soak through ``W=<dir>; ... "$W/soak-long.out.exit"``
+    and p10 through ``cd <dir> && ... soak-long.out.exit`` (README Correction 5);
+    the name counts only inside a segment whose directory is the file's
+    (Correction 6).
+    """
+    env = _assignments(command)
+    if path in _expand(command, env):
+        return True
+    parent, name = str(Path(path).parent), Path(path).name
+    return any(cwd == parent and name in _expand(segment, env) for segment, cwd in _cwd_segments(command, env))
+```
+
+Run the four suites — Expected: `OK`; ruff and mypy on `analyze.py`. Run `python3 evidence/2026-10-19-sdd-turn-liveness/tally.py > <tmp>` and `diff <tmp> evidence/2026-10-19-sdd-turn-liveness/tally.txt` — Expected: identical apart from the trailing `exit=0` line `tally.txt` carries (no row changes in either arm). If any row differs, stop and report BLOCKED with the diff. Append to the README `## Corrections` list:
+
+```text
+6. 2026-10-22, after the Codex gate of the treatment task, before the decision of record is cited. Correction 5's recognizers were fail-open in two ways: a `cd` carried into every later segment whatever operator joined them, so a write on a `||` branch (which runs only when the `cd` failed) was credited, and a watch's file name counted anywhere in the command once any segment's directory matched. `_split_ops` now records the operator between segments, a `cd` does not carry into a `||` branch, and a file name counts only in a segment whose directory is the file's. Recomputed from the archives: no row changes in either arm; the decision stands, FAIL on P. Known remaining limit: the watch recognizer takes the file's name in the right segment plus `exit=` in the call's result as the read; a command that only names the file and prints `exit=0` would pass it, a shape no run has. Pin after the Correction: `analyze.py` `<blob>` (`liveness.py` and `tally.py` unchanged).
+```
+
+and change "Five Corrections were made" (the README Limits) to six. Fill `<blob>` as before. Stage `analyze.py`, `test_analyze.py`, `README.md`; leak scan; commit `fix(evidence): a cd does not carry into a || branch and a watch names its file in its own segment`. Then the counts elsewhere: `docs/experiments/2026-10-19-sdd-turn-liveness.md` ("five recorded Corrections" to six, and its Limits sentence on the Corrections if it gives a count); leak scan; commit `docs(evidence): the experiment entry counts six Corrections`. In the hyperpowers note, the sentence naming the Corrections now names six; leak scan; commit `docs(hyperpowers): the SDD turn liveness note counts six Corrections`. Then rewrite the task report's headline: the status block at the top states the final state (decision FAIL on P alone, F 10 of 10, the six evals commits and the three hyperpowers commits), with the first tally kept below as history. `bun run check` on the final tree, recorded.
 
 ---
 

@@ -165,8 +165,12 @@ stop ("I've said what's next; I'll pick it up on the next turn"), one for
 the detached launch ("A trailing `&` keeps it out of my way"), each with
 what actually happens.
 
-Nothing changes in `recipe-code.md`, the implementer and reviewer prompt
-templates, or the other harnesses' reference files.
+Nothing changes in `recipe-code.md` or the other harnesses' reference
+files. The four SDD dispatch templates and
+`requesting-code-review/code-reviewer.md` carry `run_in_background: false`
+at their dispatch lines (plan deviation 11, approved on 2026-10-21 during
+Task 9: the smoke showed a controller dispatching without the flag while
+SKILL.md alone stated the rule).
 
 **Cost accepted:** a message the human partner types while a foreground
 subagent runs is delivered when that call returns, which can be 10 to 30

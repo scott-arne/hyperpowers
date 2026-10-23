@@ -8,6 +8,19 @@ writing-plans, subagent-driven-development, and requesting-code-review.
 **Claude Code only.** Run this gate only under Claude Code. In any other harness,
 skip it silently — do not run the preflight, do not emit the notice.
 
+**Outside the Bash sandbox.** Run the preflight, and every companion command
+after it, in a shell without the sandbox. A sandboxed shell may not connect to
+the broker socket, and the companion (codex-plugin-cc 1.0.6,
+`ensureBrokerSession`) reads a connect it cannot make as a broker that is not
+ready: it unlinks the live broker's socket, pid file and record, then starts a
+replacement it cannot reach either. The original broker process keeps running
+with its jobs, unreachable, and every other session on the host now finds a
+stale record. From a sandboxed shell the preflight itself reports `not-ready`
+with `connect EPERM` on the broker socket in `.reason` (builds before 6.17.0
+reported `stale-broker` and offered a rename); neither says anything about the
+broker. Repeat the preflight unsandboxed before degrading a gate or quoting a
+recovery to the user.
+
 ## Sections
 
 | File | Contents |

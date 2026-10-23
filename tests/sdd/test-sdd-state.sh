@@ -1326,7 +1326,15 @@ GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" update-index --add --cacheinfo "120000,$l
 tree12=$(GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" write-tree)
 evil1=$(printf 'a workspace that is a link\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$tree12" -p "$tip12")
 git -C "$PAIR_A" push -q origin "$evil1:refs/heads/hyperpowers/state" 2>/dev/null
-run_state "$PAIR_B" sync docs/plan.md >/dev/null 2>&1
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p12.out" 2> "$TEST_ROOT/p12.err"; rc=$?
+out=$(cat "$TEST_ROOT/p12.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$co_b/plans/evil" ] && [ ! -L "$co_b/plans/evil" ] && [ ! -e "$outside12/progress.md" ] && grep -q 'plans/evil' "$TEST_ROOT/p12.err"; then pass "a workspace the branch carries as a symbolic link is refused before the checkout can materialize it"; else fail "a workspace the branch carries as a symbolic link is refused before the checkout can materialize it (rc=$rc: $out: $(cat "$TEST_ROOT/p12.err"))"; fi
+if grep -q 'Remove the link on the host that committed it, snapshot, push, then sync again' "$TEST_ROOT/p12.err"; then pass "the refusal says what to do about the link"; else fail "the refusal says what to do about the link ($(cat "$TEST_ROOT/p12.err"))"; fi
+if [ ! -f "$co_b/.sync-applying" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$tip12" ]; then pass "the refusal comes before anything is applied: no marker, the ref unmoved"; else fail "the refusal comes before anything is applied: no marker, the ref unmoved"; fi
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$outside12/progress.md" ] && [ "$(cat "$outside12/sentinel")" = "untouched" ]; then pass "a second sync refuses the same way and still writes nothing outside the checkout"; else fail "a second sync refuses the same way and still writes nothing outside the checkout (rc=$rc: $out)"; fi
+# A later commit that replaces the link with a real directory is applied:
+# the refusal is about the tree being applied, not about the branch's past.
 ledger12=$(printf '# SDD ledger — plan: docs/evil.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' | git -C "$PAIR_A" hash-object -w --stdin)
 rm -f "$idx12"; GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" read-tree "$evil1"
 GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" update-index --force-remove plans/evil
@@ -1334,12 +1342,8 @@ GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" update-index --add --cacheinfo "100644,$l
 tree12=$(GIT_INDEX_FILE=$idx12 git -C "$PAIR_A" write-tree)
 evil2=$(printf 'a ledger under the link\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$tree12" -p "$evil1")
 git -C "$PAIR_A" push -q origin "$evil2:refs/heads/hyperpowers/state" 2>/dev/null
-run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p12.out" 2> "$TEST_ROOT/p12.err"; rc=$?
-out=$(cat "$TEST_ROOT/p12.out")
-if [ -L "$co_b/plans/evil" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$outside12/progress.md" ] && grep -q 'plans/evil' "$TEST_ROOT/p12.err"; then pass "a workspace the branch carries as a symbolic link is refused and its target is not written"; else fail "a workspace the branch carries as a symbolic link is refused and its target is not written (rc=$rc: $out: $(cat "$TEST_ROOT/p12.err"))"; fi
-if [ ! -f "$co_b/.sync-applying" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$evil1" ]; then pass "the refusal comes before anything is applied: no marker, the ref unmoved"; else fail "the refusal comes before anything is applied: no marker, the ref unmoved"; fi
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$outside12/progress.md" ] && [ "$(cat "$outside12/sentinel")" = "untouched" ]; then pass "a second sync refuses the same way and still writes nothing outside the checkout"; else fail "a second sync refuses the same way and still writes nothing outside the checkout (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ -f "$co_b/plans/evil/progress.md" ] && [ ! -L "$co_b/plans/evil" ] && [ "$(cat "$outside12/sentinel")" = "untouched" ]; then pass "once the branch replaces the link with a real directory the apply goes through"; else fail "once the branch replaces the link with a real directory the apply goes through (rc=$rc: $out)"; fi
 
 echo ""
 echo "=== import recovery when the source outgrew the published copy ==="
@@ -1444,5 +1448,69 @@ rmdir "$wsx_b"; mv "$co_b14/plans/.removing-$(basename "$wsx")-4242" "$wsx_b"
 advance14 'line after the copy came back'
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ -f "$wsx_b/progress.md" ] && [ -z "$(git -C "$co_b14" status --porcelain -- plans/)" ] && grep -q '^line after the copy came back$' "$wsy_b/progress.md"; then pass "once the human puts the copy back the apply carries on and the tree is clean"; else fail "once the human puts the copy back the apply carries on and the tree is clean (rc=$rc: $out: $(git -C "$co_b14" status --porcelain -- plans/ | tr '\n' ' '))"; fi
+
+echo ""
+echo "=== containment of the paths the apply writes at the checkout root ==="
+# A leaf inside a workspace can be a link too, and the marker and the
+# rewrite journal are written at the checkout root, where nothing checked
+# them.
+make_pair p15
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+co_b15="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa15=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa15/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+wsb15="$co_b15/plans/$(basename "$wsa15")"
+outside15="$TEST_ROOT/outside-p15"; mkdir -p "$outside15"; printf 'untouched\n' > "$outside15/sentinel"
+idx15="$TEST_ROOT/p15.index"
+tip15=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+leaf15=$(printf '%s' "$outside15/sentinel" | git -C "$PAIR_A" hash-object -w --stdin)
+rm -f "$idx15"; GIT_INDEX_FILE=$idx15 git -C "$PAIR_A" read-tree "$tip15"
+GIT_INDEX_FILE=$idx15 git -C "$PAIR_A" update-index --add --cacheinfo "120000,$leaf15,plans/$(basename "$wsa15")/task-1-report.md"
+tree15=$(GIT_INDEX_FILE=$idx15 git -C "$PAIR_A" write-tree)
+evil15=$(printf 'a report that is a link\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$tree15" -p "$tip15")
+git -C "$PAIR_A" push -q origin "$evil15:refs/heads/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p15.out" 2> "$TEST_ROOT/p15.err"; rc=$?
+out=$(cat "$TEST_ROOT/p15.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsb15/task-1-report.md" ] && [ ! -L "$wsb15/task-1-report.md" ] && grep -q 'task-1-report.md' "$TEST_ROOT/p15.err"; then pass "a leaf the branch carries as a symbolic link inside a workspace is refused, naming it"; else fail "a leaf the branch carries as a symbolic link inside a workspace is refused, naming it (rc=$rc: $out: $(cat "$TEST_ROOT/p15.err"))"; fi
+if [ ! -f "$co_b15/.sync-applying" ] && [ "$(git -C "$co_b15" rev-parse hyperpowers/state)" = "$tip15" ] && [ "$(cat "$outside15/sentinel")" = "untouched" ]; then pass "the leaf refusal moves nothing: no marker, the ref unmoved, the target untouched"; else fail "the leaf refusal moves nothing: no marker, the ref unmoved, the target untouched"; fi
+# The sync marker: a link at its path would put the marker outside the cache.
+make_pair p16
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+co_a16="$STATE_ROOT/$(state_key "$PAIR_A")"; co_b16="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa16=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa16/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+wsb16="$co_b16/plans/$(basename "$wsa16")"
+outside16="$TEST_ROOT/outside-p16"; mkdir -p "$outside16"
+ln -s "$outside16/marker" "$co_b16/.sync-applying"
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsa16/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+tip16=$(git -C "$co_b16" rev-parse hyperpowers/state)
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p16.out" 2> "$TEST_ROOT/p16.err"; rc=$?
+out=$(cat "$TEST_ROOT/p16.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$outside16/marker" ] && grep -q '.sync-applying is a symbolic link' "$TEST_ROOT/p16.err" && [ "$(git -C "$co_b16" rev-parse hyperpowers/state)" = "$tip16" ]; then pass "a symbolic link at the sync marker's path is refused and nothing is written through it"; else fail "a symbolic link at the sync marker's path is refused and nothing is written through it (rc=$rc: $out: $(cat "$TEST_ROOT/p16.err"))"; fi
+rm -f "$co_b16/.sync-applying"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && grep -q '^Task 1: complete' "$wsb16/progress.md"; then pass "with the link gone the same sync applies"; else fail "with the link gone the same sync applies (rc=$rc: $out)"; fi
+# The rewrite journal: the same at .rewrite/, which only a rewritten ledger
+# creates. Both hosts append, B merges, and A fast-forwards onto the merge.
+git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
+printf 'walk A\n' >> "$wsa16/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+printf 'walk B\n' >> "$wsb16/progress.md"; run_state "$PAIR_B" snapshot docs/plan.md >/dev/null
+git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null; git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
+outside16b="$TEST_ROOT/outside-p16-rewrite"; mkdir -p "$outside16b"
+ln -s "$outside16b" "$co_a16/.rewrite"
+run_state "$PAIR_A" sync docs/plan.md > "$TEST_ROOT/p16b.out" 2> "$TEST_ROOT/p16b.err"; rc=$?
+out=$(cat "$TEST_ROOT/p16b.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q '.rewrite is a symbolic link' "$TEST_ROOT/p16b.err" && [ -z "$(ls -A "$outside16b")" ]; then pass "a symbolic link at the rewrite journal's path is refused and nothing is journaled through it"; else fail "a symbolic link at the rewrite journal's path is refused and nothing is journaled through it (rc=$rc: $out: $(cat "$TEST_ROOT/p16b.err"))"; fi
+rm -f "$co_a16/.rewrite"
+out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(grep -c '^walk A$' "$wsa16/progress.md")" -eq 1 ] && [ "$(grep -c '^walk B$' "$wsa16/progress.md")" -eq 1 ] && [ ! -e "$co_a16/.rewrite/$(basename "$wsa16").journal" ]; then pass "with the link gone the rewrite completes, each line once"; else fail "with the link gone the rewrite completes, each line once (rc=$rc: $out)"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

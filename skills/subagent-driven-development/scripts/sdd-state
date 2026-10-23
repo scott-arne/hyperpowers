@@ -799,6 +799,10 @@ ledger_apply() {
     git -C "$CO" cat-file blob "$t_blob" | tail -c "$suffix_size" >> "$file" || return 2
     return 0
   fi
+  if [ -L "$CO/.rewrite" ]; then
+    echo "sdd-state: $CO/.rewrite is a symbolic link; refusing to journal a ledger rewrite through it" >&2
+    return 2
+  fi
   mkdir -p "$CO/.rewrite" || return 2
   { git -C "$CO" cat-file blob "$t_blob" && tail -c +"$((s_size + 1))" "$file"; } > "$jbase.staged.tmp" || { rm -f "$jbase.staged.tmp"; return 2; }
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in ledger-apply-before-rewrite) printf 'raced the rewrite\n' >> "$file" ;; esac
@@ -937,7 +941,7 @@ restore_tombs() {
 # after the ref moved (the marker stays; the next call finishes it), 2 error.
 # Controllers write without the lock, so the working tree is live.
 apply_target() {
-  local S=$1 target=$2 pending line status path left res dir rc i refused tombs=() dirs=()
+  local S=$1 target=$2 pending line status path left links res dir rc i refused tombs=() dirs=()
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-apply:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-apply:}" ;; esac
   if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = sync-before-apply ]; then
     : > "$CO/.sync-paused"
@@ -975,10 +979,18 @@ apply_target() {
     done < <(printf '%s\n' "$pending")
     if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
   fi
-  # Every path this apply touches must be a real entry inside the checkout:
-  # a fetched branch can carry plans/<ws>, or a ledger, as a symbolic link,
-  # and the writes below would follow it out of the cache. The refusal comes
-  # before anything is renamed or moved, so nothing is left half-applied.
+  # A dossier holds plain files. The incoming tree is inspected before the
+  # checkout materializes it: a commit that carries plans/<ws>, or a file
+  # under it, as a symbolic link is refused whole, including a relative link
+  # a host committed inside its own workspace. The refusal comes before
+  # anything is renamed or moved, so nothing is left half-applied.
+  links=$(git -C "$CO" ls-tree -r "$target" -- plans | awk -F'\t' '$1 ~ /^120000 / {print $2}') || return 2
+  if [ -n "$links" ]; then
+    echo "sdd-state: $target carries a symbolic link at $(printf '%s\n' "$links" | head -n 1); refusing to apply it. Remove the link on the host that committed it, snapshot, push, then sync again" >&2
+    return 2
+  fi
+  # Every path this apply touches must also be a real entry on disk: a link
+  # already there would take the writes below out of the cache.
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     hp_contained "$CO" "$path" || return 2
@@ -1010,6 +1022,10 @@ apply_target() {
   # The marker goes down before anything irreversible: the verified copies
   # are discarded only once it is on disk and read back, and the ref moves
   # after that. A crash anywhere from here on is finished by recover_apply.
+  if [ -L "$CO/.sync-applying" ]; then
+    echo "sdd-state: $CO/.sync-applying is a symbolic link; refusing to write the sync marker through it" >&2
+    restore_all; return 2
+  fi
   printf '%s %s\n' "$S" "$target" > "$CO/.sync-applying" || { rm -f "$CO/.sync-applying"; restore_all; return 2; }
   [ "$(cat "$CO/.sync-applying" 2>/dev/null)" = "$S $target" ] || { rm -f "$CO/.sync-applying"; restore_all; return 2; }
   if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-marker ]; then hp_unlock; exit 99; fi
@@ -1028,7 +1044,15 @@ apply_target() {
     [ "$res" -eq 5 ] || break
   done
   case "$res" in
-    0) rm -f "$CO/.sync-applying"; return 0 ;;
+    0)
+      # A link that appeared under a path this apply touched (a writer
+      # between the checks above and the writes) fails it closed: the marker
+      # stays, and every later call refuses until the link is gone.
+      while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        hp_contained "$CO" "$path" || return 2
+      done < <(git -C "$CO" diff --name-only "$S" "$target")
+      rm -f "$CO/.sync-applying"; return 0 ;;
     5|6) return 7 ;;
     *) return "$res" ;;
   esac

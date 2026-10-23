@@ -408,8 +408,10 @@ records directory, for conflict recovery (Known limits).
 
    A verb line is printed only when this run changed that file. The
    `paths:` line is different: it is computed after staging as every
-   compiler-owned path whose staged content differs from HEAD, that is
-   `git diff --cached --name-only -- <records dir> <spec> <plan>`, so it
+   compiler-owned path whose staged content differs from HEAD (the records
+   this run wrote or re-ran, the supersession targets it rewrote, the index,
+   the spec and the plan; a staged change under the records directory that
+   this run does not own is refused before the first write), so it
    also carries what a failed earlier run staged and this run found already
    in place. A run that changes nothing on a clean index prints the summary
    and an empty `paths:` line; a run that changes nothing after a failed

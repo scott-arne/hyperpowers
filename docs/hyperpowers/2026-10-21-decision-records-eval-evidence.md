@@ -284,3 +284,9 @@ is honored; Claude Code 2.1.302 interactive fork mode, which hides that option,
 is covered by Decision 7's reasoning but by no transcript, so the first
 interactive finish should confirm the extractor still dispatches in the
 background.
+
+Every rehearsal ended in dismissals or a bare "3", so the accepted-proposal
+path of Step 4 (a proposal written into the spec, the compiler re-run, the
+second diff approved, the one records commit) rests on the compiler suite and
+on offline probes, not on a transcript; it is owed with the other post-landing
+checks.

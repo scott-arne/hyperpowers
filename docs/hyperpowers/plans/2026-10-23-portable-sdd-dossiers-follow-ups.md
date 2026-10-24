@@ -954,7 +954,7 @@ git commit -m "feat(sdd-state): prune quarantines and then removes the copies ki
 
 **Interfaces:**
 - Consumes: the spec's stamp paragraphs (Task 1); `$HP_PROG` (Task 5); the `docs/plan.md` Task 3 creates in `PAIR_A`.
-- Produces: `hp_stamp_ok <repo-dir>` returns 0 when the stamp's first line equals `<hyperpowers.stateRemote or origin> <hyperpowers.stateBranch or hyperpowers/state>`; `cmd_sync` writes that line on every stamp-writing outcome (`assumed-absent`, `no-remote`, `absent`, and the fetched outcomes); an empty or different stamp is `needs-sync` with the difference named.
+- Produces: `hp_stamp_ok <repo-dir>` returns 0 when the stamp's first line equals `<hyperpowers.stateRemote or origin> <hyperpowers.stateBranch or hyperpowers/state>`; `cmd_sync` writes that line on `assumed-absent`, `absent` and the fetched outcomes, and removes any stamp on `no-remote` (a repository without a remote creates freely, and a remote added later asks for one `sync` first); an empty or different stamp is `needs-sync` with the difference named.
 
 **Mirror:** `tests/sdd/test-sdd-state.sh:106-111` (p1: `make_pair`, `ensure`, the `needs-sync` needle, the stamp written by hand).
 
@@ -987,11 +987,22 @@ out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state" ]; then pass "sync writes the remote and branch into the stamp"; else fail "sync writes the remote and branch into the stamp (rc=$rc: $out: $(cat "$STATE_ROOT/$(state_key "$PAIR_A").fetched" 2>/dev/null))"; fi
 ```
 
-(`PAIR_A`'s origin has no state branch at this point, so `sync` ends `absent` and writes the stamp; line 109's write that follows then rewrites the same content, which is harmless.) Find the existing `--assume-absent` assertion (`grep -n 'assume-absent' tests/sdd/test-sdd-state.sh`) and add after it one line checking that fixture's stamp reads `origin hyperpowers/state`, in the same form as the check above.
+(`PAIR_A`'s origin has no state branch at this point, so `sync` ends `absent` and writes the stamp; line 109's write that follows then rewrites the same content, which is harmless.) Find the existing `--assume-absent` assertion (`grep -n 'assume-absent' tests/sdd/test-sdd-state.sh`) and add after it one line checking that fixture's stamp reads `origin hyperpowers/state`, in the same form as the check above. Then add, beside the library suite's or the state suite's first no-remote fixture (a `make_repo` repository with no remote; `r3` at line 97 or the `r7` of the plain fixtures, whichever already runs `sync`), a `no-remote` check:
+
+```bash
+nr="$TEST_ROOT/nr"; make_repo "$nr"; mkdir -p "$nr/docs"; : > "$nr/docs/plan.md"
+out=$(run_state "$nr" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=no-remote" ] && [ ! -e "$STATE_ROOT/$(state_key "$nr").fetched" ]; then pass "a no-remote sync leaves no stamp"; else fail "a no-remote sync leaves no stamp (rc=$rc: $out)"; fi
+git -C "$nr" remote add origin "$TEST_ROOT/nowhere.git"
+err=$(ensure "$nr" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync'; then pass "a remote added after a no-remote sync asks for a sync before any branch is created"; else fail "a remote added after a no-remote sync asks for a sync (rc=$rc: $err)"; fi
+```
+
+(`ensure` is the suite's helper around `hp_ensure_checkout`; if the repository already has a checkout from the earlier `sync`, delete it first with `rm -rf "$STATE_ROOT/$(state_key "$nr")"` and `git -C "$nr" worktree prune`, so the needs-sync path is reached.)
 
 - [ ] **Step 2: RED**
 
-`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_stamp_ok'`: five `[FAIL]` (`command not found`). State suite (or extracted harness), needles `a stamp for another remote` (`[FAIL]`: creation proceeds today on any existing file) and `writes the remote and branch into the stamp` (`[FAIL]`: the stamp is empty today).
+`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_stamp_ok'`: five `[FAIL]` (`command not found`). State suite (or extracted harness), needles `a stamp for another remote` (`[FAIL]`: creation proceeds today on any existing file), `writes the remote and branch into the stamp` (`[FAIL]`: the stamp is empty today), `a no-remote sync leaves no stamp` (`[FAIL]`: an empty stamp is written today) and `a remote added after a no-remote sync` (`[FAIL]`: the empty stamp vouches today).
 
 - [ ] **Step 3: The guard and the writer**
 
@@ -1034,14 +1045,14 @@ with
 
 and add `have` to the function's `local` line.
 
-In `cmd_sync`, replace each of the four `: > "$stamp"` (lines 1211, 1212, 1216 and 1233) with `printf '%s %s\n' "$REMOTE" "$BRANCH" > "$stamp"`.
+In `cmd_sync`, replace three of the four `: > "$stamp"` writes (lines 1211 `assumed-absent`, 1216 `absent` and 1233, the fetched outcomes) with `printf '%s %s\n' "$REMOTE" "$BRANCH" > "$stamp"`, and the `no-remote` one at line 1212 with `rm -f "$stamp"`: a stamp written without a fetch would vouch for a remote named later, so a repository without a remote leaves none and creates on the strength of `hp_has_remote` alone.
 
 - [ ] **Step 4: The changelog**
 
 In `CHANGELOG.md` under `## Unreleased`, after the prune bullet (Task 7), add:
 
 ```markdown
-- **The fetch stamp names its remote and branch.** `<key>.fetched` now holds `<remote> <branch>`, and a checkout is created only when it names the configured `hyperpowers.stateRemote` and `hyperpowers.stateBranch`; a stamp from an earlier build is empty and asks for one `sdd-state sync`, after which it is current.
+- **The fetch stamp names its remote and branch.** `<key>.fetched` now holds `<remote> <branch>`, and a checkout is created only when it names the configured `hyperpowers.stateRemote` and `hyperpowers.stateBranch`; a `no-remote` sync leaves no stamp, so a remote added later asks for one `sync` first; a stamp from an earlier build is empty and asks for one `sdd-state sync`, after which it is current.
 ```
 
 - [ ] **Step 5: GREEN, quick suites, lint**

@@ -90,11 +90,12 @@ Three requirements shape the replacement:
   the fallback, and the arrival checks underspecified; the sections below
   carry those corrections.
 - The fetch stamp records the remote and the branch it fetched. Creation of
-  an orphan branch requires an exact match, so a changed
-  `hyperpowers.stateRemote` or `hyperpowers.stateBranch` means a fresh
-  `sync` before any branch is invented; the per-key boolean the spec first
-  described would have let a stale stamp vouch for a remote it never
-  checked. Decided 2026-10-23 at the hand-back.
+  an orphan branch requires an exact match of remote, branch and a
+  fingerprint of the remote's fetch URL, so a changed
+  `hyperpowers.stateRemote` or `hyperpowers.stateBranch`, or a repointed
+  remote, means a fresh `sync` before any branch is invented; the per-key
+  boolean the spec first described would have let a stale stamp vouch for a
+  remote it never checked. Decided 2026-10-23 at the hand-back.
 - A verified import keeps the legacy workspace as a dated copy. The source
   is renamed to `<source>.imported-<UTC>-<pid>` beside its physical
   location (the pointer's referent when the candidate was a pointer) rather
@@ -183,12 +184,14 @@ the next attempt starts clean. The test override `HYPERPOWERS_TEST_CRASH_AT`
 
 An orphan branch is created only when the repository has no remote
 configured, or when `sync` has recorded a fetch outcome for this key (the
-stamp file `<key>.fetched`, holding the remote and the branch it fetched,
+stamp file `<key>.fetched`, holding the remote, the branch and a
+fingerprint of the remote's fetch URL,
 written on `assumed-absent` and on every outcome in which the fetch ran,
 never on `offline`, `offline-no-state` or `no-remote` (a `no-remote` sync
 removes any stamp); creation requires the stamp to name the configured
-`hyperpowers.stateRemote` and `hyperpowers.stateBranch` exactly, so a
-changed remote or branch, an empty stamp from before 6.17.0, or a remote
+`hyperpowers.stateRemote` and `hyperpowers.stateBranch` exactly and to
+carry the fingerprint of that remote's current fetch URL, so a changed
+remote, branch or URL, an empty stamp from before 6.17.0, or a remote
 added after a `no-remote` sync means a fresh `sync`). The stamp governs
 creation only: a state branch that already exists here is continued, and the
 next `sync` reconciles it with whatever the remote holds.
@@ -329,7 +332,9 @@ usage or internal error throughout; other exits are listed per subcommand.
 **`sync PLAN_FILE [--assume-absent]`** (or `sync --repo REPO_DIR` for
 callers without a plan). Fetches
 `<remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>`, writes the
-`<key>.fetched` stamp (`<remote> <branch>`) on every outcome except
+`<key>.fetched` stamp (`<remote> <branch> <fingerprint>`, the fingerprint
+being the first 12 hex digits of the SHA-256 of the remote's fetch URL, or
+`none` when the remote has no URL) on every outcome except
 `offline`, `offline-no-state` and `no-remote` (which removes any stamp), runs `ensure_checkout`, and reconciles under the lock.
 Reconciliation starts by snapshotting every plan directory with pending
 tracked changes, so the working tree equals the local tip S and no local

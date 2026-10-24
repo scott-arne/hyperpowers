@@ -355,6 +355,10 @@ find "$idle_two" -depth -exec touch -mt "$OLDSTAMP" {} +
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
 claimed_two=$(ls -d "$idle_two".reclaiming-* 2>/dev/null | head -n 1) || claimed_two=""
 if [ ! -d "$idle_two" ] && [ -n "$claimed_two" ] && [ -f "$claimed_two/plans/some-plan-deadbeef/progress.md" ]; then pass "an idle root is claimed under a .reclaiming-<pid> name and nothing is deleted on that pass"; else fail "an idle root is claimed under a .reclaiming-<pid> name and nothing is deleted on that pass (claimed: '$claimed_two')"; fi
+# The claim stamps the tree before the rename, so no call that sees the
+# claimed name can read the tree as idle and take it.
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -n "$claimed_two" ] && [ -d "$claimed_two" ] && [ -f "$claimed_two/plans/some-plan-deadbeef/progress.md" ]; then pass "a root claimed by one invocation is not taken by the next"; else fail "a root claimed by one invocation is not taken by the next (claimed: '$claimed_two')"; fi
 # A writer on the previous plugin appends to the claimed copy before the
 # second phase could take it.
 if [ -n "$claimed_two" ]; then

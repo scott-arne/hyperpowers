@@ -56,13 +56,15 @@ base="$(hp_cache_root)/sdd"
 # that follow agent-touched files hold a watcher per scratch file. Reclaim is
 # two-phase, because a writer on the previous plugin that still holds a kept
 # import copy's ledger open cannot be excluded: nothing is deleted on the
-# pass that finds a root idle. That pass claims the root by renaming it aside
-# (atomic) to `<key>.reclaiming-<pid>`, re-checks the claimed tree — an
-# import that got in first left a fresh mtime (it touches the root before
-# anything else) or its backup (`plans/*.importing-*`), and such a root is
-# put back — and touches it, which restarts the clock. A later call deletes a
-# `.reclaiming-*` root once nothing under it, the directory itself included,
-# is newer than 14 days, after one more rename-aside and re-check. So a late
+# pass that finds a root idle. That pass stamps the root with `touch`, which
+# restarts the clock, claims it by renaming it aside (atomic) to
+# `<key>.reclaiming-<pid>` — the stamp first, so no concurrent call ever
+# reads the tree under the claimed name as idle — and re-checks the claimed
+# tree, putting it back when something was written during the window or an
+# import that got in first left its backup (`plans/*.importing-*`). A later
+# call deletes a `.reclaiming-*` root once nothing under it, the directory
+# itself included, is newer than 14 days, after one more rename-aside and
+# re-check. So a late
 # append refreshes the tree and buys 14 more days, and a root another
 # repository's call reclaimed by mistake is recoverable for 14 days under its
 # `.reclaiming-*` name. A root is idle only when nothing under it is newer
@@ -98,17 +100,28 @@ reclaim_plain() {
         ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
         claimed="$r.reclaiming-$$"
         if [ -e "$claimed" ] || [ -L "$claimed" ]; then continue; fi
+        # The stamp goes on before the rename, not after it: the reclaim
+        # holds no lock, and a concurrent call that saw a still-old tree
+        # under the claimed name would read it as a quarantine that had been
+        # quiet for its 14 days and delete it at once.
+        touch "$r" 2>/dev/null || true
         mv "$r" "$claimed" 2>/dev/null || continue
         if [ -n "${HYPERPOWERS_TEST_RECLAIM_RACE:-}" ] && [ "$HYPERPOWERS_TEST_RECLAIM_RACE" = "$r" ]; then
           # Test hook: an importer that touched the root and renamed its source
           # aside just before the claim.
           mkdir -p "$claimed/plans/x.importing-1"; touch "$claimed"
         fi
-        if [ -z "$(find "$claimed" -maxdepth 0 -mtime +14 2>/dev/null)" ] || [ -n "$(find "$claimed" -mtime -14 2>/dev/null | head -n 1)" ] || ls -d "$claimed"/plans/*.importing-* >/dev/null 2>&1; then
+        # The root's own mtime is this call's stamp from here on, so the
+        # re-check reads the tree under it: anything written during the
+        # rename's window, and an importer's backup. A root put back carries
+        # that stamp, which only defers its next reclaim by 14 days. An
+        # importer that had touched the root and nothing more loses the
+        # stamp; its own rename then fails cleanly with nothing lost, as it
+        # does for one that arrives after the claim.
+        if [ -n "$(find "$claimed" -mindepth 1 -mtime -14 2>/dev/null | head -n 1)" ] || ls -d "$claimed"/plans/*.importing-* >/dev/null 2>&1; then
           mv "$claimed" "$r" 2>/dev/null || true
           continue
         fi
-        touch "$claimed" 2>/dev/null || true
         ;;
     esac
   done

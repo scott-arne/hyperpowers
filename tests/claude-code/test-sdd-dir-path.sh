@@ -273,10 +273,10 @@ touch "$stale_dir/task-1-brief.md"
 # is idle only when nothing under it is newer than the threshold either.
 touch -t 202601010000 "$stale_dir/task-1-brief.md" "$stale_dir"
 run_sdd_dir "$repo_a" >/dev/null
-if [ ! -d "$stale_dir" ]; then
-    pass "stale sibling scratch dir is pruned"
+if [ ! -d "$stale_dir" ] && ls -d "$stale_dir".reclaiming-* >/dev/null 2>&1; then
+    pass "stale sibling scratch dir is claimed for reclaim"
 else
-    fail "stale sibling scratch dir is pruned (still present: $stale_dir)"
+    fail "stale sibling scratch dir is claimed for reclaim (still present: $stale_dir)"
 fi
 if [ -d "$fresh_dir" ]; then
     pass "fresh sibling scratch dir survives pruning"
@@ -331,7 +331,7 @@ mkdir -p "$idle_backup/plans/some-plan-deadbeef.importing-4242" "$idle_plain/pla
 : > "$idle_backup/plans/some-plan-deadbeef.importing-4242/progress.md"
 find "$idle_backup" "$idle_plain" -depth -exec touch -mt "$OLDSTAMP" {} +
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
-if [ -d "$idle_backup" ] && [ ! -d "$idle_plain" ]; then pass "an idle root holding an import backup survives the reclaim; an idle root without one is removed"; else fail "an idle root holding an import backup survives the reclaim; an idle root without one is removed (backup root: $([ -d "$idle_backup" ] && echo kept || echo gone), plain root: $([ -d "$idle_plain" ] && echo kept || echo gone))"; fi
+if [ -d "$idle_backup" ] && [ ! -d "$idle_plain" ] && ls -d "$idle_plain".reclaiming-* >/dev/null 2>&1; then pass "an idle root holding an import backup survives the reclaim; an idle root without one is claimed"; else fail "an idle root holding an import backup survives the reclaim; an idle root without one is claimed (backup root: $([ -d "$idle_backup" ] && echo kept || echo gone), plain root: $([ -d "$idle_plain" ] && echo kept || echo gone))"; fi
 idle_kept="$XDG_CACHE_HOME/hyperpowers/sdd/idlekept0000000000005"
 mkdir -p "$idle_kept/plans/some-plan-deadbeef.imported-20240101T000000Z-1"
 : > "$idle_kept/plans/some-plan-deadbeef.imported-20240101T000000Z-1/progress.md"
@@ -345,7 +345,27 @@ mkdir -p "$idle_kept_old/plans/some-plan-deadbeef.imported-20240101T000000Z-1"
 : > "$idle_kept_old/plans/some-plan-deadbeef.imported-20240101T000000Z-1/progress.md"
 find "$idle_kept_old" -depth -exec touch -mt "$OLDSTAMP" {} +
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
-if [ ! -d "$idle_kept_old" ]; then pass "an idle root whose kept import copy is old is reclaimed"; else fail "an idle root whose kept import copy is old is reclaimed (root: $([ -d "$idle_kept_old" ] && echo kept || echo gone))"; fi
+if [ ! -d "$idle_kept_old" ] && ls -d "$idle_kept_old".reclaiming-* >/dev/null 2>&1; then pass "an idle root whose kept import copy is old is reclaimed"; else fail "an idle root whose kept import copy is old is reclaimed (root: $([ -d "$idle_kept_old" ] && echo kept || echo gone))"; fi
+# Nothing is deleted on the pass that finds a root idle: it is claimed under
+# a .reclaiming-<pid> name, and a later call takes it once it has been quiet
+# for another 14 days.
+idle_two="$XDG_CACHE_HOME/hyperpowers/sdd/idletwophase000000007"
+mkdir -p "$idle_two/plans/some-plan-deadbeef"; : > "$idle_two/plans/some-plan-deadbeef/progress.md"
+find "$idle_two" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+claimed_two=$(ls -d "$idle_two".reclaiming-* 2>/dev/null | head -n 1) || claimed_two=""
+if [ ! -d "$idle_two" ] && [ -n "$claimed_two" ] && [ -f "$claimed_two/plans/some-plan-deadbeef/progress.md" ]; then pass "an idle root is claimed under a .reclaiming-<pid> name and nothing is deleted on that pass"; else fail "an idle root is claimed under a .reclaiming-<pid> name and nothing is deleted on that pass (claimed: '$claimed_two')"; fi
+# A writer on the previous plugin appends to the claimed copy before the
+# second phase could take it.
+if [ -n "$claimed_two" ]; then
+    find "$claimed_two" -depth -exec touch -mt "$OLDSTAMP" {} +
+    touch "$claimed_two/plans/some-plan-deadbeef/progress.md"
+fi
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -n "$claimed_two" ] && [ -f "$claimed_two/plans/some-plan-deadbeef/progress.md" ]; then pass "a claimed root written to since the claim survives the next invocation"; else fail "a claimed root written to since the claim survives the next invocation (claimed: $([ -n "$claimed_two" ] && [ -d "$claimed_two" ] && echo kept || echo gone))"; fi
+[ -z "$claimed_two" ] || find "$claimed_two" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -n "$claimed_two" ] && [ ! -d "$claimed_two" ] && ! ls -d "$claimed_two".gone-* >/dev/null 2>&1; then pass "a claimed root quiet for another 14 days is deleted, leaving no .gone-* copy"; else fail "a claimed root quiet for another 14 days is deleted, leaving no .gone-* copy (claimed: $([ -n "$claimed_two" ] && [ -d "$claimed_two" ] && echo kept || echo gone))"; fi
 idle_raced="$XDG_CACHE_HOME/hyperpowers/sdd/idleraced000000000003"
 mkdir -p "$idle_raced/plans/some-plan-deadbeef"; : > "$idle_raced/plans/some-plan-deadbeef/progress.md"
 find "$idle_raced" -depth -exec touch -mt "$OLDSTAMP" {} +

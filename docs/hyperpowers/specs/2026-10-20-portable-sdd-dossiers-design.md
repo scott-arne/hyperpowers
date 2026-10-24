@@ -101,8 +101,10 @@ Three requirements shape the replacement:
   location (the pointer's referent when the candidate was a pointer) rather
   than deleted: a session on the previous plugin that still holds the legacy
   ledger open appends into that copy, where a human can find the line, and
-  the plain-cache reclaim takes the copy with its root after 14 idle days.
-  Decided 2026-10-23 at the hand-back.
+  the plain-cache reclaim sets that root aside under a `.reclaiming-` name
+  once nothing under it is newer than 14 days and deletes it on a later call
+  after 14 more quiet days, so an append that lands during the first 14 days
+  buys the copy another 14. Decided 2026-10-23 at the hand-back.
 - A tip or incoming commit carrying a symbolic link, a submodule entry or a
   recovery sidecar anywhere is refused whole. The check is absolute and
   runs at checkout creation, at apply and at plain materialization; the
@@ -519,8 +521,9 @@ destination, and only after a clean verification set the source aside as
 `<source>.imported-<UTC>-<pid>` beside its own location and then put a
 symlink to the new workspace in the source's place (the copy is kept for a
 writer of the previous plugin that still holds the old ledger open; the
-plain-cache reclaim takes it with its root once nothing under that root is
-newer than 14 days; an import interrupted between those two steps leaves the
+plain-cache reclaim sets that root aside under a `.reclaiming-` name once
+nothing under it is newer than 14 days and deletes it on a later call after
+14 more quiet days; an import interrupted between those two steps leaves the
 kept copy and no pointer, and the next import completes the relink and
 prints `status=moved`) (a pointer candidate is
 relinked to the new workspace instead); a failed verification leaves the

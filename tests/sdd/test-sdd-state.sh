@@ -1918,5 +1918,45 @@ git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/ori
 run_state "$PAIR_B" sync docs/plan.md >/dev/null
 rc=0; out=$(run_sdd_dir "$PAIR_B" docs/plan.md 2>/dev/null) || rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "$plainb27/plans/$ws27" ] && [ ! -L "$out/progress.md" ] && [ "$(sed -n 2p "$out/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "with the link replaced on the branch the same call materializes the workspace"; else fail "with the link replaced on the branch the same call materializes the workspace (rc=$rc: $out)"; fi
+
+# --- complete and handback (stop guard, 2026-10-23) -------------------------
+repo30="$TEST_ROOT/complete30"; make_repo "$repo30"
+mkdir -p "$repo30/docs"; printf '# Plan\n\n### Task 1: one\n\n### Task 2: two\n' > "$repo30/docs/plan.md"
+git -C "$repo30" add docs/plan.md; git -C "$repo30" commit -q -m plan
+ws30=$(run_sdd_dir "$repo30" docs/plan.md 2>/dev/null)
+printf '# SDD ledger — plan: docs/plan.md\nsession s30: mode worktree on main at %s started 2026-10-23T00:00:00Z\n' "$repo30" > "$ws30/progress.md"
+out=$(run_state "$repo30" complete docs/plan.md 1 --commits 1111111..2222222 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -Eq '^status=complete task=1 appended=1 snapshot=(plain|[0-9a-f]{7})$'; then pass "complete appends the canonical line and snapshots"; else fail "complete appends the canonical line and snapshots (rc=$rc: $out)"; fi
+if [ "$(grep -c '^Task 1: complete (commits 1111111..2222222, review clean)$' "$ws30/progress.md")" = 1 ]; then pass "the completion line has the canonical shape"; else fail "the completion line has the canonical shape"; fi
+out=$(run_state "$repo30" complete docs/plan.md 1 --commits 1111111..2222222 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^status=complete task=1 appended=0 snapshot=' && [ "$(grep -c '^Task 1: complete' "$ws30/progress.md")" = 1 ]; then pass "a repeated complete appends nothing and still snapshots"; else fail "a repeated complete appends nothing and still snapshots (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" complete docs/plan.md 3 --commits 1111111..2222222 --session s30); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=unknown-task task=3 tasks=2" ]; then pass "complete refuses a task the plan does not have"; else fail "complete refuses a task the plan does not have (rc=$rc: $out)"; fi
+for bad in 111111..2222222 1111111..22222222 abcdefg..1234567 1111111.2222222 1111111..2222222x; do
+  out=$(run_state "$repo30" complete docs/plan.md 2 --commits "$bad" --session s30); rc=$?
+  if [ "$rc" -eq 2 ] && [ -z "$out" ] && ! grep -q '^Task 2: complete' "$ws30/progress.md"; then pass "complete rejects the range '$bad'"; else fail "complete rejects the range '$bad' (rc=$rc: $out)"; fi
+done
+out=$(HYPERPOWERS_TEST_FAIL_SNAPSHOT=1 run_state "$repo30" complete docs/plan.md 2 --commits 3333333..4444444 --session s30); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(grep -c '^Task 2: complete' "$ws30/progress.md")" = 1 ]; then pass "a failed snapshot leaves the line and reports error"; else fail "a failed snapshot leaves the line and reports error (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits 3333333..4444444 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^status=complete task=2 appended=0 snapshot='; then pass "the retry after a failed snapshot succeeds without a second line"; else fail "the retry after a failed snapshot succeeds without a second line (rc=$rc: $out)"; fi
+# lock contention: busy, exit 3, nothing written
+lock30="$( . "$LIB"; hp_checkout_path "$repo30" ).lock"; mkdir -p "$lock30"; printf 'pid=1\n' > "$lock30/owner"
+before30=$(wc -l < "$ws30/progress.md")
+out=$(HYPERPOWERS_LOCK_WAIT_STEPS=2 run_state "$repo30" complete docs/plan.md 2 --commits 5555555..6666666 --session s30); rc=$?
+if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$(wc -l < "$ws30/progress.md")" = "$before30" ]; then pass "complete under a held lock is busy"; else fail "complete under a held lock is busy (rc=$rc: $out)"; fi
+out=$(HYPERPOWERS_LOCK_WAIT_STEPS=2 run_state "$repo30" handback docs/plan.md --reason "x" --session s30); rc=$?
+if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$(wc -l < "$ws30/progress.md")" = "$before30" ]; then pass "handback under a held lock is busy"; else fail "handback under a held lock is busy (rc=$rc: $out)"; fi
+rm -rf "$lock30"
+out=$(run_state "$repo30" handback docs/plan.md --reason "a question only you can answer" --session s30); rc=$?
+line=$(tail -n 1 "$ws30/progress.md")
+if [ "$rc" -eq 0 ] && [ "$out" = "status=handback" ] && printf '%s' "$line" | grep -Eq '^handback s30 [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z: a question only you can answer$'; then pass "handback appends a millisecond-stamped line"; else fail "handback appends a millisecond-stamped line (rc=$rc: $out / $line)"; fi
+out=$(cd "$repo30" && CLAUDE_CODE_SESSION_ID=s31 bash "$SDD_STATE" handback docs/plan.md --reason "stopped by your human partner"); rc=$?
+if [ "$rc" -eq 0 ] && tail -n 1 "$ws30/progress.md" | grep -q '^handback s31 '; then pass "handback takes the session from CLAUDE_CODE_SESSION_ID when --session is omitted"; else fail "handback takes the session from CLAUDE_CODE_SESSION_ID when --session is omitted (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" complete docs/plan.md 1 --session s30); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "complete without --commits is a usage error"; else fail "complete without --commits is a usage error (rc=$rc: $out)"; fi
+rm -rf "$ws30"
+out=$(run_state "$repo30" complete docs/plan.md 1 --commits 1111111..2222222 --session s30); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace" ]; then pass "complete without a ledger is no-workspace"; else fail "complete without a ledger is no-workspace (rc=$rc: $out)"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

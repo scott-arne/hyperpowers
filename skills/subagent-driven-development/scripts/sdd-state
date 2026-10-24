@@ -12,12 +12,15 @@
 #   sdd-state import PLAN_FILE
 #   sdd-state prune [--days N] [--apply] --repo DIR
 #   sdd-state claim PLAN_FILE N --session SID [--takeover]
+#   sdd-state complete PLAN_FILE N --commits BASE..HEAD [--session SID]
+#   sdd-state handback PLAN_FILE --reason TEXT [--session SID]
 #
 # stdout: one line of space-separated key=value pairs, status= first; sync
 # adds a second line "merge=<command>" on diverged.
 # exit: 0 ok | 1 offline, offline-no-state, push-failed | 2 usage or internal
-#       (needs-sync, foreign branch, no-workspace, import-failed) |
-#       3 diverged, busy, remote-finished |
+#       (needs-sync, foreign branch, no-workspace, import-failed, complete's
+#       unknown-task) |
+#       3 diverged, busy (also complete and handback), remote-finished |
 #       4 claim held by another session | 5 scan-failed | 6 open-claims |
 #       7 plain backend (handoff) | 8 plan-not-committed |
 #       9 wrong-repo, code-missing, plan-stale | 10 code-dirty | 11 detached-head | 12 shallow-source
@@ -46,7 +49,9 @@ usage() {
     '  finish PLAN_FILE [--force]' \
     '  import PLAN_FILE' \
     '  prune [--days N] [--apply] --repo DIR' \
-    '  claim PLAN_FILE N --session SID [--takeover]' >&2
+    '  claim PLAN_FILE N --session SID [--takeover]' \
+    '  complete PLAN_FILE N --commits BASE..HEAD [--session SID]' \
+    '  handback PLAN_FILE --reason TEXT [--session SID]' >&2
   exit 2
 }
 
@@ -179,6 +184,83 @@ cmd_claim() {
   if [ "$owner" = "$sid" ]; then echo "status=held task=$n owner=$owner own=1"; return 0; fi
   echo "status=held task=$n owner=$owner since=$since worktree=$(enc "$wt")"
   return 4
+}
+
+# take_lock_or_busy: the lock path must derive (else error, 2); contention past
+# the wait is busy (3). Prints the status line itself and returns the code.
+take_lock_or_busy() {
+  hp_checkout_path "$PLAN_DIR" >/dev/null 2>&1 || { echo "status=error"; return 2; }
+  hp_lock "$PLAN_DIR" 2>/dev/null || { echo "status=busy"; return 3; }
+  return 0
+}
+
+# --- complete ----------------------------------------------------------------
+# The one writer of a completion line. Idempotent: the line is appended once,
+# the snapshot runs every time, so a failed snapshot is retried by calling
+# complete again with the same arguments. The task number must be one of the
+# plan's headings, so a controller cannot complete a task that does not exist.
+cmd_complete() {
+  local plan="" n="" commits="" sid="" total line out rc appended
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --commits) [ $# -ge 2 ] || usage; commits=$2; shift 2 ;;
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      -*) usage ;;
+      *) if [ -z "$plan" ]; then plan=$1; elif [ -z "$n" ]; then n=$1; else usage; fi; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$n" ] && [ -n "$commits" ] || usage
+  case "$n" in ''|*[!0-9]*) usage ;; esac
+  [[ "$commits" =~ ^[0-9a-f]{7}\.\.[0-9a-f]{7}$ ]] || usage
+  resolve_plan "$plan"
+  total=$(grep -Ec '^### Task [0-9]+:' "$PLAN") || total=0
+  if ! grep -Eq "^### Task $n:" "$PLAN"; then echo "status=unknown-task task=$n tasks=$total"; return 2; fi
+  take_lock_or_busy || return $?
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace"; return 2; fi
+  hp_contained "$ROOT" "plans/$WS/progress.md" || { hp_unlock; echo "status=error"; return 2; }
+  line="Task $n: complete (commits $commits, review clean)"
+  grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md"; rc=$?
+  case "$rc" in
+    0) appended=0 ;;
+    1) if ! printf '%s\n' "$line" >> "$WSDIR/progress.md"; then hp_unlock; echo "status=error"; return 2; fi; appended=1 ;;
+    *) hp_unlock; echo "status=error"; return 2 ;;
+  esac
+  if [ "$BACKEND" != branch ]; then hp_unlock; echo "status=complete task=$n appended=$appended snapshot=plain"; return 0; fi
+  if [ -n "${HYPERPOWERS_TEST_FAIL_SNAPSHOT:-}" ]; then hp_unlock; echo "status=error"; return 2; fi
+  hp_contained "$CO" "plans/$WS" || { hp_unlock; echo "status=error"; return 2; }
+  out=$(hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: Task $n complete" "plans/$WS"); rc=$?
+  hp_unlock
+  [ "$rc" -eq 0 ] || { echo "status=error"; return 2; }
+  if [ "$out" = none ]; then out=$(git -C "$CO" rev-parse "refs/heads/$BRANCH"); fi
+  echo "status=complete task=$n appended=$appended snapshot=${out:0:7}"
+}
+
+# --- handback ----------------------------------------------------------------
+# The explicit hand-back the stop guard honours for the current turn: one
+# millisecond-stamped line, appended under the lock, no snapshot.
+cmd_handback() {
+  local plan="" reason="" sid=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason) [ $# -ge 2 ] || usage; reason=$2; shift 2 ;;
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$reason" ] || usage
+  [ -n "$sid" ] || sid=$(hp_session_id)
+  [ -n "$sid" ] || { echo "sdd-state: no session id: pass --session SID" >&2; return 2; }
+  case "$reason" in *$'\n'*) echo "sdd-state: --reason must be one line" >&2; return 2 ;; esac
+  resolve_plan "$plan"
+  take_lock_or_busy || return $?
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace"; return 2; fi
+  hp_contained "$ROOT" "plans/$WS/progress.md" || { hp_unlock; echo "status=error"; return 2; }
+  if ! printf 'handback %s %s: %s\n' "$sid" "$(hp_utc_now_ms)" "$reason" >> "$WSDIR/progress.md"; then hp_unlock; echo "status=error"; return 2; fi
+  hp_unlock
+  echo "status=handback"
 }
 
 # --- import ------------------------------------------------------------------
@@ -1504,6 +1586,8 @@ case "$sub" in
   snapshot) cmd_snapshot "$@" ;;
   import) cmd_import "$@" ;;
   claim) cmd_claim "$@" ;;
+  complete) cmd_complete "$@" ;;
+  handback) cmd_handback "$@" ;;
   finish) cmd_finish "$@" ;;
   prune) cmd_prune "$@" ;;
   sync) cmd_sync "$@" ;;

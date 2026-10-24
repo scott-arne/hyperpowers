@@ -74,6 +74,9 @@ hp_write_backend() { # <repo-dir> <line>
 
 hp_session_id() { printf '%s\n' "${HYPERPOWERS_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"; }
 hp_utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+# Millisecond UTC for lines the stop guard compares against transcript
+# timestamps; macOS date has no sub-second field, node is always present.
+hp_utc_now_ms() { node -e 'process.stdout.write(new Date().toISOString())' 2>/dev/null || hp_utc_now; }
 
 # <plan-file> -> physical directory of the plan. The plan must be an existing
 # regular file inside a repository: a mistyped path never earns a workspace.
@@ -204,7 +207,7 @@ hp_lock_at() { # <lock-dir>
       waited=$((waited + 1))
       continue
     fi
-    if [ "$waited" -ge 150 ]; then
+    if [ "$waited" -ge "${HYPERPOWERS_LOCK_WAIT_STEPS:-150}" ]; then
       echo "sdd-state: lock held: $(hp_lock_owner_text "$lock" | tr '\n' ' ')" >&2
       return 2
     fi

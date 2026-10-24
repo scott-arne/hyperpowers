@@ -954,7 +954,7 @@ git commit -m "feat(sdd-state): prune quarantines and then removes the copies ki
 
 **Interfaces:**
 - Consumes: the spec's stamp paragraphs (Task 1); `$HP_PROG` (Task 5); the `docs/plan.md` Task 3 creates in `PAIR_A`.
-- Produces: `hp_remote_fingerprint <repo-dir>` prints the first 12 hex digits of the SHA-256 of `git remote get-url <configured remote>` (`shasum -a 256`), or `none` when the remote has no URL. `hp_stamp_ok <repo-dir>` returns 0 when the stamp's first line equals `<hyperpowers.stateRemote or origin> <hyperpowers.stateBranch or hyperpowers/state> <fingerprint>`, so a repointed remote (`git remote set-url`) invalidates the stamp; `cmd_sync` writes that line on `assumed-absent`, `absent` and the fetched outcomes, and removes any stamp on `no-remote` (a repository without a remote creates freely, and a remote added later asks for one `sync` first); an empty or different stamp is `needs-sync` with the difference named.
+- Produces: `hp_remote_fingerprint <repo-dir>` prints the first 12 hex digits of the SHA-256 of `git remote get-url <configured remote>` (computed with node's `crypto`, since node is already a requirement of the helper and the repository's scripts use no other digest tool), or `none` when the remote has no URL. `hp_stamp_ok <repo-dir>` returns 0 when the stamp's first line equals `<hyperpowers.stateRemote or origin> <hyperpowers.stateBranch or hyperpowers/state> <fingerprint>`, so a repointed remote (`git remote set-url`) invalidates the stamp; `cmd_sync` writes that line on `assumed-absent`, `absent` and the fetched outcomes, and removes any stamp on `no-remote` (a repository without a remote creates freely, and a remote added later asks for one `sync` first); an empty or different stamp is `needs-sync` with the difference named.
 
 **Mirror:** `tests/sdd/test-sdd-state.sh:106-111` (p1: `make_pair`, `ensure`, the `needs-sync` needle, the stamp written by hand).
 
@@ -1059,7 +1059,7 @@ hp_remote_fingerprint() {
   local url
   url=$(git -C "$1" remote get-url "$(hp_state_remote "$1")" 2>/dev/null) || { printf 'none\n'; return 0; }
   [ -n "$url" ] || { printf 'none\n'; return 0; }
-  printf '%s' "$url" | shasum -a 256 | cut -c1-12
+  node -e 'process.stdout.write(require("crypto").createHash("sha256").update(process.argv[1]).digest("hex").slice(0, 12) + "\n")' "$url"
 }
 
 # <repo-dir> -> 0 when the fetch stamp names the configured remote, branch

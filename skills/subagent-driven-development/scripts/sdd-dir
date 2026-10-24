@@ -58,8 +58,11 @@ base="$(hp_cache_root)/sdd"
 # claimed tree: an import that got in first left a fresh mtime (it touches
 # the root before anything else) or its backup (`plans/*.importing-*`),
 # and such a root is put back; an import that arrives after the rename
-# finds no root and fails cleanly with nothing lost. Best effort: pruning
-# must never break the contract that stdout is the path.
+# finds no root and fails cleanly with nothing lost. A root is idle only
+# when nothing under it is newer than 14 days either, so a kept import copy
+# (`plans/*.imported-<UTC>-<pid>`) a slower session still appends to is
+# never taken. Best effort: pruning must never break the contract that
+# stdout is the path.
 reclaim_plain() {
   local r claimed
   for r in "$base"/*/; do
@@ -67,6 +70,7 @@ reclaim_plain() {
     [ -d "$r" ] && [ ! -L "$r" ] || continue
     [ "${r##*/}" != "$1" ] || continue
     [ -n "$(find "$r" -maxdepth 0 -mtime +14 2>/dev/null)" ] || continue
+    [ -z "$(find "$r" -mtime -14 2>/dev/null | head -n 1)" ] || continue
     ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
     claimed="$r.reclaiming-$$"
     mv "$r" "$claimed" 2>/dev/null || continue
@@ -75,7 +79,7 @@ reclaim_plain() {
       # aside just before the claim.
       mkdir -p "$claimed/plans/x.importing-1"; touch "$claimed"
     fi
-    if [ -z "$(find "$claimed" -maxdepth 0 -mtime +14 2>/dev/null)" ] || ls -d "$claimed"/plans/*.importing-* >/dev/null 2>&1; then
+    if [ -z "$(find "$claimed" -maxdepth 0 -mtime +14 2>/dev/null)" ] || [ -n "$(find "$claimed" -mtime -14 2>/dev/null | head -n 1)" ] || ls -d "$claimed"/plans/*.importing-* >/dev/null 2>&1; then
       mv "$claimed" "$r" 2>/dev/null || true
       continue
     fi

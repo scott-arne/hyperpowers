@@ -238,20 +238,43 @@ recover_import_backup() {
   done
   return 1
 }
+# <legacy path>: set every <path>.importing-* copy aside as
+# <path>.imported-<UTC>-<pid>, the name a complete import leaves. The copy
+# stays beside the pointer for a session on the previous plugin that still
+# holds the legacy ledger open, and the plain-cache reclaim takes it with its
+# root after 14 idle days. `.imported-` is not `.importing-`:
+# recover_import_backup and reclaim_plain match the latter only. A name that
+# is already taken gets a counter, so BSD mv never nests one copy in another.
+# Returns 0 when no .importing-* copy is left, 1 otherwise.
+set_aside_imported() {
+  local b kept n=0 left=0
+  for b in "$1".importing-*; do
+    [ -d "$b" ] || continue
+    kept="$1.imported-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    while [ -e "$kept" ] || [ -L "$kept" ]; do n=$((n + 1)); kept="$1.imported-$(date -u +%Y%m%dT%H%M%SZ)-$$-$n"; done
+    mv "$b" "$kept" 2>/dev/null || { echo "sdd-state: the imported source could not be set aside at $kept; it is still at $b and the next import will try again" >&2; left=1; }
+  done
+  return "$left"
+}
 # <candidate> <backup> <ref> <stage> <installed>: undo an import that failed
 # after the source was renamed aside. <installed> is "" (nothing published),
 # "whole" (the destination was published by one rename) or "ledger" (entries
 # were installed into an existing destination). Leaves no ledger in the
 # destination, puts the source back, releases the lock and prints the
-# failure line; the caller returns 2.
+# failure line; the caller returns 2. A failure after the set-aside finds no
+# backup at <backup>: the source is then the newest kept copy, and it goes
+# back from there, so a failed relink still leaves the source where it was.
 import_abort() {
+  local src
   [ -z "$4" ] || rm -rf "$4"
   case "$5" in
     whole) rm -rf "$dest" ;;
     ledger) rm -f "$dest/progress.md" ;;
   esac
   [ ! -L "$3" ] || rm -f "$3"
-  if [ ! -e "$3" ]; then mv "$2" "$3" 2>/dev/null || echo "sdd-state: could not restore the legacy workspace; it is at $2" >&2; fi
+  src=$2
+  [ -d "$src" ] || src=$(ls -d "$3".imported-* 2>/dev/null | tail -n 1)
+  if [ ! -e "$3" ]; then mv "${src:-$2}" "$3" 2>/dev/null || echo "sdd-state: could not restore the legacy workspace; it is at ${src:-$2}" >&2; fi
   if [ "$1" != "$3" ] && [ ! -e "$1" ] && [ ! -L "$1" ]; then ln -s "$3" "$1" 2>/dev/null || true; fi
   hp_unlock
   echo "status=import-failed from=$(enc "$1")"
@@ -287,10 +310,12 @@ import_published() {
 # <candidate> <backup> <ref>: reconcile a ledger append that landed in the
 # source after it was copied (the ledger is append-only, so the new bytes
 # are added to the destination), verify that the two ledger bodies then
-# agree from their second line on and that nothing else changed, relink the
-# legacy path (or the pointer) to the destination and check it resolves
-# there, and remove the backup. Reconciliation runs before the relink so a
-# crash leaves the legacy path absent and the backup recoverable; any
+# agree from their second line on and that nothing else changed, set the
+# backup aside as the kept copy (set_aside_imported), and relink the legacy
+# path (or the pointer) to the destination and check it resolves there.
+# Reconciliation runs before the set-aside so a crash leaves the legacy path
+# absent and the backup recoverable; a crash after it leaves the kept copy
+# and no pointer, which the next import's candidate loop completes. Any
 # failure or non-append change aborts with the source restored, and the next
 # import starts over from the current source. Reads src_ledger_size and
 # src_manifest_rest from the caller (both taken from the frozen copy).
@@ -305,17 +330,26 @@ import_finish() {
     echo "sdd-state: the legacy workspace changed while it was imported; nothing was moved, run import again" >&2
     import_abort "$1" "$2" "$3" "" "$installed"; return 2
   fi
+  # The kept copy is made before the pointer: a crash between the two leaves
+  # the destination complete, the copy beside the source's location and no
+  # pointer, and the next import completes the relink (cmd_import). A copy
+  # that cannot be set aside keeps the import unfinished rather than leaving
+  # .importing-* beside a published pointer.
+  set_aside_imported "$3" || { import_abort "$1" "$2" "$3" "" "$installed"; return 2; }
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = import-after-set-aside ]; then hp_unlock; exit 99; fi
   if [ -L "$1" ]; then link=$1; else link=$3; fi
   if [ -n "${HYPERPOWERS_TEST_FAIL_RELINK:-}" ] || ! ln -sfn "$dest" "$link" 2>/dev/null || [ "$(hp_physical_dir "$link" 2>/dev/null)" != "$(hp_physical_dir "$dest")" ]; then
     import_abort "$1" "$2" "$3" "" "$installed"; return 2
   fi
-  rm -rf "$2" || echo "sdd-state: the imported source's backup could not be removed: $2" >&2
   hp_unlock
   if [ "${conflicts:-0}" -gt 0 ]; then echo "status=moved from=$(enc "$1") conflicts=$conflicts"; else echo "status=moved from=$(enc "$1")"; fi
   return 0
 }
 cmd_import() {
-  local plan cache candidates c ref dest dest_phys seen="" stage e name rel stage_manifest backup link rc restored installed conflicts=0 dbody src_ledger_size src_manifest_rest published_prefix_size
+  # installed="" is "nothing this attempt published": the finish of a cutover
+  # interrupted after publication reaches import_finish without setting it,
+  # and an abort there must not remove the destination it found.
+  local plan cache candidates c t ref dest dest_phys seen="" stage e name rel stage_manifest backup link rc restored installed="" conflicts=0 dbody src_ledger_size src_manifest_rest published_prefix_size
   [ $# -eq 1 ] || usage
   plan=$1
   command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 2; }
@@ -357,6 +391,19 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
   while IFS= read -r c; do
     [ -n "$c" ] || continue
     if recover_import_backup "$c"; then restored=1; else restored=0; fi
+    # A kept copy beside an absent candidate (or beside a dangling pointer's
+    # referent) while the destination already holds a ledger is an import
+    # interrupted between its set-aside and its relink: finish the relink.
+    if [ ! -e "$c" ] && [ -f "$dest/progress.md" ]; then
+      if [ -L "$c" ]; then t=$(readlink "$c"); else t=$c; fi
+      if ls -d "$t".imported-* >/dev/null 2>&1; then
+        if [ -L "$c" ]; then link=$c; else link=$t; fi
+        if ln -sfn "$dest" "$link" 2>/dev/null && [ "$(hp_physical_dir "$link" 2>/dev/null)" = "$dest_phys" ]; then
+          hp_unlock; echo "status=moved from=$(enc "$c")"; return 0
+        fi
+        hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2
+      fi
+    fi
     [ -e "$c" ] || continue
     ref=$(hp_physical_dir "$c") || continue
     [ "$ref" != "$dest_phys" ] || continue
@@ -378,6 +425,8 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
           backup="$ref.importing-$$"
           # The source's root is touched before anything is renamed aside, so the
           # 14-day reclaim of plain-cache roots does not take the backup with it.
+          # A finished import leaves <ref>.imported-<UTC>-<pid>, which the
+          # reclaim does take.
           touch "$(dirname "$(dirname "$ref")")" 2>/dev/null || true
           mv "$ref" "$backup" 2>/dev/null || { hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
           import_finish "$c" "$backup" "$ref"; return $?
@@ -403,6 +452,8 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
     backup="$ref.importing-$$"
     # The source's root is touched before anything is renamed aside, so the
     # 14-day reclaim of plain-cache roots does not take the backup with it.
+    # A finished import leaves <ref>.imported-<UTC>-<pid>, which the reclaim
+    # does take.
     touch "$(dirname "$(dirname "$ref")")" 2>/dev/null || true
     mv "$ref" "$backup" 2>/dev/null || { hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
     stage="$dest.import-$$"

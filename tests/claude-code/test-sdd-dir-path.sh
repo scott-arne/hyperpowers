@@ -269,8 +269,9 @@ stale_dir="$sdd_base/stale-run"
 fresh_dir="$sdd_base/fresh-run"
 mkdir -p "$stale_dir" "$fresh_dir"
 touch "$stale_dir/task-1-brief.md"
-# Backdate after populating: adding the file bumps the dir mtime.
-touch -t 202601010000 "$stale_dir"
+# Backdate after populating: adding the file bumps the dir mtime, and a root
+# is idle only when nothing under it is newer than the threshold either.
+touch -t 202601010000 "$stale_dir/task-1-brief.md" "$stale_dir"
 run_sdd_dir "$repo_a" >/dev/null
 if [ ! -d "$stale_dir" ]; then
     pass "stale sibling scratch dir is pruned"
@@ -328,12 +329,26 @@ idle_backup="$XDG_CACHE_HOME/hyperpowers/sdd/idlebackup0000000001"
 idle_plain="$XDG_CACHE_HOME/hyperpowers/sdd/idleplain00000000002"
 mkdir -p "$idle_backup/plans/some-plan-deadbeef.importing-4242" "$idle_plain/plans/some-plan-deadbeef"
 : > "$idle_backup/plans/some-plan-deadbeef.importing-4242/progress.md"
-touch -mt "$OLDSTAMP" "$idle_backup" "$idle_plain"
+find "$idle_backup" "$idle_plain" -depth -exec touch -mt "$OLDSTAMP" {} +
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
 if [ -d "$idle_backup" ] && [ ! -d "$idle_plain" ]; then pass "an idle root holding an import backup survives the reclaim; an idle root without one is removed"; else fail "an idle root holding an import backup survives the reclaim; an idle root without one is removed (backup root: $([ -d "$idle_backup" ] && echo kept || echo gone), plain root: $([ -d "$idle_plain" ] && echo kept || echo gone))"; fi
+idle_kept="$XDG_CACHE_HOME/hyperpowers/sdd/idlekept0000000000005"
+mkdir -p "$idle_kept/plans/some-plan-deadbeef.imported-20240101T000000Z-1"
+: > "$idle_kept/plans/some-plan-deadbeef.imported-20240101T000000Z-1/progress.md"
+find "$idle_kept" -depth -exec touch -mt "$OLDSTAMP" {} +
+# A slower session on the previous plugin still appends to the kept copy.
+touch "$idle_kept/plans/some-plan-deadbeef.imported-20240101T000000Z-1/progress.md"
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -f "$idle_kept/plans/some-plan-deadbeef.imported-20240101T000000Z-1/progress.md" ]; then pass "an idle root whose kept import copy was written to recently survives"; else fail "an idle root whose kept import copy was written to recently survives (root: $([ -d "$idle_kept" ] && echo kept || echo gone))"; fi
+idle_kept_old="$XDG_CACHE_HOME/hyperpowers/sdd/idlekeptold00000000006"
+mkdir -p "$idle_kept_old/plans/some-plan-deadbeef.imported-20240101T000000Z-1"
+: > "$idle_kept_old/plans/some-plan-deadbeef.imported-20240101T000000Z-1/progress.md"
+find "$idle_kept_old" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ ! -d "$idle_kept_old" ]; then pass "an idle root whose kept import copy is old is reclaimed"; else fail "an idle root whose kept import copy is old is reclaimed (root: $([ -d "$idle_kept_old" ] && echo kept || echo gone))"; fi
 idle_raced="$XDG_CACHE_HOME/hyperpowers/sdd/idleraced000000000003"
 mkdir -p "$idle_raced/plans/some-plan-deadbeef"; : > "$idle_raced/plans/some-plan-deadbeef/progress.md"
-touch -mt "$OLDSTAMP" "$idle_raced"
+find "$idle_raced" -depth -exec touch -mt "$OLDSTAMP" {} +
 _=$(cd "$TEST_ROOT/repo-plan" && HYPERPOWERS_TEST_RECLAIM_RACE="$idle_raced" "$SDD_DIR_SCRIPT" docs/a/plan.md)
 if [ -d "$idle_raced" ] && [ -f "$idle_raced/plans/some-plan-deadbeef/progress.md" ] && [ -d "$idle_raced/plans/x.importing-1" ] && ! ls -d "$idle_raced.reclaiming-"* >/dev/null 2>&1; then pass "an import that wins the race by an instant gets its root back, backup and all"; else fail "an import that wins the race by an instant gets its root back, backup and all (root: $([ -d "$idle_raced" ] && echo kept || echo gone))"; fi
 ln -s "$TEST_ROOT/repo-plan" "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004"

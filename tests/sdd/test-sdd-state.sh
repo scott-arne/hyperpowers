@@ -460,6 +460,11 @@ out=$(run_state "$i1" import docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i1" ] && [ -f "$wsi/task-1-report.md" ] && [ -f "$wsi/task-1-brief.md" ]; then pass "import moves a legacy workspace into the checkout"; else fail "import moves a legacy workspace into the checkout (rc=$rc: $out)"; fi
 if [ "$(head -n 1 "$wsi/progress.md")" = "# SDD ledger — plan: docs/plan.md" ] && [ "$(sed -n 2p "$wsi/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "an absolute identity line is rewritten to the repo-relative form"; else fail "an absolute identity line is rewritten to the repo-relative form ($(head -n 1 "$wsi/progress.md"))"; fi
 if [ -L "$legacy_i1" ] && [ "$(cd "$legacy_i1" && pwd -P)" = "$(cd "$wsi" && pwd -P)" ]; then pass "the legacy location becomes a symlink to the new workspace"; else fail "the legacy location becomes a symlink to the new workspace"; fi
+kept_i1=$(ls -d "$legacy_i1".imported-* 2>/dev/null | head -n 1)
+if [ -n "$kept_i1" ] && [ -d "$kept_i1" ] && [ ! -L "$kept_i1" ] && [ "$(head -n 1 "$kept_i1/progress.md")" = "# SDD ledger — plan: $i1/docs/plan.md" ] && cmp -s <(tail -n +2 "$kept_i1/progress.md") <(tail -n +2 "$wsi/progress.md") && [ -f "$kept_i1/task-1-report.md" ] && [ -f "$kept_i1/task-1-brief.md" ] && [ -L "$legacy_i1" ]; then pass "a verified import keeps the legacy workspace as <path>.imported-<UTC>-<pid> beside the pointer, identity line unrewritten"; else fail "a verified import keeps the legacy workspace beside the pointer (kept='$kept_i1')"; fi
+if ! ls -d "$legacy_i1".importing-* >/dev/null 2>&1; then pass "no .importing-* copy is left after a complete import"; else fail "no .importing-* copy is left after a complete import"; fi
+out=$(run_state "$i1" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none" ] && [ -d "$kept_i1" ]; then pass "the kept copy is not an import candidate: the next import prints status=none and leaves it"; else fail "the kept copy is not an import candidate (rc=$rc: $out)"; fi
 if [ "$(run_state "$i1" import docs/plan.md)" = "status=none" ]; then pass "a second import finds nothing"; else fail "a second import finds nothing"; fi
 other="$XDG_CACHE_HOME/hyperpowers/sdd/otherkey00000000/plans/$(basename "$wsi")"
 mkdir -p "$other"; printf '# SDD ledger — plan: docs/plan.md\n' > "$other/progress.md"
@@ -665,6 +670,33 @@ mkdir -p "$legacy_i17"; printf '# SDD ledger — plan: docs/plan.md\n' > "$legac
 touch -t 202601010000 "$root_i17"
 out=$(run_state "$i17" import docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i17" ] && [ -z "$(find "$root_i17" -maxdepth 0 -mtime +14 2>/dev/null)" ]; then pass "import refreshes the legacy root before the cutover"; else fail "import refreshes the legacy root before the cutover (rc=$rc: $out)"; fi
+
+# An import killed between the set-aside and the relink leaves the kept copy
+# and no pointer; the next import completes the relink.
+i22="$TEST_ROOT/i22"; make_repo "$i22"
+mkdir -p "$i22/docs"; : > "$i22/docs/plan.md"; git -C "$i22" add docs; git -C "$i22" commit -qm plan
+wsi22=$(ws_path "$i22" "$i22/docs/plan.md")
+legacy_i22="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i22")/plans/$(basename "$wsi22")"
+mkdir -p "$legacy_i22"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$legacy_i22/progress.md"
+( cd "$i22" && HYPERPOWERS_TEST_CRASH_AT=import-after-set-aside bash "$SDD_STATE" import docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ ! -e "$legacy_i22" ] && [ ! -L "$legacy_i22" ] && ls -d "$legacy_i22".imported-* >/dev/null 2>&1 && ! ls -d "$legacy_i22".importing-* >/dev/null 2>&1 && [ -f "$wsi22/progress.md" ]; then pass "the crash seam stops after the set-aside with the kept copy present and no pointer yet"; else fail "the crash seam stops after the set-aside (rc=$rc)"; fi
+out=$(run_state "$i22" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i22" ] && [ -L "$legacy_i22" ] && [ "$(cd "$legacy_i22" && pwd -P)" = "$(cd "$wsi22" && pwd -P)" ] && ls -d "$legacy_i22".imported-* >/dev/null 2>&1; then pass "the next import completes the relink and prints status=moved"; else fail "the next import completes the relink (rc=$rc: $out)"; fi
+out=$(run_state "$i22" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none" ]; then pass "a completed relink is idempotent: status=none after it"; else fail "a completed relink is idempotent (rc=$rc: $out)"; fi
+# The same crash when the candidate is a pointer: the copy sits beside the
+# pointer's former referent under another root, not beside the pointer.
+i23="$TEST_ROOT/i23"; make_repo "$i23"
+mkdir -p "$i23/docs"; : > "$i23/docs/plan.md"; git -C "$i23" add docs; git -C "$i23" commit -qm plan
+wsi23=$(ws_path "$i23" "$i23/docs/plan.md")
+real_i23="$XDG_CACHE_HOME/hyperpowers/sdd/otherroot00000000000000000000000000000000/plans/$(basename "$wsi23")"
+mkdir -p "$real_i23"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$real_i23/progress.md"
+ptr_i23="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i23")/plans/$(basename "$wsi23")+$(state_key "$i23" | cut -c1-8)"
+mkdir -p "$(dirname "$ptr_i23")"; ln -s "$real_i23" "$ptr_i23"
+( cd "$i23" && HYPERPOWERS_TEST_CRASH_AT=import-after-set-aside bash "$SDD_STATE" import docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -L "$ptr_i23" ] && [ ! -e "$ptr_i23" ] && ls -d "$real_i23".imported-* >/dev/null 2>&1 && [ -f "$wsi23/progress.md" ]; then pass "a pointer candidate's crash leaves the kept copy beside its former referent and the pointer dangling"; else fail "a pointer candidate's crash leaves the kept copy beside its former referent (rc=$rc)"; fi
+out=$(run_state "$i23" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$ptr_i23" ] && [ "$(cd "$ptr_i23" && pwd -P)" = "$(cd "$wsi23" && pwd -P)" ]; then pass "the next import relinks the dangling pointer to the destination"; else fail "the next import relinks the dangling pointer (rc=$rc: $out)"; fi
 
 echo ""
 echo "=== sdd-dir and the plain fallback over branch state ==="

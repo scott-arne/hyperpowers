@@ -993,12 +993,24 @@ if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STA
 nr="$TEST_ROOT/nr"; make_repo "$nr"; mkdir -p "$nr/docs"; : > "$nr/docs/plan.md"
 out=$(run_state "$nr" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=no-remote" ] && [ ! -e "$STATE_ROOT/$(state_key "$nr").fetched" ]; then pass "a no-remote sync leaves no stamp"; else fail "a no-remote sync leaves no stamp (rc=$rc: $out)"; fi
+# The stamp governs creation only: a no-remote sync created a local branch
+# here, which is continued, and a remote added later is reconciled by the
+# next sync. The creation path is reached only when neither the checkout
+# nor the local branch exists, so the fixture removes both before asking.
+git -C "$nr" worktree remove --force "$STATE_ROOT/$(state_key "$nr")" >/dev/null 2>&1 || rm -rf "$STATE_ROOT/$(state_key "$nr")"; git -C "$nr" worktree prune; git -C "$nr" branch -D hyperpowers/state >/dev/null 2>&1
 git -C "$nr" remote add origin "$TEST_ROOT/nowhere.git"
 err=$(ensure "$nr" 2>&1 >/dev/null); rc=$?
-if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync'; then pass "a remote added after a no-remote sync asks for a sync before any branch is created"; else fail "a remote added after a no-remote sync asks for a sync (rc=$rc: $err)"; fi
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync' && [ ! -d "$STATE_ROOT/$(state_key "$nr")" ]; then pass "with its branch and checkout gone, a repository that gained a remote after a no-remote sync asks for a sync before any branch is created"; else fail "a repository that gained a remote after a no-remote sync asks for a sync (rc=$rc: $err)"; fi
+# The realistic transition keeps the local branch: a remote that already
+# holds another dossier is reconciled, never silently replaced or invented.
+nr2="$TEST_ROOT/nr2"; make_repo "$nr2"; mkdir -p "$nr2/docs"; : > "$nr2/docs/plan.md"
+run_state "$nr2" sync docs/plan.md >/dev/null; wsnr2=$(run_sdd_dir "$nr2" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsnr2/progress.md"; run_state "$nr2" snapshot docs/plan.md >/dev/null
+git -C "$nr2" remote add origin "$PAIR_REMOTE"
+out=$(run_state "$nr2" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "${out%% *}" = "status=diverged" ] && [ -f "$wsnr2/progress.md" ] && grep -q '^Task 1: complete' "$wsnr2/progress.md"; then pass "a remote gained after a no-remote sync is reconciled by the next sync (diverged, nothing invented, the local ledger kept)"; else fail "a remote gained after a no-remote sync is reconciled by the next sync (rc=$rc: $out)"; fi
 ```
 
-(`ensure` is the suite's helper around `hp_ensure_checkout`; if the repository already has a checkout from the earlier `sync`, delete it first with `rm -rf "$STATE_ROOT/$(state_key "$nr")"` and `git -C "$nr" worktree prune`, so the needs-sync path is reached.) And an unreachable remote on a fresh clone, which must leave no stamp either:
+(`ensure` is the suite's helper around `hp_ensure_checkout`; `$PAIR_REMOTE` is the bare origin of the most recent `make_pair`, whose `hyperpowers/state` already holds another plan's dossier, so the two orphan histories are unrelated and `sync` reports `diverged`; if the nearest `make_pair` origin carries no state branch at that point in the suite, run the block after one that does, or push `PAIR_A`'s state first as p11 does.) And an unreachable remote on a fresh clone, which must leave no stamp either:
 
 ```bash
 ons="$TEST_ROOT/ons"; make_repo "$ons"; mkdir -p "$ons/docs"; : > "$ons/docs/plan.md"; git -C "$ons" remote add origin "$TEST_ROOT/nowhere.git"
@@ -1012,7 +1024,7 @@ if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync'; then pass "afte
 
 - [ ] **Step 2: RED**
 
-`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_stamp_ok'`: five `[FAIL]` (`command not found`). State suite (or extracted harness), needles `a stamp for another remote` (`[FAIL]`: creation proceeds today on any existing file), `writes the remote and branch into the stamp` (`[FAIL]`: the stamp is empty today), `a no-remote sync leaves no stamp` (`[FAIL]`: an empty stamp is written today), `a remote added after a no-remote sync` (`[FAIL]`: the empty stamp vouches today), `an offline sync with no state branch leaves no stamp` and `after an offline sync creation still asks for a sync` (these two may already pass: `offline` outcomes write no stamp today; they are regression guards and the report says which way they went).
+`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_stamp_ok'`: five `[FAIL]` (`command not found`). State suite (or extracted harness), needles `a stamp for another remote` (`[FAIL]`: creation proceeds today on any existing file), `writes the remote and branch into the stamp` (`[FAIL]`: the stamp is empty today), `a no-remote sync leaves no stamp` (`[FAIL]`: an empty stamp is written today), `gained a remote after a no-remote sync asks for a sync` (`[FAIL]`: the empty stamp vouches today), `reconciled by the next sync` (may already pass; it is the guard that the stamp never affects an existing branch), `an offline sync with no state branch leaves no stamp` and `after an offline sync creation still asks for a sync` (these two may already pass: `offline` outcomes write no stamp today; they are regression guards and the report says which way they went).
 
 - [ ] **Step 3: The guard and the writer**
 

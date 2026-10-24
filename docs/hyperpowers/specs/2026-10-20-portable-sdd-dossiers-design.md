@@ -89,6 +89,40 @@ Three requirements shape the replacement:
   spec review then found the shared checkout, the cross-repository case,
   the fallback, and the arrival checks underspecified; the sections below
   carry those corrections.
+- The fetch stamp records the remote and the branch it fetched. Creation of
+  an orphan branch requires an exact match, so a changed
+  `hyperpowers.stateRemote` or `hyperpowers.stateBranch` means a fresh
+  `sync` before any branch is invented; the per-key boolean the spec first
+  described would have let a stale stamp vouch for a remote it never
+  checked. Decided 2026-10-23 at the hand-back.
+- A verified import keeps the legacy workspace as a dated copy. The source
+  is renamed to `<source>.imported-<UTC>-<pid>` beside the pointer rather
+  than deleted: a session on the previous plugin that still holds the legacy
+  ledger open appends into that copy, where a human can find the line, and
+  the plain-cache reclaim takes the copy with its root after 14 idle days.
+  Decided 2026-10-23 at the hand-back.
+- A tip or incoming commit carrying a symbolic link, a submodule entry or a
+  recovery sidecar anywhere is refused whole. The check is absolute and
+  runs at checkout creation, at apply and at plain materialization; the
+  helper itself never produces those kinds, so only a hand-made commit
+  trips it, and such a host wedges every other host's `sync` until the
+  branch is repaired, with the path named. Scoping the check to the paths
+  an apply writes was rejected: it reopens the fresh-checkout and
+  materialization routes. Decided 2026-10-23 at the hand-back.
+- The pre-opened-writer race at finish is a documented limit, not a
+  protocol change yet. A controller that opened the ledger before
+  `finish`'s rename and writes after the verification loses that line;
+  `finish` runs when the plan is complete, by the controller that owns it,
+  so the writer in question is a second session on the same plan, which
+  claims already discourage. The lock-sharing write helper that would close
+  it goes with the sidecar relocation below. Decided 2026-10-23 at the
+  hand-back.
+- Recovery sidecars move out of the tracked checkout in a later design.
+  `.rewrite/` and `.sync-applying` live inside the state checkout today,
+  which is why three guards refuse them when they arrive from the branch;
+  relocating them to a sibling directory under the cache key removes the
+  class and is the natural home for the write protocol. It is scheduled
+  after 6.17.0, not before. Decided 2026-10-23 at the hand-back.
 
 ## Design
 
@@ -148,7 +182,11 @@ the next attempt starts clean. The test override `HYPERPOWERS_TEST_CRASH_AT`
 
 An orphan branch is created only when the repository has no remote
 configured, or when `sync` has recorded a fetch outcome for this key (the
-stamp file `<key>.fetched`, written on every outcome except `offline`).
+stamp file `<key>.fetched`, holding the remote and the branch it fetched,
+written on every outcome except `offline`; creation requires the stamp to
+name the configured `hyperpowers.stateRemote` and `hyperpowers.stateBranch`
+exactly, so a changed remote or branch, or an empty stamp from before
+6.17.0, means a fresh `sync`).
 Without either, `sdd-dir` exits 2 with `status=needs-sync`: a fresh host
 that is offline must not invent an empty dossier while a remote one may
 exist. `sync --assume-absent PLAN` writes the stamp without fetching, for
@@ -286,8 +324,8 @@ usage or internal error throughout; other exits are listed per subcommand.
 **`sync PLAN_FILE [--assume-absent]`** (or `sync --repo REPO_DIR` for
 callers without a plan). Fetches
 `<remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>`, writes the
-`<key>.fetched` stamp on every outcome except `offline` and
-`offline-no-state`, runs `ensure_checkout`, and reconciles under the lock.
+`<key>.fetched` stamp (`<remote> <branch>`) on every outcome except
+`offline` and `offline-no-state`, runs `ensure_checkout`, and reconciles under the lock.
 Reconciliation starts by snapshotting every plan directory with pending
 tracked changes, so the working tree equals the local tip S and no local
 edit can be lost, then compares S with the fetched tip R:
@@ -467,8 +505,14 @@ a symlink), and duplicates are dropped. For the first referent that is a real
 directory holding a `progress.md`: if the checkout workspace has no
 `progress.md`, copy the referent's contents with `cp -a <src>/. <dst>/`,
 verify by comparing the recursive file list and byte sizes of source and
-destination, and only after a clean verification remove the source directory
-and put a symlink to the new workspace in its place (a pointer candidate is
+destination, and only after a clean verification set the source aside as
+`<source>.imported-<UTC>-<pid>` beside its own location and then put a
+symlink to the new workspace in the source's place (the copy is kept for a
+writer of the previous plugin that still holds the old ledger open; the
+plain-cache reclaim takes it with its root once nothing under that root is
+newer than 14 days; an import interrupted between those two steps leaves the
+kept copy and no pointer, and the next import completes the relink and
+prints `status=moved`) (a pointer candidate is
 relinked to the new workspace instead); a failed verification leaves the
 source untouched and exits 2 with `status=import-failed`. The copied
 ledger's first line is rewritten to the repo-relative form when it holds an
@@ -484,7 +528,23 @@ the same rules apply.
 plan directories whose last commit (`git log -1 --format=%ct -- plans/<ws>`)
 and newest file are both older than N days, and checkouts under
 `${cache}/hyperpowers/state/` whose `.git` file points at a directory that no
-longer exists. Without `--apply` it only lists (`status=listed ...`). With
+longer exists. Without `--apply` it only lists (`status=listed ...`).
+The listing also names, as `tombs=<comma-separated names>`, every copy a
+killed removal left at `plans/.removing-<ws>-<pid>` whose process is gone,
+whose newest file is older than N days, and whose workspace the branch does
+not track (a tracked one comes back through `sync`'s restore and is never
+listed; a copy whose tracking cannot be read is kept), and as
+`quarantined=<names>` every copy an earlier `--apply` set aside at
+`plans/.pruned-<ws>-<pid>` whose newest entry is older than N days. Removal
+is two-phase, because a writer that still holds the copy open cannot be
+excluded: the first `--apply` renames a listed tomb to `plans/.pruned-<ws>-<pid>`
+under the lock after re-checking it, and touches it so the clock restarts
+(a late append moves into the renamed copy and refreshes its time); a later
+`--apply`, once nothing in the quarantined copy is newer than N days,
+deletes it and verifies it is gone. The `status=pruned` line prints the
+names renamed this run as `tombs=` and the names deleted this run as
+`quarantined=`; a copy that fails any re-check is kept where it is.
+With
 `--apply` it removes the listed plan directories in one private-index commit
 `sdd: prune <slugs>` and `rm -rf`s the dead checkouts together with their
 backend and lock files. Nothing calls `prune` implicitly. Under `plain`:
@@ -922,6 +982,11 @@ Docs: `README.md`, `CHANGELOG.md`, `docs/testing.md`.
 - `sync` merges only what git merges without conflict. The union driver
   covers the ledger; two hosts editing the same report file is a conflict
   the human partner resolves.
+- A controller that opened `progress.md` before `finish`'s rename-aside and
+  writes after the verification loses that line. `finish` runs when the
+  plan is complete, by the controller that owns it, so this needs a second
+  session writing to a finished plan; the lock-sharing write helper that
+  would close it is scheduled with the sidecar relocation (Follow-ups).
 
 ## Assumptions
 
@@ -957,13 +1022,16 @@ far below 4 KB). Validate via the concurrency cases in Verification item 2.
 - The parallel development spec (BACKLOG "Parallel development on the same
   machine"), built on the shared checkout, claims, session lines, and the
   task-list assignment.
-- BACKLOG "Stale brokers": the Codex preflight run under the Bash sandbox
-  reported `stale-broker` for this repository and offered the rename; the
-  same preflight outside the sandbox reported `ok`, and the broker sweep
-  under the sandbox could not reach any broker socket. The sandbox blocks the
-  socket probe, so some of those rename requests are false alarms. A
-  preflight that reports `unverifiable` when the connect is refused by the
-  sandbox, rather than `stale-broker`, is the likely fix.
+- BACKLOG "Stale brokers": resolved on 2026-10-23 (hyperpowers `main`
+  d7d6883). The sandboxed preflight's `stale-broker` was `broker-health`
+  reading an EPERM from `kill -0` as a dead pid; only ESRCH is death now,
+  and the gate's index says the preflight and every companion command run
+  outside the sandbox, because a companion that cannot connect tears down
+  the live broker's socket and record.
+- Recovery sidecars out of the tracked checkout, with the lock-sharing
+  write helper for ledger appends and a recovery-only result for the
+  journaled rewrite's composition case: one design, after 6.17.0
+  (Decisions).
 - Evals: analyzers and scenario checks for the new layout.
 - The ungated ledger onto the state branch, so unswept entries follow the
   work between hosts.

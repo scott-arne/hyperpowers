@@ -392,11 +392,13 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
     [ -n "$c" ] || continue
     if recover_import_backup "$c"; then restored=1; else restored=0; fi
     # A kept copy beside an absent candidate (or beside a dangling pointer's
-    # referent) while the destination already holds a ledger is an import
-    # interrupted between its set-aside and its relink: finish the relink.
+    # referent, or inside the root the plain-cache reclaim has claimed since)
+    # while the destination already holds a ledger is an import interrupted
+    # between its set-aside and its relink: finish the relink. The copy stays
+    # where it is; only the pointer moves.
     if [ ! -e "$c" ] && [ -f "$dest/progress.md" ]; then
       if [ -L "$c" ]; then t=$(readlink "$c"); else t=$c; fi
-      if ls -d "$t".imported-* >/dev/null 2>&1; then
+      if hp_kept_copy_exists "$t"; then
         if [ -L "$c" ]; then link=$c; else link=$t; fi
         if ln -sfn "$dest" "$link" 2>/dev/null && [ "$(hp_physical_dir "$link" 2>/dev/null)" = "$dest_phys" ]; then
           hp_unlock; echo "status=moved from=$(enc "$c")"; return 0

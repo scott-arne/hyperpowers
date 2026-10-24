@@ -714,6 +714,27 @@ if [ "$rc" -eq 99 ] && [ -L "$ptr_i24" ] && [ ! -e "$ptr_i24" ]; then pass "a cr
 out=$(run_state "$i24" import docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$ptr_i24" ] && [ "$(cd "$ptr_i24" && pwd -P)" = "$(cd "$wsi24" && pwd -P)" ]; then pass "the import relinks the pointer the prune kept"; else fail "the import relinks the pointer the prune kept (rc=$rc: $out)"; fi
 
+# The same pointer once the plain-cache reclaim has claimed the referent's
+# root: the kept copy moves under <root>.reclaiming-*/plans/, and both the
+# prune and the import must still recognize it there.
+i25="$TEST_ROOT/i25"; make_repo "$i25"; i25b="$TEST_ROOT/i25b"; make_repo "$i25b"
+mkdir -p "$i25/docs"; : > "$i25/docs/plan.md"; : > "$i25/docs/plan2.md"; git -C "$i25" add docs; git -C "$i25" commit -qm plan
+wsi25=$(ws_path "$i25" "$i25/docs/plan.md")
+root_i25="$XDG_CACHE_HOME/hyperpowers/sdd/otherroot00000000000000000000000000000025"
+real_i25="$root_i25/plans/$(basename "$wsi25")"
+mkdir -p "$real_i25"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$real_i25/progress.md"
+ptr_i25="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i25b")/plans/$(basename "$wsi25")+$(state_key "$i25" | cut -c1-8)"
+mkdir -p "$(dirname "$ptr_i25")"; ln -s "$real_i25" "$ptr_i25"
+( cd "$i25" && HYPERPOWERS_TEST_CRASH_AT=import-after-set-aside bash "$SDD_STATE" import docs/plan.md >/dev/null 2>&1 ); rc=$?
+find "$root_i25" -depth -exec touch -t 202601010000 {} +
+# The first call claims the idle root; the second runs its pointer prune
+# against the claimed tree.
+run_sdd_dir "$i25b" "$i25/docs/plan2.md" >/dev/null 2>&1
+run_sdd_dir "$i25b" "$i25/docs/plan2.md" >/dev/null 2>&1
+if [ "$rc" -eq 99 ] && [ -L "$ptr_i25" ] && [ ! -e "$ptr_i25" ] && ls -d "$root_i25".reclaiming-*/plans/"$(basename "$wsi25")".imported-* >/dev/null 2>&1; then pass "a quarantined root's kept copy keeps the pointer the prune walks"; else fail "a quarantined root's kept copy keeps the pointer the prune walks (rc=$rc, pointer: $([ -L "$ptr_i25" ] && echo kept || echo gone))"; fi
+out=$(run_state "$i25" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$ptr_i25" ] && [ "$(cd "$ptr_i25" && pwd -P)" = "$(cd "$wsi25" && pwd -P)" ]; then pass "the import completes the relink with the kept copy inside a quarantined root"; else fail "the import completes the relink with the kept copy inside a quarantined root (rc=$rc: $out)"; fi
+
 echo ""
 echo "=== sdd-dir and the plain fallback over branch state ==="
 make_pair p5

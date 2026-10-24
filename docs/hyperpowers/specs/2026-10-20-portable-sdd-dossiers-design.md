@@ -189,7 +189,9 @@ never on `offline`, `offline-no-state` or `no-remote` (a `no-remote` sync
 removes any stamp); creation requires the stamp to name the configured
 `hyperpowers.stateRemote` and `hyperpowers.stateBranch` exactly, so a
 changed remote or branch, an empty stamp from before 6.17.0, or a remote
-added after a `no-remote` sync means a fresh `sync`).
+added after a `no-remote` sync means a fresh `sync`). The stamp governs
+creation only: a state branch that already exists here is continued, and the
+next `sync` reconciles it with whatever the remote holds.
 Without either, `sdd-dir` exits 2 with `status=needs-sync`: a fresh host
 that is offline must not invent an empty dossier while a remote one may
 exist. `sync --assume-absent PLAN` writes the stamp without fetching, for

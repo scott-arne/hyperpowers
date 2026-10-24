@@ -6,7 +6,7 @@
 
 **Goal:** Close the decisions and residuals left by the portable-dossiers hand-back: the fetch stamp binds to the remote and branch it fetched, the import keeps a dated copy of the legacy workspace, every subcommand prints a status line when the state checkout cannot be created, `sdd-dir` stops adding a generic failure line after a specific refusal, the library's messages carry the calling tool's name, the post-ref containment failure says how to repair it, and `prune` lists and removes the copies killed removals left behind.
 
-**Architecture:** Every change is inside the existing helper (`sdd-state`), its library (`sdd-common.sh`) and `sdd-dir`, with the spec amended first so the stdout grammar and the records compiler have their text before any code moves. No new file, no new subcommand, no new seam variable. The `prune` stdout grammar gains one field (`tombs=`) and the fetch stamp file gains content (`<remote> <branch>`, where it was empty); nothing else observable changes shape.
+**Architecture:** Every change is inside the existing helper (`sdd-state`), its library (`sdd-common.sh`) and `sdd-dir`, with the spec amended first so the stdout grammar and the records compiler have their text before any code moves. No new file, no new subcommand, no new seam variable. The `prune` stdout grammar gains one field (`tombs=`) and the fetch stamp file gains content (`<remote> <branch> <fingerprint>`, where it was empty); nothing else observable changes shape.
 
 **Tech Stack:** bash 3.2 (macOS), git 2.56, node (already required by the helper), the repository's bash test suites.
 
@@ -56,7 +56,7 @@
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: the binding text for Tasks 2, 3, 6, 7 and 8: the import keeps `<source>.imported-<UTC>-<pid>`; `prune` prints `tombs=`; the stamp records `<remote> <branch>` and creation requires an exact match; the writer race is a known limit.
+- Produces: the binding text for Tasks 2, 3, 6, 7 and 8: the import keeps `<source>.imported-<UTC>-<pid>`; `prune` prints `tombs=`; the stamp records `<remote> <branch> <fingerprint>` and creation requires an exact match; the writer race is a known limit.
 
 - [ ] **Step 1: Append the five decisions**
 
@@ -193,7 +193,7 @@ bash skills/finishing-a-development-branch/scripts/decisions-compile docs/hyperp
 grep -c 'imported-<UTC>-<pid>' docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md
 grep -c 'tombs=' docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md
 grep -c 'quarantined=' docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md
-grep -c '<remote> <branch>' docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md
+grep -c '<remote> <branch> <fingerprint>' docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md
 ```
 
 Expected: `dry run: 9 decisions, index docs/hyperpowers/decisions/README.md`; `2`; `2`; `2`; `1`. (The dry run may need the spec committed; if it exits 2 saying so, commit first and re-run.)
@@ -947,18 +947,20 @@ git commit -m "feat(sdd-state): prune quarantines and then removes the copies ki
 **Risk tier:** high — a guard on checkout creation plus the writer of the file that guard reads.
 
 **Files:**
-- Modify: `skills/subagent-driven-development/scripts/sdd-common.sh:57` (beside `hp_stamp_path`: new `hp_stamp_ok`), `:500-506` (the needs-sync check in `hp_ensure_checkout`; after Task 5 its message starts with `$HP_PROG:`)
+- Modify: `skills/subagent-driven-development/scripts/sdd-common.sh:57` (beside `hp_stamp_path`: new `hp_remote_fingerprint` and `hp_stamp_ok`), `:500-506` (the needs-sync check in `hp_ensure_checkout`; after Task 5 its message starts with `$HP_PROG:`)
 - Modify: `skills/subagent-driven-development/scripts/sdd-state:1211-1233` (the four `: > "$stamp"` writes in `cmd_sync`)
 - Modify: `CHANGELOG.md` (the `## Unreleased` list)
 - Test: `tests/sdd/test-sdd-common.sh`, `tests/sdd/test-sdd-state.sh:109, 196, 204, 252, 323, 332, 673` (the seven lines that create an empty stamp) and the p1 block at lines 106-118
 
 **Interfaces:**
 - Consumes: the spec's stamp paragraphs (Task 1); `$HP_PROG` (Task 5); the `docs/plan.md` Task 3 creates in `PAIR_A`.
-- Produces: `hp_stamp_ok <repo-dir>` returns 0 when the stamp's first line equals `<hyperpowers.stateRemote or origin> <hyperpowers.stateBranch or hyperpowers/state>`; `cmd_sync` writes that line on `assumed-absent`, `absent` and the fetched outcomes, and removes any stamp on `no-remote` (a repository without a remote creates freely, and a remote added later asks for one `sync` first); an empty or different stamp is `needs-sync` with the difference named.
+- Produces: `hp_remote_fingerprint <repo-dir>` prints the first 12 hex digits of the SHA-256 of `git remote get-url <configured remote>` (`shasum -a 256`), or `none` when the remote has no URL. `hp_stamp_ok <repo-dir>` returns 0 when the stamp's first line equals `<hyperpowers.stateRemote or origin> <hyperpowers.stateBranch or hyperpowers/state> <fingerprint>`, so a repointed remote (`git remote set-url`) invalidates the stamp; `cmd_sync` writes that line on `assumed-absent`, `absent` and the fetched outcomes, and removes any stamp on `no-remote` (a repository without a remote creates freely, and a remote added later asks for one `sync` first); an empty or different stamp is `needs-sync` with the difference named.
 
 **Mirror:** `tests/sdd/test-sdd-state.sh:106-111` (p1: `make_pair`, `ensure`, the `needs-sync` needle, the stamp written by hand).
 
 - [ ] **Step 1: Write the failing tests**
+
+Both suites need a helper that prints a repository's fingerprint the way the library does; add to each, beside its other helpers: `fp() { ( . "$LIB"; hp_remote_fingerprint "$1" ); }` (the state suite defines `LIB` at its top as the common suite does; check and reuse the name it has).
 
 In `tests/sdd/test-sdd-common.sh`, after the pid-liveness block (Task 7), add:
 
@@ -969,25 +971,43 @@ stamp_st=$(hp_stamp_path "$repo_st"); mkdir -p "$(dirname "$stamp_st")"
 if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: no stamp is not ok"; else fail "hp_stamp_ok: no stamp is not ok"; fi
 : > "$stamp_st"
 if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: an empty stamp (a pre-6.17 file) is not ok"; else fail "hp_stamp_ok: an empty stamp is not ok"; fi
+if [ "$(hp_remote_fingerprint "$repo_st")" = none ]; then pass "hp_remote_fingerprint: a remote without a URL is none"; else fail "hp_remote_fingerprint: a remote without a URL is none (got: $(hp_remote_fingerprint "$repo_st"))"; fi
+printf 'origin hyperpowers/state none\n' > "$stamp_st"
+if hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: the configured remote, branch and fingerprint are ok"; else fail "hp_stamp_ok: the configured remote, branch and fingerprint are ok"; fi
 printf 'origin hyperpowers/state\n' > "$stamp_st"
-if hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: the configured remote and branch are ok"; else fail "hp_stamp_ok: the configured remote and branch are ok"; fi
+if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: a stamp without the fingerprint is not ok"; else fail "hp_stamp_ok: a stamp without the fingerprint is not ok"; fi
+git -C "$repo_st" remote add origin "$TEST_ROOT/one.git"
+fp_one=$(hp_remote_fingerprint "$repo_st")
+if [ "${#fp_one}" -eq 12 ] && [ "$fp_one" != none ]; then pass "hp_remote_fingerprint: a URL gives twelve hex digits"; else fail "hp_remote_fingerprint: a URL gives twelve hex digits (got: $fp_one)"; fi
+printf 'origin hyperpowers/state %s\n' "$fp_one" > "$stamp_st"
+if hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: the stamp matches the current URL"; else fail "hp_stamp_ok: the stamp matches the current URL"; fi
+git -C "$repo_st" remote set-url origin "$TEST_ROOT/two.git"
+if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: a repointed remote invalidates the stamp"; else fail "hp_stamp_ok: a repointed remote invalidates the stamp"; fi
 git -C "$repo_st" config hyperpowers.stateBranch other/state
-if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: a stamp for another branch is not ok"; else fail "hp_stamp_ok: a stamp for another branch is not ok"; fi
-printf 'origin other/state\n' > "$stamp_st"
+printf 'origin other/state %s\n' "$(hp_remote_fingerprint "$repo_st")" > "$stamp_st"
 if hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: the stamp follows the configured branch"; else fail "hp_stamp_ok: the stamp follows the configured branch"; fi
 ```
 
-In `tests/sdd/test-sdd-state.sh`, change each of the seven lines `: > "$STATE_ROOT/<key expression>.fetched"` (lines 109, 196, 204, 252, 323, 332, 673) to `printf 'origin hyperpowers/state\n' > "$STATE_ROOT/<the same key expression>.fetched"`. Then, after the two Task 3 assertions (which sit between line 108 and the stamp write), add:
+In `tests/sdd/test-sdd-state.sh`, change each of the seven lines `: > "$STATE_ROOT/<key expression>.fetched"` (lines 109, 196, 204, 252, 323, 332, 673) to `printf 'origin hyperpowers/state %s\n' "$(fp "<the repository the key expression names>")" > "$STATE_ROOT/<the same key expression>.fetched"` (for `$keyA`/`$keyB` at 196 and 204, the repositories those keys were computed from). Then, after the two Task 3 assertions (which sit between line 108 and the stamp write), add:
 
 ```bash
-printf 'other hyperpowers/state\n' > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+printf 'other hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 err=$(ensure "$PAIR_A" 2>&1 >/dev/null); rc=$?
-if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q "needs-sync" && printf '%s' "$err" | grep -q "names 'other hyperpowers/state'" && [ ! -d "$STATE_ROOT/$(state_key "$PAIR_A")" ]; then pass "a stamp for another remote is needs-sync and names the difference"; else fail "a stamp for another remote is needs-sync and names the difference (rc=$rc: $err)"; fi
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q "needs-sync" && printf '%s' "$err" | grep -q "names 'other hyperpowers/state" && [ ! -d "$STATE_ROOT/$(state_key "$PAIR_A")" ]; then pass "a stamp for another remote is needs-sync and names the difference"; else fail "a stamp for another remote is needs-sync and names the difference (rc=$rc: $err)"; fi
 out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state" ]; then pass "sync writes the remote and branch into the stamp"; else fail "sync writes the remote and branch into the stamp (rc=$rc: $out: $(cat "$STATE_ROOT/$(state_key "$PAIR_A").fetched" 2>/dev/null))"; fi
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ]; then pass "sync writes the remote, branch and URL fingerprint into the stamp"; else fail "sync writes the remote, branch and URL fingerprint into the stamp (rc=$rc: $out: $(cat "$STATE_ROOT/$(state_key "$PAIR_A").fetched" 2>/dev/null))"; fi
+# A repointed remote: the stamp earned against one endpoint must not vouch
+# for another once the checkout and the local branch are gone.
+git -C "$PAIR_A" worktree remove --force "$STATE_ROOT/$(state_key "$PAIR_A")" >/dev/null 2>&1 || rm -rf "$STATE_ROOT/$(state_key "$PAIR_A")"; git -C "$PAIR_A" worktree prune; git -C "$PAIR_A" branch -D hyperpowers/state >/dev/null 2>&1
+url_was=$(git -C "$PAIR_A" remote get-url origin); git -C "$PAIR_A" remote set-url origin "$TEST_ROOT/elsewhere.git"
+err=$(ensure "$PAIR_A" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync' && [ ! -d "$STATE_ROOT/$(state_key "$PAIR_A")" ] && ! git -C "$PAIR_A" rev-parse -q --verify hyperpowers/state >/dev/null; then pass "a repointed remote makes the stamp stale: needs-sync and no branch created"; else fail "a repointed remote makes the stamp stale (rc=$rc: $err)"; fi
+git -C "$PAIR_A" remote set-url origin "$url_was"
 ```
 
-(`PAIR_A`'s origin has no state branch at this point, so `sync` ends `absent` and writes the stamp; line 109's write that follows then rewrites the same content, which is harmless.) Find the existing `--assume-absent` assertion (`grep -n 'assume-absent' tests/sdd/test-sdd-state.sh`) and add after it one line checking that fixture's stamp reads `origin hyperpowers/state`, in the same form as the check above. Then add, beside the library suite's or the state suite's first no-remote fixture (a `make_repo` repository with no remote; `r3` at line 97 or the `r7` of the plain fixtures, whichever already runs `sync`), a `no-remote` check:
+(The block ends with the remote restored; the lines that follow in the p1 block, which write the stamp by hand and fetch, continue from there.)
+
+(`PAIR_A`'s origin has no state branch at this point, so `sync` ends `absent` and writes the stamp; line 109's write that follows then rewrites the same content, which is harmless.) Find the existing `--assume-absent` assertion (`grep -n 'assume-absent' tests/sdd/test-sdd-state.sh`) and add after it one line checking that fixture's stamp reads `origin hyperpowers/state $(fp "<that fixture's repository>")`, in the same form as the check above. Then add, beside the library suite's or the state suite's first no-remote fixture (a `make_repo` repository with no remote; `r3` at line 97 or the `r7` of the plain fixtures, whichever already runs `sync`), a `no-remote` check:
 
 ```bash
 nr="$TEST_ROOT/nr"; make_repo "$nr"; mkdir -p "$nr/docs"; : > "$nr/docs/plan.md"
@@ -1024,21 +1044,32 @@ if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync'; then pass "afte
 
 - [ ] **Step 2: RED**
 
-`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_stamp_ok'`: five `[FAIL]` (`command not found`). State suite (or extracted harness), needles `a stamp for another remote` (`[FAIL]`: creation proceeds today on any existing file), `writes the remote and branch into the stamp` (`[FAIL]`: the stamp is empty today), `a no-remote sync leaves no stamp` (`[FAIL]`: an empty stamp is written today), `gained a remote after a no-remote sync asks for a sync` (`[FAIL]`: the empty stamp vouches today), `reconciled by the next sync` (may already pass; it is the guard that the stamp never affects an existing branch), `an offline sync with no state branch leaves no stamp` and `after an offline sync creation still asks for a sync` (these two may already pass: `offline` outcomes write no stamp today; they are regression guards and the report says which way they went).
+`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_stamp_ok\|hp_remote_fingerprint'`: every new line `[FAIL]` (`command not found`). State suite (or extracted harness), needles `a stamp for another remote` (`[FAIL]`: creation proceeds today on any existing file), `writes the remote, branch and URL fingerprint` (`[FAIL]`: the stamp is empty today), `a repointed remote makes the stamp stale` (`[FAIL]`: any existing file vouches today), `a no-remote sync leaves no stamp` (`[FAIL]`: an empty stamp is written today), `gained a remote after a no-remote sync asks for a sync` (`[FAIL]`: the empty stamp vouches today), `reconciled by the next sync` (may already pass; it is the guard that the stamp never affects an existing branch), `an offline sync with no state branch leaves no stamp` and `after an offline sync creation still asks for a sync` (these two may already pass: `offline` outcomes write no stamp today; they are regression guards and the report says which way they went).
 
 - [ ] **Step 3: The guard and the writer**
 
 In `sdd-common.sh`, after `hp_stamp_path` (line 57), add:
 
 ```bash
-# <repo-dir> -> 0 when the fetch stamp names the configured remote and
-# branch. A stamp from before 6.17 is an empty file; it, or a stamp written
-# for another remote or branch, means a sync is owed before any branch is
-# created here.
+# <repo-dir> -> the first 12 hex digits of the SHA-256 of the configured
+# remote's fetch URL, or none when the remote has no URL. The stamp carries
+# it so a remote repointed with set-url, which keeps its alias, cannot reuse
+# a stamp earned against another endpoint.
+hp_remote_fingerprint() {
+  local url
+  url=$(git -C "$1" remote get-url "$(hp_state_remote "$1")" 2>/dev/null) || { printf 'none\n'; return 0; }
+  [ -n "$url" ] || { printf 'none\n'; return 0; }
+  printf '%s' "$url" | shasum -a 256 | cut -c1-12
+}
+
+# <repo-dir> -> 0 when the fetch stamp names the configured remote, branch
+# and the remote's current URL fingerprint. A stamp from before 6.17 is an
+# empty file; it, or a stamp written for another remote, branch or URL,
+# means a sync is owed before any branch is created here.
 hp_stamp_ok() {
   local have
   have=$(head -n 1 "$(hp_stamp_path "$1")" 2>/dev/null) || return 1
-  [ "$have" = "$(hp_state_remote "$1") $(hp_state_branch "$1")" ]
+  [ "$have" = "$(hp_state_remote "$1") $(hp_state_branch "$1") $(hp_remote_fingerprint "$1")" ]
 }
 ```
 
@@ -1057,7 +1088,7 @@ with
     if hp_has_remote "$repo" && ! hp_stamp_ok "$repo"; then
       have=$(head -n 1 "$(hp_stamp_path "$repo")" 2>/dev/null)
       if [ -n "$have" ]; then
-        echo "$HP_PROG: status=needs-sync: the fetch stamp names '$have' but git config names '$(hp_state_remote "$repo") $(hp_state_branch "$repo")'; run sdd-state sync <plan> first" >&2
+        echo "$HP_PROG: status=needs-sync: the fetch stamp names '$have' but the configured remote, branch and URL fingerprint are '$(hp_state_remote "$repo") $(hp_state_branch "$repo") $(hp_remote_fingerprint "$repo")'; run sdd-state sync <plan> first" >&2
       else
         echo "$HP_PROG: status=needs-sync: this repository has a remote and no state branch here; run sdd-state sync <plan> first (or sdd-state sync --assume-absent <plan>)" >&2
       fi
@@ -1067,14 +1098,14 @@ with
 
 and add `have` to the function's `local` line.
 
-In `cmd_sync`, replace three of the four `: > "$stamp"` writes (lines 1211 `assumed-absent`, 1216 `absent` and 1233, the fetched outcomes) with `printf '%s %s\n' "$REMOTE" "$BRANCH" > "$stamp"`, and the `no-remote` one at line 1212 with `rm -f "$stamp"`: a stamp written without a fetch would vouch for a remote named later, so a repository without a remote leaves none and creates on the strength of `hp_has_remote` alone.
+In `cmd_sync`, replace three of the four `: > "$stamp"` writes (lines 1211 `assumed-absent`, 1216 `absent` and 1233, the fetched outcomes) with `printf '%s %s %s\n' "$REMOTE" "$BRANCH" "$(hp_remote_fingerprint "$PLAN_DIR")" > "$stamp"`, and the `no-remote` one at line 1212 with `rm -f "$stamp"`: a stamp written without a fetch would vouch for a remote named later, so a repository without a remote leaves none and creates on the strength of `hp_has_remote` alone.
 
 - [ ] **Step 4: The changelog**
 
 In `CHANGELOG.md` under `## Unreleased`, after the prune bullet (Task 7), add:
 
 ```markdown
-- **The fetch stamp names its remote and branch.** `<key>.fetched` now holds `<remote> <branch>`, and a checkout is created only when it names the configured `hyperpowers.stateRemote` and `hyperpowers.stateBranch`; a `no-remote` sync leaves no stamp, so a remote added later asks for one `sync` first; a stamp from an earlier build is empty and asks for one `sdd-state sync`, after which it is current.
+- **The fetch stamp names its remote, branch and endpoint.** `<key>.fetched` now holds `<remote> <branch> <fingerprint of the fetch URL>`, and a checkout is created only when it names the configured `hyperpowers.stateRemote` and `hyperpowers.stateBranch` and the remote's current URL (a repointed remote asks for a sync); a `no-remote` sync leaves no stamp, so a remote added later asks for one `sync` first; a stamp from an earlier build is empty and asks for one `sdd-state sync`, after which it is current.
 ```
 
 - [ ] **Step 5: GREEN, quick suites, lint**

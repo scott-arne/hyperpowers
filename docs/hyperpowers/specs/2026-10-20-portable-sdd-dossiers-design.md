@@ -96,7 +96,8 @@ Three requirements shape the replacement:
   described would have let a stale stamp vouch for a remote it never
   checked. Decided 2026-10-23 at the hand-back.
 - A verified import keeps the legacy workspace as a dated copy. The source
-  is renamed to `<source>.imported-<UTC>-<pid>` beside the pointer rather
+  is renamed to `<source>.imported-<UTC>-<pid>` beside its physical
+  location (the pointer's referent when the candidate was a pointer) rather
   than deleted: a session on the previous plugin that still holds the legacy
   ledger open appends into that copy, where a human can find the line, and
   the plain-cache reclaim takes the copy with its root after 14 idle days.
@@ -183,10 +184,12 @@ the next attempt starts clean. The test override `HYPERPOWERS_TEST_CRASH_AT`
 An orphan branch is created only when the repository has no remote
 configured, or when `sync` has recorded a fetch outcome for this key (the
 stamp file `<key>.fetched`, holding the remote and the branch it fetched,
-written on every outcome except `offline`; creation requires the stamp to
-name the configured `hyperpowers.stateRemote` and `hyperpowers.stateBranch`
-exactly, so a changed remote or branch, or an empty stamp from before
-6.17.0, means a fresh `sync`).
+written on `assumed-absent` and on every outcome in which the fetch ran,
+never on `offline`, `offline-no-state` or `no-remote` (a `no-remote` sync
+removes any stamp); creation requires the stamp to name the configured
+`hyperpowers.stateRemote` and `hyperpowers.stateBranch` exactly, so a
+changed remote or branch, an empty stamp from before 6.17.0, or a remote
+added after a `no-remote` sync means a fresh `sync`).
 Without either, `sdd-dir` exits 2 with `status=needs-sync`: a fresh host
 that is offline must not invent an empty dossier while a remote one may
 exist. `sync --assume-absent PLAN` writes the stamp without fetching, for
@@ -325,7 +328,7 @@ usage or internal error throughout; other exits are listed per subcommand.
 callers without a plan). Fetches
 `<remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>`, writes the
 `<key>.fetched` stamp (`<remote> <branch>`) on every outcome except
-`offline` and `offline-no-state`, runs `ensure_checkout`, and reconciles under the lock.
+`offline`, `offline-no-state` and `no-remote` (which removes any stamp), runs `ensure_checkout`, and reconciles under the lock.
 Reconciliation starts by snapshotting every plan directory with pending
 tracked changes, so the working tree equals the local tip S and no local
 edit can be lost, then compares S with the fetched tip R:

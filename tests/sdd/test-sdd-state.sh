@@ -698,6 +698,22 @@ if [ "$rc" -eq 99 ] && [ -L "$ptr_i23" ] && [ ! -e "$ptr_i23" ] && ls -d "$real_
 out=$(run_state "$i23" import docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$ptr_i23" ] && [ "$(cd "$ptr_i23" && pwd -P)" = "$(cd "$wsi23" && pwd -P)" ]; then pass "the next import relinks the dangling pointer to the destination"; else fail "the next import relinks the dangling pointer (rc=$rc: $out)"; fi
 
+# A dangling pointer whose referent carries a kept copy is the interrupted
+# import's only handle: another plan's cross-repository call must not prune
+# it (sdd-dir's prune loop walks every pointer under the cwd's key).
+i24="$TEST_ROOT/i24"; make_repo "$i24"; i24b="$TEST_ROOT/i24b"; make_repo "$i24b"
+mkdir -p "$i24/docs"; : > "$i24/docs/plan.md"; : > "$i24/docs/plan2.md"; git -C "$i24" add docs; git -C "$i24" commit -qm plan
+wsi24=$(ws_path "$i24" "$i24/docs/plan.md")
+real_i24="$XDG_CACHE_HOME/hyperpowers/sdd/otherroot00000000000000000000000000000024/plans/$(basename "$wsi24")"
+mkdir -p "$real_i24"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$real_i24/progress.md"
+ptr_i24="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i24b")/plans/$(basename "$wsi24")+$(state_key "$i24" | cut -c1-8)"
+mkdir -p "$(dirname "$ptr_i24")"; ln -s "$real_i24" "$ptr_i24"
+( cd "$i24" && HYPERPOWERS_TEST_CRASH_AT=import-after-set-aside bash "$SDD_STATE" import docs/plan.md >/dev/null 2>&1 ); rc=$?
+run_sdd_dir "$i24b" "$i24/docs/plan2.md" >/dev/null 2>&1
+if [ "$rc" -eq 99 ] && [ -L "$ptr_i24" ] && [ ! -e "$ptr_i24" ]; then pass "a cross-repository call for another plan keeps the dangling pointer whose referent carries a kept copy"; else fail "a cross-repository call for another plan keeps the dangling pointer (rc=$rc, pointer: $([ -L "$ptr_i24" ] && echo kept || echo gone))"; fi
+out=$(run_state "$i24" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$ptr_i24" ] && [ "$(cd "$ptr_i24" && pwd -P)" = "$(cd "$wsi24" && pwd -P)" ]; then pass "the import relinks the pointer the prune kept"; else fail "the import relinks the pointer the prune kept (rc=$rc: $out)"; fi
+
 echo ""
 echo "=== sdd-dir and the plain fallback over branch state ==="
 make_pair p5

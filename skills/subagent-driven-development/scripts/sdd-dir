@@ -223,11 +223,17 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
       ln -sfn "$dir" "$pointer" 2>/dev/null || true
     fi
     # Dangling pointers left by finished workspaces are pruned; one whose
-    # target is an interrupted import's backup is kept for import to recover.
+    # target an interrupted import renamed aside is kept for import to
+    # recover, whether what sits beside the referent is the backup
+    # (`.importing-*`) or the kept copy a verified import leaves
+    # (`.imported-*`, the state after a crash before the relink). The
+    # pointer is that import's only handle: pruning it here would leave the
+    # next import nothing to find.
     for p in "$cwd_plans"/*; do
       [ -L "$p" ] && [ ! -e "$p" ] || continue
       t=$(readlink "$p")
       ls -d "$t".importing-* >/dev/null 2>&1 && continue
+      ls -d "$t".imported-* >/dev/null 2>&1 && continue
       rm -f "$p" 2>/dev/null || true
     done
   fi

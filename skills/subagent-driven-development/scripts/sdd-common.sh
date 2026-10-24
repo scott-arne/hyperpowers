@@ -78,6 +78,27 @@ hp_utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # timestamps; macOS date has no sub-second field, node is always present.
 hp_utc_now_ms() { node -e 'process.stdout.write(new Date().toISOString())' 2>/dev/null || hp_utc_now; }
 
+# hp_ledger_append LEDGER LINE: the one way a machine-written line reaches a
+# ledger. The ledger stays append-only (the controller appends prose to it
+# without the lock, so a stage-and-rename would drop a concurrent append). A
+# short write can leave a fragment; the next append ends it as its own line
+# rather than gluing the new line onto it, and success means the tail really
+# is LINE, so a fragment that already reads like a record never counts.
+hp_ledger_append() { # <ledger> <line>
+  local ledger=$1 line=$2 last
+  if [ -s "$ledger" ]; then
+    last=$(tail -c 1 "$ledger" | od -An -c | tr -d ' ')
+    if [ "$last" != '\n' ]; then printf '\n' >> "$ledger" || return 1; fi
+  fi
+  if [ -n "${HYPERPOWERS_TEST_FAIL_APPEND:-}" ]; then
+    printf '%s' "${line:0:12}" >> "$ledger"
+  else
+    printf '%s\n' "$line" >> "$ledger" || return 1
+  fi
+  last=$(tail -c 1 "$ledger" | od -An -c | tr -d ' ')
+  [ "$last" = '\n' ] && [ "$(tail -n 1 "$ledger")" = "$line" ]
+}
+
 # <plan-file> -> physical directory of the plan. The plan must be an existing
 # regular file inside a repository: a mistyped path never earns a workspace.
 hp_plan_dir() {

@@ -220,10 +220,16 @@ cmd_complete() {
   if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace"; return 2; fi
   hp_contained "$ROOT" "plans/$WS/progress.md" || { hp_unlock; echo "status=error"; return 2; }
   line="Task $n: complete (commits $commits, review clean)"
-  grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md"; rc=$?
+  # An unterminated last line is a fragment of an interrupted write, never a
+  # record, even when its prefix reads "Task N: complete".
+  if [ "$(tail -c 1 "$WSDIR/progress.md" | od -An -c | tr -d ' ')" = '\n' ]; then
+    grep -Ec "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md" >/dev/null; rc=$?
+  else
+    sed '$d' "$WSDIR/progress.md" | grep -Ec "(^|[^A-Za-z0-9])Task $n: complete" >/dev/null; rc=${PIPESTATUS[1]}
+  fi
   case "$rc" in
     0) appended=0 ;;
-    1) if ! printf '%s\n' "$line" >> "$WSDIR/progress.md"; then hp_unlock; echo "status=error"; return 2; fi; appended=1 ;;
+    1) if ! hp_ledger_append "$WSDIR/progress.md" "$line"; then hp_unlock; echo "status=error"; return 2; fi; appended=1 ;;
     *) hp_unlock; echo "status=error"; return 2 ;;
   esac
   if [ "$BACKEND" != branch ]; then hp_unlock; echo "status=complete task=$n appended=$appended snapshot=plain"; return 0; fi
@@ -261,7 +267,7 @@ cmd_handback() {
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace"; return 2; fi
   hp_contained "$ROOT" "plans/$WS/progress.md" || { hp_unlock; echo "status=error"; return 2; }
-  if ! printf 'handback %s %s: %s\n' "$sid" "$(hp_utc_now_ms)" "$reason" >> "$WSDIR/progress.md"; then hp_unlock; echo "status=error"; return 2; fi
+  if ! hp_ledger_append "$WSDIR/progress.md" "$(printf 'handback %s %s: %s' "$sid" "$(hp_utc_now_ms)" "$reason")"; then hp_unlock; echo "status=error"; return 2; fi
   hp_unlock
   echo "status=handback"
 }

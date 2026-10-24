@@ -35,13 +35,16 @@ it runs"), so the first attempt, which ran `printf` with
 Stop hook firing under `-p` (hook and env ids equal) while the shell command
 was refused.
 
-Claude Code: 2.1.302. Date: 2026-10-24.
+Claude Code: 2.1.302. Date: 2026-10-24. This is the run of record: it ran
+outside the Bash sandbox, the environment a real hook runs in. The same
+command inside the sandbox gave `efa38fbc-b7dd-49ec-ba78-b8d99400143f` for all
+three ids as well.
 
 | Id | Value |
 |----|-------|
-| hook (`session_id` in the Stop payload) | `efa38fbc-b7dd-49ec-ba78-b8d99400143f` |
-| env (`$CLAUDE_CODE_SESSION_ID` in the hook process) | `efa38fbc-b7dd-49ec-ba78-b8d99400143f` |
-| shell (the Bash tool's `tool_result`) | `efa38fbc-b7dd-49ec-ba78-b8d99400143f` |
+| hook (`session_id` in the Stop payload) | `72cc3565-6224-4818-baa9-5be5404b7993` |
+| env (`$CLAUDE_CODE_SESSION_ID` in the hook process) | `72cc3565-6224-4818-baa9-5be5404b7993` |
+| shell (the Bash tool's `tool_result`) | `72cc3565-6224-4818-baa9-5be5404b7993` |
 
 All three are equal, so the assumption holds: discovery matches
 `session <session_id>:`.

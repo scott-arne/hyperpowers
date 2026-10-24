@@ -998,11 +998,21 @@ err=$(ensure "$nr" 2>&1 >/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync'; then pass "a remote added after a no-remote sync asks for a sync before any branch is created"; else fail "a remote added after a no-remote sync asks for a sync (rc=$rc: $err)"; fi
 ```
 
-(`ensure` is the suite's helper around `hp_ensure_checkout`; if the repository already has a checkout from the earlier `sync`, delete it first with `rm -rf "$STATE_ROOT/$(state_key "$nr")"` and `git -C "$nr" worktree prune`, so the needs-sync path is reached.)
+(`ensure` is the suite's helper around `hp_ensure_checkout`; if the repository already has a checkout from the earlier `sync`, delete it first with `rm -rf "$STATE_ROOT/$(state_key "$nr")"` and `git -C "$nr" worktree prune`, so the needs-sync path is reached.) And an unreachable remote on a fresh clone, which must leave no stamp either:
+
+```bash
+ons="$TEST_ROOT/ons"; make_repo "$ons"; mkdir -p "$ons/docs"; : > "$ons/docs/plan.md"; git -C "$ons" remote add origin "$TEST_ROOT/nowhere.git"
+out=$(run_state "$ons" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "${out%% *}" = "status=offline-no-state" ] && [ ! -e "$STATE_ROOT/$(state_key "$ons").fetched" ]; then pass "an offline sync with no state branch leaves no stamp"; else fail "an offline sync with no state branch leaves no stamp (rc=$rc: $out)"; fi
+err=$(ensure "$ons" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync'; then pass "after an offline sync creation still asks for a sync"; else fail "after an offline sync creation still asks for a sync (rc=$rc: $err)"; fi
+```
+
+(Read `cmd_sync`'s outcome for a failed fetch on a clone with no local state branch before relying on the token; if it is `offline` rather than `offline-no-state` for this shape, assert that token instead and say so in the report; either way no stamp may exist.)
 
 - [ ] **Step 2: RED**
 
-`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_stamp_ok'`: five `[FAIL]` (`command not found`). State suite (or extracted harness), needles `a stamp for another remote` (`[FAIL]`: creation proceeds today on any existing file), `writes the remote and branch into the stamp` (`[FAIL]`: the stamp is empty today), `a no-remote sync leaves no stamp` (`[FAIL]`: an empty stamp is written today) and `a remote added after a no-remote sync` (`[FAIL]`: the empty stamp vouches today).
+`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_stamp_ok'`: five `[FAIL]` (`command not found`). State suite (or extracted harness), needles `a stamp for another remote` (`[FAIL]`: creation proceeds today on any existing file), `writes the remote and branch into the stamp` (`[FAIL]`: the stamp is empty today), `a no-remote sync leaves no stamp` (`[FAIL]`: an empty stamp is written today), `a remote added after a no-remote sync` (`[FAIL]`: the empty stamp vouches today), `an offline sync with no state branch leaves no stamp` and `after an offline sync creation still asks for a sync` (these two may already pass: `offline` outcomes write no stamp today; they are regression guards and the report says which way they went).
 
 - [ ] **Step 3: The guard and the writer**
 

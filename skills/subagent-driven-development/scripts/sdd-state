@@ -253,6 +253,9 @@ cmd_handback() {
   [ -n "$sid" ] || sid=$(hp_session_id)
   [ -n "$sid" ] || { echo "sdd-state: no session id: pass --session SID" >&2; return 2; }
   case "$reason" in *$'\n'*) echo "sdd-state: --reason must be one line" >&2; return 2 ;; esac
+  # The completion readers match this mark anywhere in the ledger, so a reason
+  # carrying it would read as a finished task.
+  if printf '%s' "$reason" | grep -Eq 'Task [0-9]+: complete'; then echo "sdd-state: --reason must not contain a completion mark" >&2; return 2; fi
   resolve_plan "$plan"
   take_lock_or_busy || return $?
   recover_apply || { hp_unlock; echo "status=error"; return 2; }

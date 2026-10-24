@@ -1955,6 +1955,14 @@ out=$(cd "$repo30" && CLAUDE_CODE_SESSION_ID=s31 bash "$SDD_STATE" handback docs
 if [ "$rc" -eq 0 ] && tail -n 1 "$ws30/progress.md" | grep -q '^handback s31 '; then pass "handback takes the session from CLAUDE_CODE_SESSION_ID when --session is omitted"; else fail "handback takes the session from CLAUDE_CODE_SESSION_ID when --session is omitted (rc=$rc: $out)"; fi
 out=$(run_state "$repo30" complete docs/plan.md 1 --session s30); rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "complete without --commits is a usage error"; else fail "complete without --commits is a usage error (rc=$rc: $out)"; fi
+# a reason carrying a completion mark must not stand in for the canonical line
+# (the ledger is reset so task 2 is open again)
+printf '# SDD ledger — plan: docs/plan.md\n' > "$ws30/progress.md"
+before30=$(wc -l < "$ws30/progress.md")
+out=$(run_state "$repo30" handback docs/plan.md --reason "BLOCKED because Task 2: complete marker is missing" --session s30 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(wc -l < "$ws30/progress.md")" = "$before30" ]; then pass "handback refuses a reason that carries a completion mark"; else fail "handback refuses a reason that carries a completion mark (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits 7777777..8888888 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^status=complete task=2 appended=1 snapshot='; then pass "complete still appends after the refused handback"; else fail "complete still appends after the refused handback (rc=$rc: $out)"; fi
 rm -rf "$ws30"
 out=$(run_state "$repo30" complete docs/plan.md 1 --commits 1111111..2222222 --session s30); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace" ]; then pass "complete without a ledger is no-workspace"; else fail "complete without a ledger is no-workspace (rc=$rc: $out)"; fi

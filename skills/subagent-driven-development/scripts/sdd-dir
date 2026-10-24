@@ -56,15 +56,20 @@ base="$(hp_cache_root)/sdd"
 # that follow agent-touched files hold a watcher per scratch file. Reclaim is
 # two-phase, because a writer on the previous plugin that still holds a kept
 # import copy's ledger open cannot be excluded: nothing is deleted on the
-# pass that finds a root idle. That pass stamps the root with `touch`, which
-# restarts the clock, claims it by renaming it aside (atomic) to
-# `<key>.reclaiming-<pid>` — the stamp first, so no concurrent call ever
-# reads the tree under the claimed name as idle — and re-checks the claimed
-# tree, putting it back when something was written during the window or an
-# import that got in first left its backup (`plans/*.importing-*`). A later
-# call deletes a `.reclaiming-*` root once nothing under it, the directory
-# itself included, is newer than 14 days, after one more rename-aside and
-# re-check. So a late
+# pass that finds a root idle. A root passes under three names. `<key>` is
+# live. `<key>.claiming-<pid>` is a claim in progress: the pass renames the
+# root there (atomic) and re-checks the staged tree, which still carries the
+# mtimes it had — an import that got in first touches the root before it
+# renames its source aside, so a fresh root, a descendant written during the
+# window, or its backup (`plans/*.importing-*`) puts the tree back under
+# `<key>`. Only then is the tree touched, which restarts the clock, and
+# renamed to `<key>.reclaiming-<pid>`: the stamp precedes that name, so no
+# concurrent call ever reads a quarantine as having been quiet for its 14
+# days. A `.claiming-*` left by a crash between the two renames is adopted
+# on a later pass — touched and renamed to the `.reclaiming-` form — so the
+# crashed claim still gets its quiet days. A later call deletes a
+# `.reclaiming-*` root once nothing under it, the directory itself included,
+# is newer than 14 days, after one more rename-aside and re-check. So a late
 # append refreshes the tree and buys 14 more days, and a root another
 # repository's call reclaimed by mistake is recoverable for 14 days under its
 # `.reclaiming-*` name. A root is idle only when nothing under it is newer
@@ -73,7 +78,7 @@ base="$(hp_cache_root)/sdd"
 # after a rename finds no root and fails cleanly with nothing lost. Best
 # effort: pruning must never break the contract that stdout is the path.
 reclaim_plain() {
-  local r claimed gone
+  local r staged claimed gone
   for r in "$base"/*/; do
     r=${r%/}
     [ -d "$r" ] && [ ! -L "$r" ] || continue
@@ -93,35 +98,45 @@ reclaim_plain() {
         rm -rf "$gone" 2>/dev/null || true
         [ ! -e "$gone" ] || echo "sdd-dir: could not delete the reclaimed cache root at $gone" >&2
         ;;
+      *.claiming-*)
+        # A claim that crashed between its two renames: the tree was already
+        # found idle and re-checked, so it is adopted as a quarantine with a
+        # fresh stamp rather than re-examined.
+        claimed="${r%.claiming-*}.reclaiming-$$"
+        if [ -e "$claimed" ] || [ -L "$claimed" ]; then continue; fi
+        touch "$r" 2>/dev/null || true
+        mv "$r" "$claimed" 2>/dev/null || true
+        ;;
       *)
         # Phase one: claim an idle root, delete nothing.
         [ -n "$(find "$r" -maxdepth 0 -mtime +14 2>/dev/null)" ] || continue
         [ -z "$(find "$r" -mtime -14 2>/dev/null | head -n 1)" ] || continue
         ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
-        claimed="$r.reclaiming-$$"
-        if [ -e "$claimed" ] || [ -L "$claimed" ]; then continue; fi
-        # The stamp goes on before the rename, not after it: the reclaim
-        # holds no lock, and a concurrent call that saw a still-old tree
-        # under the claimed name would read it as a quarantine that had been
-        # quiet for its 14 days and delete it at once.
-        touch "$r" 2>/dev/null || true
-        mv "$r" "$claimed" 2>/dev/null || continue
-        if [ -n "${HYPERPOWERS_TEST_RECLAIM_RACE:-}" ] && [ "$HYPERPOWERS_TEST_RECLAIM_RACE" = "$r" ]; then
+        staged="$r.claiming-$$"
+        if [ -e "$staged" ] || [ -L "$staged" ]; then continue; fi
+        mv "$r" "$staged" 2>/dev/null || continue
+        if [ "${HYPERPOWERS_TEST_RECLAIM_RACE:-}" = "$r" ]; then
           # Test hook: an importer that touched the root and renamed its source
           # aside just before the claim.
-          mkdir -p "$claimed/plans/x.importing-1"; touch "$claimed"
+          mkdir -p "$staged/plans/x.importing-1"; touch "$staged"
+        elif [ "${HYPERPOWERS_TEST_RECLAIM_RACE:-}" = "touch:$r" ]; then
+          # Test hook: the same importer one step earlier, the root touched
+          # and its source not yet renamed aside.
+          touch "$staged"
         fi
-        # The root's own mtime is this call's stamp from here on, so the
-        # re-check reads the tree under it: anything written during the
-        # rename's window, and an importer's backup. A root put back carries
-        # that stamp, which only defers its next reclaim by 14 days. An
-        # importer that had touched the root and nothing more loses the
-        # stamp; its own rename then fails cleanly with nothing lost, as it
-        # does for one that arrives after the claim.
-        if [ -n "$(find "$claimed" -mindepth 1 -mtime -14 2>/dev/null | head -n 1)" ] || ls -d "$claimed"/plans/*.importing-* >/dev/null 2>&1; then
-          mv "$claimed" "$r" 2>/dev/null || true
+        # The staged tree still carries its own mtimes, so the re-check reads
+        # the signals an importer leaves: a fresh root, a descendant written
+        # during the window, or its backup.
+        if [ -z "$(find "$staged" -maxdepth 0 -mtime +14 2>/dev/null)" ] || [ -n "$(find "$staged" -mindepth 1 -mtime -14 2>/dev/null | head -n 1)" ] || ls -d "$staged"/plans/*.importing-* >/dev/null 2>&1; then
+          mv "$staged" "$r" 2>/dev/null || true
           continue
         fi
+        claimed="$r.reclaiming-$$"
+        if [ -e "$claimed" ] || [ -L "$claimed" ]; then continue; fi
+        # The stamp goes on before the name phase two acts on, so a
+        # concurrent call cannot read this quarantine as an aged one.
+        touch "$staged" 2>/dev/null || true
+        mv "$staged" "$claimed" 2>/dev/null || true
         ;;
     esac
   done

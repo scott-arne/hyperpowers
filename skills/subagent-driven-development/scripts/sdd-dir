@@ -199,9 +199,11 @@ if [ "$backend" = plain ] || [ ! -d "$dir" ]; then
     # The plain root may not exist yet; touch alone would create a file.
     mkdir -p "$root" || { hp_unlock; exit 2; }
     touch "$root"
-    if ! hp_materialize_plain "$plan_dir" "$ws" "$dir"; then
+    rc=0; hp_materialize_plain "$plan_dir" "$ws" "$dir" || rc=$?
+    if [ "$rc" -ne 0 ]; then
       hp_unlock
-      echo "sdd-dir: could not materialize the branch workspace into the plain cache" >&2
+      # A refusal has already named itself; only a silent failure needs a line.
+      [ "$rc" -ne 1 ] || echo "sdd-dir: could not materialize the branch workspace into the plain cache" >&2
       exit 2
     fi
   fi

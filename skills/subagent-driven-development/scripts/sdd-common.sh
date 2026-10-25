@@ -594,9 +594,10 @@ hp_ensure_checkout() {
 # and either holds the plan, exit 2 naming both, because choosing one would
 # hide the other's ledger lines or revive a finished dossier. Records the source tip in the backend file. Callers hold the
 # repository lock. A plain fallback never starts an empty ledger over
-# branch state: a failed archive is exit 2 and leaves no destination,
-# because the workspace is published by one rename from a staging
-# directory.
+# branch state: a failed archive leaves no destination, because the
+# workspace is published by one rename from a staging directory. Returns 1
+# for a failure it did not report, 2 after printing its own refusal; the
+# backend is recorded only after the ledger is verified at the destination.
 hp_materialize_plain() {
   local repo=$1 ws=$2 dest=$3 br remote local_tip remote_tip tip root staging archive_rc tar_rc local_has remote_has rc refusal rest
   [ -f "$dest/progress.md" ] && return 0
@@ -649,15 +650,26 @@ hp_materialize_plain() {
   # staging directories are leftovers of interrupted runs (callers hold the
   # lock, so none is live).
   rm -rf "${root:?}"/.materialize.* 2>/dev/null
-  staging=$(mktemp -d "$root/.materialize.XXXXXX") || return 2
+  staging=$(mktemp -d "$root/.materialize.XXXXXX") || return 1
   # Archive from the top level: a pathspec is relative to the current
   # directory, and the plan may sit in a subdirectory of the work tree.
   git -C "$(git -C "$repo" rev-parse --show-toplevel)" archive "$tip" "plans/$ws" | tar -x -C "$staging"
   archive_rc=${PIPESTATUS[0]} tar_rc=${PIPESTATUS[1]}
-  if [ "$archive_rc" -ne 0 ] || [ "$tar_rc" -ne 0 ] || [ ! -f "$staging/plans/$ws/progress.md" ]; then rm -rf "$staging"; return 2; fi
+  if [ "$archive_rc" -ne 0 ] || [ "$tar_rc" -ne 0 ] || [ ! -f "$staging/plans/$ws/progress.md" ]; then rm -rf "$staging"; return 1; fi
   hp_contained "$staging" "plans/$ws" || { rm -rf "$staging"; return 2; }
-  rm -rf "$dest"
-  if ! mv "$staging/plans/$ws" "$dest"; then rm -rf "$staging"; return 2; fi
+  # The destination must be clear ground when the staged copy is renamed
+  # onto it: BSD mv nests into a directory that reappeared and reports
+  # success with the ledger one level too deep, and the backend record
+  # would then vouch for a workspace that is not there.
+  # Test hook: the destination appears, with content, right before the rename.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in materialize-before-publish:*) mkdir -p "$root/plans/${HYPERPOWERS_TEST_WRITER_AT#materialize-before-publish:}" && : > "$root/plans/${HYPERPOWERS_TEST_WRITER_AT#materialize-before-publish:}/stray" ;; esac
+  # Nothing at the destination is ever cleared by the helper. rename(2)
+  # replaces an empty directory atomically and refuses one that holds
+  # anything (ENOTEMPTY) or that is not a directory; BSD mv would nest the
+  # staged copy inside it. What a human or another tool left there stays
+  # for them to remove.
+  if ! node -e 'require("fs").renameSync(process.argv[1], process.argv[2])' "$staging/plans/$ws" "$dest" 2>/dev/null; then rm -rf "$staging"; return 1; fi
+  if [ ! -f "$dest/progress.md" ] || [ -e "$dest/$ws" ]; then rm -rf "$staging"; return 1; fi
   rm -rf "$staging"
   hp_write_backend "$repo" "plain source=$tip"
 }

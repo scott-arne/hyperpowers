@@ -322,8 +322,9 @@ plain11="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$r11")"
 if [ "$rc" -eq 0 ] && [ "$out" = "plain $plain11" ] && [ ! -e "$STATE_ROOT/$(state_key "$r11")/.git" ] && [ "$(registrations "$r11")" -eq 0 ]; then pass "a waiter honors a plain backend persisted while it waited"; else fail "a waiter honors a plain backend persisted while it waited (rc=$rc, '$out')"; fi
 
 # Materialization publishes the whole workspace by one rename: a partial
-# destination without a ledger is replaced, a stale staging directory from
-# an interrupted run is removed, and no staging directory remains.
+# destination without a ledger is refused rather than cleared, and
+# published once a human has removed it; a stale staging directory from an
+# interrupted run is removed, and no staging directory remains.
 make_pair p4
 : > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 coA4="$STATE_ROOT/$(state_key "$PAIR_A")"
@@ -342,7 +343,10 @@ mkdir -p "$destB4" "$plainB4/.materialize.stale/plans/demo-00000000"
 printf 'partial\n' > "$destB4/task-1-report.md"
 printf 'stale\n' > "$plainB4/.materialize.stale/plans/demo-00000000/progress.md"
 materialize "$PAIR_B" demo-00000000 "$destB4"; rc=$?
-if [ "$rc" -eq 0 ] && [ "$(cat "$destB4/progress.md")" = "# SDD ledger — plan: docs/plan.md" ] && [ "$(cat "$destB4/task-1-report.md")" = report ] && [ ! -e "$plainB4/.materialize.stale" ] && ! ls -d "$plainB4"/.materialize.* >/dev/null 2>&1 && [ "$(cat "$STATE_ROOT/$(state_key "$PAIR_B").backend")" = "plain source=$(git -C "$PAIR_B" rev-parse origin/hyperpowers/state)" ]; then pass "materialization replaces a partial destination whole and leaves no staging"; else fail "materialization replaces a partial destination whole and leaves no staging (rc=$rc)"; fi
+if [ "$rc" -eq 1 ] && [ "$(cat "$destB4/task-1-report.md")" = partial ] && [ ! -e "$destB4/progress.md" ] && [ ! -e "$plainB4/.materialize.stale" ] && ! ls -d "$plainB4"/.materialize.* >/dev/null 2>&1 && [ "$(cat "$STATE_ROOT/$(state_key "$PAIR_B").backend")" = plain ]; then pass "materialization refuses a partial destination it did not write, sweeps stale staging, and records nothing"; else fail "materialization refuses a partial destination it did not write, sweeps stale staging, and records nothing (rc=$rc)"; fi
+rm -rf "$destB4"
+materialize "$PAIR_B" demo-00000000 "$destB4"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(cat "$destB4/progress.md")" = "# SDD ledger — plan: docs/plan.md" ] && [ "$(cat "$destB4/task-1-report.md")" = report ] && ! ls -d "$plainB4"/.materialize.* >/dev/null 2>&1 && [ "$(cat "$STATE_ROOT/$(state_key "$PAIR_B").backend")" = "plain source=$(git -C "$PAIR_B" rev-parse origin/hyperpowers/state)" ]; then pass "with the destination removed the whole workspace is published by one rename"; else fail "with the destination removed the whole workspace is published by one rename (rc=$rc)"; fi
 
 echo ""
 echo "=== snapshot ==="
@@ -1997,6 +2001,7 @@ out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=plain" ]; then pass "sync on the plain host reports the backend"; else fail "sync on the plain host reports the backend (rc=$rc: $out)"; fi
 rc=0; out=$(run_sdd_dir "$PAIR_B" docs/plan.md 2> "$TEST_ROOT/p27.err") || rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q 'symbolic link' "$TEST_ROOT/p27.err" && grep -q "plans/$ws27/progress.md" "$TEST_ROOT/p27.err" && grep -q 'hyperpowers/state' "$TEST_ROOT/p27.err"; then pass "the plain fallback refuses a tip whose ledger is a symbolic link, naming the branch to repair"; else fail "the plain fallback refuses a tip whose ledger is a symbolic link, naming the branch to repair (rc=$rc: $out: $(cat "$TEST_ROOT/p27.err"))"; fi
+if [ "$(grep -c '^sdd-dir:' "$TEST_ROOT/p27.err")" -eq 1 ]; then pass "a specific refusal is the only sdd-dir line on stderr"; else fail "a specific refusal is the only sdd-dir line on stderr ($(grep -c '^sdd-dir:' "$TEST_ROOT/p27.err") lines)"; fi
 if [ -z "$(find "$plainb27" -type l 2>/dev/null)" ] && ! ls -d "$plainb27"/.materialize.* >/dev/null 2>&1 && [ "$(cat "$outside27/victim")" = "untouched" ]; then pass "no link and no staging directory reach the plain cache, and the link's target is untouched"; else fail "no link and no staging directory reach the plain cache, and the link's target is untouched ($(find "$plainb27" -type l 2>/dev/null | tr '\n' ' '))"; fi
 # The remedy it prints is reachable: the branch gets the regular file back.
 rm -f "$idx27"; GIT_INDEX_FILE=$idx27 git -C "$PAIR_A" read-tree "$evil27"
@@ -2008,5 +2013,45 @@ git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/ori
 run_state "$PAIR_B" sync docs/plan.md >/dev/null
 rc=0; out=$(run_sdd_dir "$PAIR_B" docs/plan.md 2>/dev/null) || rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "$plainb27/plans/$ws27" ] && [ ! -L "$out/progress.md" ] && [ "$(sed -n 2p "$out/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "with the link replaced on the branch the same call materializes the workspace"; else fail "with the link replaced on the branch the same call materializes the workspace (rc=$rc: $out)"; fi
+# A second plan, to exercise the publish itself. This host's state branch is
+# behind origin (the forged tips above were pushed straight to it), so A
+# syncs before it snapshots: an unsynced push is rejected and the tip B reads
+# would never carry the plan.
+: > "$PAIR_A/docs/plan2.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan2; git -C "$PAIR_A" push -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan2.md >/dev/null
+wsa27b=$(run_sdd_dir "$PAIR_A" docs/plan2.md); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsa27b/progress.md"
+run_state "$PAIR_A" snapshot docs/plan2.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null; git -C "$PAIR_B" fetch -q origin hyperpowers/state 2>/dev/null
+plain27="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$PAIR_B")"; ws27b=$(basename "$wsa27b")
+# The materialization above recorded its source in the backend file, which
+# the checks below read for a source no failed call may write.
+printf 'plain\n' > "$STATE_ROOT/$(state_key "$PAIR_B").backend"
+# The destination reappears after it was cleared: the publish refuses rather
+# than nesting the staged copy inside it, and nothing is recorded.
+rc=0; out=$(HYPERPOWERS_TEST_WRITER_AT="materialize-before-publish:$ws27b" run_sdd_dir "$PAIR_B" docs/plan2.md 2> "$TEST_ROOT/p27c.err") || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(grep -c '^sdd-dir:' "$TEST_ROOT/p27c.err")" -eq 1 ] && grep -q 'could not materialize' "$TEST_ROOT/p27c.err" && [ ! -e "$plain27/plans/$ws27b/$ws27b" ] && [ ! -f "$plain27/plans/$ws27b/progress.md" ] && [ -f "$plain27/plans/$ws27b/stray" ] && ! grep -q "source=" "$STATE_ROOT/$(state_key "$PAIR_B").backend"; then pass "a destination that reappears right before the rename is refused, not nested, its contents kept, and nothing recorded"; else fail "a destination that reappears right before the rename is refused (rc=$rc; $(tr '\n' '|' < "$TEST_ROOT/p27c.err"))"; fi
+# The occupied destination is never cleared by the helper: a human removes
+# it, and the next call materializes.
+rm -rf "$plain27/plans/$ws27b"
+out=$(run_sdd_dir "$PAIR_B" docs/plan2.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$out/progress.md" ]; then pass "once the occupied destination is cleared the next call materializes the same plan"; else fail "once the occupied destination is cleared the next call materializes (rc=$rc: $out)"; fi
+rm -rf "$plain27/plans/$ws27b"; printf 'plain\n' > "$STATE_ROOT/$(state_key "$PAIR_B").backend"
+# A destination that already holds something (no ledger) before the call is
+# refused with its contents intact; an empty one is replaced.
+mkdir -p "$plain27/plans/$ws27b"; printf 'theirs\n' > "$plain27/plans/$ws27b/notes.txt"
+rc=0; out=$(run_sdd_dir "$PAIR_B" docs/plan2.md 2> "$TEST_ROOT/p27d.err") || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(cat "$plain27/plans/$ws27b/notes.txt")" = "theirs" ] && [ ! -f "$plain27/plans/$ws27b/progress.md" ] && [ "$(grep -c '^sdd-dir:' "$TEST_ROOT/p27d.err")" -eq 1 ] && ! grep -q "source=" "$STATE_ROOT/$(state_key "$PAIR_B").backend"; then pass "a destination that already holds files is refused with every byte intact"; else fail "a destination that already holds files is refused with every byte intact (rc=$rc: $out)"; fi
+rm -f "$plain27/plans/$ws27b/notes.txt"
+out=$(run_sdd_dir "$PAIR_B" docs/plan2.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$out/progress.md" ]; then pass "an empty pre-existing destination is replaced by the publish"; else fail "an empty pre-existing destination is replaced by the publish (rc=$rc: $out)"; fi
+rm -rf "$plain27/plans/$ws27b"; printf 'plain\n' > "$STATE_ROOT/$(state_key "$PAIR_B").backend"
+if [ "$(id -u)" -ne 0 ]; then
+  mkdir -p "$plain27/plans"; chmod 0555 "$plain27"
+  rc=0; out=$(run_sdd_dir "$PAIR_B" docs/plan2.md 2> "$TEST_ROOT/p27b.err") || rc=$?
+  chmod 0755 "$plain27"
+  if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(grep -c '^sdd-dir:' "$TEST_ROOT/p27b.err")" -eq 1 ] && grep -q 'could not materialize' "$TEST_ROOT/p27b.err"; then pass "an unreported materialization failure gets exactly one generic sdd-dir line"; else fail "an unreported materialization failure gets exactly one generic sdd-dir line (rc=$rc; $(tr '\n' '|' < "$TEST_ROOT/p27b.err"))"; fi
+else
+  pass "an unreported materialization failure gets exactly one generic sdd-dir line (skipped: root ignores directory modes)"
+fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

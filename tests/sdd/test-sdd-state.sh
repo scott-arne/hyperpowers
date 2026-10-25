@@ -1583,10 +1583,14 @@ advance() { printf '%s\n' "$1" >> "$wsa/progress.md"; run_state "$PAIR_A" snapsh
 tomb_p11="$co_b/plans/.removing-gone-1234abcd-999"
 mkdir -p "$tomb_p11"; printf 'orphaned copy\n' > "$tomb_p11/progress.md"
 quar_p11="$co_b/plans/.pruned-gone-1234abcd-999"; mkdir -p "$quar_p11"; printf 'quarantined copy\n' > "$quar_p11/progress.md"
+# Names with a space: git status quotes such paths, and the scan must still
+# see the leftovers for what they are.
+tomb_p11s="$co_b/plans/.removing-old plan-1234abcd-999"; mkdir -p "$tomb_p11s"; printf 'orphaned copy\n' > "$tomb_p11s/progress.md"
+quar_p11s="$co_b/plans/.pruned-old plan-1234abcd-999"; mkdir -p "$quar_p11s"; printf 'quarantined copy\n' > "$quar_p11s/progress.md"
 advance 'line one'
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && grep -q '^line one$' "$wsb/progress.md" && [ -d "$tomb_p11" ] && [ -d "$quar_p11" ]; then pass "a tomb or a quarantine left under plans/ by a removal does not stop the apply"; else fail "a tomb or a quarantine left under plans/ by a removal does not stop the apply (rc=$rc: $out)"; fi
-rm -rf "$tomb_p11" "$quar_p11"
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && grep -q '^line one$' "$wsb/progress.md" && [ -d "$tomb_p11" ] && [ -d "$quar_p11" ] && [ -d "$tomb_p11s" ] && [ -d "$quar_p11s" ]; then pass "a tomb or a quarantine left under plans/ by a removal, with or without a space in its name, does not stop the apply"; else fail "a tomb or a quarantine left under plans/ by a removal, with or without a space in its name, does not stop the apply (rc=$rc: $out)"; fi
+rm -rf "$tomb_p11" "$quar_p11" "$tomb_p11s" "$quar_p11s"
 # Any other leftover entry still stops the apply, and names itself.
 printf 'stray\n' > "$co_b/plans/stray.txt"
 advance 'line two'

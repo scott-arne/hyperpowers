@@ -846,11 +846,14 @@ cmd_prune() {
     [ ! -e "$quar" ] && [ ! -L "$quar" ] || continue
     mv "$t" "$quar" 2>/dev/null || continue
     case "${HYPERPOWERS_TEST_WRITER_AT:-}" in prune-after-tomb-rename:*) [ "${HYPERPOWERS_TEST_WRITER_AT#prune-after-tomb-rename:}" != "$tomb_name" ] || touch "$quar/progress.md" ;; esac
-    if ! tomb_qualifies "$quar" "$tomb_pid" "$tomb_ws"; then
+    # A re-check that fails, or a clock that cannot be restarted, is doubt:
+    # the copy goes back under its old name, after the same destination
+    # check every rename here makes (BSD mv nests into an occupied one).
+    if ! tomb_qualifies "$quar" "$tomb_pid" "$tomb_ws" || ! touch "$quar"; then
+      if [ -e "$t" ] || [ -L "$t" ]; then echo "sdd-state: the copy renamed to $quar could not be put back at $t, which is occupied again; move it back by hand" >&2; continue; fi
       mv "$quar" "$t" 2>/dev/null || echo "sdd-state: the copy renamed to $quar could not be put back at $t; move it back by hand" >&2
       continue
     fi
-    touch "$quar"
     tomb_list="$tomb_list,$(enc "$tomb_name")"
   done
   tomb_list=${tomb_list#,}
@@ -864,6 +867,7 @@ cmd_prune() {
     [ ! -e "$q.pruning-$$" ] && [ ! -L "$q.pruning-$$" ] || continue
     mv "$q" "$q.pruning-$$" 2>/dev/null || continue
     if ! quarantine_idle "$q.pruning-$$"; then
+      if [ -e "$q" ] || [ -L "$q" ]; then echo "sdd-state: the copy renamed aside at $q.pruning-$$ could not be put back at $q, which is occupied again; move it back by hand" >&2; continue; fi
       mv "$q.pruning-$$" "$q" 2>/dev/null || echo "sdd-state: the copy renamed aside at $q.pruning-$$ could not be put back at $q; move it back by hand" >&2
       continue
     fi
@@ -1264,7 +1268,7 @@ restore_tombs() {
 # after the ref moved (the marker stays; the next call finishes it), 2 error.
 # Controllers write without the lock, so the working tree is live.
 apply_target() {
-  local S=$1 target=$2 pending line status path left refusal rest res dir rc i refused tombs=() dirs=()
+  local S=$1 target=$2 line status path left refusal rest res dir rc i refused tombs=() dirs=()
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-apply:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-apply:}" ;; esac
   if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = sync-before-apply ]; then
     : > "$CO/.sync-paused"
@@ -1272,39 +1276,40 @@ apply_target() {
     rm -f "$CO/.sync-paused"
   fi
   restore_tombs
-  pending=$(git -C "$CO" status --porcelain -- plans/ 2>/dev/null)
-  if [ -n "$pending" ]; then
-    refused=0
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      status=${line:0:2}; path=${line:3}
-      case "$status|$path" in
-        " M|plans/"*"/progress.md") continue ;;
-      esac
-      # A copy a killed removal left aside is not a concurrent write: it is
-      # cleared by finish, by sdd-dir and by the restore above, and
-      # treating it as one would wedge every later sync on this repository.
-      # A copy prune quarantined at plans/.pruned-* is as much a removal's
-      # leftover as a tomb, and waits there for a later prune; holding the
-      # apply on it would wedge every sync for as long as it sits.
-      case "$path" in "plans/.removing-"*|"plans/.pruned-"*) continue ;; esac
-      # A tracked file missing from a workspace: the restore above left the
-      # copy that holds it only when the workspace is occupied again, and
-      # named it there, so nothing more is said about this row; telling a
-      # human to move or delete a file that is gone would be wrong.
-      case "$status|$path" in
-        " D|plans/"*)
-          left=${path#plans/}; left=${left%%/*}
-          if ! ls -d "$CO/plans/.removing-$left-"* >/dev/null 2>&1; then
-            [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is committed on the state branch but missing from the checkout and holds the apply; put it back or finish its plan, then run sdd-state sync again" >&2
-          fi
-          refused=1; continue ;;
-      esac
-      [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is not part of a plan workspace and holds the apply; inspect it, move or delete it, then run sdd-state sync again" >&2
-      refused=1
-    done < <(printf '%s\n' "$pending")
-    if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
-  fi
+  # Rows are read NUL-delimited: the porcelain format C-quotes a path with
+  # a space or an unusual byte, and a quoted row would match none of the
+  # exemptions below. A rename row carries a second field, consumed here.
+  refused=0
+  while IFS= read -r -d '' line; do
+    [ -n "$line" ] || continue
+    status=${line:0:2}; path=${line:3}
+    case "$status" in R*|C*) IFS= read -r -d '' _ ;; esac
+    case "$status|$path" in
+      " M|plans/"*"/progress.md") continue ;;
+    esac
+    # A copy a killed removal left aside is not a concurrent write: it is
+    # cleared by finish, by sdd-dir and by the restore above, and
+    # treating it as one would wedge every later sync on this repository.
+    # A copy prune quarantined at plans/.pruned-* is as much a removal's
+    # leftover as a tomb, and waits there for a later prune; holding the
+    # apply on it would wedge every sync for as long as it sits.
+    case "$path" in "plans/.removing-"*|"plans/.pruned-"*) continue ;; esac
+    # A tracked file missing from a workspace: the restore above left the
+    # copy that holds it only when the workspace is occupied again, and
+    # named it there, so nothing more is said about this row; telling a
+    # human to move or delete a file that is gone would be wrong.
+    case "$status|$path" in
+      " D|plans/"*)
+        left=${path#plans/}; left=${left%%/*}
+        if ! ls -d "$CO/plans/.removing-$left-"* >/dev/null 2>&1; then
+          [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is committed on the state branch but missing from the checkout and holds the apply; put it back or finish its plan, then run sdd-state sync again" >&2
+        fi
+        refused=1; continue ;;
+    esac
+    [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is not part of a plan workspace and holds the apply; inspect it, move or delete it, then run sdd-state sync again" >&2
+    refused=1
+  done < <(git -C "$CO" status --porcelain -z -- plans/ 2>/dev/null)
+  if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
   # The incoming tree is inspected whole before the checkout materializes
   # any of it: the same validation the creation of a checkout runs, so a
   # commit carrying a symbolic link, a submodule entry or a recovery sidecar

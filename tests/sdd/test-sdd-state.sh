@@ -923,6 +923,38 @@ if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=$(basena
 out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=$(basename "$quar_old")\$" && [ ! -e "$quar_old" ] && ! ls -d "$quar_old".pruning-* >/dev/null 2>&1; then pass "the later --apply deletes the idle quarantine and verifies it is gone"; else fail "the later --apply deletes the idle quarantine (rc=$rc: $out)"; fi
 rm -rf "$tomb_live" "$tomb_young" "$tomb_tracked"
+# A crash after the staging rename: the copy sits under a name neither
+# phase lists, the next --apply puts it back and quarantines it with a
+# fresh clock, and the --apply after that does not delete it.
+tomb_cr="$co_pr/plans/.removing-crash-0badc0de-$tp"; mkdir -p "$tomb_cr"; printf 'orphaned copy\n' > "$tomb_cr/progress.md"; touch -t 202401010000 "$tomb_cr/progress.md" "$tomb_cr"
+( cd "$pr" && HYPERPOWERS_TEST_CRASH_AT=prune-after-stage bash "$SDD_STATE" prune --repo "$pr" --apply >/dev/null 2>&1 ); rc=$?
+stage_cr="$co_pr/plans/.quarantining-crash-0badc0de-$tp"; quar_cr="$co_pr/plans/.pruned-crash-0badc0de-$tp"
+if [ "$rc" -eq 99 ] && [ -d "$stage_cr" ] && [ ! -e "$tomb_cr" ] && [ ! -e "$quar_cr" ]; then pass "the crash seam after the staging rename leaves the copy under the staging name only"; else fail "the crash seam after the staging rename leaves the copy under the staging name only (rc=$rc)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -d "$stage_cr" ]; then pass "a staged copy is listed by neither phase"; else fail "a staged copy is listed by neither phase (rc=$rc: $out)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs=$(basename "$tomb_cr") quarantined=\$" && [ ! -e "$stage_cr" ] && [ ! -e "$tomb_cr" ] && [ -d "$quar_cr" ] && [ "$(cat "$quar_cr/progress.md")" = "orphaned copy" ]; then pass "the next --apply puts the staged copy back and quarantines it"; else fail "the next --apply puts the staged copy back and quarantines it (rc=$rc: $out)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -d "$quar_cr" ]; then pass "a quarantine made after a crash keeps its full grace period"; else fail "a quarantine made after a crash keeps its full grace period (rc=$rc: $out)"; fi
+rm -rf "$quar_cr"
+# A put-back whose destination is occupied again: the copy stays staged and
+# is named, never nested into the new occupant.
+tomb_oc="$co_pr/plans/.removing-occupied-0badc0de-$tp"; mkdir -p "$tomb_oc"; printf 'orphaned copy\n' > "$tomb_oc/progress.md"; touch -t 202401010000 "$tomb_oc/progress.md" "$tomb_oc"
+out=$(cd "$pr" && HYPERPOWERS_TEST_WRITER_AT="prune-reoccupy-tomb:$(basename "$tomb_oc")" bash "$SDD_STATE" prune --repo "$pr" --apply 2>"$TEST_ROOT/pr-oc.err"); rc=$?
+stage_oc="$co_pr/plans/.quarantining-occupied-0badc0de-$tp"
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -d "$stage_oc" ] && [ "$(cat "$stage_oc/progress.md")" = "orphaned copy" ] && [ -d "$tomb_oc" ] && [ ! -e "$tomb_oc/$(basename "$stage_oc")" ] && grep -q 'occupied again' "$TEST_ROOT/pr-oc.err"; then pass "a put-back whose destination is occupied again leaves the staged copy named, not nested"; else fail "a put-back whose destination is occupied again leaves the staged copy named, not nested (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/pr-oc.err"))"; fi
+rm -rf "$tomb_oc" "$stage_oc"
+# A quarantine whose deletion fails keeps the copy under the aside name and
+# says so; nothing is reported as quarantined.
+if [ "$(id -u)" -ne 0 ]; then
+  quar_ro="$co_pr/plans/.pruned-ro-0badc0de-$tp"; mkdir -p "$quar_ro/sub"; printf 'orphaned copy\n' > "$quar_ro/sub/held"; touch -t 202401010000 "$quar_ro/sub/held" "$quar_ro/sub" "$quar_ro"; chmod 0555 "$quar_ro/sub"
+  out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>"$TEST_ROOT/pr-ro.err"); rc=$?
+  aside_ro=$(ls -d "$quar_ro".pruning-* 2>/dev/null | head -n 1)
+  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " quarantined=\$" && [ -n "$aside_ro" ] && [ -f "$aside_ro/sub/held" ] && grep -q 'could not be removed; remove it by hand' "$TEST_ROOT/pr-ro.err"; then pass "a quarantine whose deletion fails is kept under the aside name and named"; else fail "a quarantine whose deletion fails is kept under the aside name and named (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/pr-ro.err"))"; fi
+  chmod 0755 "$aside_ro/sub" 2>/dev/null; rm -rf "$quar_ro" "$aside_ro"
+else
+  pass "a quarantine whose deletion fails is kept under the aside name and named (skipped: root ignores directory modes)"
+fi
 out=$(run_state "$pr" prune --repo "$pr" --days 08); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=listed" ]; then pass "--days 08 is read as decimal eight"; else fail "--days 08 is read as decimal eight (rc=$rc: $out)"; fi
 : > "$pr/docs/third.md"; git -C "$pr" add docs; git -C "$pr" commit -qm third
@@ -935,6 +967,13 @@ rm -rf "$wst"
 out=$(run_state "$pr" prune --repo "$pr" --days abc 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "--days rejects a non-numeric value with usage"; else fail "--days rejects a non-numeric value with usage (rc=$rc: $out)"; fi
 if [ "$(run_state "$rp" prune --repo "$rp" 2>/dev/null)" = "status=plain" ]; then pass "prune under the plain backend reports plain"; else fail "prune under the plain backend reports plain"; fi
+# A plan file named like a leftover: its workspace name never starts with
+# a dot, so neither prune's loops nor the apply's scan can take it for one.
+: > "$pr/docs/.pruned-demo.md"; git -C "$pr" add docs/.pruned-demo.md; git -C "$pr" commit -qm dotplan
+wsd=$(run_sdd_dir "$pr" docs/.pruned-demo.md); printf 'dot plan\n' > "$wsd/progress.md"; run_state "$pr" snapshot docs/.pruned-demo.md >/dev/null
+case "$(basename "$wsd")" in pruned-demo-*) pass "a plan file named like a quarantine gets a workspace name without the leading dot" ;; *) fail "a plan file named like a quarantine gets a workspace name without the leading dot (got $(basename "$wsd"))" ;; esac
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -f "$wsd/progress.md" ]; then pass "such a workspace is never listed as a tomb or a quarantine"; else fail "such a workspace is never listed as a tomb or a quarantine (rc=$rc: $out)"; fi
 echo ""
 echo "=== sync ==="
 make_pair p7

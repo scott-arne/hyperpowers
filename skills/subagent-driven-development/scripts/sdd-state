@@ -718,7 +718,7 @@ cmd_finish() {
 # runs implicitly.
 cmd_prune() {
   local repo="" days=30 apply=0 repo_dir co br d name now cutoff c key list="" dead_list="" i tip gd ck
-  local tomb_list="" quar_list="" tomb_name tomb_pid tomb_ws tracked t q quar
+  local tomb_list="" quar_list="" tomb_name tomb_pid tomb_ws tracked t q quar stage s q_pid
   local plans=() dead=() tombs=() tomb_dead=() quar_idle=()
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -767,6 +767,17 @@ cmd_prune() {
   # in between is kept and reported.
   if [ "$apply" -eq 1 ]; then hp_lock "$repo_dir" || return 2; fi
   if [ "$apply" -eq 1 ]; then CO=$co; BRANCH=$br; recover_apply || { hp_unlock; echo "status=error"; return 2; }; fi
+  # A copy a killed --apply left staged at plans/.quarantining-<ws>-<pid>
+  # goes back to its tomb name before anything is listed: the lock is held,
+  # so no other prune owns it, and neither phase lists the staging name.
+  if [ "$apply" -eq 1 ] && [ -e "$co/.git" ]; then
+    for s in "$co"/plans/.quarantining-*; do
+      [ -d "$s" ] && [ ! -L "$s" ] || continue
+      t="$co/plans/.removing-${s##*/.quarantining-}"
+      if [ -e "$t" ] || [ -L "$t" ]; then echo "sdd-state: a staged copy from an interrupted prune is at $s and its tomb name $t is taken; move it back or delete it by hand" >&2; continue; fi
+      mv "$s" "$t" 2>/dev/null || echo "sdd-state: the staged copy at $s could not be put back at $t; move it back by hand" >&2
+    done
+  fi
   if [ -e "$co/.git" ]; then
     for d in "$co"/plans/*/; do
       [ -d "$d" ] || continue
@@ -789,6 +800,11 @@ cmd_prune() {
     done
     for q in "$co"/plans/.pruned-*; do
       [ -d "$q" ] && [ ! -L "$q" ] || continue
+      # The name must parse as a quarantine (a numeric pid last), and a
+      # path the branch tracks is a workspace, never a quarantine.
+      q_pid=${q##*-}; case "$q_pid" in ''|*[!0-9]*) continue ;; esac
+      tracked=$(git -C "$co" ls-tree -d "refs/heads/$br" -- "plans/${q##*/}" 2>/dev/null) || continue
+      [ -z "$tracked" ] || continue
       quarantine_idle "$q" || continue
       quar_idle[${#quar_idle[@]}]=$q; quar_list="$quar_list,$(enc "${q##*/}")"
     done
@@ -831,29 +847,37 @@ cmd_prune() {
     i=0
     while [ "$i" -lt "${#tombs[@]}" ]; do discard_tomb "${tombs[$i]}" || true; i=$((i + 1)); done
   fi
-  # Phase one: a listed copy is renamed to its quarantine name under the
-  # lock, re-checked on the renamed copy (a writer with the directory open
-  # appends into it, which the mtime check sees), and touched so the clock
-  # starts again; any doubt puts it back. Nothing is deleted here, so a
-  # writer that still holds the copy open loses no byte.
+  # Phase one: a listed copy is staged under a name neither phase lists,
+  # re-checked there (a writer with the directory open appends into it,
+  # which the mtime check sees), touched so the clock starts again, and
+  # only then renamed to its quarantine name; any doubt puts it back, and a
+  # crash anywhere in between leaves a staged copy the next --apply puts
+  # back. Nothing is deleted here, so a writer that still holds the copy
+  # open loses no byte.
   tomb_list=""
   i=0
   while [ "$i" -lt "${#tomb_dead[@]}" ]; do
     t=${tomb_dead[$i]}; i=$((i + 1))
     tomb_name=${t##*/}; tomb_pid=${tomb_name##*-}; tomb_ws=${tomb_name#.removing-}; tomb_ws=${tomb_ws%-*}
     [ -d "$t" ] && [ ! -L "$t" ] || continue
-    quar="$co/plans/.pruned-${tomb_name#.removing-}"
-    [ ! -e "$quar" ] && [ ! -L "$quar" ] || continue
-    mv "$t" "$quar" 2>/dev/null || continue
-    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in prune-after-tomb-rename:*) [ "${HYPERPOWERS_TEST_WRITER_AT#prune-after-tomb-rename:}" != "$tomb_name" ] || touch "$quar/progress.md" ;; esac
+    stage="$co/plans/.quarantining-${tomb_name#.removing-}"; quar="$co/plans/.pruned-${tomb_name#.removing-}"
+    [ ! -e "$stage" ] && [ ! -L "$stage" ] && [ ! -e "$quar" ] && [ ! -L "$quar" ] || continue
+    mv "$t" "$stage" 2>/dev/null || continue
+    if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = prune-after-stage ]; then hp_unlock; exit 99; fi
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+      prune-after-tomb-rename:*) [ "${HYPERPOWERS_TEST_WRITER_AT#prune-after-tomb-rename:}" != "$tomb_name" ] || touch "$stage/progress.md" ;;
+      prune-reoccupy-tomb:*) [ "${HYPERPOWERS_TEST_WRITER_AT#prune-reoccupy-tomb:}" != "$tomb_name" ] || { touch "$stage/progress.md"; mkdir -p "$t"; } ;;
+    esac
     # A re-check that fails, or a clock that cannot be restarted, is doubt:
     # the copy goes back under its old name, after the same destination
     # check every rename here makes (BSD mv nests into an occupied one).
-    if ! tomb_qualifies "$quar" "$tomb_pid" "$tomb_ws" || ! touch "$quar"; then
-      if [ -e "$t" ] || [ -L "$t" ]; then echo "sdd-state: the copy renamed to $quar could not be put back at $t, which is occupied again; move it back by hand" >&2; continue; fi
-      mv "$quar" "$t" 2>/dev/null || echo "sdd-state: the copy renamed to $quar could not be put back at $t; move it back by hand" >&2
+    if ! tomb_qualifies "$stage" "$tomb_pid" "$tomb_ws" || ! touch "$stage"; then
+      if [ -e "$t" ] || [ -L "$t" ]; then echo "sdd-state: the copy renamed to $stage could not be put back at $t, which is occupied again; move it back by hand" >&2; continue; fi
+      mv "$stage" "$t" 2>/dev/null || echo "sdd-state: the copy renamed to $stage could not be put back at $t; move it back by hand" >&2
       continue
     fi
+    # The clock started on the staged copy, and rename keeps it.
+    mv "$stage" "$quar" 2>/dev/null || { echo "sdd-state: the staged copy at $stage could not be published at $quar; the next prune puts it back" >&2; continue; }
     tomb_list="$tomb_list,$(enc "$tomb_name")"
   done
   tomb_list=${tomb_list#,}
@@ -1297,10 +1321,11 @@ apply_target() {
     # A copy a killed removal left aside is not a concurrent write: it is
     # cleared by finish, by sdd-dir and by the restore above, and
     # treating it as one would wedge every later sync on this repository.
-    # A copy prune quarantined at plans/.pruned-* is as much a removal's
-    # leftover as a tomb, and waits there for a later prune; holding the
-    # apply on it would wedge every sync for as long as it sits.
-    case "$path" in "plans/.removing-"*|"plans/.pruned-"*) continue ;; esac
+    # A copy prune quarantined at plans/.pruned-*, or one staged on its way
+    # there at plans/.quarantining-*, is as much a removal's leftover as a
+    # tomb, and waits there for a later prune; holding the apply on it
+    # would wedge every sync for as long as it sits.
+    case "$path" in "plans/.removing-"*|"plans/.pruned-"*|"plans/.quarantining-"*) continue ;; esac
     # A tracked file missing from a workspace: the restore above left the
     # copy that holds it only when the workspace is occupied again, and
     # named it there, so nothing more is said about this row; telling a

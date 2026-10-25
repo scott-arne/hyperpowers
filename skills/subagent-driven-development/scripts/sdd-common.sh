@@ -137,6 +137,12 @@ hp_plan_ws_name() {
   d=$(hp_plan_dir "$1") || return 1
   rel=$(hp_plan_rel "$1")
   slug=$(basename "$1"); slug=${slug%.*}
+  # A workspace name never starts with a dot: dotted entries under plans/
+  # are the leftovers of removals (.removing-, .quarantining-, .pruned-),
+  # and a plan file named like one must not be taken for them. A dotted
+  # name was never snapshotted either (every workspace walk skips dotted
+  # names), so no durable state changes identity here.
+  slug=${slug#"${slug%%[!.]*}"}; [ -n "$slug" ] || slug=plan
   hash8=$(printf '%s' "$rel" | git -C "$d" hash-object --stdin | cut -c1-8)
   printf '%s-%s\n' "$slug" "$hash8"
 }

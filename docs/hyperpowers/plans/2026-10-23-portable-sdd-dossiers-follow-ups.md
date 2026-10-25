@@ -17,7 +17,7 @@
 - bash 3.2 compatible: no associative arrays, no `${var,,}`, no `mapfile`; BSD `sed -i ''`; BSD `mv` nests a directory into an existing directory of the same name, so every rename checks its destination first. `sdd-dir` runs under `set -euo pipefail`: a command whose failure is handled is written `rc=0; cmd || rc=$?`.
 - Quick suites, run from the worktree root, one per `bash` call, each ending `STATUS: PASSED`: `bash tests/sdd/test-sdd-common.sh`, `bash tests/sdd/test-sdd-contract.sh`, `bash tests/claude-code/test-sdd-dir-path.sh`. Lint every changed shell file with `bash scripts/lint-shell.sh <files>` (exit 0, no findings). Never run anything else under `tests/claude-code/`: those suites start real `claude` sessions.
 - The state-suite procedure. `tests/sdd/test-sdd-state.sh` takes about 15 minutes and has no section filter, so it is never piped into `grep` (the pipeline's status would be grep's). It runs in the background to a log and is waited for: `bash tests/sdd/test-sdd-state.sh > ~/.cache/hyperpowers/follow-ups-task<N>-<red|green>.log 2>&1; echo "suite rc=$?" >> ~/.cache/hyperpowers/follow-ups-task<N>-<red|green>.log`. GREEN means the log's last line is `suite rc=0`, `grep -c '\[FAIL\]' <log>` prints `0` and `grep -q 'STATUS: PASSED' <log>` succeeds; one GREEN run per task, at its end. RED means the log holds the new assertion's `[FAIL]` line with the reason the step predicts. A RED run may instead use an extracted harness: copy the suite's lines 1-67 (its helpers) plus the section under test into a script under `$TMPDIR`, repoint `REPO_ROOT`, and run that; the report says which form was used. Where a step below says "state suite, needle `<text>`", it means this procedure with that `[PASS]`/`[FAIL]` text.
-- Test seams in the helper: `HYPERPOWERS_TEST_CRASH_AT`, `HYPERPOWERS_TEST_PAUSE_AT`, `HYPERPOWERS_TEST_WRITER_AT`, `HYPERPOWERS_TEST_DEST_APPEND`, `HYPERPOWERS_TEST_LATE_APPEND`, `HYPERPOWERS_TEST_LATE_REPLACE`, `HYPERPOWERS_TEST_FAIL_RELINK`, `HYPERPOWERS_TEST_FAIL_WORKTREE_ADD`, `HYPERPOWERS_TEST_SWAP_REF`, `HYPERPOWERS_TEST_RECLAIM_RACE`. No task adds a seam variable. Task 2 adds the value `import-after-set-aside`, Task 6 the value `restore-after-copy` and Task 7 the value `prune-after-stage` to `HYPERPOWERS_TEST_CRASH_AT` (every crash seam exits 99 after `hp_unlock`, as the existing ones do); Task 2 adds the value form `touch:<root>` to `HYPERPOWERS_TEST_RECLAIM_RACE` (touch the root only, no `.importing-*`); Tasks 4, 6 and 7 add the values `materialize-before-publish:<ws>`, `sync-after-ref-link:<path>`, `sync-after-apply-link:<path>`, `sync-before-restore:<path>`, `prune-after-tomb-rename:<name>`, `prune-reoccupy-tomb:<name>` and `sync-after-fetch-set-url:<url>` (Task 8) to `HYPERPOWERS_TEST_WRITER_AT`, each one `case` line at the point it names, in the form of the existing `sync-before-apply:` and `finish-before-remove-link:` values (`sdd-state:634` and `:1054`).
+- Test seams in the helper: `HYPERPOWERS_TEST_CRASH_AT`, `HYPERPOWERS_TEST_PAUSE_AT`, `HYPERPOWERS_TEST_WRITER_AT`, `HYPERPOWERS_TEST_DEST_APPEND`, `HYPERPOWERS_TEST_LATE_APPEND`, `HYPERPOWERS_TEST_LATE_REPLACE`, `HYPERPOWERS_TEST_FAIL_RELINK`, `HYPERPOWERS_TEST_FAIL_WORKTREE_ADD`, `HYPERPOWERS_TEST_SWAP_REF`, `HYPERPOWERS_TEST_RECLAIM_RACE`. No task adds a seam variable. Task 2 adds the value `import-after-set-aside`, Task 6 the value `restore-after-copy` and Task 7 the value `prune-after-stage` to `HYPERPOWERS_TEST_CRASH_AT` (every crash seam exits 99 after `hp_unlock`, as the existing ones do); Task 2 adds the value form `touch:<root>` to `HYPERPOWERS_TEST_RECLAIM_RACE` (touch the root only, no `.importing-*`); Tasks 4, 6 and 7 add the values `materialize-before-publish:<ws>`, `sync-after-ref-link:<path>`, `sync-after-apply-link:<path>`, `sync-before-restore:<path>`, `prune-after-tomb-rename:<name>`, `prune-reoccupy-tomb:<name>`, `sync-after-fetch-set-url:<url>` and `sync-aba-fetch:<url>` (Task 8) to `HYPERPOWERS_TEST_WRITER_AT`, each one `case` line at the point it names, in the form of the existing `sync-before-apply:` and `finish-before-remove-link:` values (`sdd-state:634` and `:1054`).
 - Tests use the suite's own helpers (`pass`, `fail`, `make_repo`, `make_pair`, `run_state`, `run_sdd_dir`, `ensure`, `state_key`, `ws_path`, `TEST_ROOT`, `STATE_ROOT`, `SDD_STATE`) and never touch the real `~/.cache`: `XDG_CACHE_HOME` is pinned by every suite. A new assertion is one `if ... then pass "..."; else fail "... (got: ...)"; fi` line in the suite's style.
 - Message prefixes: after Task 5 every message the library prints starts with `$HP_PROG:`; `sdd-state` and `sdd-dir` keep their own literal prefixes for the messages they print themselves.
 - The fetch stamp today: `sync` writes an empty `<key>.fetched` and `hp_ensure_checkout` tests its existence only (`sdd-common.sh:503`, `sdd-state:1211-1233`). Decision 1 is therefore new code (Task 8), not a description of what exists; Task 1 writes the spec text it will satisfy.
@@ -1394,7 +1394,7 @@ git commit -m "feat(sdd-state): prune quarantines and then removes the copies ki
 
 **Interfaces:**
 - Consumes: the spec's stamp paragraphs (Task 1); `$HP_PROG` (Task 5); the `docs/plan.md` Task 3 creates in `PAIR_A`.
-- Produces: `hp_remote_fingerprint <repo-dir>` prints the first 12 hex digits of the SHA-256 of `git remote get-url <configured remote>` (computed with node's `crypto`, since node is already a requirement of the helper and the repository's scripts use no other digest tool), or `none` when the remote has no URL. `hp_stamp_ok <repo-dir>` returns 0 when the stamp's first line equals `<hyperpowers.stateRemote or origin> <hyperpowers.stateBranch or hyperpowers/state> <fingerprint>`, so a repointed remote (`git remote set-url`) invalidates the stamp; `cmd_sync` writes that line on `assumed-absent`, `absent` and the fetched outcomes, and removes any stamp on `no-remote` (a repository without a remote creates freely, and a remote added later asks for one `sync` first); an empty or different stamp is `needs-sync` with the difference named. The stamp names the endpoint that was fetched: `cmd_sync` fingerprints the remote before the fetch, re-reads the remote, branch and fingerprint after it, and on any difference removes the stamp, prints `the remote changed during the sync` and ends `status=error` (exit 2) without creating anything; the seam value `HYPERPOWERS_TEST_WRITER_AT=sync-after-fetch-set-url:<url>` repoints the configured remote right after the fetch returns. The URL reaches node on stdin, never in argv (it may carry credentials). A fingerprint that cannot be computed (node missing or failing, output not twelve hex digits) is a failure, not an empty identity: `hp_remote_fingerprint` prints nothing and returns 1, `hp_stamp_ok` returns 1, and `cmd_sync` ends `status=error` with `the remote's URL could not be fingerprinted` and writes no stamp.
+- Produces: `hp_remote_fingerprint <repo-dir>` prints the first 12 hex digits of the SHA-256 of `git remote get-url <configured remote>` (computed with node's `crypto`, since node is already a requirement of the helper and the repository's scripts use no other digest tool), or `none` when the remote has no URL. `hp_stamp_ok <repo-dir>` returns 0 when the stamp's first line equals `<hyperpowers.stateRemote or origin> <hyperpowers.stateBranch or hyperpowers/state> <fingerprint>`, so a repointed remote (`git remote set-url`) invalidates the stamp; `cmd_sync` writes that line on `assumed-absent`, `absent` and the fetched outcomes, and removes any stamp on `no-remote` (a repository without a remote creates freely, and a remote added later asks for one `sync` first); an empty or different stamp is `needs-sync` with the difference named. The stamp names the endpoint that was fetched: `cmd_sync` fingerprints the remote before the fetch, re-reads the remote, branch and fingerprint after it, and on any difference removes the stamp, prints `the remote changed during the sync` and ends `status=error` (exit 2) without creating anything; the seam value `HYPERPOWERS_TEST_WRITER_AT=sync-after-fetch-set-url:<url>` repoints the configured remote right after the fetch returns. The URL reaches node on stdin, never in argv (it may carry credentials). A fingerprint that cannot be computed (node missing or failing, output not twelve hex digits) is a failure, not an empty identity: `hp_remote_fingerprint` prints nothing and returns 1, `hp_stamp_ok` returns 1, and `cmd_sync` ends `status=error` with `the remote's URL could not be fingerprinted` and writes no stamp. The fetch itself is pinned to the URL that was fingerprinted: the remote alias is mutable, so `cmd_sync` reads the URL once, fingerprints that string (`hp_url_fingerprint`), and fetches it through a private alias injected in git's environment configuration (`GIT_CONFIG_COUNT`, git 2.31 or newer), so neither a repoint between the fingerprint and the fetch nor one that is undone before the stamp can make the stamp name an endpoint the fetch never contacted, and the URL stays out of argv; the seam value `HYPERPOWERS_TEST_WRITER_AT=sync-aba-fetch:<url>` repoints the remote to `<url>` right before the fetch and back to the captured URL right after it.
 
 **Mirror:** `tests/sdd/test-sdd-state.sh:106-111` (p1: `make_pair`, `ensure`, the `needs-sync` needle, the stamp written by hand).
 
@@ -1457,9 +1457,16 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'changed during the
 out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ]; then pass "the next sync fetches the new endpoint and stamps it"; else fail "the next sync fetches the new endpoint and stamps it (rc=$rc: $out: $(cat "$STATE_ROOT/$(state_key "$PAIR_A").fetched" 2>/dev/null))"; fi
 git -C "$PAIR_A" remote set-url origin "$url_was"
-# That sync created the orphan against the race endpoint; the checkout, the
-# branch and the stamp go again, so the hand-written stamp below is what
-# lets the next creation happen.
+# A remote repointed to another endpoint between the fingerprint and the
+# fetch, and back before the stamp: the fetch is pinned to the fingerprinted
+# URL, so the other endpoint (which holds a branch under the state name) is
+# never contacted, the outcome is still absent, and the stamp stays true.
+aba_b="$TEST_ROOT/p1-aba.git"; git init -q --bare -b main "$aba_b"; git -C "$PAIR_A" push -q "$aba_b" main:refs/heads/hyperpowers/state 2>/dev/null
+out=$(cd "$PAIR_A" && HYPERPOWERS_TEST_WRITER_AT="sync-aba-fetch:$aba_b" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1-aba.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ] && ! git -C "$PAIR_A" rev-parse -q --verify refs/remotes/origin/hyperpowers/state >/dev/null && [ "$(git -C "$PAIR_A" remote get-url origin)" = "$url_was" ]; then pass "a repoint away and back around the fetch never reaches the other endpoint: the fetch is pinned to the fingerprinted URL"; else fail "a repoint away and back around the fetch never reaches the other endpoint (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p1-aba.err"))"; fi
+# Those syncs created the orphan; the checkout, the branch and the stamp go
+# again, so the hand-written stamp below is what lets the next creation
+# happen.
 git -C "$PAIR_A" worktree remove --force "$STATE_ROOT/$(state_key "$PAIR_A")" >/dev/null 2>&1 || rm -rf "${STATE_ROOT:?}/$(state_key "$PAIR_A")"; git -C "$PAIR_A" worktree prune; git -C "$PAIR_A" branch -D hyperpowers/state >/dev/null 2>&1; rm -f "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 ```
 
@@ -1478,6 +1485,7 @@ In `tests/sdd/test-sdd-common.sh`, at the end of the `# --- fetch stamp` block, 
 mkdir -p "$TEST_ROOT/fakebin"; printf '#!/bin/sh\nexit 9\n' > "$TEST_ROOT/fakebin/node"; chmod 755 "$TEST_ROOT/fakebin/node"
 fp_fail=$(PATH="$TEST_ROOT/fakebin:$PATH" hp_remote_fingerprint "$repo_st"); rc=$?
 if [ "$rc" -eq 1 ] && [ -z "$fp_fail" ]; then pass "hp_remote_fingerprint: a failing node is return 1 with no output"; else fail "hp_remote_fingerprint: a failing node is return 1 with no output (rc=$rc: '$fp_fail')"; fi
+if [ "$(hp_url_fingerprint "$TEST_ROOT/one.git")" = "$fp_one" ]; then pass "hp_url_fingerprint: the URL's own digest is the remote's"; else fail "hp_url_fingerprint: the URL's own digest is the remote's"; fi
 if ! PATH="$TEST_ROOT/fakebin:$PATH" hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: a stamp is not ok when the fingerprint cannot be computed"; else fail "hp_stamp_ok: a stamp is not ok when the fingerprint cannot be computed"; fi
 ```
 
@@ -1518,7 +1526,7 @@ if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync'; then pass "afte
 
 - [ ] **Step 2: RED**
 
-`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_stamp_ok\|hp_remote_fingerprint'`: every new line `[FAIL]` (`command not found`). State suite (or extracted harness), needles `a stamp for another remote` (`[FAIL]`: creation proceeds today on any existing file), `writes the remote, branch and URL fingerprint` (`[FAIL]`: the stamp is empty today), `a repointed remote makes the stamp stale` (`[FAIL]`: any existing file vouches today), `cannot be computed stops the sync` (`[FAIL]`: an empty fingerprint is stamped today), `repointed during the fetch is not stamped` (`[FAIL]`: the seam does not exist and the fingerprint is read after the fetch), `a fetch that found the branch writes the remote` (`[FAIL]`: the stamp is empty today), the two common-suite `failing node` assertions (`[FAIL]`: an empty digest is accepted today), `a no-remote sync leaves no stamp` (`[FAIL]`: an empty stamp is written today), `gained a remote after a no-remote sync asks for a sync` (`[FAIL]`: the empty stamp vouches today), `reconciled by the next sync` (may already pass; it is the guard that the stamp never affects an existing branch), `an offline sync with no state branch leaves no stamp` and `after an offline sync creation still asks for a sync` (these two may already pass: `offline` outcomes write no stamp today; they are regression guards and the report says which way they went).
+`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_stamp_ok\|hp_remote_fingerprint'`: every new line `[FAIL]` (`command not found`). State suite (or extracted harness), needles `a stamp for another remote` (`[FAIL]`: creation proceeds today on any existing file), `writes the remote, branch and URL fingerprint` (`[FAIL]`: the stamp is empty today), `a repointed remote makes the stamp stale` (`[FAIL]`: any existing file vouches today), `cannot be computed stops the sync` (`[FAIL]`: an empty fingerprint is stamped today), `repointed during the fetch is not stamped` (`[FAIL]`: the seam does not exist and the fingerprint is read after the fetch), `pinned to the fingerprinted URL` (`[FAIL]`: the fetch resolves the alias at fetch time and reaches the other endpoint, so the outcome is `foreign` (rc 2) and a remote-tracking ref appears), `a fetch that found the branch writes the remote` (`[FAIL]`: the stamp is empty today), the two common-suite `failing node` assertions (`[FAIL]`: an empty digest is accepted today), `a no-remote sync leaves no stamp` (`[FAIL]`: an empty stamp is written today), `gained a remote after a no-remote sync asks for a sync` (`[FAIL]`: the empty stamp vouches today), `reconciled by the next sync` (may already pass; it is the guard that the stamp never affects an existing branch), `an offline sync with no state branch leaves no stamp` and `after an offline sync creation still asks for a sync` (these two may already pass: `offline` outcomes write no stamp today; they are regression guards and the report says which way they went).
 
 - [ ] **Step 3: The guard and the writer**
 
@@ -1529,17 +1537,23 @@ In `sdd-common.sh`, after `hp_stamp_path` (line 57), add:
 # remote's fetch URL, or none when the remote has no URL. The stamp carries
 # it so a remote repointed with set-url, which keeps its alias, cannot reuse
 # a stamp earned against another endpoint.
-hp_remote_fingerprint() {
-  local url fp
-  url=$(git -C "$1" remote get-url "$(hp_state_remote "$1")" 2>/dev/null) || { printf 'none\n'; return 0; }
-  [ -n "$url" ] || { printf 'none\n'; return 0; }
-  # The URL may carry credentials: it reaches node on stdin, never in argv
-  # or the environment. A digest that cannot be computed is a failure, not
-  # an empty identity: callers fail closed on return 1.
-  fp=$(printf '%s' "$url" | node -e 'const b=[];process.stdin.on("data",c=>{b.push(c)}).on("end",()=>{process.stdout.write(require("crypto").createHash("sha256").update(Buffer.concat(b)).digest("hex").slice(0,12))})' 2>/dev/null) || return 1
+# <url> -> the first 12 hex digits of its SHA-256. The URL may carry
+# credentials: it reaches node on stdin, never in argv or the environment.
+# A digest that cannot be computed is a failure, not an empty identity:
+# callers fail closed on return 1.
+hp_url_fingerprint() {
+  local fp
+  fp=$(printf '%s' "$1" | node -e 'const b=[];process.stdin.on("data",c=>{b.push(c)}).on("end",()=>{process.stdout.write(require("crypto").createHash("sha256").update(Buffer.concat(b)).digest("hex").slice(0,12))})' 2>/dev/null) || return 1
   case "$fp" in ????????????) ;; *) return 1 ;; esac
   case "$fp" in *[!0-9a-f]*) return 1 ;; esac
   printf '%s\n' "$fp"
+}
+
+hp_remote_fingerprint() {
+  local url
+  url=$(git -C "$1" remote get-url "$(hp_state_remote "$1")" 2>/dev/null) || { printf 'none\n'; return 0; }
+  [ -n "$url" ] || { printf 'none\n'; return 0; }
+  hp_url_fingerprint "$url"
 }
 
 # <repo-dir> -> 0 when the fetch stamp names the configured remote, branch
@@ -1580,7 +1594,7 @@ with
 
 and add `have fp` to the function's `local` line (`remote` and `br` are already its locals).
 
-In `cmd_sync`, the stamp must name the endpoint that was fetched, and a fingerprint that cannot be computed must stop the sync. Add `fp_before fp_after` to its `local` line. Replace the `no-remote` write (line 1212) with `rm -f "$stamp"` (a stamp written without a fetch would vouch for a remote named later, so a repository without a remote leaves none and creates on the strength of `hp_has_remote` alone), and replace the `assumed-absent` write (line 1211) with
+In `cmd_sync`, the stamp must name the endpoint that was fetched, and a fingerprint that cannot be computed must stop the sync. Add `url_before fp_before fp_after` to its `local` line. Replace the `no-remote` write (line 1212) with `rm -f "$stamp"` (a stamp written without a fetch would vouch for a remote named later, so a repository without a remote leaves none and creates on the strength of `hp_has_remote` alone), and replace the `assumed-absent` write (line 1211) with
 
 ```bash
   if [ "$assume" -eq 1 ]; then
@@ -1589,18 +1603,30 @@ In `cmd_sync`, the stamp must name the endpoint that was fetched, and a fingerpr
   fi
 ```
 
-Right before the `err=$(... git -C "$PLAN_DIR" fetch ...)` line add the capture, and right after it the seam:
+Replace the fetch line `err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 git -C "$PLAN_DIR" fetch -q "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?` with the capture, the pinned fetch and the seams:
 
 ```bash
-  # The stamp names the endpoint that was fetched: the fingerprint is taken
-  # before the fetch, and the remote, branch and URL are read again after it;
-  # any difference means a repoint raced the fetch, and nothing is stamped.
-  fp_before=$(hp_remote_fingerprint "$PLAN_DIR") || { echo "sdd-state: the remote's URL could not be fingerprinted (node is required); nothing was stamped. Run sdd-state sync again" >&2; echo "status=error"; return 2; }
+  # The stamp names the endpoint that was fetched. The remote alias is
+  # mutable, so the URL is read once, fingerprinted as that string, and the
+  # fetch is pinned to it through a private alias in git's environment
+  # configuration (the URL stays out of argv); the remote, branch and URL
+  # are read again after the fetch, and any difference means a repoint
+  # raced it, so nothing is stamped.
+  url_before=$(git -C "$PLAN_DIR" remote get-url "$REMOTE" 2>/dev/null) || url_before=""
+  if [ -n "$url_before" ]; then
+    fp_before=$(hp_url_fingerprint "$url_before") || { echo "sdd-state: the remote's URL could not be fingerprinted (node is required); nothing was stamped. Run sdd-state sync again" >&2; echo "status=error"; return 2; }
+  else
+    fp_before=none
+  fi
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-aba-fetch:}" ;; esac
+  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="remote.hp-fetch-$$.url" GIT_CONFIG_VALUE_0="$url_before" git -C "$PLAN_DIR" fetch -q "hp-fetch-$$" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+    sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "$url_before" ;;
+    sync-after-fetch-set-url:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch-set-url:}" ;;
+  esac
 ```
 
-```bash
-  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-fetch-set-url:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch-set-url:}" ;; esac
-```
+(A remote without a URL makes `url_before` empty: the pinned fetch then fails as `git fetch origin` did, and the `offline` outcomes follow unchanged. The `--assume-absent` arm keeps `hp_remote_fingerprint`, since it fetches nothing.)
 
 Beside `settle`, add the writer both fetched outcomes call:
 
@@ -1626,7 +1652,7 @@ In the spec, after the creation paragraph's sentence that ends `means a fresh ``
 In `CHANGELOG.md` under `## Unreleased`, after the prune bullet (Task 7), add:
 
 ```markdown
-- **The fetch stamp names its remote, branch and endpoint.** `<key>.fetched` now holds `<remote> <branch> <fingerprint of the fetch URL>`, and a checkout is created only when it names the configured `hyperpowers.stateRemote` and `hyperpowers.stateBranch` and the remote's current URL (a repointed remote asks for a sync); a `no-remote` sync leaves no stamp, so a remote added later asks for one `sync` first; a stamp from an earlier build is empty and asks for one `sdd-state sync`, after which it is current. The stamp names the endpoint the fetch contacted: a remote changed during the fetch, or a fingerprint that cannot be computed, ends the sync with `status=error` and nothing stamped, so creating a checkout in a repository with a remote now needs `node` (already required by `sdd-state`'s import, claim and recovery paths).
+- **The fetch stamp names its remote, branch and endpoint.** `<key>.fetched` now holds `<remote> <branch> <fingerprint of the fetch URL>`, and a checkout is created only when it names the configured `hyperpowers.stateRemote` and `hyperpowers.stateBranch` and the remote's current URL (a repointed remote asks for a sync); a `no-remote` sync leaves no stamp, so a remote added later asks for one `sync` first; a stamp from an earlier build is empty and asks for one `sdd-state sync`, after which it is current. The stamp names the endpoint the fetch contacted: the fetch is pinned to the URL that was fingerprinted (through git's environment configuration, git 2.31 or newer), a remote changed around the fetch, or a fingerprint that cannot be computed, ends the sync with `status=error` and nothing stamped, so creating a checkout in a repository with a remote now needs `node` (already required by `sdd-state`'s import, claim and recovery paths).
 ```
 
 - [ ] **Step 5: GREEN, quick suites, lint**

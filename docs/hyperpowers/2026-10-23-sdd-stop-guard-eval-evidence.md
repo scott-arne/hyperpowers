@@ -48,3 +48,21 @@ three ids as well.
 
 All three are equal, so the assumption holds: discovery matches
 `session <session_id>:`.
+
+## Process groups (Task 3, deviation 1)
+
+`tracked-job run` gives the command its own process group through bash job
+control and keeps the supervisor outside it; `setsid` is not used, so both
+stay in the controller's session. The line below is what
+`tests/sdd/test-tracked-job.sh` printed on 2026-10-25 when the controller ran
+it outside the Bash sandbox (inside it, `ps` is refused and the two
+process-identity cases skip): the child leads its own group, the supervisor
+sits in another, and `ps -o sess=` reports 0 for both on this host (macOS
+prints 0 for a process that is not a session leader).
+
+```
+child=51098 pgid=51098 sid=0 run=50973 pgid=34374 sid=0
+```
+
+Result: `STATUS: PASSED (0 skipped)`, 20 cases; inside the sandbox,
+`STATUS: PASSED (2 skipped)`.

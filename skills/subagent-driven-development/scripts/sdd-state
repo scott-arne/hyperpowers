@@ -118,21 +118,28 @@ cmd_snapshot() {
   echo "status=snapshot sha=${out:0:7} files=$n"
 }
 
-# ledger_marks_complete LEDGER N: 0 when the ledger records task N complete,
-# 1 when it does not, 2 on a read error. An unterminated last line and any
-# line ending in tab-"#fragment" are remains of an interrupted write, never
-# records, even when their prefix reads "Task N: complete"; every completion
-# reader goes through here.
-ledger_marks_complete() { # <ledger> <n>
+# ledger_records LEDGER: the ledger's lines that are records. An unterminated
+# last line and any line ending in tab-"#fragment" are remains of an
+# interrupted write, never records, even when their prefix reads like one.
+# Every reader of completion lines goes through here. 2 when unreadable.
+ledger_records() { # <ledger>
   local last tab
   tab=$(printf '\t')
   [ -r "$1" ] || return 2
   last=$(tail -c 1 "$1" | od -An -c | tr -d ' ')
   if [ "$last" = '\n' ]; then
-    grep -v "${tab}#fragment\$" "$1" | grep -Ec "(^|[^A-Za-z0-9])Task $2: complete" >/dev/null; return "${PIPESTATUS[1]}"
+    grep -v "${tab}#fragment\$" "$1"
   else
-    sed '$d' "$1" | grep -v "${tab}#fragment\$" | grep -Ec "(^|[^A-Za-z0-9])Task $2: complete" >/dev/null; return "${PIPESTATUS[2]}"
+    sed '$d' "$1" | grep -v "${tab}#fragment\$"
   fi
+  return 0
+}
+
+# ledger_marks_complete LEDGER N: 0 when the ledger records task N complete,
+# 1 when it does not, 2 on a read error.
+ledger_marks_complete() { # <ledger> <n>
+  [ -r "$1" ] || return 2
+  ledger_records "$1" | grep -Ec "(^|[^A-Za-z0-9])Task $2: complete" >/dev/null; return "${PIPESTATUS[1]}"
 }
 
 # --- claim -------------------------------------------------------------------
@@ -1418,7 +1425,7 @@ verify_ledger() {
     fi
   fi
   # Both endpoints of every completion range, then the hand-off head.
-  shas=$(grep -Eo 'Task [0-9]+: complete \(commits [0-9a-f]+\.\.[0-9a-f]+' "$ledger" | sed 's/.*(commits //; s/\.\./ /')
+  shas=$(ledger_records "$ledger" | grep -Eo 'Task [0-9]+: complete \(commits [0-9a-f]+\.\.[0-9a-f]+' | sed 's/.*(commits //; s/\.\./ /')
   tasks=$(printf '%s\n' "$shas" | grep -c .)
   [ -n "$rec_sha" ] && shas="$shas $rec_sha"
   for sha in $shas; do

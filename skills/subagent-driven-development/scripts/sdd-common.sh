@@ -98,7 +98,9 @@ hp_ledger_append() { # <ledger> <line>
     fi
   fi
   if [ -n "${HYPERPOWERS_TEST_FAIL_APPEND:-}" ]; then
-    cut=$(( ${#line} > 15 ? ${#line} - 15 : 0 ))
+    # 1 cuts the last 15 bytes; a larger number cuts that many (inside the sha).
+    case "$HYPERPOWERS_TEST_FAIL_APPEND" in *[!0-9]*|1) cut=15 ;; *) cut=$HYPERPOWERS_TEST_FAIL_APPEND ;; esac
+    cut=$(( ${#line} > cut ? ${#line} - cut : 0 ))
     printf '%s' "${line:0:$cut}" >> "$ledger"
   else
     printf '%s\n' "$line" >> "$ledger" || return 1

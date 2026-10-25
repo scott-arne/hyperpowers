@@ -1992,6 +1992,20 @@ if [ "$rc" -eq 0 ] && [ "$out" = "status=handback" ] && [ "$(size30)" -gt "$sz30
 reset30; printf 'Task 2: comp' >> "$ws30/progress.md"; printf 'note: a controller append\n' >> "$ws30/progress.md"; sz30=$(size30)
 out=$(run_state "$repo30" complete docs/plan.md 2 --commits 5555555..6666666 --session s30); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'appended=1' && grep -q 'a controller append' "$ws30/progress.md" && [ "$(grep -Fxc 'Task 2: complete (commits 5555555..6666666, review clean)' "$ws30/progress.md")" = 1 ] && [ "$(size30)" -gt "$sz30" ]; then pass "a controller append glued to a fragment survives the next machine append"; else fail "a controller append glued to a fragment survives the next machine append (rc=$rc: $out)"; fi
+# verify reads the same normalized records: a fragment is never a required range
+base30=$(git -C "$repo30" rev-parse --short=7 HEAD~1); head30=$(git -C "$repo30" rev-parse --short=7 HEAD)
+reset30
+out=$(HYPERPOWERS_TEST_FAIL_APPEND=20 run_state "$repo30" complete docs/plan.md 2 --commits "$base30..$head30" --session s30); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && ! grep -q "$base30\.\.$head30" "$ws30/progress.md" && grep -q "^Task 2: complete (commits $base30\.\." "$ws30/progress.md"; then pass "a short write that stops inside the head sha leaves a partial range"; else fail "a short write that stops inside the head sha leaves a partial range (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits "$base30..$head30" --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'appended=1'; then pass "the retry after a mid-sha short write appends the canonical line"; else fail "the retry after a mid-sha short write appends the canonical line (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" verify docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=ok tasks=1" ]; then pass "verify ignores the marked partial range"; else fail "verify ignores the marked partial range (rc=$rc: $out)"; fi
+reset30
+out=$(HYPERPOWERS_TEST_FAIL_APPEND=1 run_state "$repo30" complete docs/plan.md 2 --commits "$base30..$head30" --session s30); rc=$?
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits "$base30..$head30" --session s30); rc=$?
+out=$(run_state "$repo30" verify docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=ok tasks=1" ] && [ "$(grep -c '^Task 2: complete' "$ws30/progress.md")" = 2 ]; then pass "verify counts one task when a marked fragment carries a full range"; else fail "verify counts one task when a marked fragment carries a full range (rc=$rc: $out)"; fi
 rm -rf "$ws30"
 out=$(run_state "$repo30" complete docs/plan.md 1 --commits 1111111..2222222 --session s30); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace" ]; then pass "complete without a ledger is no-workspace"; else fail "complete without a ledger is no-workspace (rc=$rc: $out)"; fi

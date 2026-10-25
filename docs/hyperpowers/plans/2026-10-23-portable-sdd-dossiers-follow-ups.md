@@ -970,7 +970,7 @@ git commit -m "fix(sdd-state): a link under a path the sync apply writes left th
 
 **Interfaces:**
 - Consumes: the spec's prune paragraph (Task 1).
-- Produces: `hp_pid_gone <pid>` returns 0 when `kill(pid, 0)` answers ESRCH and 1 otherwise (EPERM is alive). `status=listed plans=<list> checkouts=<list> tombs=<list> quarantined=<list>` and `status=pruned plans=<list> kept=<list> checkouts=<list> tombs=<list> quarantined=<list>`, comma-separated basenames percent-encoded with `enc`: on `listed`, `tombs=` names the `.removing-<ws>-<pid>` copies that qualify for quarantine and `quarantined=` the `.pruned-<ws>-<pid>` copies that qualify for deletion; on `pruned`, `tombs=` names the copies renamed to `.pruned-<ws>-<pid>` this run and `quarantined=` the copies deleted and verified gone this run. Removal is two-phase because a writer that still holds a copy open cannot be excluded: the rename keeps every byte such a writer adds, and the deletion waits until nothing in the quarantined copy is newer than N days. A `find` that fails keeps the copy. The seam value `HYPERPOWERS_TEST_WRITER_AT=prune-after-tomb-rename:<name>` touches the renamed copy's ledger between the rename and the re-check.
+- Produces: `hp_pid_gone <pid>` returns 0 when `kill(pid, 0)` answers ESRCH and 1 otherwise (EPERM is alive). `status=listed plans=<list> checkouts=<list> tombs=<list> quarantined=<list>` and `status=pruned plans=<list> kept=<list> checkouts=<list> tombs=<list> quarantined=<list>`, comma-separated basenames percent-encoded with `enc`: on `listed`, `tombs=` names the `.removing-<ws>-<pid>` copies that qualify for quarantine and `quarantined=` the `.pruned-<ws>-<pid>` copies that qualify for deletion; on `pruned`, `tombs=` names the copies renamed to `.pruned-<ws>-<pid>` this run and `quarantined=` the copies deleted and verified gone this run. Removal is two-phase because a writer that still holds a copy open cannot be excluded: the rename keeps every byte such a writer adds, and the deletion waits until nothing in the quarantined copy is newer than N days. A `find` that fails keeps the copy. The seam value `HYPERPOWERS_TEST_WRITER_AT=prune-after-tomb-rename:<name>` touches the renamed copy's ledger between the rename and the re-check. The apply's pending scan reads `git status --porcelain -z` NUL-delimited, so a path git would otherwise C-quote (a workspace name with a space) is seen plain and the `.removing-*`, `.pruned-*` and ledger exemptions hold for it too; a put-back rename in either phase checks its destination first, and a `touch` that fails after the staging rename is doubt: the copy goes back.
 
 **Mirror:** `tests/sdd/test-sdd-state.sh:785-802` (the prune fixture `pr`, `co_pr`, `wso`, `wsn`, the dead checkout `deadkey...`, full-string comparisons of the listing lines); `sdd-state:533-592` (rename aside, re-check, delete, verify, restore on doubt); `sdd-state:1061-1089` (the apply's pending scan: `git status --porcelain -- plans/` with `plans/.removing-*` exempted by name at line 1073; `.pruned-*` must be exempted there too, or every remote apply stays `busy` while a quarantine exists; `snapshot_pending`'s `plans/*/` glob already skips dotted names, and `restore_tombs` iterates `.removing-*` only).
 
@@ -990,9 +990,13 @@ In `tests/sdd/test-sdd-state.sh`, update the three full-string prune assertions 
 
 ```bash
 quar_p11="$co_b/plans/.pruned-gone-1234abcd-999"; mkdir -p "$quar_p11"; printf 'quarantined copy\n' > "$quar_p11/progress.md"
+# Names with a space: git status quotes such paths, and the scan must still
+# see the leftovers for what they are.
+tomb_p11s="$co_b/plans/.removing-old plan-1234abcd-999"; mkdir -p "$tomb_p11s"; printf 'orphaned copy\n' > "$tomb_p11s/progress.md"
+quar_p11s="$co_b/plans/.pruned-old plan-1234abcd-999"; mkdir -p "$quar_p11s"; printf 'quarantined copy\n' > "$quar_p11s/progress.md"
 ```
 
-and extend the p11 assertion that follows the sync so it also requires `[ -d "$quar_p11" ]`, with its pass text changed to `a tomb or a quarantine left under plans/ by a removal does not stop the apply`; remove `$quar_p11` where the fixture removes `$tomb_p11`. Then, after line 802's assertions and before the `--days 08` check at line 807, add:
+and extend the p11 assertion that follows the sync so it also requires `[ -d "$quar_p11" ] && [ -d "$tomb_p11s" ] && [ -d "$quar_p11s" ]`, with its pass text changed to `a tomb or a quarantine left under plans/ by a removal, with or without a space in its name, does not stop the apply`; remove `$quar_p11`, `$tomb_p11s` and `$quar_p11s` where the fixture removes `$tomb_p11`. Then, after line 802's assertions and before the `--days 08` check at line 807, add:
 
 ```bash
 # Copies killed removals left at plans/.removing-<ws>-<pid>: a gone pid,
@@ -1027,7 +1031,7 @@ rm -rf "$tomb_live" "$tomb_young" "$tomb_tracked"
 
 - [ ] **Step 2: RED**
 
-`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_pid_gone'`: three `[FAIL]` (`command not found`). State suite (or extracted harness), needles `tomb`, `quarantine`, `prune lists the idle plan`, `a workspace writ`, and the two `status=pruned` full-string assertions: `[FAIL]` (no `tombs=` or `quarantined=` field today, no tomb handling); the p11 needle `does not stop the apply`: `[FAIL]` (the apply reports `busy` on the `.pruned-*` entry today).
+`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_pid_gone'`: three `[FAIL]` (`command not found`). State suite (or extracted harness), needles `tomb`, `quarantine`, `prune lists the idle plan`, `a workspace writ`, and the two `status=pruned` full-string assertions: `[FAIL]` (no `tombs=` or `quarantined=` field today, no tomb handling); the p11 needle `does not stop the apply`: `[FAIL]` (the apply reports `busy` on the `.pruned-*` entry today, and on the space-named entries, which `git status` quotes so the exemptions never match them).
 
 - [ ] **Step 3: `hp_pid_gone`**
 
@@ -1115,11 +1119,14 @@ With `--apply`, after the plans loop and its commit (after the `if [ "${#removed
     [ ! -e "$quar" ] && [ ! -L "$quar" ] || continue
     mv "$t" "$quar" 2>/dev/null || continue
     case "${HYPERPOWERS_TEST_WRITER_AT:-}" in prune-after-tomb-rename:*) [ "${HYPERPOWERS_TEST_WRITER_AT#prune-after-tomb-rename:}" != "$tomb_name" ] || touch "$quar/progress.md" ;; esac
-    if ! tomb_qualifies "$quar" "$tomb_pid" "$tomb_ws"; then
+    # A re-check that fails, or a clock that cannot be restarted, is doubt:
+    # the copy goes back under its old name, after the same destination
+    # check every rename here makes (BSD mv nests into an occupied one).
+    if ! tomb_qualifies "$quar" "$tomb_pid" "$tomb_ws" || ! touch "$quar"; then
+      if [ -e "$t" ] || [ -L "$t" ]; then echo "sdd-state: the copy renamed to $quar could not be put back at $t, which is occupied again; move it back by hand" >&2; continue; fi
       mv "$quar" "$t" 2>/dev/null || echo "sdd-state: the copy renamed to $quar could not be put back at $t; move it back by hand" >&2
       continue
     fi
-    touch "$quar"
     tomb_list="$tomb_list,$(enc "$tomb_name")"
   done
   tomb_list=${tomb_list#,}
@@ -1133,6 +1140,7 @@ With `--apply`, after the plans loop and its commit (after the `if [ "${#removed
     [ ! -e "$q.pruning-$$" ] && [ ! -L "$q.pruning-$$" ] || continue
     mv "$q" "$q.pruning-$$" 2>/dev/null || continue
     if ! quarantine_idle "$q.pruning-$$"; then
+      if [ -e "$q" ] || [ -L "$q" ]; then echo "sdd-state: the copy renamed aside at $q.pruning-$$ could not be put back at $q, which is occupied again; move it back by hand" >&2; continue; fi
       mv "$q.pruning-$$" "$q" 2>/dev/null || echo "sdd-state: the copy renamed aside at $q.pruning-$$ could not be put back at $q; move it back by hand" >&2
       continue
     fi
@@ -1145,7 +1153,46 @@ With `--apply`, after the plans loop and its commit (after the `if [ "${#removed
 
 Change the final line to `echo "status=pruned plans=$list kept=$kept_list checkouts=$dead_list tombs=$tomb_list quarantined=$quar_list"`.
 
-In `apply_target`'s pending scan (line 1073), change `case "$path" in "plans/.removing-"*) continue ;; esac` to `case "$path" in "plans/.removing-"*|"plans/.pruned-"*) continue ;; esac`, and extend the comment above it: a quarantined copy is as much a removal's leftover as a tomb and holds no apply. The deletion's last window, between the final `find` and `rm -rf` on a copy that has been silent for N days, is the one the spec already accepts for an idle plan's removal; the quarantine step is what keeps a writer's bytes out of it.
+In `apply_target`'s pending scan (line 1073), change `case "$path" in "plans/.removing-"*) continue ;; esac` to `case "$path" in "plans/.removing-"*|"plans/.pruned-"*) continue ;; esac`, and extend the comment above it: a quarantined copy is as much a removal's leftover as a tomb and holds no apply. The scan must read its rows NUL-delimited, because `git status --porcelain` C-quotes a path with a space (`"plans/.pruned-old plan-..."`), and a quoted row matches none of the exemptions, so a space-named plan's leftover, or its dirty ledger, would hold every sync. Replace
+
+```bash
+  pending=$(git -C "$CO" status --porcelain -- plans/ 2>/dev/null)
+  if [ -n "$pending" ]; then
+    refused=0
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      status=${line:0:2}; path=${line:3}
+```
+
+with
+
+```bash
+  # Rows are read NUL-delimited: the porcelain format C-quotes a path with
+  # a space or an unusual byte, and a quoted row would match none of the
+  # exemptions below. A rename row carries a second field, consumed here.
+  refused=0
+  while IFS= read -r -d '' line; do
+    [ -n "$line" ] || continue
+    status=${line:0:2}; path=${line:3}
+    case "$status" in R*|C*) IFS= read -r -d '' _ ;; esac
+```
+
+and the loop's tail
+
+```bash
+    done < <(printf '%s\n' "$pending")
+    if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
+  fi
+```
+
+with
+
+```bash
+  done < <(git -C "$CO" status --porcelain -z -- plans/ 2>/dev/null)
+  if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
+```
+
+(the body between them keeps its text; re-indent it one level out, and drop `pending` from the function's `local` line if nothing else reads it). The deletion's last window, between the final `find` and `rm -rf` on a copy that has been silent for N days, is the one the spec already accepts for an idle plan's removal; the quarantine step is what keeps a writer's bytes out of it.
 
 - [ ] **Step 5: The changelog**
 

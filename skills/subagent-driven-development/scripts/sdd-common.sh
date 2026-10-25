@@ -88,12 +88,13 @@ hp_utc_now_ms() { node -e 'process.stdout.write(new Date().toISOString())' 2>/de
 # it, which is what an unlocked append always did and loses no data. Success
 # means the tail really is LINE.
 hp_ledger_append() { # <ledger> <line>
-  local ledger=$1 line=$2 last frag cut
+  local ledger=$1 line=$2 last cut
   if [ -s "$ledger" ]; then
     last=$(tail -c 1 "$ledger" | od -An -c | tr -d ' ')
     if [ "$last" != '\n' ]; then
-      frag=$(node -e 'const b=require("fs").readFileSync(process.argv[1]);process.stdout.write(b.subarray(b.lastIndexOf(10)+1).toString())' "$ledger") || return 1
-      printf '%s %s\n' "$(hp_utc_now)" "$frag" >> "$(dirname "$ledger")/fragments.log" || return 1
+      # One no-follow open: a symlink planted at fragments.log must not send
+      # ledger text elsewhere, and a failure leaves the ledger untouched.
+      node -e 'const fs=require("fs"),c=fs.constants;const b=fs.readFileSync(process.argv[1]);const f=b.subarray(b.lastIndexOf(10)+1).toString();const fd=fs.openSync(process.argv[2],c.O_WRONLY|c.O_APPEND|c.O_CREAT|c.O_NOFOLLOW,0o644);fs.writeSync(fd,process.argv[3]+" "+f+"\n");fs.closeSync(fd)' "$ledger" "$(dirname "$ledger")/fragments.log" "$(hp_utc_now)" 2>/dev/null || return 1
       printf '\t#fragment\n' >> "$ledger" || return 1
     fi
   fi

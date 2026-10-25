@@ -2016,6 +2016,14 @@ out=$(cd "$repo30" && CLAUDE_CODE_SESSION_ID='s Task 2: complete' bash "$SDD_STA
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(size30)" = "$sz30" ] && ! grep -q 'Task 2: complete' "$ws30/progress.md"; then pass "handback refuses a hostile id taken from CLAUDE_CODE_SESSION_ID"; else fail "handback refuses a hostile id taken from CLAUDE_CODE_SESSION_ID (rc=$rc: $out)"; fi
 out=$(run_state "$repo30" handback docs/plan.md --reason "x" --session 72cc3565-6224-4818-baa9-5be5404b7993); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=handback" ] && tail -n 1 "$ws30/progress.md" | grep -q '^handback 72cc3565-6224-4818-baa9-5be5404b7993 '; then pass "handback accepts a UUID-shaped session id"; else fail "handback accepts a UUID-shaped session id (rc=$rc: $out)"; fi
+# the fragment save must not follow a symlink planted at fragments.log
+reset30; printf 'Task 2: complete (commits 1111111..22' >> "$ws30/progress.md"
+printf 'precious\n' > "$TEST_ROOT/frag-target30"; ln -s "$TEST_ROOT/frag-target30" "$ws30/fragments.log"; sz30=$(size30)
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits 7777777..8888888 --session s30 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(cat "$TEST_ROOT/frag-target30")" = precious ] && [ "$(size30)" = "$sz30" ] && [ -L "$ws30/fragments.log" ]; then pass "complete does not write through a symlinked fragments.log"; else fail "complete does not write through a symlinked fragments.log (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" handback docs/plan.md --session s31 --reason "stopped" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(cat "$TEST_ROOT/frag-target30")" = precious ] && [ "$(size30)" = "$sz30" ]; then pass "handback does not write through a symlinked fragments.log"; else fail "handback does not write through a symlinked fragments.log (rc=$rc: $out)"; fi
+rm -f "$ws30/fragments.log"
 rm -rf "$ws30"
 out=$(run_state "$repo30" complete docs/plan.md 1 --commits 1111111..2222222 --session s30); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace" ]; then pass "complete without a ledger is no-workspace"; else fail "complete without a ledger is no-workspace (rc=$rc: $out)"; fi

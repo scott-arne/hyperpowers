@@ -636,7 +636,7 @@ git commit -m "fix(sdd-common): a library message named sdd-state even when sdd-
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `apply_files` returns 4 when a path it must write or remove is, or sits under, a symbolic link (both `hp_contained` checks); every other failure keeps its code. A workspace directory `apply_files` has to create comes back whole: after both walks, every path the target tracks under such a directory that is still missing is checked out (each through `hp_contained`), because the diff names only what changed between S and the target, and a directory restored with those files alone would have the next `snapshot_pending` record its unchanged siblings as deletions; that is what makes "remove the link" safe advice for a link at `plans/<ws>` itself. `say_link_repair` prints one sentence to stderr: `sdd-state: a symbolic link sits where sync writes or removes a regular file (named above); remove the link, leave $CO/.sync-applying in place, and run sdd-state sync again: the apply finishes from the branch`. It is printed on all three routes a link can take: `recover_apply` for return 4 (the generic line stays for every other failure), `apply_target`'s result `case` for return 4 on the normal post-ref apply, and `apply_target`'s post-apply re-walk on its own `hp_contained` refusal. Status and exit codes are unchanged (`status=error`, 2, marker kept). The seam value `HYPERPOWERS_TEST_WRITER_AT=sync-after-ref-link:<path>` replaces `$CO/<path>` with a symbolic link to `/dev/null` right after the ref has moved and before the apply; the seam value `HYPERPOWERS_TEST_WRITER_AT=sync-after-apply-link:<path>` does the same after `apply_files` returned 0 and before the post-apply re-walk.
+- Produces: `apply_files` returns 4 when a path it must write or remove is, or sits under, a symbolic link (both `hp_contained` checks); every other failure keeps its code. Every workspace the apply writes into comes back whole: after both walks, every path the target tracks under a workspace the first walk touched that is still missing is checked out (each through `hp_contained` first, so a link there is refused and named like any other), because the diff names only what changed between S and the target, and a directory restored with those files alone would have the next `snapshot_pending` record its unchanged siblings as deletions. The rule covers every touched workspace, not only one the apply created, because an apply that creates the directory and then fails on a later path (a second link, a publish race) leaves it partial, and the next apply, which no longer creates it, must still complete it; that is what makes "remove the link" safe advice for a link at `plans/<ws>` itself. `say_link_repair` prints one sentence to stderr: `sdd-state: a symbolic link sits where sync writes or removes a regular file (named above); remove the link, leave $CO/.sync-applying in place, and run sdd-state sync again: the apply finishes from the branch`. It is printed on all three routes a link can take: `recover_apply` for return 4 (the generic line stays for every other failure), `apply_target`'s result `case` for return 4 on the normal post-ref apply, and `apply_target`'s post-apply re-walk on its own `hp_contained` refusal. Status and exit codes are unchanged (`status=error`, 2, marker kept). The seam value `HYPERPOWERS_TEST_WRITER_AT=sync-after-ref-link:<path>` replaces `$CO/<path>` with a symbolic link to `/dev/null` right after the ref has moved and before the apply; the seam value `HYPERPOWERS_TEST_WRITER_AT=sync-after-apply-link:<path>` does the same after `apply_files` returned 0 and before the post-apply re-walk.
 
 **Mirror:** `tests/sdd/test-sdd-state.sh:925-940` (a `sync` killed by `HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref` on `PAIR_B`, then a plain `sync` that recovers; `$wsb` is the workspace on B, `$co_b` the checkout).
 
@@ -696,38 +696,61 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying"
 rm -f "$wsb/progress.md"
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7g: complete' "$wsb/progress.md"; then pass "after that repair too the recovery completes"; else fail "after that repair too the recovery completes (rc=$rc: $out)"; fi
+# Two links met by one recovery, a workspace apart: the first apply creates
+# the first workspace, publishes its ledger, and fails on the second
+# workspace's link, leaving the first partial; the apply that finishes the
+# recovery no longer creates that directory and must still complete it.
+ws2b="$co_b/plans/$(basename "$ws2a")"
+printf 'report\n' > "$wsa/task-1-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+printf 'Task 7h: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; printf 'Task 7h-second: complete (commits 1111111..2222222, review clean)\n' >> "$ws2a/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+moved7h="$TEST_ROOT/ws-7h-moved"; mv "$wsb" "$moved7h"; ln -s "$moved7h" "$wsb"
+victim7h="$TEST_ROOT/victim-7h"; printf 'untouched\n' > "$victim7h"; rm -f "$ws2b/progress.md"; ln -s "$victim7h" "$ws2b/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7h.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7h.err"; then pass "the first of two links is refused with the marker kept"; else fail "the first of two links is refused with the marker kept (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7h.err"))"; fi
+rm "$wsb"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7h2.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7h2.err" && [ -f "$wsb/progress.md" ] && [ ! -e "$wsb/task-1-report.md" ] && [ "$(cat "$victim7h")" = untouched ]; then pass "the apply that created the first workspace is stopped by the second link, leaving it partial with the marker kept"; else fail "the apply that created the first workspace is stopped by the second link (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7h2.err"))"; fi
+rm "$ws2b/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7h: complete' "$wsb/progress.md" && grep -q '^Task 7h-second: complete' "$ws2b/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ] && [ -n "$(git -C "$co_b" ls-tree --name-only refs/heads/hyperpowers/state -- "plans/$(basename "$wsb")/task-1-report.md")" ]; then pass "the apply that finishes the recovery completes the partial workspace and no deletion is snapshotted"; else fail "the apply that finishes the recovery completes the partial workspace (rc=$rc: $out: $(git -C "$co_b" status --porcelain -- plans/ | tr '\n' '|'))"; fi
 ```
 
 If that fixture's variables are named differently, use its names; the shape (crash after update-ref, plant the link, sync, repair, sync) is what matters.
 
 - [ ] **Step 2: RED**
 
-State suite (or extracted harness), needles `names the repair` (both the recovery case and the normal post-ref case): `[FAIL]` (today stderr carries `hp_contained`'s line and the generic `repair the working tree under` sentence, never `remove the link, leave`; the seam does not exist yet, so the second case applies cleanly and fails on `status=error`). Needle `comes back whole`: `[FAIL]` (the recovery restores only the diff, and the report is recorded as deleted). Needle `met by the post-apply re-walk`: `[FAIL]` (the seam does not exist, so the sync succeeds). The delete-walk pair passes as soon as the second `hp_contained` check returns 4; it is coverage the gate asked for, not a RED of its own.
+State suite (or extracted harness), needles `names the repair` (both the recovery case and the normal post-ref case): `[FAIL]` (today stderr carries `hp_contained`'s line and the generic `repair the working tree under` sentence, never `remove the link, leave`; the seam does not exist yet, so the second case applies cleanly and fails on `status=error`). Needle `comes back whole`: `[FAIL]` (the recovery restores only the diff, and the report is recorded as deleted). Needle `met by the post-apply re-walk`: `[FAIL]` (the seam does not exist, so the sync succeeds). Needle `completes the partial workspace`: `[FAIL]` (a restore keyed to the apply that created the directory does not run on the apply that finishes the recovery, and the report is recorded as deleted). The delete-walk pair passes as soon as the second `hp_contained` check returns 4; it is coverage the gate asked for, not a RED of its own.
 
 - [ ] **Step 3: A distinct code and one repair sentence**
 
-In `apply_files`, change both `hp_contained "$CO" "$path" || return 2` lines (898 and 935) to `hp_contained "$CO" "$path" || return 4`, and add to the function's comment: `Returns 4 when a path it must write or remove sits under a symbolic link; the callers turn that into a repair the human can act on. A workspace directory the apply has to create comes back whole: every path the target tracks under it that is still missing afterwards is checked out.` Then make the function remember each workspace directory it creates and restore it whole. Its `local` line becomes `local S=$1 target=$2 path dir tmp half ws i created_ws=()` (the array is named `created_ws` because `cmd_sync` already has a scalar `created`, and shellcheck's SC2178 reads the two as one name); right after the first walk's `hp_contained ... || return 4` line add:
+In `apply_files`, change both `hp_contained "$CO" "$path" || return 2` lines (898 and 935) to `hp_contained "$CO" "$path" || return 4`, and add to the function's comment: `Returns 4 when a path it must write or remove sits under a symbolic link; the callers turn that into a repair the human can act on. Every workspace the apply writes into comes back whole: every path the target tracks under it that is still missing afterwards is checked out.` Then make the function remember each workspace its first walk touches and restore it whole. Its `local` line becomes `local S=$1 target=$2 path dir tmp half ws i last_ws="" touched_ws=()` (`cmd_sync` already has a scalar `created`, so the array avoids that stem; shellcheck's SC2178 reads a scalar and an array of one name as one variable); right after the first walk's `hp_contained ... || return 4` line add:
 
 ```bash
-    # A workspace directory this apply has to create is remembered: the
-    # diff names only what changed between S and the target, and a
-    # directory restored with those files alone would have the next
-    # snapshot record its unchanged siblings as deletions.
-    case "$path" in plans/*/*) ws=${path#plans/}; ws=${ws%%/*}; [ -e "$CO/plans/$ws" ] || created_ws[${#created_ws[@]}]=$ws ;; esac
+    # Every workspace this walk writes into is remembered: the diff names
+    # only what changed between S and the target, and a directory an
+    # interrupted apply left holding those files alone would have the next
+    # snapshot record its unchanged siblings as deletions. git lists paths
+    # sorted, so one workspace's paths are contiguous.
+    case "$path" in plans/*/*) ws=${path#plans/}; ws=${ws%%/*}; [ "$ws" = "$last_ws" ] || touched_ws[${#touched_ws[@]}]=$ws; last_ws=$ws ;; esac
 ```
 
 and replace the function's final `return 0` with:
 
 ```bash
-  # Each workspace directory this apply created comes back whole: every
-  # path the target tracks under it that is still missing is checked out.
+  # Each workspace this apply wrote into comes back whole: every path the
+  # target tracks under it that is still missing is checked out. A link at
+  # such a path is refused and named, never skipped: skipped, the next
+  # snapshot would commit it onto the branch.
   i=0
-  while [ "$i" -lt "${#created_ws[@]}" ]; do
-    ws=${created_ws[$i]}; i=$((i + 1))
+  while [ "$i" -lt "${#touched_ws[@]}" ]; do
+    ws=${touched_ws[$i]}; i=$((i + 1))
     while IFS= read -r path; do
       [ -n "$path" ] || continue
-      [ ! -e "$CO/$path" ] && [ ! -L "$CO/$path" ] || continue
       hp_contained "$CO" "$path" || return 4
+      [ ! -e "$CO/$path" ] || continue
       git -C "$CO" checkout -q "$target" -- "$path" || return 2
     done < <(git -C "$CO" ls-tree -r --name-only "$target" -- "plans/$ws")
   done
@@ -738,8 +761,8 @@ Beside `recover_apply` (before it) add:
 
 ```bash
 # One sentence for the one failure a human clears by hand without reading
-# code: a link where the apply writes a regular file. hp_contained has just
-# named the path.
+# code: a link where the apply writes or removes a regular file.
+# hp_contained has just named the path.
 say_link_repair() {
   echo "sdd-state: a symbolic link sits where sync writes or removes a regular file (named above); remove the link, leave $CO/.sync-applying in place, and run sdd-state sync again: the apply finishes from the branch" >&2
 }
@@ -781,7 +804,7 @@ In the `case "$res" in` that follows the loop, add the arm `4) say_link_repair; 
 
 - [ ] **Step 4: GREEN, quick suites, lint**
 
-State suite, needles from Step 1 (all ten): `[PASS]`, log GREEN. `bash tests/sdd/test-sdd-contract.sh` `STATUS: PASSED`. `bash scripts/lint-shell.sh skills/subagent-driven-development/scripts/sdd-state tests/sdd/test-sdd-state.sh` exit 0.
+State suite, needles from Step 1 (all thirteen): `[PASS]`, log GREEN. `bash tests/sdd/test-sdd-contract.sh` `STATUS: PASSED`. `bash scripts/lint-shell.sh skills/subagent-driven-development/scripts/sdd-state tests/sdd/test-sdd-state.sh` exit 0.
 
 - [ ] **Step 5: Commit**
 

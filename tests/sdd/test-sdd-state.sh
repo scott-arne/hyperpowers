@@ -1662,6 +1662,22 @@ if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && ! ls -d "$co_b/plans/.re
 advance 'line three'
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -d "$co_b/plans/$(basename "$wsf")" ] && grep -q '^line three$' "$wsb/progress.md"; then pass "the next sync after that crash finishes the apply and keeps going"; else fail "the next sync after that crash finishes the apply and keeps going (rc=$rc: $out)"; fi
+# A workspace the branch tracks under a leftover's name (a plan file from
+# before this release whose name began with a dot): its dirty report holds
+# the apply like any other workspace's, and a remote change to the same
+# path never overwrites it.
+co_a11="$STATE_ROOT/$(state_key "$PAIR_A")"; legacy11=".pruned-legacy-12345678"
+mkdir -p "$co_a11/plans/$legacy11"; printf '# SDD ledger — plan: docs/legacy.md\n' > "$co_a11/plans/$legacy11/progress.md"; printf 'report v1\n' > "$co_a11/plans/$legacy11/task-1-report.md"
+git -C "$co_a11" add -A plans/ && git -C "$co_a11" commit -qm legacy && git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+printf 'local edit\n' > "$co_b/plans/$legacy11/task-1-report.md"
+printf 'report v2\n' > "$co_a11/plans/$legacy11/task-1-report.md"; git -C "$co_a11" add -A plans/ && git -C "$co_a11" commit -qm legacy2 && git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p11c.out" 2> "$TEST_ROOT/p11c.err"; rc=$?
+out=$(cat "$TEST_ROOT/p11c.out")
+if [ "$rc" -eq 3 ] && [ "${out%% *}" = "status=busy" ] && grep -q "plans/$legacy11/task-1-report.md" "$TEST_ROOT/p11c.err" && [ "$(cat "$co_b/plans/$legacy11/task-1-report.md")" = "local edit" ]; then pass "a dirty report in a tracked workspace named like a leftover holds the apply and is not overwritten"; else fail "a dirty report in a tracked workspace named like a leftover holds the apply and is not overwritten (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p11c.err"))"; fi
+printf 'report v1\n' > "$co_b/plans/$legacy11/task-1-report.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(cat "$co_b/plans/$legacy11/task-1-report.md")" = "report v2" ]; then pass "with the local edit put back the apply proceeds and the remote change lands"; else fail "with the local edit put back the apply proceeds and the remote change lands (rc=$rc: $out)"; fi
 # A leftover as the only entry under plans/: with no tracked entry there,
 # git collapses the directory to one `?? plans/` row, which no exemption
 # names and whose advice (move or delete the dossier root) is wrong; the

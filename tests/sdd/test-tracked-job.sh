@@ -79,12 +79,47 @@ out=$(HYPERPOWERS_TEST_FAIL_META=1 tj run "$j7" -- bash -c 'echo ran > ran.txt')
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(meta "$j7" state)" = allocated ] && [ -n "$(meta "$j7" launch_error)" ] && [ ! -d "$j7/launch.lock" ] && [ ! -f "$repo/ran.txt" ]; then pass "a failed launch kills the barrier-held child and leaves the job allocated"; else fail "a failed launch kills the barrier-held child and leaves the job allocated (rc=$rc: $out)"; fi
 tj run "$j7" -- bash -c 'exit 0' >/dev/null 2>&1
 if [ "$(cat "$j7/exit" 2>/dev/null)" = 0 ]; then pass "a later run on the same directory succeeds"; else fail "a later run on the same directory succeeds"; fi
+# a barrier that cannot be created is a failed launch like any other: the job
+# stays allocated, says why, and keeps no launch lock to block the retry.
+jg=$(newjob fifo); mkdir "$jg/go"
+out=$(tj run "$jg" -- bash -c 'echo nope > fifo-ran.txt' 2>"$err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(meta "$jg" state)" = allocated ] && [ -n "$(meta "$jg" launch_error)" ] && [ ! -d "$jg/launch.lock" ] && [ ! -f "$repo/fifo-ran.txt" ]; then pass "a barrier that cannot be created leaves the job allocated and says why"; else fail "a barrier that cannot be created leaves the job allocated and says why (rc=$rc: $out, launch_error=$(meta "$jg" launch_error))"; fi
+rmdir "$jg/go"; tj run "$jg" -- bash -c 'echo yes > fifo-ran.txt' >/dev/null 2>&1
+if [ "$(cat "$jg/exit" 2>/dev/null)" = 0 ] && [ "$(cat "$repo/fifo-ran.txt" 2>/dev/null)" = yes ]; then pass "the job runs once the obstruction is cleared"; else fail "the job runs once the obstruction is cleared (exit=$(cat "$jg/exit" 2>/dev/null))"; fi
 # the supervisor's own TERM: the group is swept, the result recorded, state stopped.
 j8=$(newjob trapped); ( tj run "$j8" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
 if ! wait_meta "$j8" run_pid; then fail "a TERM to the supervisor sweeps the command and records the result (no run_pid within 10s)"
 else
   kill -TERM "$(meta "$j8" run_pid)"; wait_file "$j8/exit"
   if [ "$(cat "$j8/exit" 2>/dev/null)" = 143 ] && [ "$(meta "$j8" state)" = stopped ] && ! kill -0 "$(meta "$j8" pid)" 2>/dev/null; then pass "a TERM to the supervisor sweeps the command and records the result"; else fail "a TERM to the supervisor sweeps the command and records the result (exit=$(cat "$j8/exit" 2>/dev/null), state=$(meta "$j8" state))"; fi
+fi
+# the launch window, pinned with the hold seam: the metadata is published and
+# the command is still blocked on the barrier, which is where a stop has to be
+# honoured — after it, an irreversible command has already run.
+jh=$(newjob heldstop)
+( HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER="$TEST_ROOT/go-1" tj run "$jh" -- bash -c 'echo ran > held-ran.txt; sleep 30' >/dev/null 2>&1 ) &
+if ! wait_meta "$jh" run_pid; then fail "a stop during the launch cancels the command before it runs (no run_pid within 10s)"
+else
+  kill -TERM "$(meta "$jh" run_pid)"; sleep 1; touch "$TEST_ROOT/go-1"; wait_file "$jh/exit"
+  if [ "$(cat "$jh/exit" 2>/dev/null)" = 143 ] && [ "$(meta "$jh" state)" = stopped ] && [ ! -f "$repo/held-ran.txt" ] && ! kill -0 "$(meta "$jh" pid)" 2>/dev/null; then pass "a stop during the launch cancels the command before it runs"; else fail "a stop during the launch cancels the command before it runs (exit=$(cat "$jh/exit" 2>/dev/null), state=$(meta "$jh" state), ran=$([ -f "$repo/held-ran.txt" ] && echo yes || echo no))"; fi
+fi
+jh2=$(newjob heldgo); held=0
+( HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER="$TEST_ROOT/go-2" tj run "$jh2" -- bash -c 'echo released > held-go.txt' >/dev/null 2>&1 ) &
+if ! wait_meta "$jh2" run_pid; then fail "a launch held at the barrier runs as usual once it is released (no run_pid within 10s)"
+else
+  sleep 1; [ -f "$repo/held-go.txt" ] || held=1
+  touch "$TEST_ROOT/go-2"; wait_file "$jh2/exit"
+  if [ "$held" -eq 1 ] && [ "$(cat "$jh2/exit" 2>/dev/null)" = 0 ] && [ "$(meta "$jh2" state)" = exited ] && [ "$(cat "$repo/held-go.txt" 2>/dev/null)" = released ]; then pass "a launch held at the barrier runs as usual once it is released"; else fail "a launch held at the barrier runs as usual once it is released (held=$held, exit=$(cat "$jh2/exit" 2>/dev/null), state=$(meta "$jh2" state))"; fi
+fi
+# the finish window: the command is already gone, so a signal must not cost the
+# record. The workspace lock is held while the supervisor tries to write it.
+jf=$(newjob finishwin)
+mkdir -p "$lockdir"; printf 'pid=1\n' > "$lockdir/owner"
+( HYPERPOWERS_LOCK_WAIT_STEPS=2 tj run "$jf" -- bash -c 'exit 7' >/dev/null 2>&1 ) &
+if ! wait_meta "$jf" run_pid; then fail "a TERM during a lock-held finish does not cost the record (no run_pid within 10s)"; rm -rf "$lockdir"
+else
+  sleep 2; kill -TERM "$(meta "$jf" run_pid)" 2>/dev/null; sleep 1; rm -rf "$lockdir"; wait_file "$jf/exit"
+  if [ "$(cat "$jf/exit" 2>/dev/null)" = 7 ] && [ "$(meta "$jf" state)" = exited ]; then pass "a TERM during a lock-held finish does not cost the record"; else fail "a TERM during a lock-held finish does not cost the record (exit=$(cat "$jf/exit" 2>/dev/null), state=$(meta "$jf" state))"; fi
 fi
 # path trust: a directory outside the workspace, and a symlinked job directory, are refused.
 mkdir -p "$TEST_ROOT/outside"; cp "$j4/meta.json" "$TEST_ROOT/outside/"
@@ -99,6 +134,21 @@ j4b=$(newjob forged)
 node -e 'const fs=require("fs"),p=process.argv[1]+"/meta.json",m=JSON.parse(fs.readFileSync(p,"utf8"));m.plan_dir=process.argv[2];fs.writeFileSync(p,JSON.stringify(m))' "$j4b" "$repo2"
 out=$(tj run "$j4b" -- bash -c 'exit 0'); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(meta "$j4b" state)" = allocated ] && [ ! -e "$j4b/exit" ]; then pass "run refuses a job whose metadata names another repository"; else fail "run refuses a job whose metadata names another repository (rc=$rc: $out)"; fi
+
+echo "=== tracked-job conclude ==="
+# The terminal state and its ledger line are one transaction under the lock:
+# a state the hook can see but the ledger cannot name is a job that never
+# happened as far as a later session is concerned. The suite calls conclude
+# directly (the library seam), because run's own transitions carry no line.
+records() { HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; hp_ledger_records "$1"' "$TJ" "$ws/progress.md" 2>/dev/null; }
+cj=$(newjob ordering)
+node -e 'const fs=require("fs"),p=process.argv[1]+"/meta.json",m=JSON.parse(fs.readFileSync(p,"utf8"));m.state="running";fs.writeFileSync(p,JSON.stringify(m))' "$cj"
+out=$(HYPERPOWERS_TEST_FAIL_APPEND=1 HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; conclude "$1" running exited "exited code=0" "code:=0" >/dev/null; echo "rc=$?"' "$TJ" "$cj" 2>/dev/null)
+if [ "$out" = "rc=1" ] && [ "$(meta "$cj" state)" = running ] && [ "$(records | grep -c 'ordering exited')" = 0 ]; then pass "a ledger line that fails to land leaves the terminal state unwritten"; else fail "a ledger line that fails to land leaves the terminal state unwritten ($out, state=$(meta "$cj" state), records=$(records | grep -c 'ordering exited'))"; fi
+out=$(HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; conclude "$1" running exited "exited code=0" "code:=0" >/dev/null; echo "rc=$?"' "$TJ" "$cj" 2>/dev/null)
+if [ "$out" = "rc=0" ] && [ "$(meta "$cj" state)" = exited ] && [ "$(records | grep -c 'ordering exited')" = 1 ]; then pass "the retry appends the line once and writes the state with it"; else fail "the retry appends the line once and writes the state with it ($out, state=$(meta "$cj" state), records=$(records | grep -c 'ordering exited'))"; fi
+
+echo "=== tracked-job process identity ==="
 # process relationships (deviation 1), where ps works.
 if [ "$HAVE_PS" -eq 1 ]; then
   # The command outlives the readiness wait by a wide margin: ps must read a
@@ -110,7 +160,11 @@ if [ "$HAVE_PS" -eq 1 ]; then
   else
     cpid=$(meta "$j9" pid); rpid=$(meta "$j9" run_pid)
     cpg=$(ps -o pgid= -p "$cpid" | tr -d ' '); rpg=$(ps -o pgid= -p "$rpid" | tr -d ' '); csid=$(ps -o sess= -p "$cpid" | tr -d ' '); rsid=$(ps -o sess= -p "$rpid" | tr -d ' ')
-    if [ "$cpg" = "$cpid" ] && [ "$cpg" != "$rpg" ] && [ "$csid" = "$rsid" ]; then pass "the child leads its own process group inside the supervisor's session"; else fail "the child leads its own process group inside the supervisor's session (child $cpid pgid $cpg sid $csid; run $rpid pgid $rpg sid $rsid)"; fi
+    # csid = rsid alone does not discriminate: macOS prints 0 for any process
+    # that is not a session leader, so two zeros say nothing. The child must
+    # also not be a session leader, which is exactly what setsid would make it
+    # (sess becomes the leader's pid on macOS and on Linux).
+    if [ "$cpg" = "$cpid" ] && [ "$cpg" != "$rpg" ] && [ "$csid" = "$rsid" ] && [ "$csid" != "$cpid" ]; then pass "the child leads its own process group inside the supervisor's session"; else fail "the child leads its own process group inside the supervisor's session (child $cpid pgid $cpg sid $csid; run $rpid pgid $rpg sid $rsid)"; fi
     printf '%s\n' "child=$cpid pgid=$cpg sid=$csid run=$rpid pgid=$rpg sid=$rsid" > "$TEST_ROOT/groups.txt"; cat "$TEST_ROOT/groups.txt"
     kill -KILL -- "-$cpg" 2>/dev/null; wait_file "$j9/exit"
     if [ "$(cat "$j9/exit" 2>/dev/null)" = 137 ] && [ "$(meta "$j9" state)" = exited ]; then pass "a KILL to the child's group leaves the supervisor alive to record 137"; else fail "a KILL to the child's group leaves the supervisor alive to record 137 (exit=$(cat "$j9/exit" 2>/dev/null))"; fi

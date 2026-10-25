@@ -80,36 +80,53 @@ job_dir_ok() {
   [ "$(hp_key "$(meta_get "$dir" plan_dir)" 2>/dev/null)" = "$key" ] || return 1
   return 0
 }
-# ledger_append_once <jobdir> <text>: one job line under the workspace lock;
-# the line's "jobdir=<path>" plus its outcome word is the key checked in the
-# ledger before appending, so repeats and retries append nothing twice. The
-# key is read from the ledger's records, so a write fragment never passes for
-# one. hp_ledger_append does the writing: it runs under the lock this
-# function holds and never shortens the ledger.
-ledger_append_once() {
-  local dir=$1 text=$2 ledger plan_dir sid outcome
-  job_dir_ok "$dir" || return 1
-  ledger=$(meta_get "$dir" ledger); plan_dir=$(meta_get "$dir" plan_dir); sid=$(meta_get "$dir" session)
+# ledger_line_once <jobdir> <text>: one job line, with the workspace lock
+# already held by the caller. The line's "jobdir=<path>" plus its outcome word
+# is the key checked in the ledger before appending, so repeats and retries
+# append nothing twice. The key is read from the ledger's records, so a write
+# fragment never passes for one. hp_ledger_append does the writing and never
+# shortens the ledger. 0 when the line is there, 1 when it is not.
+ledger_line_once() {
+  local dir=$1 text=$2 ledger sid outcome
+  ledger=$(meta_get "$dir" ledger); sid=$(meta_get "$dir" session)
   outcome=${text%% *}
-  hp_lock "$plan_dir" 2>/dev/null || return 1
-  if grep -Fq -- "$(meta_get "$dir" name) $outcome" < <(hp_ledger_records "$ledger" 2>/dev/null | grep -F -- "jobdir=$dir"); then hp_unlock; return 0; fi
-  if hp_ledger_append "$ledger" "$(printf 'job %s %s: %s %s jobdir=%s' "$sid" "$(utc_ms)" "$(meta_get "$dir" name)" "$text" "$dir")"; then hp_unlock; return 0; fi
-  hp_unlock; return 1
+  if grep -Fq -- "$(meta_get "$dir" name) $outcome" < <(hp_ledger_records "$ledger" 2>/dev/null | grep -F -- "jobdir=$dir"); then return 0; fi
+  hp_ledger_append "$ledger" "$(printf 'job %s %s: %s %s jobdir=%s' "$sid" "$(utc_ms)" "$(meta_get "$dir" name)" "$text" "$dir")"
+}
+# ledger_append_once <jobdir> <text>: the same line for a caller that does not
+# hold the workspace lock. conclude writes its line through the body above
+# instead, inside the transaction that writes the state.
+ledger_append_once() {
+  local dir=$1 text=$2 rc
+  job_dir_ok "$dir" || return 1
+  hp_lock "$(meta_get "$dir" plan_dir)" 2>/dev/null || return 1
+  ledger_line_once "$dir" "$text"; rc=$?
+  hp_unlock
+  return "$rc"
 }
 
 # conclude <jobdir> <from> <to> <ledger text or ""> [key=value...]: a terminal
 # transition under the workspace lock, written only while the state is still
 # <from>, so concurrent wait, stop and run calls never overwrite each other's
-# outcome. Prints the state in force afterwards. Exit 0 when this call wrote
-# it, 2 when another writer got there first, 1 when the lock was not taken.
+# outcome. The caller has already put <jobdir> through job_dir_ok, which is
+# what makes meta's plan_dir safe to lock. Prints the state in force
+# afterwards. Exit 0 when this call wrote it, 2 when another writer got there
+# first, 1 when the lock was not taken or the transition could not be written.
 conclude() {
   local dir=$1 from=$2 to=$3 text=$4 cur; shift 4
   hp_lock "$(meta_get "$dir" plan_dir)" 2>/dev/null || return 1
+  # hp_lock arms INT and TERM traps of its own that unlock and exit. A
+  # supervisor finishing a job must not die here: its command is already
+  # gone and the record has to land, so it asks for them to stay ignored.
+  [ "$FINISHING" -eq 0 ] || trap '' TERM INT HUP
   cur=$(meta_get "$dir" state)
   if [ "$cur" != "$from" ]; then hp_unlock; printf '%s' "$cur"; return 2; fi
+  # The ledger line goes first, inside the same lock: a terminal state the
+  # ledger cannot name is invisible to every later reader, and the once-key
+  # check means the caller's retry appends nothing twice.
+  if [ -n "$text" ] && ! ledger_line_once "$dir" "$text"; then hp_unlock; return 1; fi
   meta_set "$dir" "state=$to" "ended=$(utc_ms)" "$@" || { hp_unlock; return 1; }
   hp_unlock
-  [ -z "$text" ] || ledger_append_once "$dir" "$text"
   printf '%s' "$to"
 }
 
@@ -168,6 +185,8 @@ cmd_new() {
 # through job control (deviation 1) and starts only after the metadata is
 # durable (the FIFO barrier).
 RUN_DIR=""; RUN_PID=""; RUN_PGID=""; RUN_STOPPED=0; RUN_PENDING_STOP=0
+# Set while the supervisor writes its terminal record; conclude reads it.
+FINISHING=0
 # group_alive: any member of the command's group, leader or descendant; kill -0
 # on the negative group id asks the kernel, so it needs no ps.
 group_alive() { kill -0 -- "-$RUN_PGID" 2>/dev/null; }
@@ -180,7 +199,8 @@ stop_group() { # TERM, grace, then KILL while any member survives; marks the job
   group_alive && kill -KILL -- "-$RUN_PGID" 2>/dev/null
 }
 finish_run() { # <code>
-  local code=$1 state=exited survivors=-1 i=0 rc
+  local code=$1 state=exited survivors=-1 i=0 j=0 rc
+  FINISHING=1
   [ "$RUN_STOPPED" -eq 1 ] && state=stopped
   if have_ps; then survivors=$(ps -o pid= -g "$RUN_PGID" 2>/dev/null | grep -c .); elif ! group_alive; then survivors=0; fi
   # The terminal state goes first, under the lock and only from running, and
@@ -196,11 +216,23 @@ finish_run() { # <code>
     if [ "$i" -ge 5 ]; then printf 'tracked-job: terminal state %s not recorded (lock held); exit=%s\n' "$state" "$code" >> "$RUN_DIR/out.log"; break; fi
     sleep 1
   done
-  printf '%s\n' "$code" > "$RUN_DIR/exit.tmp" && mv "$RUN_DIR/exit.tmp" "$RUN_DIR/exit"
+  # The exit file is published last, so a reader that sees it also sees the
+  # state. A write that will not land is retried and then noted in out.log:
+  # the code is in meta.json either way, which is where wait falls back to.
+  while :; do
+    if printf '%s\n' "$code" > "$RUN_DIR/exit.tmp" && mv "$RUN_DIR/exit.tmp" "$RUN_DIR/exit"; then break; fi
+    j=$((j + 1))
+    if [ "$j" -ge 3 ]; then
+      rm -f "$RUN_DIR/exit.tmp"
+      printf 'tracked-job: exit file not written; the code is in meta.json (code=%s)\n' "$code" >> "$RUN_DIR/out.log"
+      break
+    fi
+    sleep 0.2
+  done
 }
 abort_launch() { # <reason>
-  kill -KILL -- "-$RUN_PGID" 2>/dev/null; wait "$RUN_PID" 2>/dev/null
-  rmdir "$RUN_DIR/launch.lock" 2>/dev/null; rm -f "$RUN_DIR/go"
+  [ -z "$RUN_PID" ] || { kill -KILL -- "-$RUN_PGID" 2>/dev/null; wait "$RUN_PID" 2>/dev/null; }
+  rmdir "$RUN_DIR/launch.lock" 2>/dev/null; rm -f "$RUN_DIR/go" 2>/dev/null
   meta_set "$RUN_DIR" "state=allocated" "launch_error=$1 at $(utc_ms)" >/dev/null 2>&1
   echo "status=error"; exit 2
 }
@@ -210,15 +242,18 @@ cmd_run() {
   dir=$1; shift 2
   job_dir_ok "$dir" || { echo "status=error"; exit 2; }
   [ "$(meta_get "$dir" state)" = allocated ] || { echo "status=already-launched"; exit 2; }
-  mkdir "$dir/launch.lock" 2>/dev/null || { echo "status=already-launched"; exit 2; }
   RUN_DIR=$dir
-  # From here to the supervise loop a signal must not kill the supervisor
-  # under its default disposition: between the spawn and the trap below that
-  # would leave the command running with nothing watching it and the job
-  # recorded running for ever. The request is remembered and swept as soon
-  # as the command is released.
+  # From here on a signal must not kill the supervisor under its default
+  # disposition. launch.lock below outlives the process: dying between taking
+  # it and this trap would leave every later run reporting already-launched
+  # for a job that never started, and dying after the spawn would leave the
+  # command running with nothing watching it. The request is remembered and
+  # acted on at the barrier, the last point at which the command can still be
+  # cancelled rather than stopped after the fact.
   trap 'RUN_PENDING_STOP=1' TERM INT HUP
-  rm -f "$dir/go"; mkfifo "$dir/go" || { rmdir "$dir/launch.lock"; echo "status=error"; exit 2; }
+  mkdir "$dir/launch.lock" 2>/dev/null || { echo "status=already-launched"; exit 2; }
+  rm -f "$dir/go" 2>/dev/null
+  mkfifo "$dir/go" 2>/dev/null || abort_launch "the launch barrier could not be created"
   : > "$dir/out.log"
   set -m
   ( exec env "TRACKED_JOB_DIR=$dir" bash -c 'read -r _ < "$0/go" || exit 97; exec "$@"' "$dir" "$@" ) >> "$dir/out.log" 2>&1 &
@@ -227,6 +262,24 @@ cmd_run() {
   cmd_json=$(node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' "$@")
   if [ -n "${HYPERPOWERS_TEST_FAIL_META:-}" ] || ! meta_set "$dir" "pid:=$RUN_PID" "pgid:=$RUN_PGID" "run_pid:=$$" "run_lstart=$(lstart_of $$)" "lstart=$(lstart_of "$RUN_PID")" "command:=$cmd_json" "launched=$(utc_ms)" "state=running"; then
     abort_launch "metadata write failed"
+  fi
+  # Test seam: hold the launch open here, metadata published and the command
+  # still blocked, so a test can place a signal inside the launch window.
+  if [ -n "${HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER:-}" ]; then
+    i=0; while [ "$i" -lt 100 ] && [ ! -e "$HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER" ]; do sleep 0.1; i=$((i + 1)); done
+  fi
+  # A stop that arrived during the launch is honoured before the command is
+  # released: the child is still blocked reading the barrier, so sweeping its
+  # group now means the command never runs at all, which is the whole point
+  # of cancelling something irreversible. The job is already running in
+  # meta.json, so it concludes exactly as a stop during supervision does.
+  if [ "$RUN_PENDING_STOP" -ne 0 ]; then
+    trap '' TERM INT HUP
+    stop_group
+    rm -f "$dir/go"
+    wait "$RUN_PID"; code=$?
+    finish_run "$code"
+    return 0
   fi
   # Open the barrier: the child is blocked in read on the FIFO. A writer that
   # cannot open within five seconds means the child died before reading.
@@ -241,13 +294,21 @@ cmd_run() {
     if [ -e "$dir/stop-request" ] && [ "$RUN_STOPPED" -eq 0 ]; then stop_group; fi
   done
   wait "$RUN_PID"; code=$?
-  trap - TERM INT HUP
+  # The command is gone and the record has to land: a signal here would leave
+  # the job reading running for ever, with an exit status nobody can see. The
+  # three are ignored across the finish, which the supervisor exits right
+  # after. (conclude keeps them ignored under hp_lock's own traps.)
+  trap '' TERM INT HUP
   finish_run "$code"
 }
 
-case "${1:-}" in
-  new) shift; cmd_new "$@" ;;
-  run) shift; cmd_run "$@" ;;
-  wait|stop) echo "tracked-job: $1 arrives with Task 4" >&2; exit 2 ;;
-  *) usage ;;
-esac
+# The suite sources this file to exercise the shared functions on their own;
+# a sourced copy must not run a subcommand.
+if [ "${HYPERPOWERS_TEST_LIB_ONLY:-}" != 1 ]; then
+  case "${1:-}" in
+    new) shift; cmd_new "$@" ;;
+    run) shift; cmd_run "$@" ;;
+    wait|stop) echo "tracked-job: $1 arrives with Task 4" >&2; exit 2 ;;
+    *) usage ;;
+  esac
+fi

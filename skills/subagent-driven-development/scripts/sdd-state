@@ -1279,6 +1279,13 @@ apply_target() {
   # Rows are read NUL-delimited: the porcelain format C-quotes a path with
   # a space or an unusual byte, and a quoted row would match none of the
   # exemptions below. A rename row carries a second field, consumed here.
+  # -uall lists untracked files one by one: with no tracked entry under
+  # plans/, git would otherwise collapse the directory to a single
+  # "?? plans/" row, which no exemption names, so one leftover there would
+  # hold every sync and the advice would name the dossier root.
+  # snapshot_pending runs before this scan in cmd_sync, so a workspace not
+  # yet snapshotted is tracked by the time the scan runs and -uall cannot
+  # refuse it.
   refused=0
   while IFS= read -r -d '' line; do
     [ -n "$line" ] || continue
@@ -1308,7 +1315,7 @@ apply_target() {
     esac
     [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is not part of a plan workspace and holds the apply; inspect it, move or delete it, then run sdd-state sync again" >&2
     refused=1
-  done < <(git -C "$CO" status --porcelain -z -- plans/ 2>/dev/null)
+  done < <(git -C "$CO" status --porcelain -z -uall -- plans/ 2>/dev/null)
   if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
   # The incoming tree is inspected whole before the checkout materializes
   # any of it: the same validation the creation of a checkout runs, so a

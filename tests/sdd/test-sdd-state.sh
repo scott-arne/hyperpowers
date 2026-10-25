@@ -1613,6 +1613,23 @@ if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && ! ls -d "$co_b/plans/.re
 advance 'line three'
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -d "$co_b/plans/$(basename "$wsf")" ] && grep -q '^line three$' "$wsb/progress.md"; then pass "the next sync after that crash finishes the apply and keeps going"; else fail "the next sync after that crash finishes the apply and keeps going (rc=$rc: $out)"; fi
+# A leftover as the only entry under plans/: with no tracked entry there,
+# git collapses the directory to one `?? plans/` row, which no exemption
+# names and whose advice (move or delete the dossier root) is wrong; the
+# scan lists untracked files one by one, so the row is the leftover's own.
+make_pair p11b
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+co_b11="$STATE_ROOT/$(state_key "$PAIR_B")"
+sole11="$co_b11/plans/.removing-gone-1234abcd-999"; mkdir -p "$sole11"; printf 'orphaned copy\n' > "$sole11/progress.md"
+wsa=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p11b.out" 2> "$TEST_ROOT/p11b.err"; rc=$?
+out=$(cat "$TEST_ROOT/p11b.out")
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ -f "$co_b11/plans/$(basename "$wsa")/progress.md" ] && [ -d "$sole11" ] && ! grep -q 'plans/ is not part of a plan workspace' "$TEST_ROOT/p11b.err"; then pass "a leftover that is the only entry under plans/ does not stop the apply"; else fail "a leftover that is the only entry under plans/ does not stop the apply (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p11b.err"))"; fi
+rm -rf "$sole11"
 
 echo ""
 echo "=== containment on the apply path ==="

@@ -194,9 +194,13 @@ removes any stamp); creation requires the stamp to name the configured
 `hyperpowers.stateRemote` and `hyperpowers.stateBranch` exactly and to
 carry the fingerprint of that remote's current fetch URL, so a changed
 remote, branch or URL, an empty stamp from before 6.17.0, or a remote
-added after a `no-remote` sync means a fresh `sync`). The stamp governs
-creation only: a state branch that already exists here is continued, and the
-next `sync` reconciles it with whatever the remote holds.
+added after a `no-remote` sync means a fresh `sync`). A `sync` whose
+remote, branch or URL changed while its fetch ran, or whose fingerprint
+cannot be computed (node is required), ends `status=error` and stamps
+nothing, so the stamp always names the endpoint that was fetched. The
+stamp governs creation only: a state branch that already exists here is
+continued, and the next `sync` reconciles it with whatever the remote
+holds.
 Without either, `sdd-dir` exits 2 with `status=needs-sync`: a fresh host
 that is offline must not invent an empty dossier while a remote one may
 exist. `sync --assume-absent PLAN` writes the stamp without fetching, for
@@ -337,7 +341,7 @@ callers without a plan). Fetches
 `<key>.fetched` stamp (`<remote> <branch> <fingerprint>`, the fingerprint
 being the first 12 hex digits of the SHA-256 of the remote's fetch URL, or
 `none` when the remote has no URL) on every outcome except
-`offline`, `offline-no-state` and `no-remote` (which removes any stamp), runs `ensure_checkout`, and reconciles under the lock.
+`offline`, `offline-no-state` and `no-remote` (which removes any stamp), runs `ensure_checkout`, and reconciles under the lock. A remote, branch or URL that changed while the fetch ran, or a fingerprint that cannot be computed, ends the sync with `status=error` and nothing stamped.
 Reconciliation starts by snapshotting every plan directory with pending
 tracked changes, so the working tree equals the local tip S and no local
 edit can be lost, then compares S with the fetched tip R:

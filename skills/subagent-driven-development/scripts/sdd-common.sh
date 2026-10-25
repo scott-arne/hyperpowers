@@ -72,7 +72,7 @@ hp_remote_fingerprint() {
   # The URL may carry credentials: it reaches node on stdin, never in argv
   # or the environment. A digest that cannot be computed is a failure, not
   # an empty identity: callers fail closed on return 1.
-  fp=$(printf '%s' "$url" | node -e 'let d="";process.stdin.on("data",c=>{d+=c}).on("end",()=>{process.stdout.write(require("crypto").createHash("sha256").update(d).digest("hex").slice(0,12))})' 2>/dev/null) || return 1
+  fp=$(printf '%s' "$url" | node -e 'const b=[];process.stdin.on("data",c=>{b.push(c)}).on("end",()=>{process.stdout.write(require("crypto").createHash("sha256").update(Buffer.concat(b)).digest("hex").slice(0,12))})' 2>/dev/null) || return 1
   case "$fp" in ????????????) ;; *) return 1 ;; esac
   case "$fp" in *[!0-9a-f]*) return 1 ;; esac
   printf '%s\n' "$fp"

@@ -956,7 +956,7 @@ ledger_apply() {
 # every path the target tracks under it that is still missing afterwards
 # is published from the target.
 apply_files() {
-  local S=$1 target=$2 path dir tmp half ws i last_ws="" touched_ws=()
+  local S=$1 target=$2 path dir tmp half ws i meta last_ws="" touched_ws=()
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     hp_contained "$CO" "$path" || return 4
@@ -1017,25 +1017,33 @@ apply_files() {
   done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
   # Each workspace this apply wrote into or removed from comes back whole:
   # every path the target tracks under it that is still missing is
-  # published from the target. A link at such a path is refused and named,
-  # never skipped: skipped, the next snapshot would commit it onto the
-  # branch. The publish is one link(2) from a temporary copy, so a file a
-  # writer creates between the check and the publish is theirs.
+  # published from the target, with its tracked mode. A link at such a
+  # path is refused and named, never skipped: skipped, the next snapshot
+  # would commit it onto the branch. The publish is one link(2) from a
+  # temporary copy, so a file a writer creates between the check and the
+  # publish is theirs; a ledger a writer creates there is reconciled,
+  # never adopted.
   i=0
   while [ "$i" -lt "${#touched_ws[@]}" ]; do
     ws=${touched_ws[$i]}; i=$((i + 1))
-    while IFS= read -r path; do
+    while IFS=$'\t' read -r meta path; do
       [ -n "$path" ] || continue
       hp_contained "$CO" "$path" || return 4
       [ ! -e "$CO/$path" ] || continue
       mkdir -p "$(dirname "$CO/$path")" || return 2
       tmp="$CO/$path.restore.$$"; rm -f "$tmp"
       git -C "$CO" show "$target:$path" > "$tmp" || { rm -f "$tmp"; return 2; }
+      case "$meta" in 100755*) chmod 755 "$tmp" || { rm -f "$tmp"; return 2; } ;; esac
       # Test hook: a writer creates the file right before the publish.
       case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-restore:*) [ "${HYPERPOWERS_TEST_WRITER_AT#sync-before-restore:}" != "$path" ] || printf 'concurrent write\n' > "$CO/$path" ;; esac
-      if ! ln "$tmp" "$CO/$path" 2>/dev/null; then rm -f "$tmp"; [ -e "$CO/$path" ] || return 2; fi
+      if ! ln "$tmp" "$CO/$path" 2>/dev/null; then
+        rm -f "$tmp"
+        [ -e "$CO/$path" ] || return 2
+        case "$path" in plans/*/progress.md) [ -f "$CO/$path" ] || return 2; ledger_apply "$path" "$S" "$target" || return $? ;; esac
+        continue
+      fi
       rm -f "$tmp"
-    done < <(git -C "$CO" ls-tree -r --name-only "$target" -- "plans/$ws")
+    done < <(git -C "$CO" ls-tree -r "$target" -- "plans/$ws")
   done
   return 0
 }
@@ -1057,7 +1065,7 @@ say_link_repair() {
 # leave it in place and say so, and every publishing subcommand refuses
 # until the tree is repaired.
 recover_apply() {
-  local S="" target="" rc head j path tracked
+  local S="" target="" rc head j path dir tracked
   # Both paths this helper writes at the checkout root are read below, the
   # journals before anything else: a link at either one would have the
   # recovery walk, and finish, whatever it points at.
@@ -1079,8 +1087,13 @@ recover_apply() {
   fi
   # A new ledger, or a restored file, interrupted between its temporary
   # copy and its publish leaves that copy inside a workspace, where a
-  # snapshot would commit it.
-  rm -f "$CO"/plans/*/progress.md.new.* "$CO"/plans/*/*.restore.* 2>/dev/null
+  # snapshot would commit it. Only real workspace directories are swept: a
+  # link at plans/<ws> is refused further down, and nothing is removed
+  # through it; the pid suffix keeps a tracked name out of the pattern.
+  for dir in "$CO"/plans/*/; do
+    [ -d "$dir" ] && [ ! -L "${dir%/}" ] || continue
+    rm -f "$dir"progress.md.new.* "$dir"*.restore.[0-9]* 2>/dev/null
+  done
   for j in "$CO"/.rewrite/*.journal; do
     [ -f "$j" ] || continue
     rewrite_finish "${j%.journal}" || { echo "sdd-state: an interrupted ledger rewrite left $j and finishing it failed; check the ledger it names, then remove it and its .staged file" >&2; return 2; }

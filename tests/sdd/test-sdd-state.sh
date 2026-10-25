@@ -1111,9 +1111,9 @@ printf 'second report\n' > "$wsa/task-2-report.md"; run_state "$PAIR_A" snapshot
 run_state "$PAIR_B" sync docs/plan.md >/dev/null
 rm -f "$wsa/task-2-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
-moved7i="$TEST_ROOT/ws-7i-moved"; mv "$wsb" "$moved7i"; ln -s "$moved7i" "$wsb"
+moved7i="$TEST_ROOT/ws-7i-moved"; mv "$wsb" "$moved7i"; ln -s "$moved7i" "$wsb"; printf 'x\n' > "$moved7i/keep.restore.123"
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7i.err"); rc=$?
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7i.err" && [ "$(cat "$moved7i/task-2-report.md")" = "second report" ]; then pass "a deletion-only apply met by a link at the workspace directory keeps the marker and names the repair"; else fail "a deletion-only apply met by a link at the workspace directory names the repair (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7i.err"))"; fi
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7i.err" && [ "$(cat "$moved7i/task-2-report.md")" = "second report" ] && [ -f "$moved7i/keep.restore.123" ]; then pass "a deletion-only apply met by a link at the workspace directory keeps the marker, names the repair, and sweeps nothing through the link"; else fail "a deletion-only apply met by a link at the workspace directory names the repair and sweeps nothing through the link (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7i.err"))"; fi
 rm "$wsb"
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7h: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ ! -e "$wsb/task-2-report.md" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "after the repair a deletion-only recovery brings the workspace back whole"; else fail "after the repair a deletion-only recovery brings the workspace back whole (rc=$rc: $out: $(git -C "$co_b" status --porcelain -- plans/ | tr '\n' '|'))"; fi
@@ -1135,6 +1135,27 @@ printf 'report\n' > "$wsb/task-1-report.md"; run_state "$PAIR_B" snapshot docs/p
 # B pushed last, so A is behind: without this its snapshot below would be
 # rejected silently and the remote finish would never reach B.
 run_state "$PAIR_A" sync docs/plan.md >/dev/null
+# A ledger a writer creates right before the restore publishes it is
+# reconciled, never adopted: the branch's ledger stays intact and the sync
+# stops with the marker, as for any ledger rewritten locally.
+printf 'third report\n' > "$wsa/task-3-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+rm -f "$wsa/task-3-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/progress.md"
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-before-restore:plans/$(basename "$wsb")/progress.md" bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && [ "$(cat "$wsb/progress.md")" = "concurrent write" ] && git -C "$co_b" show "refs/heads/hyperpowers/state:plans/$(basename "$wsb")/progress.md" | grep -q '^Task 7k: complete'; then pass "a writer's ledger met by the restore is reconciled, never adopted: the branch's ledger is intact and the sync stops"; else fail "a writer's ledger met by the restore is reconciled, never adopted (rc=$rc: $out: $(cat "$wsb/progress.md" 2>/dev/null | head -n 2 | tr '\n' '|'))"; fi
+rm -f "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7k: complete' "$wsb/progress.md" && [ ! -e "$wsb/task-3-report.md" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "with the writer's ledger removed the restore publishes the branch's"; else fail "with the writer's ledger removed the restore publishes the branch's (rc=$rc: $out)"; fi
+# A restored file keeps its tracked mode.
+printf '#!/bin/sh\nexit 0\n' > "$wsa/run.sh"; chmod 755 "$wsa/run.sh"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+printf 'Task 7m: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/run.sh"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && [ -x "$wsb/run.sh" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "a restored file keeps its tracked mode"; else fail "a restored file keeps its tracked mode (rc=$rc: $out: $(ls -l "$wsb/run.sh" 2>&1))"; fi
 
 # A remote finish racing a local writer: refused, nothing changed. The seam
 # writes after the pending check and right before the rename.

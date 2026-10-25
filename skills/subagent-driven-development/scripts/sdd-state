@@ -718,7 +718,8 @@ cmd_finish() {
 # runs implicitly.
 cmd_prune() {
   local repo="" days=30 apply=0 repo_dir co br d name now cutoff c key list="" dead_list="" i tip gd ck
-  local plans=() dead=() tombs=()
+  local tomb_list="" quar_list="" tomb_name tomb_pid tomb_ws tracked t q quar
+  local plans=() dead=() tombs=() tomb_dead=() quar_idle=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --days) [ $# -ge 2 ] || usage; days=$2; shift 2 ;;
@@ -741,6 +742,26 @@ cmd_prune() {
     lc=$(git -C "$co" log -1 --format=%ct -- "plans/$1" 2>/dev/null)
     [ -n "$lc" ] && [ "$lc" -lt "$cutoff" ] && [ -z "$(find "$co/plans/$1" -type f -mtime -"$days" 2>/dev/null | head -n 1)" ]
   }
+  # <tomb dir> <pid> <ws> -> 0 when the copy may be quarantined: its
+  # process is gone, nothing in it is newer than N days, and the branch does
+  # not track its workspace. A traversal or a tracking lookup that fails
+  # (not an empty answer) keeps it.
+  tomb_qualifies() {
+    local newer
+    hp_pid_gone "$2" || return 1
+    newer=$(find "$1" -mtime -"$days" 2>/dev/null) || return 1
+    [ -z "$newer" ] || return 1
+    tracked=$(git -C "$co" ls-tree -d "refs/heads/$br" -- "plans/$3" 2>/dev/null) || return 1
+    [ -z "$tracked" ]
+  }
+  # <quarantined dir> -> 0 when nothing in it is newer than N days: the
+  # quarantine touched it when it was made, and a late writer refreshes it,
+  # so the clock measures silence since the last of those.
+  quarantine_idle() {
+    local newer
+    newer=$(find "$1" -mtime -"$days" 2>/dev/null) || return 1
+    [ -z "$newer" ]
+  }
   # With --apply the selection itself runs under the lock, and each candidate
   # is revalidated right before its removal; a workspace that became active
   # in between is kept and reported.
@@ -755,6 +776,24 @@ cmd_prune() {
       list="$list,$(enc "$name")"
     done
   fi
+  # Copies killed removals left at plans/.removing-<ws>-<pid>, and the ones
+  # an earlier --apply quarantined at plans/.pruned-<ws>-<pid>. A tracked
+  # workspace's copy comes back through sync's restore and is never listed.
+  if [ -e "$co/.git" ]; then
+    for t in "$co"/plans/.removing-*; do
+      [ -d "$t" ] && [ ! -L "$t" ] || continue
+      tomb_name=${t##*/}; tomb_pid=${tomb_name##*-}; tomb_ws=${tomb_name#.removing-}; tomb_ws=${tomb_ws%-*}
+      case "$tomb_pid" in ''|*[!0-9]*) continue ;; esac
+      tomb_qualifies "$t" "$tomb_pid" "$tomb_ws" || continue
+      tomb_dead[${#tomb_dead[@]}]=$t; tomb_list="$tomb_list,$(enc "$tomb_name")"
+    done
+    for q in "$co"/plans/.pruned-*; do
+      [ -d "$q" ] && [ ! -L "$q" ] || continue
+      quarantine_idle "$q" || continue
+      quar_idle[${#quar_idle[@]}]=$q; quar_list="$quar_list,$(enc "${q##*/}")"
+    done
+  fi
+  tomb_list=${tomb_list#,}; quar_list=${quar_list#,}
   # A checkout is dead when the directory its .git file names is gone. A
   # relative gitdir (worktree.useRelativePaths) resolves against the
   # checkout; an unparsable .git file is not evidence that the clone is gone.
@@ -766,7 +805,7 @@ cmd_prune() {
     if [ ! -d "$gd" ]; then dead[${#dead[@]}]=$(basename "$c"); dead_list="$dead_list,$(basename "$c")"; fi
   done
   list=${list#,}; dead_list=${dead_list#,}
-  if [ "$apply" -eq 0 ]; then echo "status=listed plans=$list checkouts=$dead_list"; return 0; fi
+  if [ "$apply" -eq 0 ]; then echo "status=listed plans=$list checkouts=$dead_list tombs=$tomb_list quarantined=$quar_list"; return 0; fi
   local removed=() removed_paths=() kept_list="" removed_list=""
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in prune-before-remove:*) printf 'concurrent write\n' >> "$co/${HYPERPOWERS_TEST_WRITER_AT#prune-before-remove:}" ;; esac
   CO=$co
@@ -792,6 +831,47 @@ cmd_prune() {
     i=0
     while [ "$i" -lt "${#tombs[@]}" ]; do discard_tomb "${tombs[$i]}" || true; i=$((i + 1)); done
   fi
+  # Phase one: a listed copy is renamed to its quarantine name under the
+  # lock, re-checked on the renamed copy (a writer with the directory open
+  # appends into it, which the mtime check sees), and touched so the clock
+  # starts again; any doubt puts it back. Nothing is deleted here, so a
+  # writer that still holds the copy open loses no byte.
+  tomb_list=""
+  i=0
+  while [ "$i" -lt "${#tomb_dead[@]}" ]; do
+    t=${tomb_dead[$i]}; i=$((i + 1))
+    tomb_name=${t##*/}; tomb_pid=${tomb_name##*-}; tomb_ws=${tomb_name#.removing-}; tomb_ws=${tomb_ws%-*}
+    [ -d "$t" ] && [ ! -L "$t" ] || continue
+    quar="$co/plans/.pruned-${tomb_name#.removing-}"
+    [ ! -e "$quar" ] && [ ! -L "$quar" ] || continue
+    mv "$t" "$quar" 2>/dev/null || continue
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in prune-after-tomb-rename:*) [ "${HYPERPOWERS_TEST_WRITER_AT#prune-after-tomb-rename:}" != "$tomb_name" ] || touch "$quar/progress.md" ;; esac
+    if ! tomb_qualifies "$quar" "$tomb_pid" "$tomb_ws"; then
+      mv "$quar" "$t" 2>/dev/null || echo "sdd-state: the copy renamed to $quar could not be put back at $t; move it back by hand" >&2
+      continue
+    fi
+    touch "$quar"
+    tomb_list="$tomb_list,$(enc "$tomb_name")"
+  done
+  tomb_list=${tomb_list#,}
+  # Phase two: a quarantined copy that has been silent for N days is
+  # renamed aside once more, re-checked, deleted, and verified gone.
+  quar_list=""
+  i=0
+  while [ "$i" -lt "${#quar_idle[@]}" ]; do
+    q=${quar_idle[$i]}; i=$((i + 1))
+    [ -d "$q" ] && [ ! -L "$q" ] || continue
+    [ ! -e "$q.pruning-$$" ] && [ ! -L "$q.pruning-$$" ] || continue
+    mv "$q" "$q.pruning-$$" 2>/dev/null || continue
+    if ! quarantine_idle "$q.pruning-$$"; then
+      mv "$q.pruning-$$" "$q" 2>/dev/null || echo "sdd-state: the copy renamed aside at $q.pruning-$$ could not be put back at $q; move it back by hand" >&2
+      continue
+    fi
+    rm -rf "$q.pruning-$$" 2>/dev/null
+    if [ -e "$q.pruning-$$" ] || [ -L "$q.pruning-$$" ]; then echo "sdd-state: the copy at $q.pruning-$$ could not be removed; remove it by hand" >&2; continue; fi
+    quar_list="$quar_list,$(enc "${q##*/}")"
+  done
+  quar_list=${quar_list#,}
   hp_unlock
   list=${removed_list#,}; kept_list=${kept_list#,}
   # Each dead checkout goes under its own key's lock: the gitdir is re-read
@@ -812,7 +892,7 @@ cmd_prune() {
     dead_list="$dead_list,$key"
   done
   dead_list=${dead_list#,}
-  echo "status=pruned plans=$list kept=$kept_list checkouts=$dead_list"
+  echo "status=pruned plans=$list kept=$kept_list checkouts=$dead_list tombs=$tomb_list quarantined=$quar_list"
 }
 
 # --- sync --------------------------------------------------------------------
@@ -1204,7 +1284,10 @@ apply_target() {
       # A copy a killed removal left aside is not a concurrent write: it is
       # cleared by finish, by sdd-dir and by the restore above, and
       # treating it as one would wedge every later sync on this repository.
-      case "$path" in "plans/.removing-"*) continue ;; esac
+      # A copy prune quarantined at plans/.pruned-* is as much a removal's
+      # leftover as a tomb, and waits there for a later prune; holding the
+      # apply on it would wedge every sync for as long as it sits.
+      case "$path" in "plans/.removing-"*|"plans/.pruned-"*) continue ;; esac
       # A tracked file missing from a workspace: the restore above left the
       # copy that holds it only when the workspace is occupied again, and
       # named it there, so nothing more is said about this row; telling a

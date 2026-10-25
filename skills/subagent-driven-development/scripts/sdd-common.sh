@@ -80,18 +80,26 @@ hp_utc_now_ms() { node -e 'process.stdout.write(new Date().toISOString())' 2>/de
 
 # hp_ledger_append LEDGER LINE: the one way a machine-written line reaches a
 # ledger. The ledger stays append-only (the controller appends prose to it
-# without the lock, so a stage-and-rename would drop a concurrent append). A
-# short write can leave a fragment; the next append ends it as its own line
-# rather than gluing the new line onto it, and success means the tail really
-# is LINE, so a fragment that already reads like a record never counts.
+# without the lock, so a stage-and-rename would drop a concurrent append).
+# A failed write can leave an unterminated fragment. The next append repairs
+# it: the fragment is saved as one line in fragments.log beside the ledger,
+# then the ledger is truncated back to its last newline. That is safe because
+# machine writers hold the workspace lock and a controller's prose append is
+# one write call ending in a newline, so an unterminated tail is always a
+# failed write. Success means the tail really is LINE.
 hp_ledger_append() { # <ledger> <line>
-  local ledger=$1 line=$2 last
+  local ledger=$1 line=$2 last frag cut
   if [ -s "$ledger" ]; then
     last=$(tail -c 1 "$ledger" | od -An -c | tr -d ' ')
-    if [ "$last" != '\n' ]; then printf '\n' >> "$ledger" || return 1; fi
+    if [ "$last" != '\n' ]; then
+      frag=$(node -e 'const b=require("fs").readFileSync(process.argv[1]);process.stdout.write(b.subarray(b.lastIndexOf(10)+1).toString())' "$ledger") || return 1
+      printf '%s %s\n' "$(hp_utc_now)" "$frag" >> "$(dirname "$ledger")/fragments.log" || return 1
+      node -e 'const fs=require("fs");fs.truncateSync(process.argv[1],fs.readFileSync(process.argv[1]).lastIndexOf(10)+1)' "$ledger" || return 1
+    fi
   fi
   if [ -n "${HYPERPOWERS_TEST_FAIL_APPEND:-}" ]; then
-    printf '%s' "${line:0:12}" >> "$ledger"
+    cut=$(( ${#line} > 15 ? ${#line} - 15 : 0 ))
+    printf '%s' "${line:0:$cut}" >> "$ledger"
   else
     printf '%s\n' "$line" >> "$ledger" || return 1
   fi

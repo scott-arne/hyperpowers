@@ -1963,24 +1963,28 @@ out=$(run_state "$repo30" handback docs/plan.md --reason "BLOCKED because Task 2
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(wc -l < "$ws30/progress.md")" = "$before30" ]; then pass "handback refuses a reason that carries a completion mark"; else fail "handback refuses a reason that carries a completion mark (rc=$rc: $out)"; fi
 out=$(run_state "$repo30" complete docs/plan.md 2 --commits 7777777..8888888 --session s30); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^status=complete task=2 appended=1 snapshot='; then pass "complete still appends after the refused handback"; else fail "complete still appends after the refused handback (rc=$rc: $out)"; fi
-# appends terminate a partial line and verify their own tail
+# appends repair a write fragment and the completion readers ignore one
 hdr30=$(printf '# SDD ledger — plan: docs/plan.md\nsession s30: mode worktree started\n')
-reset30() { printf '%s\n' "$hdr30" > "$ws30/progress.md"; }
+reset30() { printf '%s\n' "$hdr30" > "$ws30/progress.md"; rm -rf "$ws30/claims" "$ws30/fragments.log"; }
 last30() { tail -c 1 "$ws30/progress.md" | od -An -c | tr -d ' '; }
-canon30='Task 2: complete (commits 1111111..2222222, review clean)'
 reset30; printf 'Task 2: complete (commits 1111111..22' >> "$ws30/progress.md"
 out=$(run_state "$repo30" complete docs/plan.md 2 --commits 1111111..2222222 --session s30); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'appended=1' && [ "$(grep -Fxc "$canon30" "$ws30/progress.md")" = 1 ] && grep -Fxq 'Task 2: complete (commits 1111111..22' "$ws30/progress.md"; then pass "complete ends a pre-truncated line and appends the canonical one"; else fail "complete ends a pre-truncated line and appends the canonical one (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'appended=1' && [ "$(grep -Fxc 'Task 2: complete (commits 1111111..2222222, review clean)' "$ws30/progress.md")" = 1 ] && ! grep -q '1111111\.\.22$' "$ws30/progress.md" && grep -q ' Task 2: complete (commits 1111111..22$' "$ws30/fragments.log"; then pass "complete moves a pre-truncated fragment to fragments.log and appends the canonical line"; else fail "complete moves a pre-truncated fragment to fragments.log and appends the canonical line (rc=$rc: $out)"; fi
 reset30
 out=$(HYPERPOWERS_TEST_FAIL_APPEND=1 run_state "$repo30" complete docs/plan.md 2 --commits 3333333..4444444 --session s30); rc=$?
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(last30)" != '\n' ]; then pass "a short write in complete is an error and leaves no newline"; else fail "a short write in complete is an error and leaves no newline (rc=$rc: $out)"; fi
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(last30)" != '\n' ] && grep -q '^Task 2: complete (commits 3333333..4444444$' "$ws30/progress.md"; then pass "a short write in complete is an error and leaves a fragment past the full token"; else fail "a short write in complete is an error and leaves a fragment past the full token (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" claim docs/plan.md 2 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2" ]; then pass "claim does not treat the fragment as a completion"; else fail "claim does not treat the fragment as a completion (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 6 ] && [ "$out" = "status=open-claims tasks=2" ]; then pass "finish counts the claim open on the strength of no fragment"; else fail "finish counts the claim open on the strength of no fragment (rc=$rc: $out)"; fi
+rm -rf "$ws30/claims"
 out=$(run_state "$repo30" complete docs/plan.md 2 --commits 3333333..4444444 --session s30); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'appended=1' && [ "$(grep -Fxc 'Task 2: complete (commits 3333333..4444444, review clean)' "$ws30/progress.md")" = 1 ]; then pass "the retry after a short write appends the canonical line once"; else fail "the retry after a short write appends the canonical line once (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'appended=1' && [ "$(grep -Fxc 'Task 2: complete (commits 3333333..4444444, review clean)' "$ws30/progress.md")" = 1 ] && ! grep -q '3333333\.\.4444444$' "$ws30/progress.md" && grep -q ' Task 2: complete (commits 3333333..4444444$' "$ws30/fragments.log"; then pass "the retry after a short write repairs the ledger and keeps the fragment"; else fail "the retry after a short write repairs the ledger and keeps the fragment (rc=$rc: $out)"; fi
 reset30
-out=$(HYPERPOWERS_TEST_FAIL_APPEND=1 run_state "$repo30" handback docs/plan.md --reason "stuck" --session s30); rc=$?
+out=$(HYPERPOWERS_TEST_FAIL_APPEND=1 run_state "$repo30" handback docs/plan.md --reason "stuck here" --session s30); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(last30)" != '\n' ]; then pass "a short write in handback is an error and leaves no newline"; else fail "a short write in handback is an error and leaves no newline (rc=$rc: $out)"; fi
-out=$(run_state "$repo30" handback docs/plan.md --reason "stuck" --session s30); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "status=handback" ] && tail -n 1 "$ws30/progress.md" | grep -Eq '^handback s30 [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{12}Z: stuck$'; then pass "the retry after a short write appends a well-formed handback line"; else fail "the retry after a short write appends a well-formed handback line (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" handback docs/plan.md --reason "stuck here" --session s30); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=handback" ] && [ "$(grep -c '^handback ' "$ws30/progress.md")" = 1 ] && tail -n 1 "$ws30/progress.md" | grep -Eq '^handback s30 [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{12}Z: stuck here$' && grep -q ' handback s30 ' "$ws30/fragments.log"; then pass "the retry after a short write appends a well-formed handback line and keeps the fragment"; else fail "the retry after a short write appends a well-formed handback line and keeps the fragment (rc=$rc: $out)"; fi
 rm -rf "$ws30"
 out=$(run_state "$repo30" complete docs/plan.md 1 --commits 1111111..2222222 --session s30); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace" ]; then pass "complete without a ledger is no-workspace"; else fail "complete without a ledger is no-workspace (rc=$rc: $out)"; fi

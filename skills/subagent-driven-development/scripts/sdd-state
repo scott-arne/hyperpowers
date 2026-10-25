@@ -952,8 +952,9 @@ ledger_apply() {
 # locally returns 5 (from ledger_apply); a changed ledger the target deletes
 # returns 6. Returns 4 when a path it must write or remove sits under a
 # symbolic link; the callers turn that into a repair the human can act on.
-# Every workspace the apply writes into comes back whole: every path the
-# target tracks under it that is still missing afterwards is checked out.
+# Every workspace the apply writes into or removes from comes back whole:
+# every path the target tracks under it that is still missing afterwards
+# is published from the target.
 apply_files() {
   local S=$1 target=$2 path dir tmp half ws i last_ws="" touched_ws=()
   while IFS= read -r path; do
@@ -1002,6 +1003,11 @@ apply_files() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     hp_contained "$CO" "$path" || return 4
+    # The delete walk records the workspace too: a deletion-only apply met
+    # by a link at the directory must bring the rest back after the repair.
+    # A workspace the target empties (a remote finish) tracks nothing
+    # afterwards, so the pass below restores nothing there.
+    case "$path" in plans/*/*) ws=${path#plans/}; ws=${ws%%/*}; [ "$ws" = "$last_ws" ] || touched_ws[${#touched_ws[@]}]=$ws; last_ws=$ws ;; esac
     case "$path" in
       plans/*/progress.md)
         dir=$(dirname "$CO/$path")
@@ -1009,10 +1015,12 @@ apply_files() {
       *) rm -f "$CO/$path" 2>/dev/null; [ ! -e "$CO/$path" ] || return 2 ;;
     esac
   done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
-  # Each workspace this apply wrote into comes back whole: every path the
-  # target tracks under it that is still missing is checked out. A link at
-  # such a path is refused and named, never skipped: skipped, the next
-  # snapshot would commit it onto the branch.
+  # Each workspace this apply wrote into or removed from comes back whole:
+  # every path the target tracks under it that is still missing is
+  # published from the target. A link at such a path is refused and named,
+  # never skipped: skipped, the next snapshot would commit it onto the
+  # branch. The publish is one link(2) from a temporary copy, so a file a
+  # writer creates between the check and the publish is theirs.
   i=0
   while [ "$i" -lt "${#touched_ws[@]}" ]; do
     ws=${touched_ws[$i]}; i=$((i + 1))
@@ -1020,7 +1028,13 @@ apply_files() {
       [ -n "$path" ] || continue
       hp_contained "$CO" "$path" || return 4
       [ ! -e "$CO/$path" ] || continue
-      git -C "$CO" checkout -q "$target" -- "$path" || return 2
+      mkdir -p "$(dirname "$CO/$path")" || return 2
+      tmp="$CO/$path.restore.$$"; rm -f "$tmp"
+      git -C "$CO" show "$target:$path" > "$tmp" || { rm -f "$tmp"; return 2; }
+      # Test hook: a writer creates the file right before the publish.
+      case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-restore:*) [ "${HYPERPOWERS_TEST_WRITER_AT#sync-before-restore:}" != "$path" ] || printf 'concurrent write\n' > "$CO/$path" ;; esac
+      if ! ln "$tmp" "$CO/$path" 2>/dev/null; then rm -f "$tmp"; [ -e "$CO/$path" ] || return 2; fi
+      rm -f "$tmp"
     done < <(git -C "$CO" ls-tree -r --name-only "$target" -- "plans/$ws")
   done
   return 0
@@ -1063,9 +1077,10 @@ recover_apply() {
     echo "sdd-state: the state branch tracks a recovery sidecar at ${tracked#*$'\t'}; refusing to run recovery from committed files. Remove it from the branch on the host that committed it, push, then sync again" >&2
     return 2
   fi
-  # A new ledger interrupted between its temporary copy and its publish
-  # leaves that copy inside a workspace, where a snapshot would commit it.
-  rm -f "$CO"/plans/*/progress.md.new.* 2>/dev/null
+  # A new ledger, or a restored file, interrupted between its temporary
+  # copy and its publish leaves that copy inside a workspace, where a
+  # snapshot would commit it.
+  rm -f "$CO"/plans/*/progress.md.new.* "$CO"/plans/*/*.restore.* 2>/dev/null
   for j in "$CO"/.rewrite/*.journal; do
     [ -f "$j" ] || continue
     rewrite_finish "${j%.journal}" || { echo "sdd-state: an interrupted ledger rewrite left $j and finishing it failed; check the ledger it names, then remove it and its .staged file" >&2; return 2; }

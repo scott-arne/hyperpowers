@@ -600,6 +600,7 @@ ln -s "$outside_link" "$co_b_link/plans/$ws_name"
 rc=0
 out=$(cd "$link_b" && bash "$SDD_DIR_SCRIPT" docs/plan.md 2>"$TEST_ROOT/link-ws.err") || rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q "plans/$ws_name" "$TEST_ROOT/link-ws.err"; then pass "a workspace that is a symbolic link is refused, naming the link"; else fail "a workspace that is a symbolic link is refused, naming the link (rc=$rc, out='$out', err=$(cat "$TEST_ROOT/link-ws.err"))"; fi
+if grep -q '^sdd-dir: .* is a symbolic link' "$TEST_ROOT/link-ws.err"; then pass "the containment refusal under sdd-dir is prefixed sdd-dir"; else fail "the containment refusal under sdd-dir is prefixed sdd-dir ($(head -n 2 "$TEST_ROOT/link-ws.err" | tr '\n' '|'))"; fi
 if [ -L "$co_b_link/plans/$ws_name" ] && [ "$(ls -A "$outside_link" | tr '\n' ' ')" = "sentinel " ]; then pass "nothing is created through the link: its target still holds only the sentinel"; else fail "nothing is created through the link ($(ls -A "$outside_link" | tr '\n' ' '))"; fi
 # The human removes the link: the workspace resolves again.
 rm -f "$co_b_link/plans/$ws_name"

@@ -48,6 +48,14 @@ ln -s "$repo_a" "$TEST_ROOT/a-link"
 if [ "$(hp_key "$TEST_ROOT/a-link")" = "$key_a" ]; then pass "a symlinked path yields the physical key"; else fail "a symlinked path yields the physical key"; fi
 case "$(hp_zero_oid "$repo_a")" in 0000000000000000000000000000000000000000) pass "the zero oid matches the repository's hash length" ;; *) fail "the zero oid matches the repository's hash length ($(hp_zero_oid "$repo_a"))" ;; esac
 
+# --- message prefix ----------------------------------------------------------
+# Every message the library prints names the tool that called it.
+root_px="$TEST_ROOT/px"; mkdir -p "$root_px/plans"; ln -s "$TEST_ROOT" "$root_px/plans/link"
+msg=$(HP_PROG=probe-tool bash -c '. "$1"; hp_contained "$2" plans/link' probe-default "$LIB" "$root_px" 2>&1 >/dev/null)
+case "$msg" in "probe-tool: "*) pass "a library message carries HP_PROG as its prefix" ;; *) fail "a library message carries HP_PROG as its prefix (got: $msg)" ;; esac
+msg=$(bash -c '. "$1"; hp_contained "$2" plans/link' probe-default "$LIB" "$root_px" 2>&1 >/dev/null)
+case "$msg" in "probe-default: "*) pass "without HP_PROG the prefix is the calling script's basename (\$0)" ;; *) fail "without HP_PROG the prefix is the calling script's basename (got: $msg)" ;; esac
+
 # --- config ----------------------------------------------------------------
 if [ "$(hp_state_branch "$repo_a")" = "hyperpowers/state" ]; then pass "default state branch"; else fail "default state branch"; fi
 if [ "$(hp_state_remote "$repo_a")" = "origin" ]; then pass "default state remote"; else fail "default state remote"; fi

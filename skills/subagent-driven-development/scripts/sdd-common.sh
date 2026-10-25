@@ -10,6 +10,11 @@
 # checkout and one live ledger per plan; the pre-6.17 key hashed the
 # per-worktree git directory and split a plan across worktrees.
 
+# The prefix of every message this library prints: the tool that called it.
+# sdd-dir and sdd-state set it before sourcing; any other sourcer prints
+# under its own name.
+HP_PROG=${HP_PROG:-${0##*/}}
+
 hp_cache_root() { printf '%s\n' "${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers"; }
 
 # Physical absolute path of a directory (symlinks resolved).
@@ -237,7 +242,7 @@ hp_lock_at() { # <lock-dir>
       continue
     fi
     if [ "$waited" -ge 150 ]; then
-      echo "sdd-state: lock held: $(hp_lock_owner_text "$lock" | tr '\n' ' ')" >&2
+      echo "$HP_PROG: lock held: $(hp_lock_owner_text "$lock" | tr '\n' ' ')" >&2
       return 2
     fi
     sleep 0.2
@@ -278,7 +283,7 @@ hp_contained() { # <root> <relative path>
     case "$part" in ''|.|..) return 2 ;; esac
     cur="$cur/$part"
     if [ -L "$cur" ]; then
-      echo "sdd-state: $cur is a symbolic link; refusing to write through it" >&2
+      echo "$HP_PROG: $cur is a symbolic link; refusing to write through it" >&2
       return 1
     fi
   done
@@ -366,7 +371,7 @@ hp_has_sentinel() {
 # used and never written to.
 hp_check_sentinel() {
   hp_has_sentinel "$1" "$2" && return 0
-  echo "sdd-dir: branch $(hp_state_branch "$1") exists but is not a hyperpowers state branch; set git config hyperpowers.stateBranch to another name" >&2
+  echo "$HP_PROG: branch $(hp_state_branch "$1") exists but is not a hyperpowers state branch; set git config hyperpowers.stateBranch to another name" >&2
   return 2
 }
 
@@ -411,11 +416,11 @@ hp_refuse_tip() {
   # gets its own sentence: the refusal below is parsed as two kind words
   # and a path, and its remedy would be wrong advice here.
   if [ "$rc" -ne 1 ]; then
-    echo "sdd-state: $2 could not be read as a tree; refusing to create the state checkout from it. Fetch the state branch again and retry; if it persists, the repository needs repair" >&2
+    echo "$HP_PROG: $2 could not be read as a tree; refusing to create the state checkout from it. Fetch the state branch again and retry; if it persists, the repository needs repair" >&2
     return 2
   fi
   rest=${refusal#* }
-  echo "sdd-state: ${2:0:7} carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to create the state checkout from it. Remove it on the host that committed it and commit the removal on the state branch, push, then sync again" >&2
+  echo "$HP_PROG: ${2:0:7} carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to create the state checkout from it. Remove it on the host that committed it and commit the removal on the state branch, push, then sync again" >&2
   return 2
 }
 
@@ -474,17 +479,17 @@ hp_recover_tmp_checkouts() {
 hp_verify_checkout() {
   local repo=$1 co=$2 br=$3 sym head
   if [ "$(hp_common_dir "$co" 2>/dev/null)" != "$(hp_common_dir "$repo" 2>/dev/null)" ]; then
-    echo "sdd-dir: state checkout $co does not belong to this repository; remove it and run again" >&2
+    echo "$HP_PROG: state checkout $co does not belong to this repository; remove it and run again" >&2
     return 2
   fi
   sym=$(git -C "$co" symbolic-ref -q HEAD 2>/dev/null) || sym=""
   if [ "$sym" != "refs/heads/$br" ]; then
-    echo "sdd-dir: state checkout $co is on ${sym:-a detached HEAD} but git config hyperpowers.stateBranch names $br; restore the config, or remove the checkout (git -C $repo worktree remove --force $co) and run again" >&2
+    echo "$HP_PROG: state checkout $co is on ${sym:-a detached HEAD} but git config hyperpowers.stateBranch names $br; restore the config, or remove the checkout (git -C $repo worktree remove --force $co) and run again" >&2
     return 2
   fi
   head=$(git -C "$co" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || head=""
   if [ -z "$head" ]; then
-    echo "sdd-dir: state checkout $co has no commit; remove it (git -C $repo worktree remove --force $co) and run again" >&2
+    echo "$HP_PROG: state checkout $co has no commit; remove it (git -C $repo worktree remove --force $co) and run again" >&2
     return 2
   fi
   hp_check_sentinel "$repo" "$head"
@@ -533,7 +538,7 @@ hp_ensure_checkout() {
     mode=remote
   else
     if hp_has_remote "$repo" && [ ! -f "$(hp_stamp_path "$repo")" ]; then
-      echo "sdd-dir: status=needs-sync: this repository has a remote and no state branch here; run sdd-state sync <plan> first (or sdd-state sync --assume-absent <plan>)" >&2
+      echo "$HP_PROG: status=needs-sync: this repository has a remote and no state branch here; run sdd-state sync <plan> first (or sdd-state sync --assume-absent <plan>)" >&2
       hp_unlock; return 2
     fi
     mode=orphan
@@ -561,7 +566,7 @@ hp_ensure_checkout() {
     esac
   fi
   if [ "$rc" -ne 0 ]; then
-    echo "sdd-dir: git worktree add (or its tracking setup) failed (rc=$rc); this repository uses the plain cache (backend=plain)" >&2
+    echo "$HP_PROG: git worktree add (or its tracking setup) failed (rc=$rc); this repository uses the plain cache (backend=plain)" >&2
     git -C "$repo" worktree remove --force "$tmp" >/dev/null 2>&1 || rm -rf "$tmp"
     hp_write_backend "$repo" plain || { hp_unlock; return 2; }
     hp_unlock; printf 'plain %s\n' "$(hp_plain_root "$repo")"; return 0
@@ -579,7 +584,7 @@ hp_ensure_checkout() {
   # root files pass, so the call is the same in all three modes.
   hp_verify_checkout "$repo" "$tmp" "$br" || { git -C "$repo" worktree remove --force "$tmp" >/dev/null 2>&1 || rm -rf "$tmp"; hp_unlock; return 2; }
   hp_refuse_tip "$tmp" "$(git -C "$tmp" rev-parse HEAD)" || { git -C "$repo" worktree remove --force "$tmp" >/dev/null 2>&1 || rm -rf "$tmp"; hp_unlock; return 2; }
-  git -C "$repo" worktree move "$tmp" "$co" >/dev/null 2>&1 || { echo "sdd-dir: git worktree move of $tmp to $co failed; remove whatever occupies $co and run again" >&2; hp_unlock; return 2; }
+  git -C "$repo" worktree move "$tmp" "$co" >/dev/null 2>&1 || { echo "$HP_PROG: git worktree move of $tmp to $co failed; remove whatever occupies $co and run again" >&2; hp_unlock; return 2; }
   hp_write_backend "$repo" branch || { hp_unlock; return 2; }
   hp_unlock
   printf 'branch %s\n' "$co"
@@ -616,7 +621,7 @@ hp_materialize_plain() {
       git -C "$repo" cat-file -e "$local_tip:plans/$ws/progress.md" 2>/dev/null && local_has=1
       git -C "$repo" cat-file -e "$remote_tip:plans/$ws/progress.md" 2>/dev/null && remote_has=1
       if [ "$local_has" -eq 0 ] && [ "$remote_has" -eq 0 ]; then return 0; fi
-      echo "sdd-dir: $br ($local_tip) and $remote/$br ($remote_tip) have diverged and at least one of them holds plans/$ws; reconcile them (sdd-state sync under the branch backend, or merge the state branch) before the plain fallback can materialize this plan" >&2
+      echo "$HP_PROG: $br ($local_tip) and $remote/$br ($remote_tip) have diverged and at least one of them holds plans/$ws; reconcile them (sdd-state sync under the branch backend, or merge the state branch) before the plain fallback can materialize this plan" >&2
       return 2
     fi
   else
@@ -631,12 +636,12 @@ hp_materialize_plain() {
   # because the next call extracts it again from the same tip.
   rc=0; refusal=$(hp_tree_refusal "$repo" "$tip") || rc=$?
   if [ "$rc" -eq 2 ]; then
-    echo "sdd-dir: $tip could not be read as a tree; refusing to materialize the plain workspace from it. Fetch the state branch again and retry; if it persists, the repository needs repair" >&2
+    echo "$HP_PROG: $tip could not be read as a tree; refusing to materialize the plain workspace from it. Fetch the state branch again and retry; if it persists, the repository needs repair" >&2
     return 2
   fi
   if [ "$rc" -ne 0 ]; then
     rest=${refusal#* }
-    echo "sdd-dir: ${tip:0:7} on $br carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to materialize the plain workspace from it. Remove it on the host that committed it and commit the removal on the state branch, push, then fetch that branch here (git fetch $remote $br; under the plain backend sdd-state sync does not fetch) and run sdd-dir again" >&2
+    echo "$HP_PROG: ${tip:0:7} on $br carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to materialize the plain workspace from it. Remove it on the host that committed it and commit the removal on the state branch, push, then fetch that branch here (git fetch $remote $br; under the plain backend sdd-state sync does not fetch) and run sdd-dir again" >&2
     return 2
   fi
   root=$(dirname "$(dirname "$dest")")

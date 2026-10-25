@@ -24,6 +24,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+HP_PROG=sdd-dir
 # shellcheck source=sdd-common.sh
 . "$SCRIPT_DIR/sdd-common.sh"
 

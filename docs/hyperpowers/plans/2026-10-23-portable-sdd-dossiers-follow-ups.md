@@ -1389,6 +1389,7 @@ git commit -m "feat(sdd-state): prune quarantines and then removes the copies ki
 - Modify: `skills/subagent-driven-development/scripts/sdd-common.sh:57` (beside `hp_stamp_path`: new `hp_remote_fingerprint` and `hp_stamp_ok`), `:500-506` (the needs-sync check in `hp_ensure_checkout`; after Task 5 its message starts with `$HP_PROG:`)
 - Modify: `skills/subagent-driven-development/scripts/sdd-state:1211-1233` (the four `: > "$stamp"` writes in `cmd_sync`)
 - Modify: `CHANGELOG.md` (the `## Unreleased` list)
+- Modify: `docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md` (the two stamp paragraphs: one sentence each on the refusal)
 - Test: `tests/sdd/test-sdd-common.sh`, `tests/sdd/test-sdd-state.sh:109, 196, 204, 252, 323, 332, 673` (the seven lines that create an empty stamp) and the p1 block at lines 106-118
 
 **Interfaces:**
@@ -1456,9 +1457,13 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'changed during the
 out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ]; then pass "the next sync fetches the new endpoint and stamps it"; else fail "the next sync fetches the new endpoint and stamps it (rc=$rc: $out: $(cat "$STATE_ROOT/$(state_key "$PAIR_A").fetched" 2>/dev/null))"; fi
 git -C "$PAIR_A" remote set-url origin "$url_was"
+# That sync created the orphan against the race endpoint; the checkout, the
+# branch and the stamp go again, so the hand-written stamp below is what
+# lets the next creation happen.
+git -C "$PAIR_A" worktree remove --force "$STATE_ROOT/$(state_key "$PAIR_A")" >/dev/null 2>&1 || rm -rf "${STATE_ROOT:?}/$(state_key "$PAIR_A")"; git -C "$PAIR_A" worktree prune; git -C "$PAIR_A" branch -D hyperpowers/state >/dev/null 2>&1; rm -f "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 ```
 
-(The block ends with the remote restored and A's orphan checkout created against the race endpoint, which the stamp write that follows and the tracking fixture after it accept as before; the lines that follow in the p1 block, which write the stamp by hand and fetch, continue from there.)
+(The block ends with the remote restored and A's checkout, branch and stamp removed again, so the stamp written by hand on the next line is what the `the stamp allows the orphan` assertion exercises; the lines that follow in the p1 block, which write the stamp by hand and fetch, continue from there.)
 
 (`PAIR_A`'s origin has no state branch at this point, so `sync` ends `absent` and writes the stamp; line 109's write that follows then rewrites the same content, which is harmless.) Find the existing `--assume-absent` assertion (`grep -n 'assume-absent' tests/sdd/test-sdd-state.sh`) and add after it one line checking that fixture's stamp reads `origin hyperpowers/state $(fp "<that fixture's repository>")`, in the same form as the check above. In the `=== sync ===` section, after the assertion `the second host creates its checkout from the remote` (B's first sync, a fetch that found the branch), add:
 
@@ -1531,7 +1536,7 @@ hp_remote_fingerprint() {
   # The URL may carry credentials: it reaches node on stdin, never in argv
   # or the environment. A digest that cannot be computed is a failure, not
   # an empty identity: callers fail closed on return 1.
-  fp=$(printf '%s' "$url" | node -e 'let d="";process.stdin.on("data",c=>{d+=c}).on("end",()=>{process.stdout.write(require("crypto").createHash("sha256").update(d).digest("hex").slice(0,12))})' 2>/dev/null) || return 1
+  fp=$(printf '%s' "$url" | node -e 'const b=[];process.stdin.on("data",c=>{b.push(c)}).on("end",()=>{process.stdout.write(require("crypto").createHash("sha256").update(Buffer.concat(b)).digest("hex").slice(0,12))})' 2>/dev/null) || return 1
   case "$fp" in ????????????) ;; *) return 1 ;; esac
   case "$fp" in *[!0-9a-f]*) return 1 ;; esac
   printf '%s\n' "$fp"
@@ -1614,22 +1619,24 @@ Beside `settle`, add the writer both fetched outcomes call:
 
 and replace the `absent` write (line 1216) with `*"couldn't find remote ref"*) stamp_fetched || { echo "status=error"; return 2; }; settle absent 0; return $? ;;` and the fetched-outcome write (line 1233) with `stamp_fetched || { echo "status=error"; return 2; }`.
 
+In the spec, after the creation paragraph's sentence that ends `means a fresh ``sync``).` (around line 197), add the sentence: `A ``sync`` whose remote, branch or URL changed while its fetch ran, or whose fingerprint cannot be computed (node is required), ends ``status=error`` and stamps nothing, so the stamp always names the endpoint that was fetched.` And in the `sync` entry, after `(which removes any stamp)` (around line 340), add: `; a remote, branch or URL that changed while the fetch ran, or a fingerprint that cannot be computed, ends the sync with ``status=error`` and nothing stamped`.
+
 - [ ] **Step 4: The changelog**
 
 In `CHANGELOG.md` under `## Unreleased`, after the prune bullet (Task 7), add:
 
 ```markdown
-- **The fetch stamp names its remote, branch and endpoint.** `<key>.fetched` now holds `<remote> <branch> <fingerprint of the fetch URL>`, and a checkout is created only when it names the configured `hyperpowers.stateRemote` and `hyperpowers.stateBranch` and the remote's current URL (a repointed remote asks for a sync); a `no-remote` sync leaves no stamp, so a remote added later asks for one `sync` first; a stamp from an earlier build is empty and asks for one `sdd-state sync`, after which it is current.
+- **The fetch stamp names its remote, branch and endpoint.** `<key>.fetched` now holds `<remote> <branch> <fingerprint of the fetch URL>`, and a checkout is created only when it names the configured `hyperpowers.stateRemote` and `hyperpowers.stateBranch` and the remote's current URL (a repointed remote asks for a sync); a `no-remote` sync leaves no stamp, so a remote added later asks for one `sync` first; a stamp from an earlier build is empty and asks for one `sdd-state sync`, after which it is current. The stamp names the endpoint the fetch contacted: a remote changed during the fetch, or a fingerprint that cannot be computed, ends the sync with `status=error` and nothing stamped, so creating a checkout in a repository with a remote now needs `node` (already required by `sdd-state`'s import, claim and recovery paths).
 ```
 
 - [ ] **Step 5: GREEN, quick suites, lint**
 
-`bash tests/sdd/test-sdd-common.sh`, `bash tests/claude-code/test-sdd-dir-path.sh`, `bash tests/sdd/test-sdd-contract.sh` `STATUS: PASSED`. State suite, needles from Step 2: all `[PASS]`, log GREEN. `bash scripts/lint-shell.sh skills/subagent-driven-development/scripts/sdd-common.sh skills/subagent-driven-development/scripts/sdd-state tests/sdd/test-sdd-common.sh tests/sdd/test-sdd-state.sh` exit 0. (The dir-path suite's needs-sync fixture writes no stamp and still expects `needs-sync`; its later fixtures create their stamps through `sync`, so they pass unchanged.)
+`bash tests/sdd/test-sdd-common.sh`, `bash tests/claude-code/test-sdd-dir-path.sh`, `bash tests/sdd/test-sdd-contract.sh` `STATUS: PASSED`. State suite, needles from Step 2: all `[PASS]`, log GREEN; `the stamp allows the orphan` must reach the creation path (with the checkout, branch and stamp removed, a stamp replaced by `bogus hyperpowers/state deadbeefcafe` makes `ensure` refuse: check that by hand once and report it). `bash scripts/lint-shell.sh skills/subagent-driven-development/scripts/sdd-common.sh skills/subagent-driven-development/scripts/sdd-state tests/sdd/test-sdd-common.sh tests/sdd/test-sdd-state.sh` exit 0. (The dir-path suite's needs-sync fixture writes no stamp and still expects `needs-sync`; its later fixtures create their stamps through `sync`, so they pass unchanged.)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add skills/subagent-driven-development/scripts/sdd-common.sh skills/subagent-driven-development/scripts/sdd-state tests/sdd/test-sdd-common.sh tests/sdd/test-sdd-state.sh CHANGELOG.md
+git add skills/subagent-driven-development/scripts/sdd-common.sh skills/subagent-driven-development/scripts/sdd-state tests/sdd/test-sdd-common.sh tests/sdd/test-sdd-state.sh CHANGELOG.md docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md
 git diff --cached | python3 ~/.claude/scripts/realval-scan.py
 git commit -m "fix(sdd-state): the fetch stamp vouched for whichever remote and branch happened to be configured later"
 ```

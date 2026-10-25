@@ -66,10 +66,16 @@ hp_stamp_path() { local c; c=$(hp_checkout_path "$1") || return 1; printf '%s.fe
 # it so a remote repointed with set-url, which keeps its alias, cannot reuse
 # a stamp earned against another endpoint.
 hp_remote_fingerprint() {
-  local url
+  local url fp
   url=$(git -C "$1" remote get-url "$(hp_state_remote "$1")" 2>/dev/null) || { printf 'none\n'; return 0; }
   [ -n "$url" ] || { printf 'none\n'; return 0; }
-  node -e 'process.stdout.write(require("crypto").createHash("sha256").update(process.argv[1]).digest("hex").slice(0, 12) + "\n")' "$url"
+  # The URL may carry credentials: it reaches node on stdin, never in argv
+  # or the environment. A digest that cannot be computed is a failure, not
+  # an empty identity: callers fail closed on return 1.
+  fp=$(printf '%s' "$url" | node -e 'let d="";process.stdin.on("data",c=>{d+=c}).on("end",()=>{process.stdout.write(require("crypto").createHash("sha256").update(d).digest("hex").slice(0,12))})' 2>/dev/null) || return 1
+  case "$fp" in ????????????) ;; *) return 1 ;; esac
+  case "$fp" in *[!0-9a-f]*) return 1 ;; esac
+  printf '%s\n' "$fp"
 }
 
 # <repo-dir> -> 0 when the fetch stamp names the configured remote, branch
@@ -77,9 +83,10 @@ hp_remote_fingerprint() {
 # empty file; it, or a stamp written for another remote, branch or URL,
 # means a sync is owed before any branch is created here.
 hp_stamp_ok() {
-  local have
+  local have fp
   have=$(head -n 1 "$(hp_stamp_path "$1")" 2>/dev/null) || return 1
-  [ "$have" = "$(hp_state_remote "$1") $(hp_state_branch "$1") $(hp_remote_fingerprint "$1")" ]
+  fp=$(hp_remote_fingerprint "$1") || return 1
+  [ "$have" = "$(hp_state_remote "$1") $(hp_state_branch "$1") $fp" ]
 }
 
 # The backend file: first word branch|plain, the rest free-form key=value.
@@ -529,7 +536,7 @@ hp_verify_checkout() {
 # state name belongs to a foreign branch. The one creation operation: it
 # owns the lock, the temporary path, recovery, and the backend file.
 hp_ensure_checkout() {
-  local repo=$1 co br remote backend tmp mode tip rc=0 refusal rest have
+  local repo=$1 co br remote backend tmp mode tip rc=0 refusal rest have fp
   co=$(hp_checkout_path "$repo") || return 2
   br=$(hp_state_branch "$repo"); remote=$(hp_state_remote "$repo")
   backend=$(hp_backend "$repo")
@@ -568,8 +575,9 @@ hp_ensure_checkout() {
   else
     if hp_has_remote "$repo" && ! hp_stamp_ok "$repo"; then
       have=$(head -n 1 "$(hp_stamp_path "$repo")" 2>/dev/null)
+      fp=$(hp_remote_fingerprint "$repo") || fp=unavailable
       if [ -n "$have" ]; then
-        echo "$HP_PROG: status=needs-sync: the fetch stamp names '$have' but the configured remote, branch and URL fingerprint are '$(hp_state_remote "$repo") $(hp_state_branch "$repo") $(hp_remote_fingerprint "$repo")'; run sdd-state sync <plan> first" >&2
+        echo "$HP_PROG: status=needs-sync: the fetch stamp names '$have' but the configured remote, branch and URL fingerprint are '$remote $br $fp'; run sdd-state sync <plan> first" >&2
       else
         echo "$HP_PROG: status=needs-sync: this repository has a remote and no state branch here; run sdd-state sync <plan> first (or sdd-state sync --assume-absent <plan>)" >&2
       fi

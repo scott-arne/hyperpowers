@@ -335,6 +335,11 @@ if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: a repointed remote invalida
 git -C "$repo_st" config hyperpowers.stateBranch other/state
 printf 'origin other/state %s\n' "$(hp_remote_fingerprint "$repo_st")" > "$stamp_st"
 if hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: the stamp follows the configured branch"; else fail "hp_stamp_ok: the stamp follows the configured branch"; fi
+# A digest that cannot be computed is a failure, never an empty identity.
+mkdir -p "$TEST_ROOT/fakebin"; printf '#!/bin/sh\nexit 9\n' > "$TEST_ROOT/fakebin/node"; chmod 755 "$TEST_ROOT/fakebin/node"
+fp_fail=$(PATH="$TEST_ROOT/fakebin:$PATH" hp_remote_fingerprint "$repo_st"); rc=$?
+if [ "$rc" -eq 1 ] && [ -z "$fp_fail" ]; then pass "hp_remote_fingerprint: a failing node is return 1 with no output"; else fail "hp_remote_fingerprint: a failing node is return 1 with no output (rc=$rc: '$fp_fail')"; fi
+if ! PATH="$TEST_ROOT/fakebin:$PATH" hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: a stamp is not ok when the fingerprint cannot be computed"; else fail "hp_stamp_ok: a stamp is not ok when the fingerprint cannot be computed"; fi
 
 # --- kept copies beside a referent -----------------------------------------
 # The plain-cache reclaim can move the whole root while a pointer still names

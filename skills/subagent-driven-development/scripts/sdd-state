@@ -1450,7 +1450,7 @@ apply_target() {
   esac
 }
 cmd_sync() {
-  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure
+  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure fp_before fp_after
   REMOTE_FINISHED=""
   # remove_verified (Task 6) and recover_apply live in this file; sync, finish, handoff and snapshot share them.
   while [ $# -gt 0 ]; do
@@ -1484,14 +1484,32 @@ cmd_sync() {
     echo "status=$1 local=$(short "$S") remote=none age=$(age_of "$CO" "$S")"
     return "$2"
   }
-  if [ "$assume" -eq 1 ]; then printf '%s %s %s\n' "$REMOTE" "$BRANCH" "$(hp_remote_fingerprint "$PLAN_DIR")" > "$stamp"; settle assumed-absent 0; return $?; fi
+  # Writes the stamp for the endpoint the fetch contacted, or refuses.
+  stamp_fetched() {
+    fp_after=$(hp_remote_fingerprint "$PLAN_DIR") || fp_after=unavailable
+    if [ "$fp_after" != "$fp_before" ] || [ "$(hp_state_remote "$PLAN_DIR") $(hp_state_branch "$PLAN_DIR")" != "$REMOTE $BRANCH" ]; then
+      rm -f "$stamp"
+      echo "sdd-state: the remote changed during the sync (remote, branch or URL); nothing was stamped. Run sdd-state sync again" >&2
+      return 1
+    fi
+    printf '%s %s %s\n' "$REMOTE" "$BRANCH" "$fp_before" > "$stamp"
+  }
+  if [ "$assume" -eq 1 ]; then
+    fp_before=$(hp_remote_fingerprint "$PLAN_DIR") || { echo "sdd-state: the remote's URL could not be fingerprinted (node is required); nothing was stamped. Run sdd-state sync again" >&2; echo "status=error"; return 2; }
+    printf '%s %s %s\n' "$REMOTE" "$BRANCH" "$fp_before" > "$stamp"; settle assumed-absent 0; return $?
+  fi
   # No remote to earn a stamp against: one written here would vouch for a
   # remote named later, so none is left and creation rests on hp_has_remote.
   if ! hp_has_remote "$PLAN_DIR"; then rm -f "$stamp"; settle no-remote 0; return $?; fi
+  # The stamp names the endpoint that was fetched: the fingerprint is taken
+  # before the fetch, and the remote, branch and URL are read again after it;
+  # any difference means a repoint raced the fetch, and nothing is stamped.
+  fp_before=$(hp_remote_fingerprint "$PLAN_DIR") || { echo "sdd-state: the remote's URL could not be fingerprinted (node is required); nothing was stamped. Run sdd-state sync again" >&2; echo "status=error"; return 2; }
   err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 git -C "$PLAN_DIR" fetch -q "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-fetch-set-url:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch-set-url:}" ;; esac
   if [ "$rc" -ne 0 ]; then
     case "$err" in
-      *"couldn't find remote ref"*) printf '%s %s %s\n' "$REMOTE" "$BRANCH" "$(hp_remote_fingerprint "$PLAN_DIR")" > "$stamp"; settle absent 0; return $? ;;
+      *"couldn't find remote ref"*) stamp_fetched || { echo "status=error"; return 2; }; settle absent 0; return $? ;;
     esac
     S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")
     # A default clone has the branch as a remote-tracking ref only; the
@@ -1508,7 +1526,7 @@ cmd_sync() {
     echo "status=offline-no-state local=none remote=none age=0"
     return 1
   fi
-  printf '%s %s %s\n' "$REMOTE" "$BRANCH" "$(hp_remote_fingerprint "$PLAN_DIR")" > "$stamp"
+  stamp_fetched || { echo "status=error"; return 2; }
   # The remote tip is read once, here, and that sha alone is reconciled: a
   # fetch by another process cannot swap in a different commit later.
   R=$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")

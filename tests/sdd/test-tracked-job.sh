@@ -86,6 +86,11 @@ out=$(tj run "$jg" -- bash -c 'echo nope > fifo-ran.txt' 2>"$err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(meta "$jg" state)" = allocated ] && [ -n "$(meta "$jg" launch_error)" ] && [ ! -d "$jg/launch.lock" ] && [ ! -f "$repo/fifo-ran.txt" ]; then pass "a barrier that cannot be created leaves the job allocated and says why"; else fail "a barrier that cannot be created leaves the job allocated and says why (rc=$rc: $out, launch_error=$(meta "$jg" launch_error))"; fi
 rmdir "$jg/go"; tj run "$jg" -- bash -c 'echo yes > fifo-ran.txt' >/dev/null 2>&1
 if [ "$(cat "$jg/exit" 2>/dev/null)" = 0 ] && [ "$(cat "$repo/fifo-ran.txt" 2>/dev/null)" = yes ]; then pass "the job runs once the obstruction is cleared"; else fail "the job runs once the obstruction is cleared (exit=$(cat "$jg/exit" 2>/dev/null))"; fi
+# an exit file that cannot be published (the command put a directory in its
+# place) is reported, never faked: the code stays readable in meta.json.
+jx=$(newjob exitdir)
+tj run "$jx" -- bash -c 'mkdir "$TRACKED_JOB_DIR/exit"; exit 5' >/dev/null 2>&1
+if [ "$(meta "$jx" state)" = exited ] && [ "$(meta "$jx" code)" = 5 ] && [ ! -f "$jx/exit" ] && grep -q 'exit file not written' "$jx/out.log"; then pass "an exit file that cannot be published is reported, not faked"; else fail "an exit file that cannot be published is reported, not faked (state=$(meta "$jx" state), code=$(meta "$jx" code), exit file=$([ -f "$jx/exit" ] && echo yes || echo no))"; fi
 # the supervisor's own TERM: the group is swept, the result recorded, state stopped.
 j8=$(newjob trapped); ( tj run "$j8" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
 if ! wait_meta "$j8" run_pid; then fail "a TERM to the supervisor sweeps the command and records the result (no run_pid within 10s)"
@@ -102,6 +107,23 @@ if ! wait_meta "$jh" run_pid; then fail "a stop during the launch cancels the co
 else
   kill -TERM "$(meta "$jh" run_pid)"; sleep 1; touch "$TEST_ROOT/go-1"; wait_file "$jh/exit"
   if [ "$(cat "$jh/exit" 2>/dev/null)" = 143 ] && [ "$(meta "$jh" state)" = stopped ] && [ ! -f "$repo/held-ran.txt" ] && ! kill -0 "$(meta "$jh" pid)" 2>/dev/null; then pass "a stop during the launch cancels the command before it runs"; else fail "a stop during the launch cancels the command before it runs (exit=$(cat "$jh/exit" 2>/dev/null), state=$(meta "$jh" state), ran=$([ -f "$repo/held-ran.txt" ] && echo yes || echo no))"; fi
+fi
+# the same window, reached by a file rather than a signal: a stop-request that
+# already stands when the launch would release the command (Task 4's stop
+# writes it), and the abort file the deferring trap drops for the child.
+js=$(newjob heldreq)
+( HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER="$TEST_ROOT/go-3" tj run "$js" -- bash -c 'echo ran > req-ran.txt; sleep 30' >/dev/null 2>&1 ) &
+if ! wait_meta "$js" run_pid; then fail "a stop-request standing at the barrier cancels the command (no run_pid within 10s)"
+else
+  : > "$js/stop-request"; touch "$TEST_ROOT/go-3"; wait_file "$js/exit"
+  if [ "$(cat "$js/exit" 2>/dev/null)" = 143 ] && [ "$(meta "$js" state)" = stopped ] && [ ! -f "$repo/req-ran.txt" ]; then pass "a stop-request standing at the barrier cancels the command"; else fail "a stop-request standing at the barrier cancels the command (exit=$(cat "$js/exit" 2>/dev/null), state=$(meta "$js" state), ran=$([ -f "$repo/req-ran.txt" ] && echo yes || echo no))"; fi
+fi
+ja=$(newjob heldabort)
+( HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER="$TEST_ROOT/go-4" tj run "$ja" -- bash -c 'echo ran > abort-ran.txt; sleep 30' >/dev/null 2>&1 ) &
+if ! wait_meta "$ja" run_pid; then fail "an abort standing at the barrier cancels the command (no run_pid within 10s)"
+else
+  : > "$ja/abort"; touch "$TEST_ROOT/go-4"; wait_file "$ja/exit"
+  if [ "$(cat "$ja/exit" 2>/dev/null)" = 143 ] && [ "$(meta "$ja" state)" = stopped ] && [ ! -f "$repo/abort-ran.txt" ] && [ ! -e "$ja/abort" ]; then pass "an abort standing at the barrier cancels the command and is cleaned up"; else fail "an abort standing at the barrier cancels the command and is cleaned up (exit=$(cat "$ja/exit" 2>/dev/null), state=$(meta "$ja" state), ran=$([ -f "$repo/abort-ran.txt" ] && echo yes || echo no))"; fi
 fi
 jh2=$(newjob heldgo); held=0
 ( HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER="$TEST_ROOT/go-2" tj run "$jh2" -- bash -c 'echo released > held-go.txt' >/dev/null 2>&1 ) &
@@ -147,6 +169,13 @@ out=$(HYPERPOWERS_TEST_FAIL_APPEND=1 HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"
 if [ "$out" = "rc=1" ] && [ "$(meta "$cj" state)" = running ] && [ "$(records | grep -c 'ordering exited')" = 0 ]; then pass "a ledger line that fails to land leaves the terminal state unwritten"; else fail "a ledger line that fails to land leaves the terminal state unwritten ($out, state=$(meta "$cj" state), records=$(records | grep -c 'ordering exited'))"; fi
 out=$(HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; conclude "$1" running exited "exited code=0" "code:=0" >/dev/null; echo "rc=$?"' "$TJ" "$cj" 2>/dev/null)
 if [ "$out" = "rc=0" ] && [ "$(meta "$cj" state)" = exited ] && [ "$(records | grep -c 'ordering exited')" = 1 ]; then pass "the retry appends the line once and writes the state with it"; else fail "the retry appends the line once and writes the state with it ($out, state=$(meta "$cj" state), records=$(records | grep -c 'ordering exited'))"; fi
+# The finish holds the workspace lock, and hp_lock arms INT and TERM handlers
+# that unlock and exit. A supervisor whose command has already gone must not
+# take them, so it asks the lock to leave its dispositions alone.
+keep=$(HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; trap "" TERM; HP_LOCK_KEEP_DISPOSITIONS=1 hp_lock "$1" >/dev/null 2>&1; trap -p TERM; hp_unlock' "$TJ" "$repo" 2>/dev/null)
+arm=$(HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; trap "" TERM; hp_lock "$1" >/dev/null 2>&1; trap -p TERM; hp_unlock' "$TJ" "$repo" 2>/dev/null)
+case "$keep" in "trap -- '' SIGTERM"|"trap -- '' TERM") pass "the lock keeps the caller's signal dispositions when it is asked to" ;; *) fail "the lock keeps the caller's signal dispositions when it is asked to (got: $keep)" ;; esac
+case "$arm" in *"hp_unlock; exit 143"*) pass "the lock otherwise arms its own TERM handler" ;; *) fail "the lock otherwise arms its own TERM handler (got: $arm)" ;; esac
 
 echo "=== tracked-job process identity ==="
 # process relationships (deviation 1), where ps works.

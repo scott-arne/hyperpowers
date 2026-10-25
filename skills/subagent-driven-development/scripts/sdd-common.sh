@@ -268,10 +268,17 @@ hp_lock_at() { # <lock-dir>
   if [ "$(sed -n 's/^pid=//p' "$lock/owner" 2>/dev/null)" != "$$" ]; then hp_write_owner "$lock/owner"; fi
   HP_LOCK_DIR=$lock
   # These traps replace the caller's: a script with its own EXIT handler
-  # re-arms it after hp_lock and calls hp_unlock from it.
+  # re-arms it after hp_lock and calls hp_unlock from it. A caller that must
+  # not die under the lock sets HP_LOCK_KEEP_DISPOSITIONS=1 and keeps its own
+  # INT and TERM dispositions, an ignore included — the SDD supervisor does,
+  # because by the time it locks, its command has gone and the terminal
+  # record has to land. The EXIT trap still releases the lock, and re-arming
+  # the two here afterwards would leave the same gap this avoids.
   trap 'hp_unlock' EXIT
-  trap 'hp_unlock; exit 130' INT
-  trap 'hp_unlock; exit 143' TERM
+  if [ "${HP_LOCK_KEEP_DISPOSITIONS:-}" != 1 ]; then
+    trap 'hp_unlock; exit 130' INT
+    trap 'hp_unlock; exit 143' TERM
+  fi
 }
 # Remove the lock only when this pid owns it: a stale takeover may have
 # replaced it with another process's lock.

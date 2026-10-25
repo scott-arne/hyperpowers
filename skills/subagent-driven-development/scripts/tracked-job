@@ -115,10 +115,6 @@ ledger_append_once() {
 conclude() {
   local dir=$1 from=$2 to=$3 text=$4 cur; shift 4
   hp_lock "$(meta_get "$dir" plan_dir)" 2>/dev/null || return 1
-  # hp_lock arms INT and TERM traps of its own that unlock and exit. A
-  # supervisor finishing a job must not die here: its command is already
-  # gone and the record has to land, so it asks for them to stay ignored.
-  [ "$FINISHING" -eq 0 ] || trap '' TERM INT HUP
   cur=$(meta_get "$dir" state)
   if [ "$cur" != "$from" ]; then hp_unlock; printf '%s' "$cur"; return 2; fi
   # The ledger line goes first, inside the same lock: a terminal state the
@@ -185,8 +181,6 @@ cmd_new() {
 # through job control (deviation 1) and starts only after the metadata is
 # durable (the FIFO barrier).
 RUN_DIR=""; RUN_PID=""; RUN_PGID=""; RUN_STOPPED=0; RUN_PENDING_STOP=0
-# Set while the supervisor writes its terminal record; conclude reads it.
-FINISHING=0
 # group_alive: any member of the command's group, leader or descendant; kill -0
 # on the negative group id asks the kernel, so it needs no ps.
 group_alive() { kill -0 -- "-$RUN_PGID" 2>/dev/null; }
@@ -198,9 +192,23 @@ stop_group() { # TERM, grace, then KILL while any member survives; marks the job
   local i=0; while [ "$i" -lt $((GRACE * 5)) ] && group_alive; do sleep 0.2; i=$((i + 1)); done
   group_alive && kill -KILL -- "-$RUN_PGID" 2>/dev/null
 }
+# publish_exit <code>: the exit file, written to an exact destination. A shell
+# mv would move the file *into* an "exit" directory the command could have
+# made through TRACKED_JOB_DIR and report success; rename(2) refuses that, and
+# the result is read back before it counts as published.
+publish_exit() {
+  printf '%s\n' "$1" > "$RUN_DIR/exit.tmp" 2>/dev/null || return 1
+  node -e 'require("fs").renameSync(process.argv[1],process.argv[2])' "$RUN_DIR/exit.tmp" "$RUN_DIR/exit" 2>/dev/null || return 1
+  [ -f "$RUN_DIR/exit" ] && [ "$(cat "$RUN_DIR/exit" 2>/dev/null)" = "$1" ]
+}
 finish_run() { # <code>
   local code=$1 state=exited survivors=-1 i=0 j=0 rc
-  FINISHING=1
+  # The command has gone and the record has to land, so the locks this takes
+  # must leave the supervisor's ignored signals ignored rather than arming
+  # their own handlers, which exit.
+  HP_LOCK_KEEP_DISPOSITIONS=1
+  # The launch's cancellation flag has done its work either way.
+  rm -f "$RUN_DIR/abort" 2>/dev/null
   [ "$RUN_STOPPED" -eq 1 ] && state=stopped
   if have_ps; then survivors=$(ps -o pid= -g "$RUN_PGID" 2>/dev/null | grep -c .); elif ! group_alive; then survivors=0; fi
   # The terminal state goes first, under the lock and only from running, and
@@ -220,10 +228,10 @@ finish_run() { # <code>
   # state. A write that will not land is retried and then noted in out.log:
   # the code is in meta.json either way, which is where wait falls back to.
   while :; do
-    if printf '%s\n' "$code" > "$RUN_DIR/exit.tmp" && mv "$RUN_DIR/exit.tmp" "$RUN_DIR/exit"; then break; fi
+    if publish_exit "$code"; then break; fi
     j=$((j + 1))
     if [ "$j" -ge 3 ]; then
-      rm -f "$RUN_DIR/exit.tmp"
+      rm -f "$RUN_DIR/exit.tmp" 2>/dev/null
       printf 'tracked-job: exit file not written; the code is in meta.json (code=%s)\n' "$code" >> "$RUN_DIR/out.log"
       break
     fi
@@ -232,7 +240,7 @@ finish_run() { # <code>
 }
 abort_launch() { # <reason>
   [ -z "$RUN_PID" ] || { kill -KILL -- "-$RUN_PGID" 2>/dev/null; wait "$RUN_PID" 2>/dev/null; }
-  rmdir "$RUN_DIR/launch.lock" 2>/dev/null; rm -f "$RUN_DIR/go" 2>/dev/null
+  rmdir "$RUN_DIR/launch.lock" 2>/dev/null; rm -f "$RUN_DIR/go" "$RUN_DIR/abort" 2>/dev/null
   meta_set "$RUN_DIR" "state=allocated" "launch_error=$1 at $(utc_ms)" >/dev/null 2>&1
   echo "status=error"; exit 2
 }
@@ -249,14 +257,21 @@ cmd_run() {
   # for a job that never started, and dying after the spawn would leave the
   # command running with nothing watching it. The request is remembered and
   # acted on at the barrier, the last point at which the command can still be
-  # cancelled rather than stopped after the fact.
-  trap 'RUN_PENDING_STOP=1' TERM INT HUP
+  # cancelled rather than stopped after the fact. The trap also drops the
+  # abort file, which the command itself tests after the barrier: a signal
+  # that lands after the check below would otherwise be read only once the
+  # command had already started.
+  trap 'RUN_PENDING_STOP=1; : > "$RUN_DIR/abort" 2>/dev/null' TERM INT HUP
   mkdir "$dir/launch.lock" 2>/dev/null || { echo "status=already-launched"; exit 2; }
   rm -f "$dir/go" 2>/dev/null
   mkfifo "$dir/go" 2>/dev/null || abort_launch "the launch barrier could not be created"
   : > "$dir/out.log"
   set -m
-  ( exec env "TRACKED_JOB_DIR=$dir" bash -c 'read -r _ < "$0/go" || exit 97; exec "$@"' "$dir" "$@" ) >> "$dir/out.log" 2>&1 &
+  # The command's last act before exec is to look for a cancellation, so a
+  # stop that arrives while the barrier is opening still catches it. The gap
+  # left is the one between that test and exec, which the group sweep covers:
+  # by then the command is running and a stop is a stop, not a cancellation.
+  ( exec env "TRACKED_JOB_DIR=$dir" bash -c 'read -r _ < "$0/go" || exit 97; if [ -e "$0/abort" ] || [ -e "$0/stop-request" ]; then exit 97; fi; exec "$@"' "$dir" "$@" ) >> "$dir/out.log" 2>&1 &
   RUN_PID=$!; RUN_PGID=$RUN_PID
   set +m
   cmd_json=$(node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' "$@")
@@ -271,9 +286,11 @@ cmd_run() {
   # A stop that arrived during the launch is honoured before the command is
   # released: the child is still blocked reading the barrier, so sweeping its
   # group now means the command never runs at all, which is the whole point
-  # of cancelling something irreversible. The job is already running in
-  # meta.json, so it concludes exactly as a stop during supervision does.
-  if [ "$RUN_PENDING_STOP" -ne 0 ]; then
+  # of cancelling something irreversible. A stop-request standing here (the
+  # stop subcommand writes one) and an abort left by the trap count as that
+  # stop. The job is already running in meta.json, so it concludes exactly as
+  # a stop during supervision does.
+  if [ "$RUN_PENDING_STOP" -ne 0 ] || [ -e "$dir/stop-request" ] || [ -e "$dir/abort" ]; then
     trap '' TERM INT HUP
     stop_group
     rm -f "$dir/go"
@@ -286,6 +303,9 @@ cmd_run() {
   ( printf 'go\n' > "$dir/go" ) & t=$!
   i=0; while [ "$i" -lt 50 ] && kill -0 "$t" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
   if kill -0 "$t" 2>/dev/null; then kill -KILL "$t" 2>/dev/null; abort_launch "barrier not taken"; fi
+  # Only the barrier goes here: the command is about to test for an abort the
+  # trap may just have written, and removing it now would race that test.
+  # finish_run drops it when the job concludes.
   rm -f "$dir/go"
   trap 'stop_group' TERM INT HUP
   [ "$RUN_PENDING_STOP" -eq 0 ] || stop_group

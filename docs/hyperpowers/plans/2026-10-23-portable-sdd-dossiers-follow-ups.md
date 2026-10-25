@@ -636,7 +636,7 @@ git commit -m "fix(sdd-common): a library message named sdd-state even when sdd-
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `apply_files` returns 4 when a path it must write or remove is, or sits under, a symbolic link (both `hp_contained` checks); every other failure keeps its code. Every workspace the apply writes into comes back whole: after both walks, every path the target tracks under a workspace the first walk touched that is still missing is checked out (each through `hp_contained` first, so a link there is refused and named like any other), because the diff names only what changed between S and the target, and a directory restored with those files alone would have the next `snapshot_pending` record its unchanged siblings as deletions. The rule covers every touched workspace, not only one the apply created, because an apply that creates the directory and then fails on a later path (a second link, a publish race) leaves it partial, and the next apply, which no longer creates it, must still complete it; that is what makes "remove the link" safe advice for a link at `plans/<ws>` itself. Both walks record the workspace: a deletion-only apply met by a link at the directory must bring the rest back after the repair, and a workspace the target empties (a remote finish) tracks nothing afterwards, so nothing is restored there. Each missing path is published from a temporary copy with one `link(2)`, so a file a writer creates between the check and the publish is theirs and is never overwritten; a tracked file a writer removed during the interrupted window is put back, which is the module's stance for a missing tracked file (`apply_target`'s pending scan says `put it back`), and no bytes are lost by it. The seam value `HYPERPOWERS_TEST_WRITER_AT=sync-before-restore:<path>` writes `concurrent write` to `$CO/<path>` right before the restore publishes that path. `say_link_repair` prints one sentence to stderr: `sdd-state: a symbolic link sits where sync writes or removes a regular file (named above); remove the link, leave $CO/.sync-applying in place, and run sdd-state sync again: the apply finishes from the branch`. It is printed on all three routes a link can take: `recover_apply` for return 4 (the generic line stays for every other failure), `apply_target`'s result `case` for return 4 on the normal post-ref apply, and `apply_target`'s post-apply re-walk on its own `hp_contained` refusal. Status and exit codes are unchanged (`status=error`, 2, marker kept). The seam value `HYPERPOWERS_TEST_WRITER_AT=sync-after-ref-link:<path>` replaces `$CO/<path>` with a symbolic link to `/dev/null` right after the ref has moved and before the apply; the seam value `HYPERPOWERS_TEST_WRITER_AT=sync-after-apply-link:<path>` does the same after `apply_files` returned 0 and before the post-apply re-walk.
+- Produces: `apply_files` returns 4 when a path it must write or remove is, or sits under, a symbolic link (both `hp_contained` checks); every other failure keeps its code. Every workspace the apply writes into or removes from comes back whole: after both walks, every path the target tracks under a workspace either walk touched that is still missing is published from the target with its tracked mode (each through `hp_contained` first, so a link there is refused and named like any other), because the diff names only what changed between S and the target, and a directory restored with those files alone would have the next `snapshot_pending` record its unchanged siblings as deletions. The rule covers every touched workspace, not only one the apply created, because an apply that creates the directory and then fails on a later path (a second link, a publish race) leaves it partial, and the next apply, which no longer creates it, must still complete it; that is what makes "remove the link" safe advice for a link at `plans/<ws>` itself. Both walks record the workspace: a deletion-only apply met by a link at the directory must bring the rest back after the repair, and a workspace the target empties (a remote finish) tracks nothing afterwards, so nothing is restored there. Each missing path is published from a temporary copy with one `link(2)`, so a file a writer creates between the check and the publish is theirs and is never overwritten; a ledger a writer creates there is reconciled through `ledger_apply`, never adopted, so neither the writer's lines nor the branch's are lost; the sweep of interrupted copies in `recover_apply` looks only inside real workspace directories, never through a link at `plans/<ws>`, and only at the `<name>.restore.<pid>` form; a tracked file a writer removed during the interrupted window is put back, which is the module's stance for a missing tracked file (`apply_target`'s pending scan says `put it back`), and no bytes are lost by it. The seam value `HYPERPOWERS_TEST_WRITER_AT=sync-before-restore:<path>` writes `concurrent write` to `$CO/<path>` right before the restore publishes that path. `say_link_repair` prints one sentence to stderr: `sdd-state: a symbolic link sits where sync writes or removes a regular file (named above); remove the link, leave $CO/.sync-applying in place, and run sdd-state sync again: the apply finishes from the branch`. It is printed on all three routes a link can take: `recover_apply` for return 4 (the generic line stays for every other failure), `apply_target`'s result `case` for return 4 on the normal post-ref apply, and `apply_target`'s post-apply re-walk on its own `hp_contained` refusal. Status and exit codes are unchanged (`status=error`, 2, marker kept). The seam value `HYPERPOWERS_TEST_WRITER_AT=sync-after-ref-link:<path>` replaces `$CO/<path>` with a symbolic link to `/dev/null` right after the ref has moved and before the apply; the seam value `HYPERPOWERS_TEST_WRITER_AT=sync-after-apply-link:<path>` does the same after `apply_files` returned 0 and before the post-apply re-walk.
 
 **Mirror:** `tests/sdd/test-sdd-state.sh:925-940` (a `sync` killed by `HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref` on `PAIR_B`, then a plain `sync` that recovers; `$wsb` is the workspace on B, `$co_b` the checkout).
 
@@ -723,9 +723,9 @@ printf 'second report\n' > "$wsa/task-2-report.md"; run_state "$PAIR_A" snapshot
 run_state "$PAIR_B" sync docs/plan.md >/dev/null
 rm -f "$wsa/task-2-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
-moved7i="$TEST_ROOT/ws-7i-moved"; mv "$wsb" "$moved7i"; ln -s "$moved7i" "$wsb"
+moved7i="$TEST_ROOT/ws-7i-moved"; mv "$wsb" "$moved7i"; ln -s "$moved7i" "$wsb"; printf 'x\n' > "$moved7i/keep.restore.123"
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7i.err"); rc=$?
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7i.err" && [ "$(cat "$moved7i/task-2-report.md")" = "second report" ]; then pass "a deletion-only apply met by a link at the workspace directory keeps the marker and names the repair"; else fail "a deletion-only apply met by a link at the workspace directory names the repair (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7i.err"))"; fi
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7i.err" && [ "$(cat "$moved7i/task-2-report.md")" = "second report" ] && [ -f "$moved7i/keep.restore.123" ]; then pass "a deletion-only apply met by a link at the workspace directory keeps the marker, names the repair, and sweeps nothing through the link"; else fail "a deletion-only apply met by a link at the workspace directory names the repair and sweeps nothing through the link (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7i.err"))"; fi
 rm "$wsb"
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7h: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ ! -e "$wsb/task-2-report.md" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "after the repair a deletion-only recovery brings the workspace back whole"; else fail "after the repair a deletion-only recovery brings the workspace back whole (rc=$rc: $out: $(git -C "$co_b" status --porcelain -- plans/ | tr '\n' '|'))"; fi
@@ -744,19 +744,41 @@ rm -f "$wsb/task-1-report.md"
 out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-before-restore:plans/$(basename "$wsb")/task-1-report.md" bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7k: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = "concurrent write" ] && ! ls "$wsb"/*.restore.* >/dev/null 2>&1; then pass "a file a writer creates right before the restore publishes it keeps the writer's bytes"; else fail "a file a writer creates right before the restore publishes it keeps the writer's bytes (rc=$rc: $out: $(cat "$wsb/task-1-report.md" 2>/dev/null))"; fi
 printf 'report\n' > "$wsb/task-1-report.md"; run_state "$PAIR_B" snapshot docs/plan.md >/dev/null; git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
-# B published last, so A syncs before the next fixture pushes from A.
+# B pushed last, so A is behind: without this its snapshot below would be
+# rejected silently and the remote finish would never reach B.
 run_state "$PAIR_A" sync docs/plan.md >/dev/null
+# A ledger a writer creates right before the restore publishes it is
+# reconciled, never adopted: the branch's ledger stays intact and the sync
+# stops with the marker, as for any ledger rewritten locally.
+printf 'third report\n' > "$wsa/task-3-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+rm -f "$wsa/task-3-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/progress.md"
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-before-restore:plans/$(basename "$wsb")/progress.md" bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && [ "$(cat "$wsb/progress.md")" = "concurrent write" ] && git -C "$co_b" show "refs/heads/hyperpowers/state:plans/$(basename "$wsb")/progress.md" | grep -q '^Task 7k: complete'; then pass "a writer's ledger met by the restore is reconciled, never adopted: the branch's ledger is intact and the sync stops"; else fail "a writer's ledger met by the restore is reconciled, never adopted (rc=$rc: $out: $(cat "$wsb/progress.md" 2>/dev/null | head -n 2 | tr '\n' '|'))"; fi
+rm -f "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7k: complete' "$wsb/progress.md" && [ ! -e "$wsb/task-3-report.md" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "with the writer's ledger removed the restore publishes the branch's"; else fail "with the writer's ledger removed the restore publishes the branch's (rc=$rc: $out)"; fi
+# A restored file keeps its tracked mode.
+printf '#!/bin/sh\nexit 0\n' > "$wsa/run.sh"; chmod 755 "$wsa/run.sh"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+printf 'Task 7m: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/run.sh"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && [ -x "$wsb/run.sh" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "a restored file keeps its tracked mode"; else fail "a restored file keeps its tracked mode (rc=$rc: $out: $(ls -l "$wsb/run.sh" 2>&1))"; fi
 ```
 
 If that fixture's variables are named differently, use its names; the shape (crash after update-ref, plant the link, sync, repair, sync) is what matters.
 
 - [ ] **Step 2: RED**
 
-State suite (or extracted harness), needles `names the repair` (both the recovery case and the normal post-ref case): `[FAIL]` (today stderr carries `hp_contained`'s line and the generic `repair the working tree under` sentence, never `remove the link, leave`; the seam does not exist yet, so the second case applies cleanly and fails on `status=error`). Needle `comes back whole`: `[FAIL]` (the recovery restores only the diff, and the report is recorded as deleted). Needle `met by the post-apply re-walk`: `[FAIL]` (the seam does not exist, so the sync succeeds). Needle `completes the partial workspace`: `[FAIL]` (a restore keyed to the apply that created the directory does not run on the apply that finishes the recovery, and the report is recorded as deleted). Needle `deletion-only recovery brings the workspace back whole`: `[FAIL]` (only the first walk recorded the workspace, so the recovery leaves it absent). Needle `keeps the writer's bytes`: `[FAIL]` (the seam does not exist, so the branch's copy is restored). The `put back by the recovery` assertion passes as soon as the restore exists; it records the stance. The delete-walk pair passes as soon as the second `hp_contained` check returns 4; it is coverage the gate asked for, not a RED of its own.
+State suite (or extracted harness), needles `names the repair` (both the recovery case and the normal post-ref case): `[FAIL]` (today stderr carries `hp_contained`'s line and the generic `repair the working tree under` sentence, never `remove the link, leave`; the seam does not exist yet, so the second case applies cleanly and fails on `status=error`). Needle `comes back whole`: `[FAIL]` (the recovery restores only the diff, and the report is recorded as deleted). Needle `met by the post-apply re-walk`: `[FAIL]` (the seam does not exist, so the sync succeeds). Needle `completes the partial workspace`: `[FAIL]` (a restore keyed to the apply that created the directory does not run on the apply that finishes the recovery, and the report is recorded as deleted). Needle `deletion-only recovery brings the workspace back whole`: `[FAIL]` (only the first walk recorded the workspace, so the recovery leaves it absent). Needle `keeps the writer's bytes`: `[FAIL]` (the seam does not exist, so the branch's copy is restored). The `put back by the recovery` assertion passes as soon as the restore exists; it records the stance. Needle `sweeps nothing through the link`: `[FAIL]` (the sweep's glob expands through the directory link). Needle `never adopted`: `[FAIL]` (the writer's one-line ledger is accepted and the next snapshot truncates the branch's). Needle `keeps its tracked mode`: `[FAIL]` (the copy is written with the umask). The delete-walk pair passes as soon as the second `hp_contained` check returns 4; it is coverage the gate asked for, not a RED of its own.
 
 - [ ] **Step 3: A distinct code and one repair sentence**
 
-In `apply_files`, change both `hp_contained "$CO" "$path" || return 2` lines (898 and 935) to `hp_contained "$CO" "$path" || return 4`, and add to the function's comment: `Returns 4 when a path it must write or remove sits under a symbolic link; the callers turn that into a repair the human can act on. Every workspace the apply writes into or removes from comes back whole: every path the target tracks under it that is still missing afterwards is published from the target.` Then make the function remember each workspace either walk touches and restore it whole. Its `local` line becomes `local S=$1 target=$2 path dir tmp half ws i last_ws="" touched_ws=()` (`tmp` is already there) (`cmd_sync` already has a scalar `created`, so the array avoids that stem; shellcheck's SC2178 reads a scalar and an array of one name as one variable); right after the first walk's `hp_contained ... || return 4` line add:
+In `apply_files`, change both `hp_contained "$CO" "$path" || return 2` lines (898 and 935) to `hp_contained "$CO" "$path" || return 4`, and add to the function's comment: `Returns 4 when a path it must write or remove sits under a symbolic link; the callers turn that into a repair the human can act on. Every workspace the apply writes into or removes from comes back whole: every path the target tracks under it that is still missing afterwards is published from the target.` Then make the function remember each workspace either walk touches and restore it whole. Its `local` line becomes `local S=$1 target=$2 path dir tmp half ws i last_ws="" touched_ws=()` (`tmp` is already there; `meta` is the `<mode> blob <id>` field `ls-tree -r` prints before the tab, so add `meta` to that line too) (`cmd_sync` already has a scalar `created`, so the array avoids that stem; shellcheck's SC2178 reads a scalar and an array of one name as one variable); right after the first walk's `hp_contained ... || return 4` line add:
 
 ```bash
     # Every workspace this walk writes into is remembered: the diff names
@@ -782,30 +804,38 @@ and replace the function's final `return 0` with:
 ```bash
   # Each workspace this apply wrote into or removed from comes back whole:
   # every path the target tracks under it that is still missing is
-  # published from the target. A link at such a path is refused and named,
-  # never skipped: skipped, the next snapshot would commit it onto the
-  # branch. The publish is one link(2) from a temporary copy, so a file a
-  # writer creates between the check and the publish is theirs.
+  # published from the target, with its tracked mode. A link at such a
+  # path is refused and named, never skipped: skipped, the next snapshot
+  # would commit it onto the branch. The publish is one link(2) from a
+  # temporary copy, so a file a writer creates between the check and the
+  # publish is theirs; a ledger a writer creates there is reconciled,
+  # never adopted.
   i=0
   while [ "$i" -lt "${#touched_ws[@]}" ]; do
     ws=${touched_ws[$i]}; i=$((i + 1))
-    while IFS= read -r path; do
+    while IFS=$'\t' read -r meta path; do
       [ -n "$path" ] || continue
       hp_contained "$CO" "$path" || return 4
       [ ! -e "$CO/$path" ] || continue
       mkdir -p "$(dirname "$CO/$path")" || return 2
       tmp="$CO/$path.restore.$$"; rm -f "$tmp"
       git -C "$CO" show "$target:$path" > "$tmp" || { rm -f "$tmp"; return 2; }
+      case "$meta" in 100755*) chmod 755 "$tmp" || { rm -f "$tmp"; return 2; } ;; esac
       # Test hook: a writer creates the file right before the publish.
       case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-restore:*) [ "${HYPERPOWERS_TEST_WRITER_AT#sync-before-restore:}" != "$path" ] || printf 'concurrent write\n' > "$CO/$path" ;; esac
-      if ! ln "$tmp" "$CO/$path" 2>/dev/null; then rm -f "$tmp"; [ -e "$CO/$path" ] || return 2; fi
+      if ! ln "$tmp" "$CO/$path" 2>/dev/null; then
+        rm -f "$tmp"
+        [ -e "$CO/$path" ] || return 2
+        case "$path" in plans/*/progress.md) [ -f "$CO/$path" ] || return 2; ledger_apply "$path" "$S" "$target" || return $? ;; esac
+        continue
+      fi
       rm -f "$tmp"
-    done < <(git -C "$CO" ls-tree -r --name-only "$target" -- "plans/$ws")
+    done < <(git -C "$CO" ls-tree -r "$target" -- "plans/$ws")
   done
   return 0
 ```
 
-In `recover_apply`, the cleanup of interrupted temporary copies must cover the restore's too: replace
+In `recover_apply`, the cleanup of interrupted temporary copies must cover the restore's too, and must not reach through a link at `plans/<ws>` (add `dir` to the function's `local` line): replace
 
 ```bash
   # A new ledger interrupted between its temporary copy and its publish
@@ -818,8 +848,13 @@ with
 ```bash
   # A new ledger, or a restored file, interrupted between its temporary
   # copy and its publish leaves that copy inside a workspace, where a
-  # snapshot would commit it.
-  rm -f "$CO"/plans/*/progress.md.new.* "$CO"/plans/*/*.restore.* 2>/dev/null
+  # snapshot would commit it. Only real workspace directories are swept: a
+  # link at plans/<ws> is refused further down, and nothing is removed
+  # through it; the pid suffix keeps a tracked name out of the pattern.
+  for dir in "$CO"/plans/*/; do
+    [ -d "$dir" ] && [ ! -L "${dir%/}" ] || continue
+    rm -f "$dir"progress.md.new.* "$dir"*.restore.[0-9]* 2>/dev/null
+  done
 ```
 
 Beside `recover_apply` (before it) add:
@@ -869,7 +904,7 @@ In the `case "$res" in` that follows the loop, add the arm `4) say_link_repair; 
 
 - [ ] **Step 4: GREEN, quick suites, lint**
 
-State suite, needles from Step 1 (all seventeen): `[PASS]`, log GREEN. `bash tests/sdd/test-sdd-contract.sh` `STATUS: PASSED`. `bash scripts/lint-shell.sh skills/subagent-driven-development/scripts/sdd-state tests/sdd/test-sdd-state.sh` exit 0.
+State suite, needles from Step 1 (all twenty): `[PASS]`, log GREEN. `bash tests/sdd/test-sdd-contract.sh` `STATUS: PASSED`. `bash scripts/lint-shell.sh skills/subagent-driven-development/scripts/sdd-state tests/sdd/test-sdd-state.sh` exit 0.
 
 - [ ] **Step 5: Commit**
 

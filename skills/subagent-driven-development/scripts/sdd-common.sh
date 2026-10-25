@@ -78,10 +78,12 @@ hp_utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # <referent path> -> 0 when an import left a copy of that workspace beside
 # it: the backup of one still running (`<ref>.importing-*`) or the dated
 # copy a verified one keeps (`<ref>.imported-*`). The plain-cache reclaim
-# can have claimed the whole root since, which moves the kept copy to
-# `<root>.reclaiming-*/plans/<ws>.imported-*`, so that name counts too. A
-# dangling pointer to such a referent is the interrupted import's only
-# handle: sdd-dir keeps it and sdd-state's import completes the relink.
+# can have moved the whole root since, so the copy is looked for under both
+# names a moved root carries: `<root>.claiming-*` while a claim is staging
+# it (an importer's backup can still be in there) and `<root>.reclaiming-*`
+# once it is a quarantine. A dangling pointer to such a referent is the
+# interrupted import's only handle: sdd-dir keeps it and sdd-state's import
+# completes the relink.
 hp_kept_copy_exists() {
   local root ws
   ls -d "$1".importing-* >/dev/null 2>&1 && return 0
@@ -89,6 +91,8 @@ hp_kept_copy_exists() {
   case "$1" in */plans/*) ;; *) return 1 ;; esac
   root=${1%/plans/*}
   ws=${1##*/}
+  ls -d "$root".claiming-*/plans/"$ws".importing-* >/dev/null 2>&1 && return 0
+  ls -d "$root".claiming-*/plans/"$ws".imported-* >/dev/null 2>&1 && return 0
   ls -d "$root".reclaiming-*/plans/"$ws".imported-* >/dev/null 2>&1 && return 0
   return 1
 }

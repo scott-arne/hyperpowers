@@ -296,6 +296,25 @@ if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "symbolic link escape" ]; then pass "hp_t
 # parser came out garbled, with a remedy that does not apply here.
 tr_err=$(hp_refuse_tip "$tr_repo" 0000000000000000000000000000000000000001 2>&1 >/dev/null); tr_rc=$?
 if [ "$tr_rc" -eq 2 ] && printf '%s' "$tr_err" | grep -q 'could not be read as a tree' && ! printf '%s' "$tr_err" | grep -q 'tree this'; then pass "hp_refuse_tip reports an unreadable tree in its own words"; else fail "hp_refuse_tip reports an unreadable tree in its own words (rc=$tr_rc: $tr_err)"; fi
+
+# --- kept copies beside a referent -----------------------------------------
+# The plain-cache reclaim can move the whole root while a pointer still names
+# the workspace inside it: the copy is then under the staging name a claim in
+# progress carries, or under the quarantine it becomes.
+kc_root="$TEST_ROOT/cache/hyperpowers/sdd/keptkey0000000000001"
+kc_ref="$kc_root/plans/some-plan-deadbeef"
+if hp_kept_copy_exists "$kc_ref"; then fail "hp_kept_copy_exists: no copy anywhere is 1"; else pass "hp_kept_copy_exists: no copy anywhere is 1"; fi
+mkdir -p "$kc_root/plans/some-plan-deadbeef.imported-20240101T000000Z-1"
+if hp_kept_copy_exists "$kc_ref"; then pass "hp_kept_copy_exists: a kept copy beside the live referent"; else fail "hp_kept_copy_exists: a kept copy beside the live referent"; fi
+mv "$kc_root" "$kc_root.claiming-1"
+if hp_kept_copy_exists "$kc_ref"; then pass "hp_kept_copy_exists: a kept copy under a root a claim is staging"; else fail "hp_kept_copy_exists: a kept copy under a root a claim is staging"; fi
+mv "$kc_root.claiming-1/plans/some-plan-deadbeef.imported-20240101T000000Z-1" "$kc_root.claiming-1/plans/some-plan-deadbeef.importing-4242"
+if hp_kept_copy_exists "$kc_ref"; then pass "hp_kept_copy_exists: an import's backup under a staged root counts too"; else fail "hp_kept_copy_exists: an import's backup under a staged root counts too"; fi
+mv "$kc_root.claiming-1/plans/some-plan-deadbeef.importing-4242" "$kc_root.claiming-1/plans/some-plan-deadbeef.imported-20240101T000000Z-1"
+mv "$kc_root.claiming-1" "$kc_root.reclaiming-1"
+if hp_kept_copy_exists "$kc_ref"; then pass "hp_kept_copy_exists: a kept copy under a quarantined root"; else fail "hp_kept_copy_exists: a kept copy under a quarantined root"; fi
+rm -rf "$kc_root.reclaiming-1"
+if hp_kept_copy_exists "$kc_ref"; then fail "hp_kept_copy_exists: the quarantine deleted is 1 again"; else pass "hp_kept_copy_exists: the quarantine deleted is 1 again"; fi
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

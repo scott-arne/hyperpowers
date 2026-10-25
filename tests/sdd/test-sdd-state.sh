@@ -735,6 +735,22 @@ if [ "$rc" -eq 99 ] && [ -L "$ptr_i25" ] && [ ! -e "$ptr_i25" ] && ls -d "$root_
 out=$(run_state "$i25" import docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$ptr_i25" ] && [ "$(cd "$ptr_i25" && pwd -P)" = "$(cd "$wsi25" && pwd -P)" ]; then pass "the import completes the relink with the kept copy inside a quarantined root"; else fail "the import completes the relink with the kept copy inside a quarantined root (rc=$rc: $out)"; fi
 
+# The same for a direct candidate: the relink has to recreate the legacy
+# root's plans directory, which went with the root the reclaim claimed.
+i26="$TEST_ROOT/i26"; make_repo "$i26"; i26b="$TEST_ROOT/i26b"; make_repo "$i26b"
+mkdir -p "$i26/docs"; : > "$i26/docs/plan.md"; git -C "$i26" add docs; git -C "$i26" commit -qm plan
+wsi26=$(ws_path "$i26" "$i26/docs/plan.md")
+root_i26="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i26")"
+legacy_i26="$root_i26/plans/$(basename "$wsi26")"
+mkdir -p "$legacy_i26"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$legacy_i26/progress.md"
+( cd "$i26" && HYPERPOWERS_TEST_CRASH_AT=import-after-set-aside bash "$SDD_STATE" import docs/plan.md >/dev/null 2>&1 ); rc=$?
+find "$root_i26" -depth -exec touch -t 202601010000 {} +
+# Another repository's call claims the idle root; it never touches this one.
+run_sdd_dir "$i26b" >/dev/null 2>&1
+if [ "$rc" -eq 99 ] && [ ! -e "$root_i26" ] && ls -d "$root_i26".reclaiming-*/plans/"$(basename "$wsi26")".imported-* >/dev/null 2>&1; then pass "the legacy root of a crashed direct import is claimed with its kept copy"; else fail "the legacy root of a crashed direct import is claimed with its kept copy (rc=$rc)"; fi
+out=$(run_state "$i26" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i26" ] && [ -L "$legacy_i26" ] && [ "$(cd "$legacy_i26" && pwd -P)" = "$(cd "$wsi26" && pwd -P)" ]; then pass "the import recreates the legacy root's plans directory and completes the relink"; else fail "the import recreates the legacy root's plans directory and completes the relink (rc=$rc: $out)"; fi
+
 echo ""
 echo "=== sdd-dir and the plain fallback over branch state ==="
 make_pair p5

@@ -400,6 +400,10 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
       if [ -L "$c" ]; then t=$(readlink "$c"); else t=$c; fi
       if hp_kept_copy_exists "$t"; then
         if [ -L "$c" ]; then link=$c; else link=$t; fi
+        # The reclaim can have taken the legacy root with the kept copy
+        # inside it, and the pointer still belongs where the workspace was:
+        # the plans directory comes back empty, holding nothing but the link.
+        mkdir -p "$(dirname "$link")" 2>/dev/null || true
         if ln -sfn "$dest" "$link" 2>/dev/null && [ "$(hp_physical_dir "$link" 2>/dev/null)" = "$dest_phys" ]; then
           hp_unlock; echo "status=moved from=$(enc "$c")"; return 0
         fi

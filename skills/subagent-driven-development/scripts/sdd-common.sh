@@ -139,9 +139,11 @@ hp_plan_ws_name() {
   slug=$(basename "$1"); slug=${slug%.*}
   # A workspace name never starts with a dot: dotted entries under plans/
   # are the leftovers of removals (.removing-, .quarantining-, .pruned-),
-  # and a plan file named like one must not be taken for them. A dotted
-  # name was never snapshotted either (every workspace walk skips dotted
-  # names), so no durable state changes identity here.
+  # and a plan file named like one must not be taken for them. A plan file
+  # from an earlier build whose name began with a dot continues in a new
+  # workspace from here; its old directory, if the branch tracks one, stays
+  # tracked and untouched (every walk skips dotted names, and a tracked
+  # path is never taken for a leftover).
   slug=${slug#"${slug%%[!.]*}"}; [ -n "$slug" ] || slug=plan
   hash8=$(printf '%s' "$rel" | git -C "$d" hash-object --stdin | cut -c1-8)
   printf '%s-%s\n' "$slug" "$hash8"

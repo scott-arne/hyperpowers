@@ -974,6 +974,16 @@ wsd=$(run_sdd_dir "$pr" docs/.pruned-demo.md); printf 'dot plan\n' > "$wsd/progr
 case "$(basename "$wsd")" in pruned-demo-*) pass "a plan file named like a quarantine gets a workspace name without the leading dot" ;; *) fail "a plan file named like a quarantine gets a workspace name without the leading dot (got $(basename "$wsd"))" ;; esac
 out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -f "$wsd/progress.md" ]; then pass "such a workspace is never listed as a tomb or a quarantine"; else fail "such a workspace is never listed as a tomb or a quarantine (rc=$rc: $out)"; fi
+# A checkout from before this release may track a workspace named like a
+# leftover (a dot-led plan name with an all-decimal hash): a tracked path
+# is never a tomb, a quarantine or a staged copy, whatever its name.
+for legacy in .removing-legacy-12345678 .pruned-legacy-12345678 .quarantining-legacy-12345678; do mkdir -p "$co_pr/plans/$legacy"; printf 'legacy dossier\n' > "$co_pr/plans/$legacy/progress.md"; done
+git -C "$co_pr" add -A plans/ && git -C "$co_pr" commit -qm legacy
+for legacy in .removing-legacy-12345678 .pruned-legacy-12345678 .quarantining-legacy-12345678; do touch -t 202401010000 "$co_pr/plans/$legacy/progress.md" "$co_pr/plans/$legacy"; done
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$"; then pass "tracked paths named like leftovers are listed as neither tomb nor quarantine"; else fail "tracked paths named like leftovers are listed as neither tomb nor quarantine (rc=$rc: $out)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$co_pr/plans/.removing-legacy-12345678/progress.md" ] && [ -f "$co_pr/plans/.pruned-legacy-12345678/progress.md" ] && [ -f "$co_pr/plans/.quarantining-legacy-12345678/progress.md" ] && [ -z "$(git -C "$co_pr" status --porcelain -- plans/)" ]; then pass "an --apply leaves tracked paths named like leftovers untouched"; else fail "an --apply leaves tracked paths named like leftovers untouched (rc=$rc: $out: $(git -C "$co_pr" status --porcelain -- plans/ | tr '\n' '|'))"; fi
 echo ""
 echo "=== sync ==="
 make_pair p7

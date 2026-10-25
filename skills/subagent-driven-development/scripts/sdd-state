@@ -773,6 +773,8 @@ cmd_prune() {
   if [ "$apply" -eq 1 ] && [ -e "$co/.git" ]; then
     for s in "$co"/plans/.quarantining-*; do
       [ -d "$s" ] && [ ! -L "$s" ] || continue
+      tracked=$(git -C "$co" ls-tree -d "refs/heads/$br" -- "plans/${s##*/}" 2>/dev/null) || continue
+      [ -z "$tracked" ] || continue
       t="$co/plans/.removing-${s##*/.quarantining-}"
       if [ -e "$t" ] || [ -L "$t" ]; then echo "sdd-state: a staged copy from an interrupted prune is at $s and its tomb name $t is taken; move it back or delete it by hand" >&2; continue; fi
       mv "$s" "$t" 2>/dev/null || echo "sdd-state: the staged copy at $s could not be put back at $t; move it back by hand" >&2
@@ -795,6 +797,10 @@ cmd_prune() {
       [ -d "$t" ] && [ ! -L "$t" ] || continue
       tomb_name=${t##*/}; tomb_pid=${tomb_name##*-}; tomb_ws=${tomb_name#.removing-}; tomb_ws=${tomb_ws%-*}
       case "$tomb_pid" in ''|*[!0-9]*) continue ;; esac
+      # A tracked path under plans/ is a workspace whatever its name: a
+      # checkout from before this release may hold one named like a tomb.
+      tracked=$(git -C "$co" ls-tree -d "refs/heads/$br" -- "plans/$tomb_name" 2>/dev/null) || continue
+      [ -z "$tracked" ] || continue
       tomb_qualifies "$t" "$tomb_pid" "$tomb_ws" || continue
       tomb_dead[${#tomb_dead[@]}]=$t; tomb_list="$tomb_list,$(enc "$tomb_name")"
     done
@@ -876,7 +882,9 @@ cmd_prune() {
       mv "$stage" "$t" 2>/dev/null || echo "sdd-state: the copy renamed to $stage could not be put back at $t; move it back by hand" >&2
       continue
     fi
-    # The clock started on the staged copy, and rename keeps it.
+    # The clock started on the staged copy, and rename keeps it. The
+    # destination is checked here, at the rename, like every other.
+    [ ! -e "$quar" ] && [ ! -L "$quar" ] || { echo "sdd-state: $quar appeared while $stage was staged; the next prune puts it back" >&2; continue; }
     mv "$stage" "$quar" 2>/dev/null || { echo "sdd-state: the staged copy at $stage could not be published at $quar; the next prune puts it back" >&2; continue; }
     tomb_list="$tomb_list,$(enc "$tomb_name")"
   done

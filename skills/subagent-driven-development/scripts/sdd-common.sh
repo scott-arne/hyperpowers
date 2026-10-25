@@ -75,6 +75,16 @@ hp_write_backend() { # <repo-dir> <line>
 hp_session_id() { printf '%s\n' "${HYPERPOWERS_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"; }
 hp_utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+# <pid> -> 0 when the process is gone. kill(2) answers ESRCH for a pid that
+# is gone and EPERM for one that exists but may not be signalled (another
+# user's process, or any process from a sandboxed shell); only the first is
+# death. bash's kill builtin folds both into exit 1, so node asks.
+hp_pid_gone() {
+  local answer
+  answer=$(node -e 'try { process.kill(Number(process.argv[1]), 0); process.stdout.write("alive"); } catch (e) { process.stdout.write(e && e.code === "ESRCH" ? "gone" : "alive"); }' "$1" 2>/dev/null) || answer=alive
+  [ "$answer" = gone ]
+}
+
 # <referent path> -> 0 when an import left a copy of that workspace beside
 # it: the backup of one still running (`<ref>.importing-*`) or the dated
 # copy a verified one keeps (`<ref>.imported-*`). The plain-cache reclaim

@@ -297,6 +297,12 @@ if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "symbolic link escape" ]; then pass "hp_t
 tr_err=$(hp_refuse_tip "$tr_repo" 0000000000000000000000000000000000000001 2>&1 >/dev/null); tr_rc=$?
 if [ "$tr_rc" -eq 2 ] && printf '%s' "$tr_err" | grep -q 'could not be read as a tree' && ! printf '%s' "$tr_err" | grep -q 'tree this'; then pass "hp_refuse_tip reports an unreadable tree in its own words"; else fail "hp_refuse_tip reports an unreadable tree in its own words (rc=$tr_rc: $tr_err)"; fi
 
+# --- pid liveness ----------------------------------------------------------
+sleep 0.01 & gone_pid=$!; wait "$gone_pid" 2>/dev/null
+if hp_pid_gone "$gone_pid"; then pass "hp_pid_gone: a reaped pid is gone"; else fail "hp_pid_gone: a reaped pid is gone"; fi
+if ! hp_pid_gone $$; then pass "hp_pid_gone: our own pid is alive"; else fail "hp_pid_gone: our own pid is alive"; fi
+if ! hp_pid_gone 1; then pass "hp_pid_gone: a pid we may not signal (EPERM) is alive"; else fail "hp_pid_gone: a pid we may not signal (EPERM) is alive"; fi
+
 # --- kept copies beside a referent -----------------------------------------
 # The plain-cache reclaim can move the whole root while a pointer still names
 # the workspace inside it: the copy is then under the staging name a claim in

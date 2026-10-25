@@ -382,13 +382,20 @@ mkdir -p "$idle_touched/plans/some-plan-deadbeef"; : > "$idle_touched/plans/some
 find "$idle_touched" -depth -exec touch -mt "$OLDSTAMP" {} +
 _=$(cd "$TEST_ROOT/repo-plan" && HYPERPOWERS_TEST_RECLAIM_RACE="touch:$idle_touched" "$SDD_DIR_SCRIPT" docs/a/plan.md)
 if [ -d "$idle_touched" ] && [ -f "$idle_touched/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_touched".claiming-* >/dev/null 2>&1 && ! ls -d "$idle_touched".reclaiming-* >/dev/null 2>&1; then pass "an importer that has only touched the root keeps it under its own name"; else fail "an importer that has only touched the root keeps it under its own name (root: $([ -d "$idle_touched" ] && echo kept || echo gone))"; fi
+# A claim whose owner is still running is that call's to finish or put back.
+idle_live="$XDG_CACHE_HOME/hyperpowers/sdd/idlelive00000000000a"
+mkdir -p "$idle_live.claiming-$$/plans/some-plan-deadbeef"; : > "$idle_live.claiming-$$/plans/some-plan-deadbeef/progress.md"
+find "$idle_live.claiming-$$" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -d "$idle_live.claiming-$$" ] && ! ls -d "$idle_live".reclaiming-* >/dev/null 2>&1; then pass "a .claiming-* whose owner is alive is left to its owner"; else fail "a .claiming-* whose owner is alive is left to its owner (staged: $([ -d "$idle_live.claiming-$$" ] && echo kept || echo gone))"; fi
 # A claim that crashed between its staging rename and its final one.
+sleep 0.01 & crashed_pid=$!; wait "$crashed_pid" 2>/dev/null
 idle_crashed="$XDG_CACHE_HOME/hyperpowers/sdd/idlecrashed000000009"
-mkdir -p "$idle_crashed.claiming-1/plans/some-plan-deadbeef"; : > "$idle_crashed.claiming-1/plans/some-plan-deadbeef/progress.md"
-find "$idle_crashed.claiming-1" -depth -exec touch -mt "$OLDSTAMP" {} +
+mkdir -p "$idle_crashed.claiming-$crashed_pid/plans/some-plan-deadbeef"; : > "$idle_crashed.claiming-$crashed_pid/plans/some-plan-deadbeef/progress.md"
+find "$idle_crashed.claiming-$crashed_pid" -depth -exec touch -mt "$OLDSTAMP" {} +
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
 adopted=$(ls -d "$idle_crashed".reclaiming-* 2>/dev/null | head -n 1) || adopted=""
-if [ ! -d "$idle_crashed.claiming-1" ] && [ -n "$adopted" ] && [ -f "$adopted/plans/some-plan-deadbeef/progress.md" ] && [ -z "$(find "$adopted" -maxdepth 0 -mtime +14 2>/dev/null)" ]; then pass "a .claiming-* leftover is adopted as a quarantine with a fresh stamp"; else fail "a .claiming-* leftover is adopted as a quarantine with a fresh stamp (adopted: '$adopted')"; fi
+if [ ! -d "$idle_crashed.claiming-$crashed_pid" ] && [ -n "$adopted" ] && [ -f "$adopted/plans/some-plan-deadbeef/progress.md" ] && [ -z "$(find "$adopted" -maxdepth 0 -mtime +14 2>/dev/null)" ]; then pass "a .claiming-* leftover is adopted as a quarantine with a fresh stamp"; else fail "a .claiming-* leftover is adopted as a quarantine with a fresh stamp (adopted: '$adopted')"; fi
 ln -s "$TEST_ROOT/repo-plan" "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004"
 touch -h -t 202601010000 "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004" 2>/dev/null || true
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)

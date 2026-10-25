@@ -78,7 +78,7 @@ base="$(hp_cache_root)/sdd"
 # after a rename finds no root and fails cleanly with nothing lost. Best
 # effort: pruning must never break the contract that stdout is the path.
 reclaim_plain() {
-  local r staged claimed gone
+  local r pid staged claimed gone
   for r in "$base"/*/; do
     r=${r%/}
     [ -d "$r" ] && [ ! -L "$r" ] || continue
@@ -101,7 +101,13 @@ reclaim_plain() {
       *.claiming-*)
         # A claim that crashed between its two renames: the tree was already
         # found idle and re-checked, so it is adopted as a quarantine with a
-        # fresh stamp rather than re-examined.
+        # fresh stamp rather than re-examined. Only a claim whose owner is
+        # gone is adopted: while that call runs, the tree is its to promote
+        # or to put back for an importer that got in, and moving it would
+        # take that choice away.
+        pid=${r##*.claiming-}
+        case "$pid" in ''|*[!0-9]*) continue ;; esac
+        hp_pid_gone "$pid" || continue
         claimed="${r%.claiming-*}.reclaiming-$$"
         if [ -e "$claimed" ] || [ -L "$claimed" ]; then continue; fi
         touch "$r" 2>/dev/null || true

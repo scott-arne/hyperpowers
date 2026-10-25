@@ -744,6 +744,8 @@ rm -f "$wsb/task-1-report.md"
 out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-before-restore:plans/$(basename "$wsb")/task-1-report.md" bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7k: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = "concurrent write" ] && ! ls "$wsb"/*.restore.* >/dev/null 2>&1; then pass "a file a writer creates right before the restore publishes it keeps the writer's bytes"; else fail "a file a writer creates right before the restore publishes it keeps the writer's bytes (rc=$rc: $out: $(cat "$wsb/task-1-report.md" 2>/dev/null))"; fi
 printf 'report\n' > "$wsb/task-1-report.md"; run_state "$PAIR_B" snapshot docs/plan.md >/dev/null; git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
+# B published last, so A syncs before the next fixture pushes from A.
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
 ```
 
 If that fixture's variables are named differently, use its names; the shape (crash after update-ref, plant the link, sync, repair, sync) is what matters.

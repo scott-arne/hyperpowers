@@ -952,19 +952,19 @@ ledger_apply() {
 # locally returns 5 (from ledger_apply); a changed ledger the target deletes
 # returns 6. Returns 4 when a path it must write or remove sits under a
 # symbolic link; the callers turn that into a repair the human can act on.
-# A workspace directory the apply has to create comes back whole: every
-# path the target tracks under it that is still missing afterwards is
-# checked out.
+# Every workspace the apply writes into comes back whole: every path the
+# target tracks under it that is still missing afterwards is checked out.
 apply_files() {
-  local S=$1 target=$2 path dir tmp half ws i created_ws=()
+  local S=$1 target=$2 path dir tmp half ws i last_ws="" touched_ws=()
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     hp_contained "$CO" "$path" || return 4
-    # A workspace directory this apply has to create is remembered: the
-    # diff names only what changed between S and the target, and a
-    # directory restored with those files alone would have the next
-    # snapshot record its unchanged siblings as deletions.
-    case "$path" in plans/*/*) ws=${path#plans/}; ws=${ws%%/*}; [ -e "$CO/plans/$ws" ] || created_ws[${#created_ws[@]}]=$ws ;; esac
+    # Every workspace this walk writes into is remembered: the diff names
+    # only what changed between S and the target, and a directory an
+    # interrupted apply left holding those files alone would have the next
+    # snapshot record its unchanged siblings as deletions. git lists paths
+    # sorted, so one workspace's paths are contiguous.
+    case "$path" in plans/*/*) ws=${path#plans/}; ws=${ws%%/*}; [ "$ws" = "$last_ws" ] || touched_ws[${#touched_ws[@]}]=$ws; last_ws=$ws ;; esac
     mkdir -p "$(dirname "$CO/$path")" || return 2
     case "$path" in
       plans/*/progress.md)
@@ -1009,23 +1009,25 @@ apply_files() {
       *) rm -f "$CO/$path" 2>/dev/null; [ ! -e "$CO/$path" ] || return 2 ;;
     esac
   done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
-  # Each workspace directory this apply created comes back whole: every
-  # path the target tracks under it that is still missing is checked out.
+  # Each workspace this apply wrote into comes back whole: every path the
+  # target tracks under it that is still missing is checked out. A link at
+  # such a path is refused and named, never skipped: skipped, the next
+  # snapshot would commit it onto the branch.
   i=0
-  while [ "$i" -lt "${#created_ws[@]}" ]; do
-    ws=${created_ws[$i]}; i=$((i + 1))
+  while [ "$i" -lt "${#touched_ws[@]}" ]; do
+    ws=${touched_ws[$i]}; i=$((i + 1))
     while IFS= read -r path; do
       [ -n "$path" ] || continue
-      [ ! -e "$CO/$path" ] && [ ! -L "$CO/$path" ] || continue
       hp_contained "$CO" "$path" || return 4
+      [ ! -e "$CO/$path" ] || continue
       git -C "$CO" checkout -q "$target" -- "$path" || return 2
     done < <(git -C "$CO" ls-tree -r --name-only "$target" -- "plans/$ws")
   done
   return 0
 }
 # One sentence for the one failure a human clears by hand without reading
-# code: a link where the apply writes a regular file. hp_contained has just
-# named the path.
+# code: a link where the apply writes or removes a regular file.
+# hp_contained has just named the path.
 say_link_repair() {
   echo "sdd-state: a symbolic link sits where sync writes or removes a regular file (named above); remove the link, leave $CO/.sync-applying in place, and run sdd-state sync again: the apply finishes from the branch" >&2
 }

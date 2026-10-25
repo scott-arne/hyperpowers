@@ -1084,6 +1084,26 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying"
 rm -f "$wsb/progress.md"
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7g: complete' "$wsb/progress.md"; then pass "after that repair too the recovery completes"; else fail "after that repair too the recovery completes (rc=$rc: $out)"; fi
+# Two links met by one recovery, a workspace apart: the first apply creates
+# the first workspace, publishes its ledger, and fails on the second
+# workspace's link, leaving the first partial; the apply that finishes the
+# recovery no longer creates that directory and must still complete it.
+ws2b="$co_b/plans/$(basename "$ws2a")"
+printf 'report\n' > "$wsa/task-1-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+printf 'Task 7h: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; printf 'Task 7h-second: complete (commits 1111111..2222222, review clean)\n' >> "$ws2a/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+moved7h="$TEST_ROOT/ws-7h-moved"; mv "$wsb" "$moved7h"; ln -s "$moved7h" "$wsb"
+victim7h="$TEST_ROOT/victim-7h"; printf 'untouched\n' > "$victim7h"; rm -f "$ws2b/progress.md"; ln -s "$victim7h" "$ws2b/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7h.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7h.err"; then pass "the first of two links is refused with the marker kept"; else fail "the first of two links is refused with the marker kept (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7h.err"))"; fi
+rm "$wsb"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7h2.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7h2.err" && [ -f "$wsb/progress.md" ] && [ ! -e "$wsb/task-1-report.md" ] && [ "$(cat "$victim7h")" = untouched ]; then pass "the apply that created the first workspace is stopped by the second link, leaving it partial with the marker kept"; else fail "the apply that created the first workspace is stopped by the second link (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7h2.err"))"; fi
+rm "$ws2b/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7h: complete' "$wsb/progress.md" && grep -q '^Task 7h-second: complete' "$ws2b/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ] && [ -n "$(git -C "$co_b" ls-tree --name-only refs/heads/hyperpowers/state -- "plans/$(basename "$wsb")/task-1-report.md")" ]; then pass "the apply that finishes the recovery completes the partial workspace and no deletion is snapshotted"; else fail "the apply that finishes the recovery completes the partial workspace (rc=$rc: $out: $(git -C "$co_b" status --porcelain -- plans/ | tr '\n' '|'))"; fi
 
 # A remote finish racing a local writer: refused, nothing changed. The seam
 # writes after the pending check and right before the rename.

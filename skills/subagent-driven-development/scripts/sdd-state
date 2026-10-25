@@ -950,13 +950,21 @@ ledger_apply() {
 # files are checked out; files the target deletes are removed, a ledger among
 # them through remove_verified. Any failure returns 2; a ledger rewritten
 # locally returns 5 (from ledger_apply); a changed ledger the target deletes
-# returns 6. Returns 4 when a path it must write sits under a symbolic
-# link; the callers turn that into a repair the human can act on.
+# returns 6. Returns 4 when a path it must write or remove sits under a
+# symbolic link; the callers turn that into a repair the human can act on.
+# A workspace directory the apply has to create comes back whole: every
+# path the target tracks under it that is still missing afterwards is
+# checked out.
 apply_files() {
-  local S=$1 target=$2 path dir tmp half
+  local S=$1 target=$2 path dir tmp half ws i created_ws=()
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     hp_contained "$CO" "$path" || return 4
+    # A workspace directory this apply has to create is remembered: the
+    # diff names only what changed between S and the target, and a
+    # directory restored with those files alone would have the next
+    # snapshot record its unchanged siblings as deletions.
+    case "$path" in plans/*/*) ws=${path#plans/}; ws=${ws%%/*}; [ -e "$CO/plans/$ws" ] || created_ws[${#created_ws[@]}]=$ws ;; esac
     mkdir -p "$(dirname "$CO/$path")" || return 2
     case "$path" in
       plans/*/progress.md)
@@ -1001,13 +1009,25 @@ apply_files() {
       *) rm -f "$CO/$path" 2>/dev/null; [ ! -e "$CO/$path" ] || return 2 ;;
     esac
   done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
+  # Each workspace directory this apply created comes back whole: every
+  # path the target tracks under it that is still missing is checked out.
+  i=0
+  while [ "$i" -lt "${#created_ws[@]}" ]; do
+    ws=${created_ws[$i]}; i=$((i + 1))
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      [ ! -e "$CO/$path" ] && [ ! -L "$CO/$path" ] || continue
+      hp_contained "$CO" "$path" || return 4
+      git -C "$CO" checkout -q "$target" -- "$path" || return 2
+    done < <(git -C "$CO" ls-tree -r --name-only "$target" -- "plans/$ws")
+  done
   return 0
 }
 # One sentence for the one failure a human clears by hand without reading
 # code: a link where the apply writes a regular file. hp_contained has just
 # named the path.
 say_link_repair() {
-  echo "sdd-state: a symbolic link sits where sync writes a regular file (named above); remove the link, leave $CO/.sync-applying in place, and run sdd-state sync again: the file comes back from the branch" >&2
+  echo "sdd-state: a symbolic link sits where sync writes or removes a regular file (named above); remove the link, leave $CO/.sync-applying in place, and run sdd-state sync again: the apply finishes from the branch" >&2
 }
 # recover_apply: finish a sync that was interrupted after its marker went
 # down. A journaled ledger rewrite is finished first (it is self-contained).
@@ -1230,6 +1250,8 @@ apply_target() {
   done
   case "$res" in
     0)
+      # Test hook: a link planted after the apply and before the re-walk.
+      case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-apply-link:*) rm -f "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-after-apply-link:}"; ln -s /dev/null "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-after-apply-link:}" ;; esac
       # A link that appeared under a path this apply touched (a writer
       # between the checks above and the writes) fails it closed: the marker
       # stays, and every later call refuses until the link is gone.

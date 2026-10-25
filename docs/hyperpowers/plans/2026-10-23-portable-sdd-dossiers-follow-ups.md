@@ -17,7 +17,7 @@
 - bash 3.2 compatible: no associative arrays, no `${var,,}`, no `mapfile`; BSD `sed -i ''`; BSD `mv` nests a directory into an existing directory of the same name, so every rename checks its destination first. `sdd-dir` runs under `set -euo pipefail`: a command whose failure is handled is written `rc=0; cmd || rc=$?`.
 - Quick suites, run from the worktree root, one per `bash` call, each ending `STATUS: PASSED`: `bash tests/sdd/test-sdd-common.sh`, `bash tests/sdd/test-sdd-contract.sh`, `bash tests/claude-code/test-sdd-dir-path.sh`. Lint every changed shell file with `bash scripts/lint-shell.sh <files>` (exit 0, no findings). Never run anything else under `tests/claude-code/`: those suites start real `claude` sessions.
 - The state-suite procedure. `tests/sdd/test-sdd-state.sh` takes about 15 minutes and has no section filter, so it is never piped into `grep` (the pipeline's status would be grep's). It runs in the background to a log and is waited for: `bash tests/sdd/test-sdd-state.sh > ~/.cache/hyperpowers/follow-ups-task<N>-<red|green>.log 2>&1; echo "suite rc=$?" >> ~/.cache/hyperpowers/follow-ups-task<N>-<red|green>.log`. GREEN means the log's last line is `suite rc=0`, `grep -c '\[FAIL\]' <log>` prints `0` and `grep -q 'STATUS: PASSED' <log>` succeeds; one GREEN run per task, at its end. RED means the log holds the new assertion's `[FAIL]` line with the reason the step predicts. A RED run may instead use an extracted harness: copy the suite's lines 1-67 (its helpers) plus the section under test into a script under `$TMPDIR`, repoint `REPO_ROOT`, and run that; the report says which form was used. Where a step below says "state suite, needle `<text>`", it means this procedure with that `[PASS]`/`[FAIL]` text.
-- Test seams in the helper: `HYPERPOWERS_TEST_CRASH_AT`, `HYPERPOWERS_TEST_PAUSE_AT`, `HYPERPOWERS_TEST_WRITER_AT`, `HYPERPOWERS_TEST_DEST_APPEND`, `HYPERPOWERS_TEST_LATE_APPEND`, `HYPERPOWERS_TEST_LATE_REPLACE`, `HYPERPOWERS_TEST_FAIL_RELINK`, `HYPERPOWERS_TEST_FAIL_WORKTREE_ADD`, `HYPERPOWERS_TEST_SWAP_REF`, `HYPERPOWERS_TEST_RECLAIM_RACE`. No task adds a seam variable. Task 2 adds the value `import-after-set-aside` and Task 6 the value `restore-after-copy` to `HYPERPOWERS_TEST_CRASH_AT` (every crash seam exits 99 after `hp_unlock`, as the existing ones do); Task 2 adds the value form `touch:<root>` to `HYPERPOWERS_TEST_RECLAIM_RACE` (touch the root only, no `.importing-*`); Tasks 4, 6 and 7 add the values `materialize-before-publish:<ws>`, `sync-after-ref-link:<path>`, `sync-after-apply-link:<path>`, `sync-before-restore:<path>` and `prune-after-tomb-rename:<name>` to `HYPERPOWERS_TEST_WRITER_AT`, each one `case` line at the point it names, in the form of the existing `sync-before-apply:` and `finish-before-remove-link:` values (`sdd-state:634` and `:1054`).
+- Test seams in the helper: `HYPERPOWERS_TEST_CRASH_AT`, `HYPERPOWERS_TEST_PAUSE_AT`, `HYPERPOWERS_TEST_WRITER_AT`, `HYPERPOWERS_TEST_DEST_APPEND`, `HYPERPOWERS_TEST_LATE_APPEND`, `HYPERPOWERS_TEST_LATE_REPLACE`, `HYPERPOWERS_TEST_FAIL_RELINK`, `HYPERPOWERS_TEST_FAIL_WORKTREE_ADD`, `HYPERPOWERS_TEST_SWAP_REF`, `HYPERPOWERS_TEST_RECLAIM_RACE`. No task adds a seam variable. Task 2 adds the value `import-after-set-aside`, Task 6 the value `restore-after-copy` and Task 7 the value `prune-after-stage` to `HYPERPOWERS_TEST_CRASH_AT` (every crash seam exits 99 after `hp_unlock`, as the existing ones do); Task 2 adds the value form `touch:<root>` to `HYPERPOWERS_TEST_RECLAIM_RACE` (touch the root only, no `.importing-*`); Tasks 4, 6 and 7 add the values `materialize-before-publish:<ws>`, `sync-after-ref-link:<path>`, `sync-after-apply-link:<path>`, `sync-before-restore:<path>`, `prune-after-tomb-rename:<name>` and `prune-reoccupy-tomb:<name>` to `HYPERPOWERS_TEST_WRITER_AT`, each one `case` line at the point it names, in the form of the existing `sync-before-apply:` and `finish-before-remove-link:` values (`sdd-state:634` and `:1054`).
 - Tests use the suite's own helpers (`pass`, `fail`, `make_repo`, `make_pair`, `run_state`, `run_sdd_dir`, `ensure`, `state_key`, `ws_path`, `TEST_ROOT`, `STATE_ROOT`, `SDD_STATE`) and never touch the real `~/.cache`: `XDG_CACHE_HOME` is pinned by every suite. A new assertion is one `if ... then pass "..."; else fail "... (got: ...)"; fi` line in the suite's style.
 - Message prefixes: after Task 5 every message the library prints starts with `$HP_PROG:`; `sdd-state` and `sdd-dir` keep their own literal prefixes for the messages they print themselves.
 - The fetch stamp today: `sync` writes an empty `<key>.fetched` and `hp_ensure_checkout` tests its existence only (`sdd-common.sh:503`, `sdd-state:1211-1233`). Decision 1 is therefore new code (Task 8), not a description of what exists; Task 1 writes the spec text it will satisfy.
@@ -970,7 +970,7 @@ git commit -m "fix(sdd-state): a link under a path the sync apply writes left th
 
 **Interfaces:**
 - Consumes: the spec's prune paragraph (Task 1).
-- Produces: `hp_pid_gone <pid>` returns 0 when `kill(pid, 0)` answers ESRCH and 1 otherwise (EPERM is alive). `status=listed plans=<list> checkouts=<list> tombs=<list> quarantined=<list>` and `status=pruned plans=<list> kept=<list> checkouts=<list> tombs=<list> quarantined=<list>`, comma-separated basenames percent-encoded with `enc`: on `listed`, `tombs=` names the `.removing-<ws>-<pid>` copies that qualify for quarantine and `quarantined=` the `.pruned-<ws>-<pid>` copies that qualify for deletion; on `pruned`, `tombs=` names the copies renamed to `.pruned-<ws>-<pid>` this run and `quarantined=` the copies deleted and verified gone this run. Removal is two-phase because a writer that still holds a copy open cannot be excluded: the rename keeps every byte such a writer adds, and the deletion waits until nothing in the quarantined copy is newer than N days. A `find` that fails keeps the copy. The seam value `HYPERPOWERS_TEST_WRITER_AT=prune-after-tomb-rename:<name>` touches the renamed copy's ledger between the rename and the re-check. The apply's pending scan reads `git status --porcelain -z -uall` NUL-delimited, so a path git would otherwise C-quote (a workspace name with a space) is seen plain, and a leftover that is the only entry under `plans/` is listed by its own files instead of the one collapsed `?? plans/` row that no exemption names, so the `.removing-*`, `.pruned-*` and ledger exemptions hold in both shapes; a put-back rename in either phase checks its destination first, and a `touch` that fails after the staging rename is doubt: the copy goes back.
+- Produces: `hp_pid_gone <pid>` returns 0 when `kill(pid, 0)` answers ESRCH and 1 otherwise (EPERM is alive). `status=listed plans=<list> checkouts=<list> tombs=<list> quarantined=<list>` and `status=pruned plans=<list> kept=<list> checkouts=<list> tombs=<list> quarantined=<list>`, comma-separated basenames percent-encoded with `enc`: on `listed`, `tombs=` names the `.removing-<ws>-<pid>` copies that qualify for quarantine and `quarantined=` the `.pruned-<ws>-<pid>` copies that qualify for deletion; on `pruned`, `tombs=` names the copies renamed to `.pruned-<ws>-<pid>` this run and `quarantined=` the copies deleted and verified gone this run. Removal is two-phase because a writer that still holds a copy open cannot be excluded: the rename keeps every byte such a writer adds, and the deletion waits until nothing in the quarantined copy is newer than N days. A `find` that fails keeps the copy. The seam value `HYPERPOWERS_TEST_WRITER_AT=prune-after-tomb-rename:<name>` touches the renamed copy's ledger between the rename and the re-check. The apply's pending scan reads `git status --porcelain -z -uall` NUL-delimited, so a path git would otherwise C-quote (a workspace name with a space) is seen plain, and a leftover that is the only entry under `plans/` is listed by its own files instead of the one collapsed `?? plans/` row that no exemption names, so the `.removing-*`, `.pruned-*` and ledger exemptions hold in both shapes; a put-back rename in either phase checks its destination first, and a `touch` that fails after the staging rename is doubt: the copy goes back. Phase one stages the copy at `plans/.quarantining-<ws>-<pid>`, a name neither phase lists, re-checks and touches it there, and only then renames it to `plans/.pruned-<ws>-<pid>`, so a crash anywhere in the transition leaves a copy the next `--apply` puts back to its tomb name (under the lock, before anything is listed), never one it can delete; the crash value `HYPERPOWERS_TEST_CRASH_AT=prune-after-stage` exits 99 (after `hp_unlock`) right after the staging rename, and the seam value `HYPERPOWERS_TEST_WRITER_AT=prune-reoccupy-tomb:<name>` touches the staged copy's ledger and recreates the tomb path, so the put-back meets an occupied destination. The apply's pending scan exempts `plans/.quarantining-*` as it does the other two. A quarantine must parse as one (a numeric pid last) and must not be a path the branch tracks; and `hp_plan_ws_name` never yields a name that starts with a dot (a leading run of dots is dropped from the slug, an empty slug becomes `plan`), so a plan file named like a leftover cannot produce a workspace the loops or the scan would take for one.
 
 **Mirror:** `tests/sdd/test-sdd-state.sh:785-802` (the prune fixture `pr`, `co_pr`, `wso`, `wsn`, the dead checkout `deadkey...`, full-string comparisons of the listing lines); `sdd-state:533-592` (rename aside, re-check, delete, verify, restore on doubt); `sdd-state:1061-1089` (the apply's pending scan: `git status --porcelain -- plans/` with `plans/.removing-*` exempted by name at line 1073; `.pruned-*` must be exempted there too, or every remote apply stays `busy` while a quarantine exists; `snapshot_pending`'s `plans/*/` glob already skips dotted names, and `restore_tombs` iterates `.removing-*` only).
 
@@ -1047,13 +1047,57 @@ if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=$(basena
 out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=$(basename "$quar_old")\$" && [ ! -e "$quar_old" ] && ! ls -d "$quar_old".pruning-* >/dev/null 2>&1; then pass "the later --apply deletes the idle quarantine and verifies it is gone"; else fail "the later --apply deletes the idle quarantine (rc=$rc: $out)"; fi
 rm -rf "$tomb_live" "$tomb_young" "$tomb_tracked"
+# A crash after the staging rename: the copy sits under a name neither
+# phase lists, the next --apply puts it back and quarantines it with a
+# fresh clock, and the --apply after that does not delete it.
+tomb_cr="$co_pr/plans/.removing-crash-0badc0de-$tp"; mkdir -p "$tomb_cr"; printf 'orphaned copy\n' > "$tomb_cr/progress.md"; touch -t 202401010000 "$tomb_cr/progress.md" "$tomb_cr"
+( cd "$pr" && HYPERPOWERS_TEST_CRASH_AT=prune-after-stage bash "$SDD_STATE" prune --repo "$pr" --apply >/dev/null 2>&1 ); rc=$?
+stage_cr="$co_pr/plans/.quarantining-crash-0badc0de-$tp"; quar_cr="$co_pr/plans/.pruned-crash-0badc0de-$tp"
+if [ "$rc" -eq 99 ] && [ -d "$stage_cr" ] && [ ! -e "$tomb_cr" ] && [ ! -e "$quar_cr" ]; then pass "the crash seam after the staging rename leaves the copy under the staging name only"; else fail "the crash seam after the staging rename leaves the copy under the staging name only (rc=$rc)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -d "$stage_cr" ]; then pass "a staged copy is listed by neither phase"; else fail "a staged copy is listed by neither phase (rc=$rc: $out)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs=$(basename "$tomb_cr") quarantined=\$" && [ ! -e "$stage_cr" ] && [ ! -e "$tomb_cr" ] && [ -d "$quar_cr" ] && [ "$(cat "$quar_cr/progress.md")" = "orphaned copy" ]; then pass "the next --apply puts the staged copy back and quarantines it"; else fail "the next --apply puts the staged copy back and quarantines it (rc=$rc: $out)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -d "$quar_cr" ]; then pass "a quarantine made after a crash keeps its full grace period"; else fail "a quarantine made after a crash keeps its full grace period (rc=$rc: $out)"; fi
+rm -rf "$quar_cr"
+# A put-back whose destination is occupied again: the copy stays staged and
+# is named, never nested into the new occupant.
+tomb_oc="$co_pr/plans/.removing-occupied-0badc0de-$tp"; mkdir -p "$tomb_oc"; printf 'orphaned copy\n' > "$tomb_oc/progress.md"; touch -t 202401010000 "$tomb_oc/progress.md" "$tomb_oc"
+out=$(cd "$pr" && HYPERPOWERS_TEST_WRITER_AT="prune-reoccupy-tomb:$(basename "$tomb_oc")" bash "$SDD_STATE" prune --repo "$pr" --apply 2>"$TEST_ROOT/pr-oc.err"); rc=$?
+stage_oc="$co_pr/plans/.quarantining-occupied-0badc0de-$tp"
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -d "$stage_oc" ] && [ "$(cat "$stage_oc/progress.md")" = "orphaned copy" ] && [ -d "$tomb_oc" ] && [ ! -e "$tomb_oc/$(basename "$stage_oc")" ] && grep -q 'occupied again' "$TEST_ROOT/pr-oc.err"; then pass "a put-back whose destination is occupied again leaves the staged copy named, not nested"; else fail "a put-back whose destination is occupied again leaves the staged copy named, not nested (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/pr-oc.err"))"; fi
+rm -rf "$tomb_oc" "$stage_oc"
+# A quarantine whose deletion fails keeps the copy under the aside name and
+# says so; nothing is reported as quarantined.
+if [ "$(id -u)" -ne 0 ]; then
+  quar_ro="$co_pr/plans/.pruned-ro-0badc0de-$tp"; mkdir -p "$quar_ro/sub"; printf 'orphaned copy\n' > "$quar_ro/sub/held"; touch -t 202401010000 "$quar_ro/sub/held" "$quar_ro/sub" "$quar_ro"; chmod 0555 "$quar_ro/sub"
+  out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>"$TEST_ROOT/pr-ro.err"); rc=$?
+  aside_ro=$(ls -d "$quar_ro".pruning-* 2>/dev/null | head -n 1)
+  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " quarantined=\$" && [ -n "$aside_ro" ] && [ -f "$aside_ro/sub/held" ] && grep -q 'could not be removed; remove it by hand' "$TEST_ROOT/pr-ro.err"; then pass "a quarantine whose deletion fails is kept under the aside name and named"; else fail "a quarantine whose deletion fails is kept under the aside name and named (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/pr-ro.err"))"; fi
+  chmod 0755 "$aside_ro/sub" 2>/dev/null; rm -rf "$quar_ro" "$aside_ro"
+else
+  pass "a quarantine whose deletion fails is kept under the aside name and named (skipped: root ignores directory modes)"
+fi
+```
+
+Then, at the end of the `=== prune ===` section (after the `prune under the plain backend reports plain` assertion and before the blank `echo ""` that precedes `=== sync ===`), add:
+
+```bash
+# A plan file named like a leftover: its workspace name never starts with
+# a dot, so neither prune's loops nor the apply's scan can take it for one.
+: > "$pr/docs/.pruned-demo.md"; git -C "$pr" add docs/.pruned-demo.md; git -C "$pr" commit -qm dotplan
+wsd=$(run_sdd_dir "$pr" docs/.pruned-demo.md); printf 'dot plan\n' > "$wsd/progress.md"; run_state "$pr" snapshot docs/.pruned-demo.md >/dev/null
+case "$(basename "$wsd")" in pruned-demo-*) pass "a plan file named like a quarantine gets a workspace name without the leading dot" ;; *) fail "a plan file named like a quarantine gets a workspace name without the leading dot (got $(basename "$wsd"))" ;; esac
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -f "$wsd/progress.md" ]; then pass "such a workspace is never listed as a tomb or a quarantine"; else fail "such a workspace is never listed as a tomb or a quarantine (rc=$rc: $out)"; fi
 ```
 
 `$co_pr`, `$pr` and `$wsn` are the prune fixture's checkout, repository and the `docs/new.md` workspace, which the branch tracks and which is never pruned (it is fresh). At the insertion point `wso` has already been pruned and `wsn` is kept, so the `plans=` field is empty on both lines and only the `tombs=` tail is asserted. The pid in `tomb_tracked`'s name is gone and the copy is old, so only the tracking rule keeps it.
 
 - [ ] **Step 2: RED**
 
-`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_pid_gone'`: three `[FAIL]` (`command not found`). State suite (or extracted harness), needles `tomb`, `quarantine`, `prune lists the idle plan`, `a workspace writ`, and the two `status=pruned` full-string assertions: `[FAIL]` (no `tombs=` or `quarantined=` field today, no tomb handling); the p11 needle `does not stop the apply`: `[FAIL]` (the apply reports `busy` on the `.pruned-*` entry today, and on the space-named entries, which `git status` quotes so the exemptions never match them); the needle `only entry under plans/`: `[FAIL]` (`status=busy`, the collapsed `?? plans/` row names the dossier root as the stray).
+`bash tests/sdd/test-sdd-common.sh 2>&1 | grep -n 'hp_pid_gone'`: three `[FAIL]` (`command not found`). State suite (or extracted harness), needles `tomb`, `quarantine`, `prune lists the idle plan`, `a workspace writ`, and the two `status=pruned` full-string assertions: `[FAIL]` (no `tombs=` or `quarantined=` field today, no tomb handling); the p11 needle `does not stop the apply`: `[FAIL]` (the apply reports `busy` on the `.pruned-*` entry today, and on the space-named entries, which `git status` quotes so the exemptions never match them); the needle `only entry under plans/`: `[FAIL]` (`status=busy`, the collapsed `?? plans/` row names the dossier root as the stray). Needles `staging name only` and `keeps its full grace period`: `[FAIL]` (no staging name and no crash value today: the copy is renamed straight to `.pruned-*` and a crash before the `touch` leaves it eligible). Needle `occupied again leaves the staged copy named`: `[FAIL]` (no such seam value). Needle `deletion fails is kept under the aside name`: may already pass (the phase-two code keeps the copy and names it); it is the fail-closed proof the gate asked for. Needle `without the leading dot`: `[FAIL]` (`hp_plan_ws_name` keeps the dot today, and the listing then takes the workspace for a quarantine).
 
 - [ ] **Step 3: `hp_pid_gone`**
 
@@ -1073,7 +1117,7 @@ hp_pid_gone() {
 
 - [ ] **Step 4: The listing and the fail-closed removal**
 
-In `cmd_prune`, add `tomb_list="" quar_list="" tomb_name tomb_pid tomb_ws tracked t q quar` to the first `local` line and `tomb_dead=() quar_idle=()` to the array `local` line. Add two predicates inside the function (beside `idle`):
+In `cmd_prune`, add `tomb_list="" quar_list="" tomb_name tomb_pid tomb_ws tracked t q quar stage s q_pid` to the first `local` line and `tomb_dead=() quar_idle=()` to the array `local` line. Add two predicates inside the function (beside `idle`):
 
 ```bash
   # <tomb dir> <pid> <ws> -> 0 when the copy may be quarantined: its
@@ -1098,6 +1142,22 @@ In `cmd_prune`, add `tomb_list="" quar_list="" tomb_name tomb_pid tomb_ws tracke
   }
 ```
 
+Right after the line `if [ "$apply" -eq 1 ]; then CO=$co; BRANCH=$br; recover_apply || { hp_unlock; echo "status=error"; return 2; }; fi`, insert the put-back of staged copies a killed `--apply` left:
+
+```bash
+  # A copy a killed --apply left staged at plans/.quarantining-<ws>-<pid>
+  # goes back to its tomb name before anything is listed: the lock is held,
+  # so no other prune owns it, and neither phase lists the staging name.
+  if [ "$apply" -eq 1 ] && [ -e "$co/.git" ]; then
+    for s in "$co"/plans/.quarantining-*; do
+      [ -d "$s" ] && [ ! -L "$s" ] || continue
+      t="$co/plans/.removing-${s##*/.quarantining-}"
+      if [ -e "$t" ] || [ -L "$t" ]; then echo "sdd-state: a staged copy from an interrupted prune is at $s and its tomb name $t is taken; move it back or delete it by hand" >&2; continue; fi
+      mv "$s" "$t" 2>/dev/null || echo "sdd-state: the staged copy at $s could not be put back at $t; move it back by hand" >&2
+    done
+  fi
+```
+
 After the `if [ -e "$co/.git" ]; then ... fi` block that fills `plans` (it ends before the dead-checkout scan), insert:
 
 ```bash
@@ -1114,6 +1174,11 @@ After the `if [ -e "$co/.git" ]; then ... fi` block that fills `plans` (it ends 
     done
     for q in "$co"/plans/.pruned-*; do
       [ -d "$q" ] && [ ! -L "$q" ] || continue
+      # The name must parse as a quarantine (a numeric pid last), and a
+      # path the branch tracks is a workspace, never a quarantine.
+      q_pid=${q##*-}; case "$q_pid" in ''|*[!0-9]*) continue ;; esac
+      tracked=$(git -C "$co" ls-tree -d "refs/heads/$br" -- "plans/${q##*/}" 2>/dev/null) || continue
+      [ -z "$tracked" ] || continue
       quarantine_idle "$q" || continue
       quar_idle[${#quar_idle[@]}]=$q; quar_list="$quar_list,$(enc "${q##*/}")"
     done
@@ -1126,29 +1191,37 @@ Change the listing line to `echo "status=listed plans=$list checkouts=$dead_list
 With `--apply`, after the plans loop and its commit (after the `if [ "${#removed[@]}" -gt 0 ]; then ... fi` block and before `hp_unlock`), insert:
 
 ```bash
-  # Phase one: a listed copy is renamed to its quarantine name under the
-  # lock, re-checked on the renamed copy (a writer with the directory open
-  # appends into it, which the mtime check sees), and touched so the clock
-  # starts again; any doubt puts it back. Nothing is deleted here, so a
-  # writer that still holds the copy open loses no byte.
+  # Phase one: a listed copy is staged under a name neither phase lists,
+  # re-checked there (a writer with the directory open appends into it,
+  # which the mtime check sees), touched so the clock starts again, and
+  # only then renamed to its quarantine name; any doubt puts it back, and a
+  # crash anywhere in between leaves a staged copy the next --apply puts
+  # back. Nothing is deleted here, so a writer that still holds the copy
+  # open loses no byte.
   tomb_list=""
   i=0
   while [ "$i" -lt "${#tomb_dead[@]}" ]; do
     t=${tomb_dead[$i]}; i=$((i + 1))
     tomb_name=${t##*/}; tomb_pid=${tomb_name##*-}; tomb_ws=${tomb_name#.removing-}; tomb_ws=${tomb_ws%-*}
     [ -d "$t" ] && [ ! -L "$t" ] || continue
-    quar="$co/plans/.pruned-${tomb_name#.removing-}"
-    [ ! -e "$quar" ] && [ ! -L "$quar" ] || continue
-    mv "$t" "$quar" 2>/dev/null || continue
-    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in prune-after-tomb-rename:*) [ "${HYPERPOWERS_TEST_WRITER_AT#prune-after-tomb-rename:}" != "$tomb_name" ] || touch "$quar/progress.md" ;; esac
+    stage="$co/plans/.quarantining-${tomb_name#.removing-}"; quar="$co/plans/.pruned-${tomb_name#.removing-}"
+    [ ! -e "$stage" ] && [ ! -L "$stage" ] && [ ! -e "$quar" ] && [ ! -L "$quar" ] || continue
+    mv "$t" "$stage" 2>/dev/null || continue
+    if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = prune-after-stage ]; then hp_unlock; exit 99; fi
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+      prune-after-tomb-rename:*) [ "${HYPERPOWERS_TEST_WRITER_AT#prune-after-tomb-rename:}" != "$tomb_name" ] || touch "$stage/progress.md" ;;
+      prune-reoccupy-tomb:*) [ "${HYPERPOWERS_TEST_WRITER_AT#prune-reoccupy-tomb:}" != "$tomb_name" ] || { touch "$stage/progress.md"; mkdir -p "$t"; } ;;
+    esac
     # A re-check that fails, or a clock that cannot be restarted, is doubt:
     # the copy goes back under its old name, after the same destination
     # check every rename here makes (BSD mv nests into an occupied one).
-    if ! tomb_qualifies "$quar" "$tomb_pid" "$tomb_ws" || ! touch "$quar"; then
-      if [ -e "$t" ] || [ -L "$t" ]; then echo "sdd-state: the copy renamed to $quar could not be put back at $t, which is occupied again; move it back by hand" >&2; continue; fi
-      mv "$quar" "$t" 2>/dev/null || echo "sdd-state: the copy renamed to $quar could not be put back at $t; move it back by hand" >&2
+    if ! tomb_qualifies "$stage" "$tomb_pid" "$tomb_ws" || ! touch "$stage"; then
+      if [ -e "$t" ] || [ -L "$t" ]; then echo "sdd-state: the copy renamed to $stage could not be put back at $t, which is occupied again; move it back by hand" >&2; continue; fi
+      mv "$stage" "$t" 2>/dev/null || echo "sdd-state: the copy renamed to $stage could not be put back at $t; move it back by hand" >&2
       continue
     fi
+    # The clock started on the staged copy, and rename keeps it.
+    mv "$stage" "$quar" 2>/dev/null || { echo "sdd-state: the staged copy at $stage could not be published at $quar; the next prune puts it back" >&2; continue; }
     tomb_list="$tomb_list,$(enc "$tomb_name")"
   done
   tomb_list=${tomb_list#,}
@@ -1175,7 +1248,7 @@ With `--apply`, after the plans loop and its commit (after the `if [ "${#removed
 
 Change the final line to `echo "status=pruned plans=$list kept=$kept_list checkouts=$dead_list tombs=$tomb_list quarantined=$quar_list"`.
 
-In `apply_target`'s pending scan (line 1073), change `case "$path" in "plans/.removing-"*) continue ;; esac` to `case "$path" in "plans/.removing-"*|"plans/.pruned-"*) continue ;; esac`, and extend the comment above it: a quarantined copy is as much a removal's leftover as a tomb and holds no apply. The scan must read its rows NUL-delimited, because `git status --porcelain` C-quotes a path with a space (`"plans/.pruned-old plan-..."`), and a quoted row matches none of the exemptions, so a space-named plan's leftover, or its dirty ledger, would hold every sync. Replace
+In `apply_target`'s pending scan (line 1073), change `case "$path" in "plans/.removing-"*) continue ;; esac` to `case "$path" in "plans/.removing-"*|"plans/.pruned-"*|"plans/.quarantining-"*) continue ;; esac`, and extend the comment above it: a quarantined copy, or one staged on its way there, is as much a removal's leftover as a tomb and holds no apply. The scan must read its rows NUL-delimited, because `git status --porcelain` C-quotes a path with a space (`"plans/.pruned-old plan-..."`), and a quoted row matches none of the exemptions, so a space-named plan's leftover, or its dirty ledger, would hold every sync. Replace
 
 ```bash
   pending=$(git -C "$CO" status --porcelain -- plans/ 2>/dev/null)
@@ -1216,12 +1289,23 @@ with
 
 (`-uall` lists untracked files one by one: with no tracked entry under `plans/`, git would otherwise collapse the directory to a single `?? plans/` row, which no exemption names, so one leftover there would hold every sync and the advice would name the dossier root; `snapshot_pending` runs before this scan in `cmd_sync`, so a workspace not yet snapshotted is tracked by the time the scan runs and `-uall` cannot refuse it. Extend the comment above the loop with that sentence. The body between them keeps its text; re-indent it one level out, and drop `pending` from the function's `local` line if nothing else reads it). The deletion's last window, between the final `find` and `rm -rf` on a copy that has been silent for N days, is the one the spec already accepts for an idle plan's removal; the quarantine step is what keeps a writer's bytes out of it.
 
+In `sdd-common.sh`'s `hp_plan_ws_name`, after `slug=$(basename "$1"); slug=${slug%.*}` add:
+
+```bash
+  # A workspace name never starts with a dot: dotted entries under plans/
+  # are the leftovers of removals (.removing-, .quarantining-, .pruned-),
+  # and a plan file named like one must not be taken for them. A dotted
+  # name was never snapshotted either (every workspace walk skips dotted
+  # names), so no durable state changes identity here.
+  slug=${slug#"${slug%%[!.]*}"}; [ -n "$slug" ] || slug=plan
+```
+
 - [ ] **Step 5: The changelog**
 
 In `CHANGELOG.md` under `## Unreleased`, after the import bullet (Task 2), add:
 
 ```markdown
-- **`prune` reclaims the copies killed removals leave, in two steps.** A `plans/.removing-<ws>-<pid>` whose process is gone, older than `--days`, and for a workspace the branch does not track, is listed as `tombs=`; the first `--apply` renames it to `plans/.pruned-<ws>-<pid>` (a writer that still holds it open loses nothing), and a later `--apply` deletes it once nothing in it is newer than `--days`, listing it as `quarantined=`. Tracked copies still come back through `sync`.
+- **`prune` reclaims the copies killed removals leave, in two steps.** A `plans/.removing-<ws>-<pid>` whose process is gone, older than `--days`, and for a workspace the branch does not track, is listed as `tombs=`; the first `--apply` renames it to `plans/.pruned-<ws>-<pid>` (a writer that still holds it open loses nothing), and a later `--apply` deletes it once nothing in it is newer than `--days`, listing it as `quarantined=`. Tracked copies still come back through `sync`. The transition is staged under `plans/.quarantining-<ws>-<pid>` so a crash never leaves a copy the next prune could delete, and a plan file whose name starts with a dot gets a workspace name without it, so nothing under `plans/` that starts with a dot is ever a workspace.
 ```
 
 - [ ] **Step 6: GREEN, quick suites, lint**

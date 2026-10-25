@@ -106,7 +106,7 @@ jh=$(newjob heldstop)
 if ! wait_meta "$jh" run_pid; then fail "a stop during the launch cancels the command before it runs (no run_pid within 10s)"
 else
   kill -TERM "$(meta "$jh" run_pid)"; sleep 1; touch "$TEST_ROOT/go-1"; wait_file "$jh/exit"
-  if [ "$(cat "$jh/exit" 2>/dev/null)" = 143 ] && [ "$(meta "$jh" state)" = stopped ] && [ ! -f "$repo/held-ran.txt" ] && ! kill -0 "$(meta "$jh" pid)" 2>/dev/null; then pass "a stop during the launch cancels the command before it runs"; else fail "a stop during the launch cancels the command before it runs (exit=$(cat "$jh/exit" 2>/dev/null), state=$(meta "$jh" state), ran=$([ -f "$repo/held-ran.txt" ] && echo yes || echo no))"; fi
+  if [ "$(cat "$jh/exit" 2>/dev/null)" = 143 ] && [ "$(meta "$jh" state)" = stopped ] && [ ! -f "$repo/held-ran.txt" ] && ! kill -0 "$(meta "$jh" pid)" 2>/dev/null && [ -e "$jh/stop-request" ]; then pass "a stop during the launch cancels the command before it runs"; else fail "a stop during the launch cancels the command before it runs (exit=$(cat "$jh/exit" 2>/dev/null), state=$(meta "$jh" state), ran=$([ -f "$repo/held-ran.txt" ] && echo yes || echo no))"; fi
 fi
 # the same window, reached by a file rather than a signal: a stop-request that
 # already stands when the launch would release the command (Task 4's stop

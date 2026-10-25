@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Behavior tests for tracked-job (stop guard, 2026-10-23). No pipefail: a
+# producer's SIGPIPE under grep -q would read as a failure. Cases that need
+# process identity run only where ps works (deviation 2) and print [SKIP]
+# otherwise; the controller runs the suite once unsandboxed per task.
+set -u
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TJ="$REPO_ROOT/skills/subagent-driven-development/scripts/tracked-job"
+SDD_DIR="$REPO_ROOT/skills/subagent-driven-development/scripts/sdd-dir"
+LIB="$REPO_ROOT/skills/subagent-driven-development/scripts/sdd-common.sh"
+failures=0; skips=0
+TEST_ROOT=$(mktemp -d) || exit 2
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || exit 2
+export XDG_CACHE_HOME="$TEST_ROOT/cache"
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+cleanup() { [ -n "$TEST_ROOT" ] && [ -d "$TEST_ROOT" ] && rm -rf "$TEST_ROOT"; }
+trap cleanup EXIT
+pass() { echo "  [PASS] $1"; }
+fail() { echo "  [FAIL] $1"; failures=$((failures + 1)); }
+skip() { echo "  [SKIP] $1"; skips=$((skips + 1)); }
+HAVE_PS=0; ps -o pid= -p $$ >/dev/null 2>&1 && HAVE_PS=1
+
+repo="$TEST_ROOT/repo"; git init -q -b main "$repo"
+git -C "$repo" config user.name t; git -C "$repo" config user.email t@example.com
+mkdir -p "$repo/docs"; printf '# Plan\n\n### Task 1: one\n' > "$repo/docs/plan.md"
+git -C "$repo" add docs/plan.md; git -C "$repo" commit -q -m plan
+ws=$(cd "$repo" && bash "$SDD_DIR" docs/plan.md 2>/dev/null)
+printf '# SDD ledger — plan: docs/plan.md\nsession s1: mode worktree on main at %s started 2026-10-23T00:00:00Z\n' "$repo" > "$ws/progress.md"
+tj() { (cd "$repo" && bash "$TJ" "$@"); }
+meta() { node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1]+"/meta.json","utf8"));const v=m[process.argv[2]];console.log(v===undefined||v===null?"":(typeof v==="object"?JSON.stringify(v):String(v)))' "$1" "$2"; }
+newjob() { tj new docs/plan.md "$1" --budget-ms 60000 --session s1 | sed -n 's/^jobdir=//p'; }
+
+echo "=== tracked-job new ==="
+j1=$(newjob soak); j2=$(newjob soak)
+if [ -d "$j1" ] && [ -d "$j2" ] && [ "$j1" != "$j2" ] && [ "$(meta "$j1" state)" = allocated ] && [ "$(meta "$j1" session)" = s1 ]; then pass "new allocates a distinct directory per launch, state allocated"; else fail "new allocates a distinct directory per launch ($j1 / $j2)"; fi
+if [ "$(grep -c "^job s1 .*: soak jobdir=$j1\$" "$ws/progress.md")" = 1 ]; then pass "new appends the allocation line to the ledger"; else fail "new appends the allocation line to the ledger"; fi
+case "$j1" in "$ws/jobs/soak-"*) pass "the job directory lives under the workspace's jobs/" ;; *) fail "the job directory lives under the workspace's jobs/ ($j1)" ;; esac
+lockdir="$( . "$LIB"; hp_checkout_path "$repo" ).lock"; mkdir -p "$lockdir"; printf 'pid=1\n' > "$lockdir/owner"
+before=$(wc -l < "$ws/progress.md"); n3=$(ls "$ws/jobs" | wc -l)
+out=$(HYPERPOWERS_LOCK_WAIT_STEPS=2 tj new docs/plan.md held --budget-ms 1000 --session s1); rc=$?
+rm -rf "$lockdir"
+if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$(wc -l < "$ws/progress.md")" = "$before" ] && [ "$(ls "$ws/jobs" | wc -l)" = "$n3" ]; then pass "a new that cannot take the lock is busy, leaves no directory and appends nothing"; else fail "a new that cannot take the lock is busy, leaves no directory and appends nothing (rc=$rc: $out)"; fi
+# a workspace Finish has removed (the ledger gone under the lock): nothing is created and no ledger comes back.
+mv "$ws/progress.md" "$ws/progress.md.away"
+out=$(tj new docs/plan.md gone --budget-ms 1000 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$ws/progress.md" ] && [ "$(ls "$ws/jobs" | wc -l)" = "$n3" ]; then pass "a new after the ledger is gone creates nothing and resurrects nothing"; else fail "a new after the ledger is gone creates nothing and resurrects nothing (rc=$rc: $out)"; fi
+mv "$ws/progress.md.away" "$ws/progress.md"
+out=$(tj new docs/plan.md 'bad name' --budget-ms 1000 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "a name outside [A-Za-z0-9._-] is a usage error"; else fail "a name outside [A-Za-z0-9._-] is a usage error (rc=$rc: $out)"; fi
+# the session id lands verbatim in a ledger line, so a value that is not one token is refused.
+out=$(tj new docs/plan.md hostile --budget-ms 1000 --session 's Task 2: complete' 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(wc -l < "$ws/progress.md")" = "$before" ] && [ "$(ls "$ws/jobs" | wc -l)" = "$n3" ]; then pass "a session id outside [A-Za-z0-9._-] is refused before anything is written"; else fail "a session id outside [A-Za-z0-9._-] is refused before anything is written (rc=$rc: $out)"; fi
+
+echo "=== tracked-job run ==="
+tj run "$j1" -- bash -c 'echo hello; exit 0' >/dev/null 2>&1
+if [ "$(cat "$j1/exit")" = 0 ] && [ "$(meta "$j1" state)" = exited ] && [ "$(meta "$j1" code)" = 0 ] && grep -q hello "$j1/out.log" && [ -n "$(meta "$j1" launched)" ] && [ -n "$(meta "$j1" ended)" ]; then pass "run records exit 0, the output and the times"; else fail "run records exit 0, the output and the times"; fi
+pid1=$(meta "$j1" pid)
+out=$(tj run "$j1" -- bash -c 'exit 0'); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=already-launched" ] && [ "$(meta "$j1" pid)" = "$pid1" ]; then pass "a second run on one directory is already-launched and changes nothing"; else fail "a second run on one directory is already-launched (rc=$rc: $out)"; fi
+j4=$(newjob failing); tj run "$j4" -- bash -c 'exit 3' >/dev/null 2>&1
+if [ "$(cat "$j4/exit")" = 3 ] && [ "$(meta "$j4" state)" = exited ]; then pass "a failing command records its code"; else fail "a failing command records its code"; fi
+j5=$(newjob sig); tj run "$j5" -- bash -c 'kill -TERM $$' >/dev/null 2>&1
+if [ "$(cat "$j5/exit")" = 143 ]; then pass "a command killed by TERM records 143"; else fail "a command killed by TERM records 143 ($(cat "$j5/exit" 2>/dev/null))"; fi
+j6=$(newjob fence); tj run "$j6" -- bash -c 'printf "%s" "$TRACKED_JOB_DIR" > fence.txt' >/dev/null 2>&1
+if [ "$(cat "$repo/fence.txt" 2>/dev/null)" = "$j6" ]; then pass "the command runs with TRACKED_JOB_DIR set to its job directory"; else fail "the command runs with TRACKED_JOB_DIR set to its job directory"; fi
+# the launch barrier: a metadata write that fails kills the waiting child and leaves the job allocated.
+j7=$(newjob barrier)
+out=$(HYPERPOWERS_TEST_FAIL_META=1 tj run "$j7" -- bash -c 'echo ran > ran.txt'); rc=$?; sleep 1
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(meta "$j7" state)" = allocated ] && [ -n "$(meta "$j7" launch_error)" ] && [ ! -d "$j7/launch.lock" ] && [ ! -f "$repo/ran.txt" ]; then pass "a failed launch kills the barrier-held child and leaves the job allocated"; else fail "a failed launch kills the barrier-held child and leaves the job allocated (rc=$rc: $out)"; fi
+tj run "$j7" -- bash -c 'exit 0' >/dev/null 2>&1
+if [ "$(cat "$j7/exit" 2>/dev/null)" = 0 ]; then pass "a later run on the same directory succeeds"; else fail "a later run on the same directory succeeds"; fi
+# the supervisor's own TERM: the group is swept, the result recorded, state stopped.
+j8=$(newjob trapped); ( tj run "$j8" -- bash -c 'sleep 60' >/dev/null 2>&1 ) & sleep 1
+kill -TERM "$(meta "$j8" run_pid)"; sleep 5
+if [ "$(cat "$j8/exit" 2>/dev/null)" = 143 ] && [ "$(meta "$j8" state)" = stopped ] && ! kill -0 "$(meta "$j8" pid)" 2>/dev/null; then pass "a TERM to the supervisor sweeps the command and records the result"; else fail "a TERM to the supervisor sweeps the command and records the result (exit=$(cat "$j8/exit" 2>/dev/null), state=$(meta "$j8" state))"; fi
+# path trust: a directory outside the workspace, and a symlinked job directory, are refused.
+mkdir -p "$TEST_ROOT/outside"; cp "$j4/meta.json" "$TEST_ROOT/outside/"
+out=$(tj run "$TEST_ROOT/outside" -- bash -c 'exit 0'); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "run refuses a job directory outside the workspace"; else fail "run refuses a job directory outside the workspace (rc=$rc: $out)"; fi
+ln -s "$j4" "$ws/jobs/link-x-0000"
+out=$(tj run "$ws/jobs/link-x-0000" -- bash -c 'exit 0'); rc=$?; rm -f "$ws/jobs/link-x-0000"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "run refuses a symlinked job directory"; else fail "run refuses a symlinked job directory (rc=$rc: $out)"; fi
+# a legitimate job directory whose metadata names another repository: refused before any lock or write.
+repo2="$TEST_ROOT/repo2"; git init -q -b main "$repo2"
+j4b=$(newjob forged)
+node -e 'const fs=require("fs"),p=process.argv[1]+"/meta.json",m=JSON.parse(fs.readFileSync(p,"utf8"));m.plan_dir=process.argv[2];fs.writeFileSync(p,JSON.stringify(m))' "$j4b" "$repo2"
+out=$(tj run "$j4b" -- bash -c 'exit 0'); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(meta "$j4b" state)" = allocated ] && [ ! -e "$j4b/exit" ]; then pass "run refuses a job whose metadata names another repository"; else fail "run refuses a job whose metadata names another repository (rc=$rc: $out)"; fi
+# process relationships (deviation 1), where ps works.
+if [ "$HAVE_PS" -eq 1 ]; then
+  j9=$(newjob groups); ( tj run "$j9" -- bash -c 'sleep 5' >/dev/null 2>&1 ) & sleep 1
+  cpid=$(meta "$j9" pid); rpid=$(meta "$j9" run_pid)
+  cpg=$(ps -o pgid= -p "$cpid" | tr -d ' '); rpg=$(ps -o pgid= -p "$rpid" | tr -d ' '); csid=$(ps -o sess= -p "$cpid" | tr -d ' '); rsid=$(ps -o sess= -p "$rpid" | tr -d ' ')
+  if [ "$cpg" = "$cpid" ] && [ "$cpg" != "$rpg" ] && [ "$csid" = "$rsid" ]; then pass "the child leads its own process group inside the supervisor's session"; else fail "the child leads its own process group inside the supervisor's session (child $cpid pgid $cpg sid $csid; run $rpid pgid $rpg sid $rsid)"; fi
+  printf '%s\n' "child=$cpid pgid=$cpg sid=$csid run=$rpid pgid=$rpg sid=$rsid" > "$TEST_ROOT/groups.txt"; cat "$TEST_ROOT/groups.txt"
+  kill -KILL -- "-$cpg" 2>/dev/null; sleep 2
+  if [ "$(cat "$j9/exit" 2>/dev/null)" = 137 ] && [ "$(meta "$j9" state)" = exited ]; then pass "a KILL to the child's group leaves the supervisor alive to record 137"; else fail "a KILL to the child's group leaves the supervisor alive to record 137 (exit=$(cat "$j9/exit" 2>/dev/null))"; fi
+else
+  skip "the child leads its own process group inside the supervisor's session (ps unavailable)"
+  skip "a KILL to the child's group leaves the supervisor alive to record 137 (ps unavailable)"
+fi
+
+echo ""
+if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures, $skips skipped)"; exit 1; fi
+echo "STATUS: PASSED ($skips skipped)"

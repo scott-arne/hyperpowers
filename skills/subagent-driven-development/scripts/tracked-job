@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+# tracked-job — long commands for the SDD controller: a job directory per
+# launch, a supervisor that owns the command's process group, an exit file
+# written whatever the status, and ledger lines written once.
+# Design: docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md (Design §2),
+# with plan deviations 1 (bash job control instead of setsid), 2 (loss is the
+# supervisor's death read with kill -0; the sweep of a lost job needs ps) and
+# 3 (terminal lines carry jobdir= as their once-key).
+#
+# Usage:
+#   tracked-job new PLAN_FILE NAME --budget-ms N [--session SID]   -> jobdir=<path>
+#   tracked-job run JOBDIR -- COMMAND...                           (the tracked background command)
+#   tracked-job wait JOBDIR --max-ms N                             -> status=exited code=N | running | lost | not-started | lost-unswept pgid=N
+#   tracked-job stop JOBDIR                                        -> status=stopped | not-running | stop-timeout | lost-unswept pgid=N
+# exit: 0 ok | 1 exited with a nonzero code | 2 usage, already-launched, error |
+#       3 running, busy | 4 lost | 5 not-started | 6 stop-timeout | 7 lost-unswept
+set -u
+HERE=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=sdd-common.sh
+. "$HERE/sdd-common.sh"
+GRACE=${TRACKED_JOB_GRACE_S:-5}
+# shellcheck disable=SC2034 # stop's own wait bound; its reader arrives with the stop subcommand
+STOP_WAIT=${TRACKED_JOB_STOP_WAIT_S:-10}
+
+usage() {
+  printf '%s\n' 'usage: tracked-job new PLAN_FILE NAME --budget-ms N [--session SID]' \
+    '       tracked-job run JOBDIR -- COMMAND...' \
+    '       tracked-job wait JOBDIR --max-ms N' \
+    '       tracked-job stop JOBDIR' >&2
+  exit 2
+}
+command -v node >/dev/null 2>&1 || { echo "tracked-job: node not found" >&2; exit 2; }
+
+# meta_get <jobdir> <key>: one value from meta.json, empty when absent.
+meta_get() {
+  node -e 'try{const m=JSON.parse(require("fs").readFileSync(process.argv[1]+"/meta.json","utf8"));const v=m[process.argv[2]];process.stdout.write(v===undefined||v===null?"":(typeof v==="object"?JSON.stringify(v):String(v)))}catch(e){}' "$1" "$2"
+}
+# meta_set <jobdir> key=value... : atomic rewrite (temporary file, rename); a
+# value given as key:=json is parsed (numbers, arrays).
+meta_set() {
+  local dir=$1; shift
+  node -e '
+    const fs=require("fs"),p=process.argv[1]+"/meta.json";
+    let m={}; try{m=JSON.parse(fs.readFileSync(p,"utf8"))}catch(e){}
+    for(const a of process.argv.slice(2)){const i=a.indexOf("=");let k=a.slice(0,i),v=a.slice(i+1);
+      if(k.endsWith(":")){k=k.slice(0,-1);v=JSON.parse(v)} m[k]=v}
+    fs.writeFileSync(p+".tmp",JSON.stringify(m,null,1)+"\n"); fs.renameSync(p+".tmp",p);' "$dir" "$@"
+}
+utc_ms() { hp_utc_now_ms; }
+# alive <pid>: kill -0 with only "No such process" read as dead (EPERM is alive
+# or unknown, which the sandbox gives for another call's process).
+alive() {
+  local err
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  err=$(LC_ALL=C kill -0 "$1" 2>&1) && return 0
+  case "$err" in *"No such process"*) return 1 ;; *) return 0 ;; esac
+}
+have_ps() { ps -o pid= -p $$ >/dev/null 2>&1; }
+lstart_of() { ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//;s/ *$//'; }
+
+# job_dir_ok <jobdir>: 0 when the directory is a real path under a hyperpowers
+# workspace's jobs/ (no symlink in any component below the cache root) and its
+# meta.json names that workspace's ledger. Every write and every signal is
+# preceded by this check, so a crafted directory cannot steer either.
+job_dir_ok() {
+  local dir=$1 root rel real key
+  [ -d "$dir" ] && [ -f "$dir/meta.json" ] || return 1
+  root=$(hp_cache_root)
+  case "$dir" in "$root"/state/*/plans/*/jobs/*|"$root"/sdd/*/plans/*/jobs/*) ;; *) return 1 ;; esac
+  rel=${dir#"$root"/}
+  hp_contained "$root" "$rel" 2>/dev/null || return 1
+  real=$(cd "$dir" && pwd -P) || return 1
+  [ "$real" = "$dir" ] || return 1
+  [ "$(meta_get "$dir" ledger)" = "$(cd "$dir/../.." && pwd -P)/progress.md" ] || return 1
+  # The workspace lock is taken on meta's plan_dir, so that directory must
+  # belong to the repository whose key the job path carries; forged or stale
+  # metadata cannot lock another repository while writing this ledger.
+  key=${rel#*/}; key=${key%%/*}
+  [ -d "$(meta_get "$dir" plan_dir)" ] || return 1
+  [ "$(hp_key "$(meta_get "$dir" plan_dir)" 2>/dev/null)" = "$key" ] || return 1
+  return 0
+}
+# ledger_append_once <jobdir> <text>: one job line under the workspace lock;
+# the line's "jobdir=<path>" plus its outcome word is the key checked in the
+# ledger before appending, so repeats and retries append nothing twice. The
+# key is read from the ledger's records, so a write fragment never passes for
+# one. hp_ledger_append does the writing: it runs under the lock this
+# function holds and never shortens the ledger.
+ledger_append_once() {
+  local dir=$1 text=$2 ledger plan_dir sid outcome
+  job_dir_ok "$dir" || return 1
+  ledger=$(meta_get "$dir" ledger); plan_dir=$(meta_get "$dir" plan_dir); sid=$(meta_get "$dir" session)
+  outcome=${text%% *}
+  hp_lock "$plan_dir" 2>/dev/null || return 1
+  if grep -Fq -- "$(meta_get "$dir" name) $outcome" < <(hp_ledger_records "$ledger" 2>/dev/null | grep -F -- "jobdir=$dir"); then hp_unlock; return 0; fi
+  if hp_ledger_append "$ledger" "$(printf 'job %s %s: %s %s jobdir=%s' "$sid" "$(utc_ms)" "$(meta_get "$dir" name)" "$text" "$dir")"; then hp_unlock; return 0; fi
+  hp_unlock; return 1
+}
+
+# conclude <jobdir> <from> <to> <ledger text or ""> [key=value...]: a terminal
+# transition under the workspace lock, written only while the state is still
+# <from>, so concurrent wait, stop and run calls never overwrite each other's
+# outcome. Prints the state in force afterwards. Exit 0 when this call wrote
+# it, 2 when another writer got there first, 1 when the lock was not taken.
+conclude() {
+  local dir=$1 from=$2 to=$3 text=$4 cur; shift 4
+  hp_lock "$(meta_get "$dir" plan_dir)" 2>/dev/null || return 1
+  cur=$(meta_get "$dir" state)
+  if [ "$cur" != "$from" ]; then hp_unlock; printf '%s' "$cur"; return 2; fi
+  meta_set "$dir" "state=$to" "ended=$(utc_ms)" "$@" || { hp_unlock; return 1; }
+  hp_unlock
+  [ -z "$text" ] || ledger_append_once "$dir" "$text"
+  printf '%s' "$to"
+}
+
+cmd_new() {
+  local plan="" name="" budget="" sid="" ws plan_dir lock jobs tmp final rand n=0 created deadline
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --budget-ms) [ $# -ge 2 ] || usage; budget=$2; shift 2 ;;
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      -*) usage ;;
+      *) if [ -z "$plan" ]; then plan=$1; elif [ -z "$name" ]; then name=$1; else usage; fi; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$name" ] && [ -n "$budget" ] || usage
+  case "$budget" in ''|*[!0-9]*) usage ;; esac
+  case "$name" in *[!A-Za-z0-9._-]*|'') usage ;; esac
+  [ -n "$sid" ] || sid=$(hp_session_id)
+  [ -n "$sid" ] || { echo "tracked-job: no session id: pass --session SID" >&2; exit 2; }
+  # The id lands verbatim in the job lines the ledger readers scan, so a value
+  # carrying a space or newline could forge a record.
+  case "$sid" in *[!A-Za-z0-9._-]*) echo "tracked-job: --session must be a single token of letters, digits, '.', '_' or '-'" >&2; exit 2 ;; esac
+  plan_dir=$(hp_plan_dir "$plan") || { echo "status=error"; exit 2; }
+  lock=$(hp_checkout_path "$plan_dir" 2>/dev/null) || { echo "status=error"; exit 2; }
+  # sdd-dir takes this same lock whenever it has to materialize the workspace
+  # (always under the plain backend), so contention surfaces here, before the
+  # allocation's own attempt: a held lock is busy, which the caller retries,
+  # never an error, which it does not.
+  if ! ws=$(bash "$HERE/sdd-dir" "$plan" 2>/dev/null); then
+    if [ -d "$lock.lock" ]; then echo "status=busy"; exit 3; fi
+    echo "status=error"; exit 2
+  fi
+  # The whole allocation runs under the workspace lock, which Finish holds
+  # while it removes the workspace: a ledger present under the lock is one
+  # Finish has not removed, and when it is gone nothing is created, so a
+  # removed workspace is never resurrected by a job line.
+  if ! hp_lock "$plan_dir" 2>/dev/null; then echo "status=busy"; exit 3; fi
+  if [ ! -f "$ws/progress.md" ]; then hp_unlock; echo "tracked-job: no ledger at $ws/progress.md" >&2; echo "status=error"; exit 2; fi
+  jobs="$ws/jobs"; mkdir -p "$jobs" || { hp_unlock; echo "status=error"; exit 2; }
+  tmp=$(mktemp -d "$jobs/.new-XXXXXX") || { hp_unlock; echo "status=error"; exit 2; }
+  created=$(utc_ms)
+  deadline=$(node -e 'process.stdout.write(new Date(Date.parse(process.argv[1])+Number(process.argv[2])).toISOString())' "$created" "$budget")
+  if ! meta_set "$tmp" "name=$name" "cwd=$PWD" "created=$created" "budget_ms:=$budget" "deadline=$deadline" "session=$sid" "ledger=$ws/progress.md" "plan_dir=$plan_dir" "state=allocated"; then rm -rf "$tmp"; hp_unlock; echo "status=error"; exit 2; fi
+  while :; do
+    rand=$(printf '%04x' $((RANDOM % 65536)))
+    final="$jobs/$name-$(date -u +%Y%m%dT%H%M%SZ)-$rand"
+    [ -e "$final" ] || break
+    n=$((n + 1)); [ "$n" -lt 20 ] || { rm -rf "$tmp"; hp_unlock; echo "status=error"; exit 2; }
+  done
+  mv "$tmp" "$final" || { rm -rf "$tmp"; hp_unlock; echo "status=error"; exit 2; }
+  if ! hp_ledger_append "$ws/progress.md" "$(printf 'job %s %s: %s jobdir=%s' "$sid" "$(utc_ms)" "$name" "$final")"; then rm -rf "$final"; hp_unlock; echo "status=error"; exit 2; fi
+  hp_unlock
+  echo "jobdir=$final"
+}
+
+# The supervisor. It stays in its own process group; the command gets its own
+# through job control (deviation 1) and starts only after the metadata is
+# durable (the FIFO barrier).
+RUN_DIR=""; RUN_PID=""; RUN_PGID=""; RUN_STOPPED=0; RUN_PENDING_STOP=0
+# group_alive: any member of the command's group, leader or descendant; kill -0
+# on the negative group id asks the kernel, so it needs no ps.
+group_alive() { kill -0 -- "-$RUN_PGID" 2>/dev/null; }
+stop_group() { # TERM, grace, then KILL while any member survives; marks the job stopped
+  RUN_STOPPED=1
+  kill -TERM -- "-$RUN_PGID" 2>/dev/null
+  # Five polls to the second: the grace is still GRACE seconds, but a command
+  # that goes down at once is concluded at once.
+  local i=0; while [ "$i" -lt $((GRACE * 5)) ] && group_alive; do sleep 0.2; i=$((i + 1)); done
+  group_alive && kill -KILL -- "-$RUN_PGID" 2>/dev/null
+}
+finish_run() { # <code>
+  local code=$1 state=exited survivors=-1 i=0 rc
+  [ "$RUN_STOPPED" -eq 1 ] && state=stopped
+  if have_ps; then survivors=$(ps -o pid= -g "$RUN_PGID" 2>/dev/null | grep -c .); elif ! group_alive; then survivors=0; fi
+  # The terminal state goes first, under the lock and only from running, and
+  # the exit file second: a reader that sees exit also sees the state, and a
+  # concurrent wait or stop never races this writer. A lock that stays held
+  # through five attempts is noted in out.log and the exit file is written
+  # anyway, so the job never reads as lost; wait repairs the state from the
+  # exit file once the lock is free.
+  while :; do
+    conclude "$RUN_DIR" running "$state" "" "code:=$code" "survivors:=$survivors" >/dev/null; rc=$?
+    [ "$rc" -eq 1 ] || break
+    i=$((i + 1))
+    if [ "$i" -ge 5 ]; then printf 'tracked-job: terminal state %s not recorded (lock held); exit=%s\n' "$state" "$code" >> "$RUN_DIR/out.log"; break; fi
+    sleep 1
+  done
+  printf '%s\n' "$code" > "$RUN_DIR/exit.tmp" && mv "$RUN_DIR/exit.tmp" "$RUN_DIR/exit"
+}
+abort_launch() { # <reason>
+  kill -KILL -- "-$RUN_PGID" 2>/dev/null; wait "$RUN_PID" 2>/dev/null
+  rmdir "$RUN_DIR/launch.lock" 2>/dev/null; rm -f "$RUN_DIR/go"
+  meta_set "$RUN_DIR" "state=allocated" "launch_error=$1 at $(utc_ms)" >/dev/null 2>&1
+  echo "status=error"; exit 2
+}
+cmd_run() {
+  local dir cmd_json i t code
+  [ $# -ge 3 ] && [ "$2" = "--" ] || usage
+  dir=$1; shift 2
+  job_dir_ok "$dir" || { echo "status=error"; exit 2; }
+  [ "$(meta_get "$dir" state)" = allocated ] || { echo "status=already-launched"; exit 2; }
+  mkdir "$dir/launch.lock" 2>/dev/null || { echo "status=already-launched"; exit 2; }
+  RUN_DIR=$dir
+  # From here to the supervise loop a signal must not kill the supervisor
+  # under its default disposition: between the spawn and the trap below that
+  # would leave the command running with nothing watching it and the job
+  # recorded running for ever. The request is remembered and swept as soon
+  # as the command is released.
+  trap 'RUN_PENDING_STOP=1' TERM INT HUP
+  rm -f "$dir/go"; mkfifo "$dir/go" || { rmdir "$dir/launch.lock"; echo "status=error"; exit 2; }
+  : > "$dir/out.log"
+  set -m
+  ( exec env "TRACKED_JOB_DIR=$dir" bash -c 'read -r _ < "$0/go" || exit 97; exec "$@"' "$dir" "$@" ) >> "$dir/out.log" 2>&1 &
+  RUN_PID=$!; RUN_PGID=$RUN_PID
+  set +m
+  cmd_json=$(node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' "$@")
+  if [ -n "${HYPERPOWERS_TEST_FAIL_META:-}" ] || ! meta_set "$dir" "pid:=$RUN_PID" "pgid:=$RUN_PGID" "run_pid:=$$" "run_lstart=$(lstart_of $$)" "lstart=$(lstart_of "$RUN_PID")" "command:=$cmd_json" "launched=$(utc_ms)" "state=running"; then
+    abort_launch "metadata write failed"
+  fi
+  # Open the barrier: the child is blocked in read on the FIFO. A writer that
+  # cannot open within five seconds means the child died before reading.
+  ( printf 'go\n' > "$dir/go" ) & t=$!
+  i=0; while [ "$i" -lt 50 ] && kill -0 "$t" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$t" 2>/dev/null; then kill -KILL "$t" 2>/dev/null; abort_launch "barrier not taken"; fi
+  rm -f "$dir/go"
+  trap 'stop_group' TERM INT HUP
+  [ "$RUN_PENDING_STOP" -eq 0 ] || stop_group
+  while alive "$RUN_PID"; do
+    sleep 1
+    if [ -e "$dir/stop-request" ] && [ "$RUN_STOPPED" -eq 0 ]; then stop_group; fi
+  done
+  wait "$RUN_PID"; code=$?
+  trap - TERM INT HUP
+  finish_run "$code"
+}
+
+case "${1:-}" in
+  new) shift; cmd_new "$@" ;;
+  run) shift; cmd_run "$@" ;;
+  wait|stop) echo "tracked-job: $1 arrives with Task 4" >&2; exit 2 ;;
+  *) usage ;;
+esac

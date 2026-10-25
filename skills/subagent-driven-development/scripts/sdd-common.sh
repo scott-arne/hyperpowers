@@ -110,6 +110,24 @@ hp_ledger_append() { # <ledger> <line>
   [ "$last" = '\n' ] && [ "$(tail -n 1 "$ledger")" = "$line" ]
 }
 
+# hp_ledger_records LEDGER: the ledger's lines that are records. An
+# unterminated last line and any line ending in tab-"#fragment" are remains
+# of an interrupted write, never records, even when their prefix reads like
+# one. Every reader of a ledger line goes through here: sdd-state's
+# completion readers and tracked-job's once-key check. 2 when unreadable.
+hp_ledger_records() { # <ledger>
+  local last tab
+  tab=$(printf '\t')
+  [ -r "$1" ] || return 2
+  last=$(tail -c 1 "$1" | od -An -c | tr -d ' ')
+  if [ "$last" = '\n' ]; then
+    grep -v "${tab}#fragment\$" "$1"
+  else
+    sed '$d' "$1" | grep -v "${tab}#fragment\$"
+  fi
+  return 0
+}
+
 # <plan-file> -> physical directory of the plan. The plan must be an existing
 # regular file inside a repository: a mistyped path never earns a workspace.
 hp_plan_dir() {

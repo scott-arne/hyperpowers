@@ -956,7 +956,7 @@ ledger_apply() {
 # every path the target tracks under it that is still missing afterwards
 # is published from the target.
 apply_files() {
-  local S=$1 target=$2 path dir tmp half ws i meta last_ws="" touched_ws=()
+  local S=$1 target=$2 path dir tmp half ws i meta n=0 last_ws="" touched_ws=()
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     hp_contained "$CO" "$path" || return 4
@@ -1020,9 +1020,11 @@ apply_files() {
   # published from the target, with its tracked mode. A link at such a
   # path is refused and named, never skipped: skipped, the next snapshot
   # would commit it onto the branch. The publish is one link(2) from a
-  # temporary copy, so a file a writer creates between the check and the
-  # publish is theirs; a ledger a writer creates there is reconciled,
-  # never adopted.
+  # temporary copy in the .restore sidecar at the checkout root (never
+  # inside a workspace, where a crash would leave it for a snapshot to
+  # commit), so a file a writer creates between the check and the publish
+  # is theirs; a ledger a writer creates there is reconciled, never
+  # adopted.
   i=0
   while [ "$i" -lt "${#touched_ws[@]}" ]; do
     ws=${touched_ws[$i]}; i=$((i + 1))
@@ -1030,10 +1032,11 @@ apply_files() {
       [ -n "$path" ] || continue
       hp_contained "$CO" "$path" || return 4
       [ ! -e "$CO/$path" ] || continue
-      mkdir -p "$(dirname "$CO/$path")" || return 2
-      tmp="$CO/$path.restore.$$"; rm -f "$tmp"
+      mkdir -p "$(dirname "$CO/$path")" "$CO/.restore" || return 2
+      n=$((n + 1)); tmp="$CO/.restore/$$.$n"; rm -f "$tmp"
       git -C "$CO" show "$target:$path" > "$tmp" || { rm -f "$tmp"; return 2; }
       case "$meta" in 100755*) chmod 755 "$tmp" || { rm -f "$tmp"; return 2; } ;; esac
+      if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = restore-after-copy ]; then hp_unlock; exit 99; fi
       # Test hook: a writer creates the file right before the publish.
       case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-restore:*) [ "${HYPERPOWERS_TEST_WRITER_AT#sync-before-restore:}" != "$path" ] || printf 'concurrent write\n' > "$CO/$path" ;; esac
       if ! ln "$tmp" "$CO/$path" 2>/dev/null; then
@@ -1045,6 +1048,9 @@ apply_files() {
       rm -f "$tmp"
     done < <(git -C "$CO" ls-tree -r "$target" -- "plans/$ws")
   done
+  # Emptied, the sidecar goes with the apply that emptied it; a copy a
+  # crash left behind keeps it until the next recovery sweeps it.
+  rmdir "$CO/.restore" 2>/dev/null
   return 0
 }
 # One sentence for the one failure a human clears by hand without reading
@@ -1077,23 +1083,33 @@ recover_apply() {
     echo "sdd-state: $CO/.sync-applying is a symbolic link; refusing to write the sync marker through it" >&2
     return 2
   fi
+  if [ -L "$CO/.restore" ]; then
+    echo "sdd-state: $CO/.restore is a symbolic link; refusing to sweep restore copies through it" >&2
+    return 2
+  fi
+  # The sweep below and every apply walk under plans/: a link there would
+  # take both out of the checkout.
+  if [ -L "$CO/plans" ]; then
+    echo "sdd-state: $CO/plans is a symbolic link; refusing to run recovery through it" >&2
+    return 2
+  fi
   # Defence in depth for a checkout created before the tree validation: the
   # sidecars are this host's own interrupted state, so a branch that tracks
   # one is carrying somebody else's, and the loop below would run it.
-  tracked=$(git -C "$CO" ls-tree --full-tree HEAD -- .sync-applying .rewrite 2>/dev/null) || tracked=""
+  tracked=$(git -C "$CO" ls-tree --full-tree HEAD -- .sync-applying .rewrite .restore 2>/dev/null) || tracked=""
   if [ -n "$tracked" ]; then
     echo "sdd-state: the state branch tracks a recovery sidecar at ${tracked#*$'\t'}; refusing to run recovery from committed files. Remove it from the branch on the host that committed it, push, then sync again" >&2
     return 2
   fi
-  # A new ledger, or a restored file, interrupted between its temporary
-  # copy and its publish leaves that copy inside a workspace, where a
-  # snapshot would commit it. Only real workspace directories are swept: a
-  # link at plans/<ws> is refused further down, and nothing is removed
-  # through it; the pid suffix keeps a tracked name out of the pattern.
+  # A new ledger interrupted between its temporary copy and its publish
+  # leaves that copy inside a workspace, where a snapshot would commit it;
+  # only real workspace directories are swept, never a link at plans/<ws>.
+  # A restored file's copy lives in the .restore sidecar, swept whole.
   for dir in "$CO"/plans/*/; do
     [ -d "$dir" ] && [ ! -L "${dir%/}" ] || continue
-    rm -f "$dir"progress.md.new.* "$dir"*.restore.[0-9]* 2>/dev/null
+    rm -f "$dir"progress.md.new.* 2>/dev/null
   done
+  rm -rf "$CO/.restore" 2>/dev/null
   for j in "$CO"/.rewrite/*.journal; do
     [ -f "$j" ] || continue
     rewrite_finish "${j%.journal}" || { echo "sdd-state: an interrupted ledger rewrite left $j and finishing it failed; check the ledger it names, then remove it and its .staged file" >&2; return 2; }

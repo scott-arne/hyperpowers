@@ -1156,6 +1156,27 @@ printf 'Task 7m: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/p
 rm -f "$wsb/run.sh"
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && [ -x "$wsb/run.sh" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "a restored file keeps its tracked mode"; else fail "a restored file keeps its tracked mode (rc=$rc: $out: $(ls -l "$wsb/run.sh" 2>&1))"; fi
+# A crash between the restore's copy and its publish leaves the copy in
+# the .restore sidecar, never inside a workspace: the next sync sweeps it,
+# completes the restore, and nothing of it reaches the branch.
+printf 'Task 7n: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/task-1-report.md"
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=restore-after-copy bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ -n "$(ls -A "$co_b/.restore" 2>/dev/null)" ] && [ ! -e "$wsb/task-1-report.md" ] && ! ls "$wsb"/*.restore* >/dev/null 2>&1; then pass "the crash seam after the restore's copy leaves the copy in the sidecar and nothing in the workspace"; else fail "the crash seam after the restore's copy leaves the copy in the sidecar (rc=$rc: $(ls -A "$co_b/.restore" 2>&1 | tr '\n' '|'))"; fi
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -e "$co_b/.restore" ] && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ -z "$(git -C "$co_b" status --porcelain)" ] && [ -z "$(git -C "$co_b" ls-tree -r --name-only refs/heads/hyperpowers/state | grep -F '.restore')" ]; then pass "the next sync sweeps the sidecar, completes the restore, and nothing of it reaches the branch"; else fail "the next sync sweeps the sidecar and completes the restore (rc=$rc: $out: $(git -C "$co_b" status --porcelain | tr '\n' '|'))"; fi
+# A link at plans/ itself: the recovery refuses before any sweep or walk,
+# and a matching file behind the link is untouched.
+printf 'Task 7o: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+plansroot7o="$TEST_ROOT/plans-7o-moved"; mv "$co_b/plans" "$plansroot7o"; ln -s "$plansroot7o" "$co_b/plans"
+printf 'x\n' > "$plansroot7o/$(basename "$wsb")/progress.md.new.123"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7o.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'plans is a symbolic link' "$TEST_ROOT/p7o.err" && [ -f "$plansroot7o/$(basename "$wsb")/progress.md.new.123" ]; then pass "a link at plans/ itself stops the recovery before any sweep, and the file behind it is untouched"; else fail "a link at plans/ itself stops the recovery before any sweep (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7o.err"))"; fi
+rm "$co_b/plans"; mv "$plansroot7o" "$co_b/plans"; rm -f "$wsb/progress.md.new.123"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7o: complete' "$wsb/progress.md" && [ -z "$(git -C "$co_b" status --porcelain)" ]; then pass "with plans/ a real directory again the recovery completes"; else fail "with plans/ a real directory again the recovery completes (rc=$rc: $out)"; fi
 
 # A remote finish racing a local writer: refused, nothing changed. The seam
 # writes after the pending check and right before the rename.

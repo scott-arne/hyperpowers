@@ -119,17 +119,19 @@ cmd_snapshot() {
 }
 
 # ledger_marks_complete LEDGER N: 0 when the ledger records task N complete,
-# 1 when it does not, 2 on a read error. An unterminated last line is the
-# fragment of an interrupted write, never a record, even when its prefix
-# reads "Task N: complete"; every completion reader goes through here.
+# 1 when it does not, 2 on a read error. An unterminated last line and any
+# line ending in tab-"#fragment" are remains of an interrupted write, never
+# records, even when their prefix reads "Task N: complete"; every completion
+# reader goes through here.
 ledger_marks_complete() { # <ledger> <n>
-  local last
+  local last tab
+  tab=$(printf '\t')
   [ -r "$1" ] || return 2
   last=$(tail -c 1 "$1" | od -An -c | tr -d ' ')
   if [ "$last" = '\n' ]; then
-    grep -Ec "(^|[^A-Za-z0-9])Task $2: complete" "$1" >/dev/null
+    grep -v "${tab}#fragment\$" "$1" | grep -Ec "(^|[^A-Za-z0-9])Task $2: complete" >/dev/null; return "${PIPESTATUS[1]}"
   else
-    sed '$d' "$1" | grep -Ec "(^|[^A-Za-z0-9])Task $2: complete" >/dev/null; return "${PIPESTATUS[1]}"
+    sed '$d' "$1" | grep -v "${tab}#fragment\$" | grep -Ec "(^|[^A-Za-z0-9])Task $2: complete" >/dev/null; return "${PIPESTATUS[2]}"
   fi
 }
 

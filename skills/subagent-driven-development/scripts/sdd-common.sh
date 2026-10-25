@@ -79,14 +79,14 @@ hp_utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 hp_utc_now_ms() { node -e 'process.stdout.write(new Date().toISOString())' 2>/dev/null || hp_utc_now; }
 
 # hp_ledger_append LEDGER LINE: the one way a machine-written line reaches a
-# ledger. The ledger stays append-only (the controller appends prose to it
-# without the lock, so a stage-and-rename would drop a concurrent append).
-# A failed write can leave an unterminated fragment. The next append repairs
-# it: the fragment is saved as one line in fragments.log beside the ledger,
-# then the ledger is truncated back to its last newline. That is safe because
-# machine writers hold the workspace lock and a controller's prose append is
-# one write call ending in a newline, so an unterminated tail is always a
-# failed write. Success means the tail really is LINE.
+# ledger. The ledger is only ever appended to, never truncated or replaced:
+# the controller appends prose to it without the lock, and any shrinking step
+# could delete such an append. A failed write can leave an unterminated
+# fragment. The next append saves it as one line in fragments.log beside the
+# ledger, then ends it with a tab-"#fragment" marker line that the completion
+# readers skip. A controller append that lands on an unended fragment glues to
+# it, which is what an unlocked append always did and loses no data. Success
+# means the tail really is LINE.
 hp_ledger_append() { # <ledger> <line>
   local ledger=$1 line=$2 last frag cut
   if [ -s "$ledger" ]; then
@@ -94,7 +94,7 @@ hp_ledger_append() { # <ledger> <line>
     if [ "$last" != '\n' ]; then
       frag=$(node -e 'const b=require("fs").readFileSync(process.argv[1]);process.stdout.write(b.subarray(b.lastIndexOf(10)+1).toString())' "$ledger") || return 1
       printf '%s %s\n' "$(hp_utc_now)" "$frag" >> "$(dirname "$ledger")/fragments.log" || return 1
-      node -e 'const fs=require("fs");fs.truncateSync(process.argv[1],fs.readFileSync(process.argv[1]).lastIndexOf(10)+1)' "$ledger" || return 1
+      printf '\t#fragment\n' >> "$ledger" || return 1
     fi
   fi
   if [ -n "${HYPERPOWERS_TEST_FAIL_APPEND:-}" ]; then

@@ -276,6 +276,9 @@ cmd_handback() {
   [ -n "$plan" ] && [ -n "$reason" ] || usage
   [ -n "$sid" ] || sid=$(hp_session_id)
   [ -n "$sid" ] || { echo "sdd-state: no session id: pass --session SID" >&2; return 2; }
+  # The id lands verbatim in a ledger line the completion readers scan, so a
+  # value carrying a space or newline could forge a record.
+  case "$sid" in *[!A-Za-z0-9._-]*) echo "sdd-state: --session must be a single token of letters, digits, '.', '_' or '-'" >&2; return 2 ;; esac
   case "$reason" in *$'\n'*) echo "sdd-state: --reason must be one line" >&2; return 2 ;; esac
   # The completion readers match this mark anywhere in the ledger, so a reason
   # carrying it would read as a finished task.

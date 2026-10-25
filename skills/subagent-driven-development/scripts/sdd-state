@@ -69,7 +69,9 @@ resolve_plan_basic() {
 resolve_plan() {
   local ensure
   resolve_plan_basic "$1"
-  ensure=$(hp_ensure_checkout "$PLAN_DIR") || exit 2
+  # The grammar is one status line on stdout for every outcome; the library
+  # has already said on stderr why the checkout could not be created.
+  ensure=$(hp_ensure_checkout "$PLAN_DIR") || { echo "status=error"; exit 2; }
   BACKEND=${ensure%% *}
   ROOT=${ensure#* }
   WSDIR="$ROOT/plans/$WS"

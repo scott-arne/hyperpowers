@@ -950,12 +950,13 @@ ledger_apply() {
 # files are checked out; files the target deletes are removed, a ledger among
 # them through remove_verified. Any failure returns 2; a ledger rewritten
 # locally returns 5 (from ledger_apply); a changed ledger the target deletes
-# returns 6.
+# returns 6. Returns 4 when a path it must write sits under a symbolic
+# link; the callers turn that into a repair the human can act on.
 apply_files() {
   local S=$1 target=$2 path dir tmp half
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    hp_contained "$CO" "$path" || return 2
+    hp_contained "$CO" "$path" || return 4
     mkdir -p "$(dirname "$CO/$path")" || return 2
     case "$path" in
       plans/*/progress.md)
@@ -992,7 +993,7 @@ apply_files() {
   done < <(git -C "$CO" diff --name-only --diff-filter=AM "$S" "$target")
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    hp_contained "$CO" "$path" || return 2
+    hp_contained "$CO" "$path" || return 4
     case "$path" in
       plans/*/progress.md)
         dir=$(dirname "$CO/$path")
@@ -1001,6 +1002,12 @@ apply_files() {
     esac
   done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
   return 0
+}
+# One sentence for the one failure a human clears by hand without reading
+# code: a link where the apply writes a regular file. hp_contained has just
+# named the path.
+say_link_repair() {
+  echo "sdd-state: a symbolic link sits where sync writes a regular file (named above); remove the link, leave $CO/.sync-applying in place, and run sdd-state sync again: the file comes back from the branch" >&2
 }
 # recover_apply: finish a sync that was interrupted after its marker went
 # down. A journaled ledger rewrite is finished first (it is self-contained).
@@ -1068,6 +1075,7 @@ recover_apply() {
   fi
   git -C "$CO" reset -q 2>/dev/null
   apply_files "$S" "$target"; rc=$?
+  if [ "$rc" -eq 4 ]; then say_link_repair; return 2; fi
   if [ "$rc" -ne 0 ]; then
     echo "sdd-state: an interrupted sync left $CO/.sync-applying and finishing it failed (rc=$rc); repair the working tree under $CO and run sdd-state sync again" >&2
     return 2
@@ -1210,6 +1218,7 @@ apply_target() {
   git -C "$CO" update-ref -m "sdd sync" "refs/heads/$BRANCH" "$target" "$S" 2>/dev/null || { rm -f "$CO/.sync-applying"; return 5; }
   if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-update-ref ]; then hp_unlock; exit 99; fi
   git -C "$CO" reset -q 2>/dev/null
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-ref-link:*) rm -f "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-after-ref-link:}"; ln -s /dev/null "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-after-ref-link:}" ;; esac
   # The ref has moved: an attempt a live writer defeats is retried here,
   # never by the caller's loop, whose snapshot would publish the
   # half-applied tree over the target. Three defeats, or a ledger the
@@ -1226,9 +1235,10 @@ apply_target() {
       # stays, and every later call refuses until the link is gone.
       while IFS= read -r path; do
         [ -n "$path" ] || continue
-        hp_contained "$CO" "$path" || return 2
+        hp_contained "$CO" "$path" || { say_link_repair; return 2; }
       done < <(git -C "$CO" diff --name-only "$S" "$target")
       rm -f "$CO/.sync-applying"; return 0 ;;
+    4) say_link_repair; return 2 ;;
     5|6) return 7 ;;
     *) return "$res" ;;
   esac

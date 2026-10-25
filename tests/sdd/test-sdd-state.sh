@@ -1033,6 +1033,26 @@ run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q o
 if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ "$(grep -c '^Task 5c: complete' "$wsb/progress.md")" -eq 1 ]; then pass "the crash seam after the ledger apply leaves the line applied and the marker in place"; else fail "the crash seam after the ledger apply leaves the line applied and the marker in place (rc=$rc)"; fi
 out=$(run_state "$PAIR_B" sync docs/plan.md)
 if [ "${out%% *}" = "status=up-to-date" ] && [ "$(grep -c '^Task 5c: complete' "$wsb/progress.md")" -eq 1 ] && [ ! -f "$co_b/.sync-applying" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "recovery after the ledger apply appends nothing twice"; else fail "recovery after the ledger apply appends nothing twice ($out)"; fi
+# A link planted where the recovery must write a regular file: the marker
+# stays, the human is told which repair clears it, and the plain sync that
+# follows the repair completes the apply.
+printf 'Task 7c: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+victim7c="$TEST_ROOT/victim-7c"; printf 'untouched\n' > "$victim7c"
+rm -f "$wsb/progress.md"; ln -s "$victim7c" "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7c.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7c.err" && [ "$(cat "$victim7c")" = "untouched" ]; then pass "a post-ref containment failure keeps the marker, leaves the target untouched and names the repair"; else fail "a post-ref containment failure names the repair (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7c.err"))"; fi
+rm -f "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7c: complete' "$wsb/progress.md"; then pass "after the repair the next sync completes the apply and the ledger comes back from the branch"; else fail "after the repair the next sync completes the apply (rc=$rc: $out)"; fi
+# The same link on the normal post-ref apply (no crash): the seam plants it
+# after the ref moved, so recover_apply is not the one that meets it.
+printf 'Task 7d: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-after-ref-link:plans/$(basename "$wsb")/progress.md" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p7d.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && [ -L "$wsb/progress.md" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7d.err"; then pass "a link met by the normal post-ref apply keeps the marker and names the repair"; else fail "a link met by the normal post-ref apply names the repair (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7d.err"))"; fi
+rm -f "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7d: complete' "$wsb/progress.md"; then pass "after that repair too the next sync completes the apply"; else fail "after that repair too the next sync completes the apply (rc=$rc: $out)"; fi
 
 # A remote finish racing a local writer: refused, nothing changed. The seam
 # writes after the pending check and right before the rename.

@@ -61,6 +61,27 @@ hp_checkout_path() { local k; k=$(hp_key "$1") || return 1; printf '%s/state/%s\
 hp_plain_root() { local k; k=$(hp_key "$1") || return 1; printf '%s/sdd/%s\n' "$(hp_cache_root)" "$k"; }
 hp_stamp_path() { local c; c=$(hp_checkout_path "$1") || return 1; printf '%s.fetched\n' "$c"; }
 
+# <repo-dir> -> the first 12 hex digits of the SHA-256 of the configured
+# remote's fetch URL, or none when the remote has no URL. The stamp carries
+# it so a remote repointed with set-url, which keeps its alias, cannot reuse
+# a stamp earned against another endpoint.
+hp_remote_fingerprint() {
+  local url
+  url=$(git -C "$1" remote get-url "$(hp_state_remote "$1")" 2>/dev/null) || { printf 'none\n'; return 0; }
+  [ -n "$url" ] || { printf 'none\n'; return 0; }
+  node -e 'process.stdout.write(require("crypto").createHash("sha256").update(process.argv[1]).digest("hex").slice(0, 12) + "\n")' "$url"
+}
+
+# <repo-dir> -> 0 when the fetch stamp names the configured remote, branch
+# and the remote's current URL fingerprint. A stamp from before 6.17 is an
+# empty file; it, or a stamp written for another remote, branch or URL,
+# means a sync is owed before any branch is created here.
+hp_stamp_ok() {
+  local have
+  have=$(head -n 1 "$(hp_stamp_path "$1")" 2>/dev/null) || return 1
+  [ "$have" = "$(hp_state_remote "$1") $(hp_state_branch "$1") $(hp_remote_fingerprint "$1")" ]
+}
+
 # The backend file: first word branch|plain, the rest free-form key=value.
 hp_backend() {
   local c f
@@ -508,7 +529,7 @@ hp_verify_checkout() {
 # state name belongs to a foreign branch. The one creation operation: it
 # owns the lock, the temporary path, recovery, and the backend file.
 hp_ensure_checkout() {
-  local repo=$1 co br remote backend tmp mode tip rc=0 refusal rest
+  local repo=$1 co br remote backend tmp mode tip rc=0 refusal rest have
   co=$(hp_checkout_path "$repo") || return 2
   br=$(hp_state_branch "$repo"); remote=$(hp_state_remote "$repo")
   backend=$(hp_backend "$repo")
@@ -545,8 +566,13 @@ hp_ensure_checkout() {
     hp_refuse_tip "$repo" "$tip" || { hp_unlock; return 2; }
     mode=remote
   else
-    if hp_has_remote "$repo" && [ ! -f "$(hp_stamp_path "$repo")" ]; then
-      echo "$HP_PROG: status=needs-sync: this repository has a remote and no state branch here; run sdd-state sync <plan> first (or sdd-state sync --assume-absent <plan>)" >&2
+    if hp_has_remote "$repo" && ! hp_stamp_ok "$repo"; then
+      have=$(head -n 1 "$(hp_stamp_path "$repo")" 2>/dev/null)
+      if [ -n "$have" ]; then
+        echo "$HP_PROG: status=needs-sync: the fetch stamp names '$have' but the configured remote, branch and URL fingerprint are '$(hp_state_remote "$repo") $(hp_state_branch "$repo") $(hp_remote_fingerprint "$repo")'; run sdd-state sync <plan> first" >&2
+      else
+        echo "$HP_PROG: status=needs-sync: this repository has a remote and no state branch here; run sdd-state sync <plan> first (or sdd-state sync --assume-absent <plan>)" >&2
+      fi
       hp_unlock; return 2
     fi
     mode=orphan

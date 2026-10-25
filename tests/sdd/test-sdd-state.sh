@@ -57,6 +57,9 @@ ensure() { local repo=$1; shift; env "$@" bash -c '. "$1"; hp_ensure_checkout "$
 materialize() { ( . "$LIB"; hp_materialize_plain "$@" ); }
 # shellcheck source=/dev/null
 state_key() { ( . "$LIB"; hp_key "$1" ); }
+# fp <repo>: the repository's remote fingerprint as the library computes it.
+# shellcheck source=/dev/null
+fp() { ( . "$LIB"; hp_remote_fingerprint "$1" ); }
 run_state() { ( cd "$1" && shift && bash "$SDD_STATE" "$@" ); }
 run_sdd_dir() { ( cd "$1" && shift && bash "$SDD_DIR" "$@" ); }
 registrations() { git -C "$1" worktree list --porcelain | grep -c "^worktree $STATE_ROOT/"; }
@@ -111,7 +114,19 @@ out=$(run_state "$PAIR_A" snapshot docs/plan.md 2>"$TEST_ROOT/ns-snapshot.err");
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'needs-sync' "$TEST_ROOT/ns-snapshot.err"; then pass "snapshot prints status=error when the checkout cannot be created"; else fail "snapshot prints status=error when the checkout cannot be created (rc=$rc: '$out')"; fi
 out=$(run_state "$PAIR_A" verify docs/plan.md 2>"$TEST_ROOT/ns-verify.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'needs-sync' "$TEST_ROOT/ns-verify.err"; then pass "verify prints status=error when the checkout cannot be created"; else fail "verify prints status=error when the checkout cannot be created (rc=$rc: '$out')"; fi
-: > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+printf 'other hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+err=$(ensure "$PAIR_A" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q "needs-sync" && printf '%s' "$err" | grep -q "names 'other hyperpowers/state" && [ ! -d "$STATE_ROOT/$(state_key "$PAIR_A")" ]; then pass "a stamp for another remote is needs-sync and names the difference"; else fail "a stamp for another remote is needs-sync and names the difference (rc=$rc: $err)"; fi
+out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ]; then pass "sync writes the remote, branch and URL fingerprint into the stamp"; else fail "sync writes the remote, branch and URL fingerprint into the stamp (rc=$rc: $out: $(cat "$STATE_ROOT/$(state_key "$PAIR_A").fetched" 2>/dev/null))"; fi
+# A repointed remote: the stamp earned against one endpoint must not vouch
+# for another once the checkout and the local branch are gone.
+git -C "$PAIR_A" worktree remove --force "$STATE_ROOT/$(state_key "$PAIR_A")" >/dev/null 2>&1 || rm -rf "${STATE_ROOT:?}/$(state_key "$PAIR_A")"; git -C "$PAIR_A" worktree prune; git -C "$PAIR_A" branch -D hyperpowers/state >/dev/null 2>&1
+url_was=$(git -C "$PAIR_A" remote get-url origin); git -C "$PAIR_A" remote set-url origin "$TEST_ROOT/elsewhere.git"
+err=$(ensure "$PAIR_A" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync' && [ ! -d "$STATE_ROOT/$(state_key "$PAIR_A")" ] && ! git -C "$PAIR_A" rev-parse -q --verify hyperpowers/state >/dev/null; then pass "a repointed remote makes the stamp stale: needs-sync and no branch created"; else fail "a repointed remote makes the stamp stale (rc=$rc: $err)"; fi
+git -C "$PAIR_A" remote set-url origin "$url_was"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 out=$(ensure "$PAIR_A"); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "branch $STATE_ROOT/$(state_key "$PAIR_A")" ]; then pass "the stamp allows the orphan"; else fail "the stamp allows the orphan (rc=$rc, '$out')"; fi
 
@@ -198,7 +213,7 @@ if [ "$rc" -eq 0 ] && [ "$out" = "branch $co9" ] && [ "$(git -C "$co9" symbolic-
 # foreign tip is refused before anything is read from it.
 make_pair p2
 keyA=$(state_key "$PAIR_A"); keyB=$(state_key "$PAIR_B")
-: > "$STATE_ROOT/$keyA.fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$keyA.fetched"
 coA="$STATE_ROOT/$keyA"
 ensure "$PAIR_A" >/dev/null
 mkdir -p "$coA/plans/demo-00000000"
@@ -206,7 +221,7 @@ printf '# SDD ledger — plan: docs/plan.md\n' > "$coA/plans/demo-00000000/progr
 # shellcheck source=/dev/null
 ( . "$LIB"; hp_commit_paths "$coA" hyperpowers/state "demo ledger" plans/demo-00000000/progress.md >/dev/null )
 git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
-: > "$STATE_ROOT/$keyB.fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_B")" > "$STATE_ROOT/$keyB.fetched"
 ensure "$PAIR_B" HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 >/dev/null 2>&1
 git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
 remote_tip=$(git -C "$PAIR_B" rev-parse origin/hyperpowers/state)
@@ -254,7 +269,7 @@ git -C "$PAIR_B" update-ref refs/remotes/origin/hyperpowers/state "$remote_tip"
 # smuggle a foreign commit in: remote mode creates from the validated
 # commit, and every mode verifies the temporary checkout before the move.
 make_pair p3
-: > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 ensure "$PAIR_A" >/dev/null
 git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
@@ -326,7 +341,7 @@ if [ "$rc" -eq 0 ] && [ "$out" = "plain $plain11" ] && [ ! -e "$STATE_ROOT/$(sta
 # published once a human has removed it; a stale staging directory from an
 # interrupted run is removed, and no staging directory remains.
 make_pair p4
-: > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 coA4="$STATE_ROOT/$(state_key "$PAIR_A")"
 ensure "$PAIR_A" >/dev/null
 mkdir -p "$coA4/plans/demo-00000000"
@@ -335,7 +350,7 @@ printf 'report\n' > "$coA4/plans/demo-00000000/task-1-report.md"
 # shellcheck source=/dev/null
 ( . "$LIB"; hp_commit_paths "$coA4" hyperpowers/state "demo ledger and report" plans/demo-00000000/progress.md plans/demo-00000000/task-1-report.md >/dev/null )
 git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
-: > "$STATE_ROOT/$(state_key "$PAIR_B").fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_B")" > "$STATE_ROOT/$(state_key "$PAIR_B").fetched"
 ensure "$PAIR_B" HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 >/dev/null 2>&1
 git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
 plainB4="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$PAIR_B")"; destB4="$plainB4/plans/demo-00000000"
@@ -764,7 +779,7 @@ echo ""
 echo "=== sdd-dir and the plain fallback over branch state ==="
 make_pair p5
 mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
-: > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 wsa=$(run_sdd_dir "$PAIR_A" docs/plan.md)
 printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa/progress.md"
 run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
@@ -1280,11 +1295,35 @@ out=$(run_state "$off2" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 1 ] && [ "${out%% *}" = "status=offline" ] && [ -e "$STATE_ROOT/$(state_key "$off2")/.git" ] && [ -n "$(git -C "$off2" rev-parse -q --verify refs/heads/hyperpowers/state 2>/dev/null)" ]; then pass "a default clone that cannot fetch still has the branch as a remote-tracking ref: offline, checkout built from it"; else fail "a default clone that cannot fetch still has the branch as a remote-tracking ref (rc=$rc: $out)"; fi
 out=$(run_state "$off" sync docs/plan.md --assume-absent); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=assumed-absent" ] && [ -f "$STATE_ROOT/$(state_key "$off").fetched" ] && [ -e "$STATE_ROOT/$(state_key "$off")/.git" ]; then pass "--assume-absent writes the stamp and creates the orphan"; else fail "--assume-absent writes the stamp and creates the orphan (rc=$rc: $out)"; fi
+if [ "$(head -n 1 "$STATE_ROOT/$(state_key "$off").fetched")" = "origin hyperpowers/state $(fp "$off")" ]; then pass "--assume-absent stamps the remote, branch and URL fingerprint"; else fail "--assume-absent stamps the remote, branch and URL fingerprint (got: $(cat "$STATE_ROOT/$(state_key "$off").fetched" 2>/dev/null))"; fi
 out=$(run_state "$off" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 1 ] && [ "${out%% *}" = "status=offline" ]; then pass "a later failed fetch with a local branch reports offline"; else fail "a later failed fetch with a local branch reports offline (rc=$rc: $out)"; fi
 norem="$TEST_ROOT/norem"; make_repo "$norem"; mkdir -p "$norem/docs"; : > "$norem/docs/plan.md"; git -C "$norem" add docs; git -C "$norem" commit -qm plan
 out=$(run_state "$norem" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=no-remote" ]; then pass "no remote reports no-remote"; else fail "no remote reports no-remote (rc=$rc: $out)"; fi
+nr="$TEST_ROOT/nr"; make_repo "$nr"; mkdir -p "$nr/docs"; : > "$nr/docs/plan.md"
+out=$(run_state "$nr" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=no-remote" ] && [ ! -e "$STATE_ROOT/$(state_key "$nr").fetched" ]; then pass "a no-remote sync leaves no stamp"; else fail "a no-remote sync leaves no stamp (rc=$rc: $out)"; fi
+# The stamp governs creation only: a no-remote sync created a local branch
+# here, which is continued, and a remote added later is reconciled by the
+# next sync. The creation path is reached only when neither the checkout
+# nor the local branch exists, so the fixture removes both before asking.
+git -C "$nr" worktree remove --force "$STATE_ROOT/$(state_key "$nr")" >/dev/null 2>&1 || rm -rf "${STATE_ROOT:?}/$(state_key "$nr")"; git -C "$nr" worktree prune; git -C "$nr" branch -D hyperpowers/state >/dev/null 2>&1
+git -C "$nr" remote add origin "$TEST_ROOT/nowhere.git"
+err=$(ensure "$nr" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync' && [ ! -d "$STATE_ROOT/$(state_key "$nr")" ]; then pass "with its branch and checkout gone, a repository that gained a remote after a no-remote sync asks for a sync before any branch is created"; else fail "a repository that gained a remote after a no-remote sync asks for a sync (rc=$rc: $err)"; fi
+# The realistic transition keeps the local branch: a remote that already
+# holds another dossier is reconciled, never silently replaced or invented.
+nr2="$TEST_ROOT/nr2"; make_repo "$nr2"; mkdir -p "$nr2/docs"; : > "$nr2/docs/plan.md"
+run_state "$nr2" sync docs/plan.md >/dev/null; wsnr2=$(run_sdd_dir "$nr2" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsnr2/progress.md"; run_state "$nr2" snapshot docs/plan.md >/dev/null
+git -C "$nr2" remote add origin "$PAIR_REMOTE"
+out=$(run_state "$nr2" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "${out%% *}" = "status=diverged" ] && [ -f "$wsnr2/progress.md" ] && grep -q '^Task 1: complete' "$wsnr2/progress.md"; then pass "a remote gained after a no-remote sync is reconciled by the next sync (diverged, nothing invented, the local ledger kept)"; else fail "a remote gained after a no-remote sync is reconciled by the next sync (rc=$rc: $out)"; fi
+ons="$TEST_ROOT/ons"; make_repo "$ons"; mkdir -p "$ons/docs"; : > "$ons/docs/plan.md"; git -C "$ons" remote add origin "$TEST_ROOT/nowhere.git"
+out=$(run_state "$ons" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "${out%% *}" = "status=offline-no-state" ] && [ ! -e "$STATE_ROOT/$(state_key "$ons").fetched" ]; then pass "an offline sync with no state branch leaves no stamp"; else fail "an offline sync with no state branch leaves no stamp (rc=$rc: $out)"; fi
+err=$(ensure "$ons" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync'; then pass "after an offline sync creation still asks for a sync"; else fail "after an offline sync creation still asks for a sync (rc=$rc: $err)"; fi
 if [ "$(run_state "$rp" sync docs/plan.md 2>/dev/null)" = "status=plain" ]; then pass "sync under the plain backend reports plain"; else fail "sync under the plain backend reports plain"; fi
 
 # Cross-repository: sync resolves the plan's repository, not the cwd's.

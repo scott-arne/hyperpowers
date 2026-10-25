@@ -28,6 +28,9 @@ make_repo() { # <path>
     git -C "$1" config user.email "test@example.com"
     git -C "$1" commit -q --allow-empty -m "initial"
 }
+# fp <repo>: the repository's remote fingerprint as the library computes it.
+# shellcheck source=/dev/null
+fp() { ( . "$LIB"; hp_remote_fingerprint "$1" ); }
 
 echo "=== sdd-common.sh ==="
 
@@ -310,6 +313,28 @@ sleep 0.01 & gone_pid=$!; wait "$gone_pid" 2>/dev/null
 if hp_pid_gone "$gone_pid"; then pass "hp_pid_gone: a reaped pid is gone"; else fail "hp_pid_gone: a reaped pid is gone"; fi
 if ! hp_pid_gone $$; then pass "hp_pid_gone: our own pid is alive"; else fail "hp_pid_gone: our own pid is alive"; fi
 if ! hp_pid_gone 1; then pass "hp_pid_gone: a pid we may not signal (EPERM) is alive"; else fail "hp_pid_gone: a pid we may not signal (EPERM) is alive"; fi
+
+# --- fetch stamp --------------------------------------------------------------
+repo_st="$TEST_ROOT/st"; make_repo "$repo_st"
+stamp_st=$(hp_stamp_path "$repo_st"); mkdir -p "$(dirname "$stamp_st")"
+if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: no stamp is not ok"; else fail "hp_stamp_ok: no stamp is not ok"; fi
+: > "$stamp_st"
+if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: an empty stamp (a pre-6.17 file) is not ok"; else fail "hp_stamp_ok: an empty stamp is not ok"; fi
+if [ "$(hp_remote_fingerprint "$repo_st")" = none ]; then pass "hp_remote_fingerprint: a remote without a URL is none"; else fail "hp_remote_fingerprint: a remote without a URL is none (got: $(hp_remote_fingerprint "$repo_st"))"; fi
+printf 'origin hyperpowers/state none\n' > "$stamp_st"
+if hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: the configured remote, branch and fingerprint are ok"; else fail "hp_stamp_ok: the configured remote, branch and fingerprint are ok"; fi
+printf 'origin hyperpowers/state\n' > "$stamp_st"
+if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: a stamp without the fingerprint is not ok"; else fail "hp_stamp_ok: a stamp without the fingerprint is not ok"; fi
+git -C "$repo_st" remote add origin "$TEST_ROOT/one.git"
+fp_one=$(hp_remote_fingerprint "$repo_st")
+if [ "${#fp_one}" -eq 12 ] && [ "$fp_one" != none ]; then pass "hp_remote_fingerprint: a URL gives twelve hex digits"; else fail "hp_remote_fingerprint: a URL gives twelve hex digits (got: $fp_one)"; fi
+printf 'origin hyperpowers/state %s\n' "$fp_one" > "$stamp_st"
+if hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: the stamp matches the current URL"; else fail "hp_stamp_ok: the stamp matches the current URL"; fi
+git -C "$repo_st" remote set-url origin "$TEST_ROOT/two.git"
+if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: a repointed remote invalidates the stamp"; else fail "hp_stamp_ok: a repointed remote invalidates the stamp"; fi
+git -C "$repo_st" config hyperpowers.stateBranch other/state
+printf 'origin other/state %s\n' "$(hp_remote_fingerprint "$repo_st")" > "$stamp_st"
+if hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: the stamp follows the configured branch"; else fail "hp_stamp_ok: the stamp follows the configured branch"; fi
 
 # --- kept copies beside a referent -----------------------------------------
 # The plain-cache reclaim can move the whole root while a pointer still names

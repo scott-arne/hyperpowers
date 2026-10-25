@@ -1484,12 +1484,14 @@ cmd_sync() {
     echo "status=$1 local=$(short "$S") remote=none age=$(age_of "$CO" "$S")"
     return "$2"
   }
-  if [ "$assume" -eq 1 ]; then : > "$stamp"; settle assumed-absent 0; return $?; fi
-  if ! hp_has_remote "$PLAN_DIR"; then : > "$stamp"; settle no-remote 0; return $?; fi
+  if [ "$assume" -eq 1 ]; then printf '%s %s %s\n' "$REMOTE" "$BRANCH" "$(hp_remote_fingerprint "$PLAN_DIR")" > "$stamp"; settle assumed-absent 0; return $?; fi
+  # No remote to earn a stamp against: one written here would vouch for a
+  # remote named later, so none is left and creation rests on hp_has_remote.
+  if ! hp_has_remote "$PLAN_DIR"; then rm -f "$stamp"; settle no-remote 0; return $?; fi
   err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 git -C "$PLAN_DIR" fetch -q "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?
   if [ "$rc" -ne 0 ]; then
     case "$err" in
-      *"couldn't find remote ref"*) : > "$stamp"; settle absent 0; return $? ;;
+      *"couldn't find remote ref"*) printf '%s %s %s\n' "$REMOTE" "$BRANCH" "$(hp_remote_fingerprint "$PLAN_DIR")" > "$stamp"; settle absent 0; return $? ;;
     esac
     S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")
     # A default clone has the branch as a remote-tracking ref only; the
@@ -1506,7 +1508,7 @@ cmd_sync() {
     echo "status=offline-no-state local=none remote=none age=0"
     return 1
   fi
-  : > "$stamp"
+  printf '%s %s %s\n' "$REMOTE" "$BRANCH" "$(hp_remote_fingerprint "$PLAN_DIR")" > "$stamp"
   # The remote tip is read once, here, and that sha alone is reconciled: a
   # fetch by another process cannot swap in a different commit later.
   R=$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")

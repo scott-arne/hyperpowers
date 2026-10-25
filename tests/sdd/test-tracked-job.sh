@@ -110,7 +110,7 @@ else
 fi
 # the same window, reached by a file rather than a signal: a stop-request that
 # already stands when the launch would release the command (Task 4's stop
-# writes it), and the abort file the deferring trap drops for the child.
+# writes one, and so does the supervisor's deferring trap).
 js=$(newjob heldreq)
 ( HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER="$TEST_ROOT/go-3" tj run "$js" -- bash -c 'echo ran > req-ran.txt; sleep 30' >/dev/null 2>&1 ) &
 if ! wait_meta "$js" run_pid; then fail "a stop-request standing at the barrier cancels the command (no run_pid within 10s)"
@@ -118,13 +118,14 @@ else
   : > "$js/stop-request"; touch "$TEST_ROOT/go-3"; wait_file "$js/exit"
   if [ "$(cat "$js/exit" 2>/dev/null)" = 143 ] && [ "$(meta "$js" state)" = stopped ] && [ ! -f "$repo/req-ran.txt" ]; then pass "a stop-request standing at the barrier cancels the command"; else fail "a stop-request standing at the barrier cancels the command (exit=$(cat "$js/exit" 2>/dev/null), state=$(meta "$js" state), ran=$([ -f "$repo/req-ran.txt" ] && echo yes || echo no))"; fi
 fi
-ja=$(newjob heldabort)
-( HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER="$TEST_ROOT/go-4" tj run "$ja" -- bash -c 'echo ran > abort-ran.txt; sleep 30' >/dev/null 2>&1 ) &
-if ! wait_meta "$ja" run_pid; then fail "an abort standing at the barrier cancels the command (no run_pid within 10s)"
-else
-  : > "$ja/abort"; touch "$TEST_ROOT/go-4"; wait_file "$ja/exit"
-  if [ "$(cat "$ja/exit" 2>/dev/null)" = 143 ] && [ "$(meta "$ja" state)" = stopped ] && [ ! -f "$repo/abort-ran.txt" ] && [ ! -e "$ja/abort" ]; then pass "an abort standing at the barrier cancels the command and is cleaned up"; else fail "an abort standing at the barrier cancels the command and is cleaned up (exit=$(cat "$ja/exit" 2>/dev/null), state=$(meta "$ja" state), ran=$([ -f "$repo/abort-ran.txt" ] && echo yes || echo no))"; fi
-fi
+# a stop-request the trap left behind during a launch that then failed must not
+# cancel the retry on sight: the job goes back to allocated without the marker,
+# and the next run reaches the command.
+jr=$(newjob reqretry); : > "$jr/stop-request"
+out=$(HYPERPOWERS_TEST_FAIL_META=1 tj run "$jr" -- bash -c 'echo ran > retry-ran.txt'); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(meta "$jr" state)" = allocated ] && [ ! -e "$jr/stop-request" ]; then pass "an aborted launch takes the stop-request with it"; else fail "an aborted launch takes the stop-request with it (rc=$rc: $out, state=$(meta "$jr" state), marker=$([ -e "$jr/stop-request" ] && echo yes || echo no))"; fi
+tj run "$jr" -- bash -c 'echo ran > retry-ran.txt' >/dev/null 2>&1
+if [ "$(cat "$jr/exit" 2>/dev/null)" = 0 ] && [ "$(meta "$jr" state)" = exited ] && [ "$(cat "$repo/retry-ran.txt" 2>/dev/null)" = ran ]; then pass "the retry after an aborted launch runs the command"; else fail "the retry after an aborted launch runs the command (exit=$(cat "$jr/exit" 2>/dev/null), state=$(meta "$jr" state), ran=$([ -f "$repo/retry-ran.txt" ] && echo yes || echo no))"; fi
 jh2=$(newjob heldgo); held=0
 ( HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER="$TEST_ROOT/go-2" tj run "$jh2" -- bash -c 'echo released > held-go.txt' >/dev/null 2>&1 ) &
 if ! wait_meta "$jh2" run_pid; then fail "a launch held at the barrier runs as usual once it is released (no run_pid within 10s)"

@@ -706,14 +706,14 @@ State suite (or extracted harness), needles `names the repair` (both the recover
 
 - [ ] **Step 3: A distinct code and one repair sentence**
 
-In `apply_files`, change both `hp_contained "$CO" "$path" || return 2` lines (898 and 935) to `hp_contained "$CO" "$path" || return 4`, and add to the function's comment: `Returns 4 when a path it must write or remove sits under a symbolic link; the callers turn that into a repair the human can act on. A workspace directory the apply has to create comes back whole: every path the target tracks under it that is still missing afterwards is checked out.` Then make the function remember each workspace directory it creates and restore it whole. Its `local` line becomes `local S=$1 target=$2 path dir tmp half ws i created=()`; right after the first walk's `hp_contained ... || return 4` line add:
+In `apply_files`, change both `hp_contained "$CO" "$path" || return 2` lines (898 and 935) to `hp_contained "$CO" "$path" || return 4`, and add to the function's comment: `Returns 4 when a path it must write or remove sits under a symbolic link; the callers turn that into a repair the human can act on. A workspace directory the apply has to create comes back whole: every path the target tracks under it that is still missing afterwards is checked out.` Then make the function remember each workspace directory it creates and restore it whole. Its `local` line becomes `local S=$1 target=$2 path dir tmp half ws i created_ws=()` (the array is named `created_ws` because `cmd_sync` already has a scalar `created`, and shellcheck's SC2178 reads the two as one name); right after the first walk's `hp_contained ... || return 4` line add:
 
 ```bash
     # A workspace directory this apply has to create is remembered: the
     # diff names only what changed between S and the target, and a
     # directory restored with those files alone would have the next
     # snapshot record its unchanged siblings as deletions.
-    case "$path" in plans/*/*) ws=${path#plans/}; ws=${ws%%/*}; [ -e "$CO/plans/$ws" ] || created[${#created[@]}]=$ws ;; esac
+    case "$path" in plans/*/*) ws=${path#plans/}; ws=${ws%%/*}; [ -e "$CO/plans/$ws" ] || created_ws[${#created_ws[@]}]=$ws ;; esac
 ```
 
 and replace the function's final `return 0` with:
@@ -722,8 +722,8 @@ and replace the function's final `return 0` with:
   # Each workspace directory this apply created comes back whole: every
   # path the target tracks under it that is still missing is checked out.
   i=0
-  while [ "$i" -lt "${#created[@]}" ]; do
-    ws=${created[$i]}; i=$((i + 1))
+  while [ "$i" -lt "${#created_ws[@]}" ]; do
+    ws=${created_ws[$i]}; i=$((i + 1))
     while IFS= read -r path; do
       [ -n "$path" ] || continue
       [ ! -e "$CO/$path" ] && [ ! -L "$CO/$path" ] || continue

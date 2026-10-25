@@ -30,6 +30,15 @@ printf '# SDD ledger — plan: docs/plan.md\nsession s1: mode worktree on main a
 tj() { (cd "$repo" && bash "$TJ" "$@"); }
 meta() { node -e 'const m=JSON.parse(require("fs").readFileSync(process.argv[1]+"/meta.json","utf8"));const v=m[process.argv[2]];console.log(v===undefined||v===null?"":(typeof v==="object"?JSON.stringify(v):String(v)))' "$1" "$2"; }
 newjob() { tj new docs/plan.md "$1" --budget-ms 60000 --session s1 | sed -n 's/^jobdir=//p'; }
+# A launch runs several node starts before its metadata is durable, so a fixed
+# wait reads an empty pid under load (three suites at once is enough). The
+# metadata is written in one rename, so any key of it means the supervisor is
+# past its launch window; the exit file is written last, after the terminal
+# state, so its appearance means the record is complete. Both are bounded at
+# 10 s, and a timeout leaves the case to fail on its own assertion.
+wait_meta() { local i=0; while [ "$i" -lt 100 ]; do [ -n "$(meta "$1" "$2")" ] && return 0; sleep 0.1; i=$((i + 1)); done; return 1; }
+wait_file() { local i=0; while [ "$i" -lt 100 ] && [ ! -e "$1" ]; do sleep 0.1; i=$((i + 1)); done; }
+err="$TEST_ROOT/stderr.txt"
 
 echo "=== tracked-job new ==="
 j1=$(newjob soak); j2=$(newjob soak)
@@ -43,14 +52,14 @@ rm -rf "$lockdir"
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$(wc -l < "$ws/progress.md")" = "$before" ] && [ "$(ls "$ws/jobs" | wc -l)" = "$n3" ]; then pass "a new that cannot take the lock is busy, leaves no directory and appends nothing"; else fail "a new that cannot take the lock is busy, leaves no directory and appends nothing (rc=$rc: $out)"; fi
 # a workspace Finish has removed (the ledger gone under the lock): nothing is created and no ledger comes back.
 mv "$ws/progress.md" "$ws/progress.md.away"
-out=$(tj new docs/plan.md gone --budget-ms 1000 --session s1 2>/dev/null); rc=$?
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$ws/progress.md" ] && [ "$(ls "$ws/jobs" | wc -l)" = "$n3" ]; then pass "a new after the ledger is gone creates nothing and resurrects nothing"; else fail "a new after the ledger is gone creates nothing and resurrects nothing (rc=$rc: $out)"; fi
+out=$(tj new docs/plan.md gone --budget-ms 1000 --session s1 2>"$err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -s "$err" ] && [ ! -e "$ws/progress.md" ] && [ "$(ls "$ws/jobs" | wc -l)" = "$n3" ]; then pass "a new after the ledger is gone creates nothing and resurrects nothing"; else fail "a new after the ledger is gone creates nothing and resurrects nothing (rc=$rc: $out; stderr: $(cat "$err"))"; fi
 mv "$ws/progress.md.away" "$ws/progress.md"
-out=$(tj new docs/plan.md 'bad name' --budget-ms 1000 --session s1 2>/dev/null); rc=$?
-if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "a name outside [A-Za-z0-9._-] is a usage error"; else fail "a name outside [A-Za-z0-9._-] is a usage error (rc=$rc: $out)"; fi
+out=$(tj new docs/plan.md 'bad name' --budget-ms 1000 --session s1 2>"$err"); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ -s "$err" ]; then pass "a name outside [A-Za-z0-9._-] is a usage error"; else fail "a name outside [A-Za-z0-9._-] is a usage error (rc=$rc: $out; stderr: $(cat "$err"))"; fi
 # the session id lands verbatim in a ledger line, so a value that is not one token is refused.
-out=$(tj new docs/plan.md hostile --budget-ms 1000 --session 's Task 2: complete' 2>/dev/null); rc=$?
-if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(wc -l < "$ws/progress.md")" = "$before" ] && [ "$(ls "$ws/jobs" | wc -l)" = "$n3" ]; then pass "a session id outside [A-Za-z0-9._-] is refused before anything is written"; else fail "a session id outside [A-Za-z0-9._-] is refused before anything is written (rc=$rc: $out)"; fi
+out=$(tj new docs/plan.md hostile --budget-ms 1000 --session 's Task 2: complete' 2>"$err"); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ -s "$err" ] && [ "$(wc -l < "$ws/progress.md")" = "$before" ] && [ "$(ls "$ws/jobs" | wc -l)" = "$n3" ]; then pass "a session id outside [A-Za-z0-9._-] is refused before anything is written"; else fail "a session id outside [A-Za-z0-9._-] is refused before anything is written (rc=$rc: $out; stderr: $(cat "$err"))"; fi
 
 echo "=== tracked-job run ==="
 tj run "$j1" -- bash -c 'echo hello; exit 0' >/dev/null 2>&1
@@ -71,9 +80,12 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(meta "$j7" state)" = a
 tj run "$j7" -- bash -c 'exit 0' >/dev/null 2>&1
 if [ "$(cat "$j7/exit" 2>/dev/null)" = 0 ]; then pass "a later run on the same directory succeeds"; else fail "a later run on the same directory succeeds"; fi
 # the supervisor's own TERM: the group is swept, the result recorded, state stopped.
-j8=$(newjob trapped); ( tj run "$j8" -- bash -c 'sleep 60' >/dev/null 2>&1 ) & sleep 1
-kill -TERM "$(meta "$j8" run_pid)"; sleep 5
-if [ "$(cat "$j8/exit" 2>/dev/null)" = 143 ] && [ "$(meta "$j8" state)" = stopped ] && ! kill -0 "$(meta "$j8" pid)" 2>/dev/null; then pass "a TERM to the supervisor sweeps the command and records the result"; else fail "a TERM to the supervisor sweeps the command and records the result (exit=$(cat "$j8/exit" 2>/dev/null), state=$(meta "$j8" state))"; fi
+j8=$(newjob trapped); ( tj run "$j8" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
+if ! wait_meta "$j8" run_pid; then fail "a TERM to the supervisor sweeps the command and records the result (no run_pid within 10s)"
+else
+  kill -TERM "$(meta "$j8" run_pid)"; wait_file "$j8/exit"
+  if [ "$(cat "$j8/exit" 2>/dev/null)" = 143 ] && [ "$(meta "$j8" state)" = stopped ] && ! kill -0 "$(meta "$j8" pid)" 2>/dev/null; then pass "a TERM to the supervisor sweeps the command and records the result"; else fail "a TERM to the supervisor sweeps the command and records the result (exit=$(cat "$j8/exit" 2>/dev/null), state=$(meta "$j8" state))"; fi
+fi
 # path trust: a directory outside the workspace, and a symlinked job directory, are refused.
 mkdir -p "$TEST_ROOT/outside"; cp "$j4/meta.json" "$TEST_ROOT/outside/"
 out=$(tj run "$TEST_ROOT/outside" -- bash -c 'exit 0'); rc=$?
@@ -89,13 +101,20 @@ out=$(tj run "$j4b" -- bash -c 'exit 0'); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(meta "$j4b" state)" = allocated ] && [ ! -e "$j4b/exit" ]; then pass "run refuses a job whose metadata names another repository"; else fail "run refuses a job whose metadata names another repository (rc=$rc: $out)"; fi
 # process relationships (deviation 1), where ps works.
 if [ "$HAVE_PS" -eq 1 ]; then
-  j9=$(newjob groups); ( tj run "$j9" -- bash -c 'sleep 5' >/dev/null 2>&1 ) & sleep 1
-  cpid=$(meta "$j9" pid); rpid=$(meta "$j9" run_pid)
-  cpg=$(ps -o pgid= -p "$cpid" | tr -d ' '); rpg=$(ps -o pgid= -p "$rpid" | tr -d ' '); csid=$(ps -o sess= -p "$cpid" | tr -d ' '); rsid=$(ps -o sess= -p "$rpid" | tr -d ' ')
-  if [ "$cpg" = "$cpid" ] && [ "$cpg" != "$rpg" ] && [ "$csid" = "$rsid" ]; then pass "the child leads its own process group inside the supervisor's session"; else fail "the child leads its own process group inside the supervisor's session (child $cpid pgid $cpg sid $csid; run $rpid pgid $rpg sid $rsid)"; fi
-  printf '%s\n' "child=$cpid pgid=$cpg sid=$csid run=$rpid pgid=$rpg sid=$rsid" > "$TEST_ROOT/groups.txt"; cat "$TEST_ROOT/groups.txt"
-  kill -KILL -- "-$cpg" 2>/dev/null; sleep 2
-  if [ "$(cat "$j9/exit" 2>/dev/null)" = 137 ] && [ "$(meta "$j9" state)" = exited ]; then pass "a KILL to the child's group leaves the supervisor alive to record 137"; else fail "a KILL to the child's group leaves the supervisor alive to record 137 (exit=$(cat "$j9/exit" 2>/dev/null))"; fi
+  # The command outlives the readiness wait by a wide margin: ps must read a
+  # live child, and under load the launch itself can take seconds.
+  j9=$(newjob groups); ( tj run "$j9" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
+  if ! wait_meta "$j9" pid; then
+    fail "the child leads its own process group inside the supervisor's session (no pid within 10s)"
+    fail "a KILL to the child's group leaves the supervisor alive to record 137 (no pid within 10s)"
+  else
+    cpid=$(meta "$j9" pid); rpid=$(meta "$j9" run_pid)
+    cpg=$(ps -o pgid= -p "$cpid" | tr -d ' '); rpg=$(ps -o pgid= -p "$rpid" | tr -d ' '); csid=$(ps -o sess= -p "$cpid" | tr -d ' '); rsid=$(ps -o sess= -p "$rpid" | tr -d ' ')
+    if [ "$cpg" = "$cpid" ] && [ "$cpg" != "$rpg" ] && [ "$csid" = "$rsid" ]; then pass "the child leads its own process group inside the supervisor's session"; else fail "the child leads its own process group inside the supervisor's session (child $cpid pgid $cpg sid $csid; run $rpid pgid $rpg sid $rsid)"; fi
+    printf '%s\n' "child=$cpid pgid=$cpg sid=$csid run=$rpid pgid=$rpg sid=$rsid" > "$TEST_ROOT/groups.txt"; cat "$TEST_ROOT/groups.txt"
+    kill -KILL -- "-$cpg" 2>/dev/null; wait_file "$j9/exit"
+    if [ "$(cat "$j9/exit" 2>/dev/null)" = 137 ] && [ "$(meta "$j9" state)" = exited ]; then pass "a KILL to the child's group leaves the supervisor alive to record 137"; else fail "a KILL to the child's group leaves the supervisor alive to record 137 (exit=$(cat "$j9/exit" 2>/dev/null))"; fi
+  fi
 else
   skip "the child leads its own process group inside the supervisor's session (ps unavailable)"
   skip "a KILL to the child's group leaves the supervisor alive to record 137 (ps unavailable)"

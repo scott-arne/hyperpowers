@@ -140,9 +140,16 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'changed during the
 out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ]; then pass "the next sync fetches the new endpoint and stamps it"; else fail "the next sync fetches the new endpoint and stamps it (rc=$rc: $out: $(cat "$STATE_ROOT/$(state_key "$PAIR_A").fetched" 2>/dev/null))"; fi
 git -C "$PAIR_A" remote set-url origin "$url_was"
-# That sync created the orphan against the race endpoint; the checkout, the
-# branch and the stamp go again, so the hand-written stamp below is what
-# lets the next creation happen.
+# A remote repointed to another endpoint between the fingerprint and the
+# fetch, and back before the stamp: the fetch is pinned to the fingerprinted
+# URL, so the other endpoint (which holds a branch under the state name) is
+# never contacted, the outcome is still absent, and the stamp stays true.
+aba_b="$TEST_ROOT/p1-aba.git"; git init -q --bare -b main "$aba_b"; git -C "$PAIR_A" push -q "$aba_b" main:refs/heads/hyperpowers/state 2>/dev/null
+out=$(cd "$PAIR_A" && HYPERPOWERS_TEST_WRITER_AT="sync-aba-fetch:$aba_b" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1-aba.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ] && ! git -C "$PAIR_A" rev-parse -q --verify refs/remotes/origin/hyperpowers/state >/dev/null && [ "$(git -C "$PAIR_A" remote get-url origin)" = "$url_was" ]; then pass "a repoint away and back around the fetch never reaches the other endpoint: the fetch is pinned to the fingerprinted URL"; else fail "a repoint away and back around the fetch never reaches the other endpoint (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p1-aba.err"))"; fi
+# Those syncs created the orphan; the checkout, the branch and the stamp go
+# again, so the hand-written stamp below is what lets the next creation
+# happen.
 git -C "$PAIR_A" worktree remove --force "$STATE_ROOT/$(state_key "$PAIR_A")" >/dev/null 2>&1 || rm -rf "${STATE_ROOT:?}/$(state_key "$PAIR_A")"; git -C "$PAIR_A" worktree prune; git -C "$PAIR_A" branch -D hyperpowers/state >/dev/null 2>&1; rm -f "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 out=$(ensure "$PAIR_A"); rc=$?

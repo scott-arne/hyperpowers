@@ -65,17 +65,23 @@ hp_stamp_path() { local c; c=$(hp_checkout_path "$1") || return 1; printf '%s.fe
 # remote's fetch URL, or none when the remote has no URL. The stamp carries
 # it so a remote repointed with set-url, which keeps its alias, cannot reuse
 # a stamp earned against another endpoint.
-hp_remote_fingerprint() {
-  local url fp
-  url=$(git -C "$1" remote get-url "$(hp_state_remote "$1")" 2>/dev/null) || { printf 'none\n'; return 0; }
-  [ -n "$url" ] || { printf 'none\n'; return 0; }
-  # The URL may carry credentials: it reaches node on stdin, never in argv
-  # or the environment. A digest that cannot be computed is a failure, not
-  # an empty identity: callers fail closed on return 1.
-  fp=$(printf '%s' "$url" | node -e 'const b=[];process.stdin.on("data",c=>{b.push(c)}).on("end",()=>{process.stdout.write(require("crypto").createHash("sha256").update(Buffer.concat(b)).digest("hex").slice(0,12))})' 2>/dev/null) || return 1
+# <url> -> the first 12 hex digits of its SHA-256. The URL may carry
+# credentials: it reaches node on stdin, never in argv or the environment.
+# A digest that cannot be computed is a failure, not an empty identity:
+# callers fail closed on return 1.
+hp_url_fingerprint() {
+  local fp
+  fp=$(printf '%s' "$1" | node -e 'const b=[];process.stdin.on("data",c=>{b.push(c)}).on("end",()=>{process.stdout.write(require("crypto").createHash("sha256").update(Buffer.concat(b)).digest("hex").slice(0,12))})' 2>/dev/null) || return 1
   case "$fp" in ????????????) ;; *) return 1 ;; esac
   case "$fp" in *[!0-9a-f]*) return 1 ;; esac
   printf '%s\n' "$fp"
+}
+
+hp_remote_fingerprint() {
+  local url
+  url=$(git -C "$1" remote get-url "$(hp_state_remote "$1")" 2>/dev/null) || { printf 'none\n'; return 0; }
+  [ -n "$url" ] || { printf 'none\n'; return 0; }
+  hp_url_fingerprint "$url"
 }
 
 # <repo-dir> -> 0 when the fetch stamp names the configured remote, branch

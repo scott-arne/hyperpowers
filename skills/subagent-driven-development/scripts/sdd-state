@@ -1450,7 +1450,7 @@ apply_target() {
   esac
 }
 cmd_sync() {
-  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure fp_before fp_after
+  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure url_before fp_before fp_after
   REMOTE_FINISHED=""
   # remove_verified (Task 6) and recover_apply live in this file; sync, finish, handoff and snapshot share them.
   while [ $# -gt 0 ]; do
@@ -1501,12 +1501,24 @@ cmd_sync() {
   # No remote to earn a stamp against: one written here would vouch for a
   # remote named later, so none is left and creation rests on hp_has_remote.
   if ! hp_has_remote "$PLAN_DIR"; then rm -f "$stamp"; settle no-remote 0; return $?; fi
-  # The stamp names the endpoint that was fetched: the fingerprint is taken
-  # before the fetch, and the remote, branch and URL are read again after it;
-  # any difference means a repoint raced the fetch, and nothing is stamped.
-  fp_before=$(hp_remote_fingerprint "$PLAN_DIR") || { echo "sdd-state: the remote's URL could not be fingerprinted (node is required); nothing was stamped. Run sdd-state sync again" >&2; echo "status=error"; return 2; }
-  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 git -C "$PLAN_DIR" fetch -q "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?
-  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-fetch-set-url:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch-set-url:}" ;; esac
+  # The stamp names the endpoint that was fetched. The remote alias is
+  # mutable, so the URL is read once, fingerprinted as that string, and the
+  # fetch is pinned to it through a private alias in git's environment
+  # configuration (the URL stays out of argv); the remote, branch and URL
+  # are read again after the fetch, and any difference means a repoint
+  # raced it, so nothing is stamped.
+  url_before=$(git -C "$PLAN_DIR" remote get-url "$REMOTE" 2>/dev/null) || url_before=""
+  if [ -n "$url_before" ]; then
+    fp_before=$(hp_url_fingerprint "$url_before") || { echo "sdd-state: the remote's URL could not be fingerprinted (node is required); nothing was stamped. Run sdd-state sync again" >&2; echo "status=error"; return 2; }
+  else
+    fp_before=none
+  fi
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-aba-fetch:}" ;; esac
+  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="remote.hp-fetch-$$.url" GIT_CONFIG_VALUE_0="$url_before" git -C "$PLAN_DIR" fetch -q "hp-fetch-$$" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+    sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "$url_before" ;;
+    sync-after-fetch-set-url:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch-set-url:}" ;;
+  esac
   if [ "$rc" -ne 0 ]; then
     case "$err" in
       *"couldn't find remote ref"*) stamp_fetched || { echo "status=error"; return 2; }; settle absent 0; return $? ;;

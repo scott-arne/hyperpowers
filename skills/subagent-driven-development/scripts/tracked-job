@@ -263,17 +263,21 @@ cmd_run() {
   # for a job that never started, and dying after the spawn would leave the
   # command running with nothing watching it. The request is remembered and
   # acted on at the barrier, the last point at which the command can still be
-  # cancelled rather than stopped after the fact. The trap also writes the
-  # stop-request file, which the command itself tests after the barrier: a
-  # signal that lands after the check below would otherwise be read only once
-  # the command had already started.
-  trap 'RUN_PENDING_STOP=1; { : > "$RUN_DIR/stop-request"; } 2>/dev/null' TERM INT HUP
+  # cancelled rather than stopped after the fact. Once the lock is ours the
+  # trap also writes the stop-request file, which the command itself tests
+  # after the barrier: a signal that lands after the check below would
+  # otherwise be read only once the command had already started.
+  # Until the launch lock is ours the trap only remembers the request: a
+  # losing racer must not write a marker into a job another supervisor runs.
+  trap 'RUN_PENDING_STOP=1' TERM INT HUP
   mkdir "$dir/launch.lock" 2>/dev/null || { echo "status=already-launched"; exit 2; }
   # A job in allocated has no supervisor, and stop answers not-running for one
   # without writing, so a marker standing here is left over from a launch that
   # was aborted earlier, not a cancellation of this one. This launch's own
-  # cancellation arrives through the trap above, which writes a fresh marker.
+  # cancellation arrives through the trap below, which writes a fresh marker;
+  # a signal that landed before it is still held in the flag.
   rm -f "$dir/stop-request" 2>/dev/null
+  trap 'RUN_PENDING_STOP=1; { : > "$RUN_DIR/stop-request"; } 2>/dev/null' TERM INT HUP
   rm -f "$dir/go" 2>/dev/null
   mkfifo "$dir/go" 2>/dev/null || abort_launch "the launch barrier could not be created"
   : > "$dir/out.log"

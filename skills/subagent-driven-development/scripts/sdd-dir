@@ -92,6 +92,13 @@ reclaim_plain() {
         gone="$r.gone-$$"
         if [ -e "$gone" ] || [ -L "$gone" ]; then continue; fi
         mv "$r" "$gone" 2>/dev/null || continue
+        if [ "${HYPERPOWERS_TEST_RECLAIM_RACE:-}" = "gone:$r" ]; then
+          # Test hook: a writer appends to the staged tree, and a session in
+          # the other repository recreates the quarantine, so the put-back
+          # below meets an occupied destination.
+          touch "$gone"
+          mkdir -p "$r"; : > "$r/writer"
+        fi
         if [ -n "$(find "$gone" -mtime -14 2>/dev/null | head -n 1)" ] || ls -d "$gone"/plans/*.importing-* >/dev/null 2>&1; then
           # A session in the other repository can recreate <key> while this
           # pass walks the staged tree; BSD mv would nest the staged root

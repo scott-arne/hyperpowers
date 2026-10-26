@@ -392,6 +392,17 @@ _=$(cd "$TEST_ROOT/repo-plan" && HYPERPOWERS_TEST_RECLAIM_RACE="occupy:$idle_occ
 staged_oc=$(ls -d "$idle_occupied".claiming-* 2>/dev/null | head -n 1) || staged_oc=""
 if [ -n "$staged_oc" ] && [ -f "$staged_oc/plans/some-plan-deadbeef/progress.md" ] && [ "$(ls -A "$idle_occupied" | tr '\n' ' ')" = "writer " ] && [ ! -e "$idle_occupied/$(basename "$staged_oc")" ] && grep -q 'occupied again' "$TEST_ROOT/occupy.err"; then pass "a put-back whose root is occupied again leaves the staged copy named, not nested"; else fail "a put-back whose root is occupied again leaves the staged copy named, not nested (staged: '$staged_oc', root: $(ls -A "$idle_occupied" | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/occupy.err"))"; fi
 rm -rf "$staged_oc" "$idle_occupied"
+# The same put-back one phase later: a quarantine quiet for its second 14
+# days is staged under .gone-<pid> before it is deleted, and in that window
+# a writer touches the staged tree while a session in the other repository
+# recreates the live root.
+idle_gone="$XDG_CACHE_HOME/hyperpowers/sdd/idlegone00000000000b.reclaiming-424242"
+mkdir -p "$idle_gone/plans/some-plan-deadbeef"; : > "$idle_gone/plans/some-plan-deadbeef/progress.md"
+find "$idle_gone" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && HYPERPOWERS_TEST_RECLAIM_RACE="gone:$idle_gone" "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/gone.err")
+staged_gn=$(ls -d "$idle_gone".gone-* 2>/dev/null | head -n 1) || staged_gn=""
+if [ -n "$staged_gn" ] && [ -f "$staged_gn/plans/some-plan-deadbeef/progress.md" ] && [ "$(ls -A "$idle_gone" | tr '\n' ' ')" = "writer " ] && [ ! -e "$idle_gone/$(basename "$staged_gn")" ] && grep -q 'occupied again' "$TEST_ROOT/gone.err"; then pass "a second-phase put-back whose quarantine is occupied again leaves the staged copy named, not nested"; else fail "a second-phase put-back whose quarantine is occupied again leaves the staged copy named, not nested (staged: '$staged_gn', quarantine: $(ls -A "$idle_gone" | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/gone.err"))"; fi
+rm -rf "$staged_gn" "$idle_gone"
 # node is on the creation path (hp_materialize_plain publishes through it,
 # hp_stamp_ok fingerprints the remote URL with it), so its absence is a
 # preflight refusal, not a failure partway through.

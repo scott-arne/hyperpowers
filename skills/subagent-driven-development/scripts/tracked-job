@@ -462,18 +462,24 @@ fence_fd() {
 # process that carries neither half, or whose fence cannot be read at all, is
 # not this job's and is never signalled.
 fenced() { fence_env "$1" "$2" || fence_fd "$1" "$2"; }
-# can_read_fence <jobdir>: the fence of this job's processes can be read at
-# all. The question is about the reader that will actually be used, so a proc
-# tree answers it alone wherever the readers use one: a tree that does not
-# hold the job's own leader would let the sweep find no fenced process and
-# call that a clean stop. Where there is no tree, lsof is the reader, and the
+# can_read_fence <jobdir> <group pids>: the fence of this job's processes can
+# be read at all. The question is about the reader that will actually be used,
+# so wherever the readers use a proc tree the gate asks that same tree: it can
+# answer when it holds at least one of the group's live members. A tree that
+# holds none of them would let the sweep find no fenced process and call that
+# a clean stop; asking for the *recorded leader* instead would refuse a job
+# whose leader has exited while its children run, which is one of the shapes
+# the sweep exists for. Where there is no tree, lsof is the reader, and the
 # question is whether it can list a *child's* descriptors rather than this
 # process's own, so the probe is a real short-lived child holding the job's
 # out.log open. A self-test on $$ is what made ps -E look workable on macOS:
 # it answers for the caller and for nobody else.
 can_read_fence() {
-  local pid i=0 rc=1
-  [ -d "$PROC_ROOT" ] && { [ -d "$PROC_ROOT/$(meta_get "$1" pid)" ]; return $?; }
+  local pid i=0 rc=1 p
+  if [ -d "$PROC_ROOT" ]; then
+    for p in $2; do [ -d "$PROC_ROOT/$p" ] && return 0; done
+    return 1
+  fi
   command -v lsof >/dev/null 2>&1 || return 1
   sleep 5 >> "$1/out.log" 2>/dev/null &
   pid=$!
@@ -503,7 +509,7 @@ unswept() {
   echo "status=lost-unswept pgid=$3"; exit 7
 }
 cmd_stop() {
-  local dir=${1:-} state i pgid pids p code skipped survivors rc
+  local dir=${1:-} state i pgid members pids p code skipped survivors rc
   [ -n "$dir" ] || usage
   job_dir_ok "$dir" || { echo "status=error"; exit 2; }
   state=$(meta_get "$dir" state)
@@ -542,9 +548,10 @@ cmd_stop() {
   pgid=$(meta_get "$dir" pgid)
   # Without the process table the group cannot be listed at all.
   have_ps || unswept "$dir" "$state" "$pgid"
+  members=$(group_pids "$pgid")
   # A group with no members needs no fence: there is nothing left to tell
   # apart, and nothing to signal.
-  if [ "$(group_pids "$pgid" | grep -c .)" -eq 0 ]; then
+  if [ -z "$members" ]; then
     conclude "$dir" "$state" stopped "stopped" "survivors:=0" "skipped:=0" >/dev/null; rc=$?
     [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
     echo "status=not-running"; exit 0
@@ -552,7 +559,7 @@ cmd_stop() {
   # The group has members, so the fence decides which of them are the job's.
   # A fence that cannot be read would leave every one of them unsignalled and
   # call that a clean stop, so the record names the group instead.
-  can_read_fence "$dir" || unswept "$dir" "$state" "$pgid"
+  can_read_fence "$dir" "$members" || unswept "$dir" "$state" "$pgid"
   # The fence is read again immediately before each signal: a pid that left
   # the job between the listing and the signal is no longer this job's.
   pids=$(fenced_pids "$dir" "$pgid")

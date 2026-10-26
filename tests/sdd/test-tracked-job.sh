@@ -338,7 +338,7 @@ if [ "$out" = "11=yes 12=yes 13=no 14=no " ]; then pass "the fence is the TRACKE
 # job's processes: a tree that holds none of them, or a host where lsof cannot
 # list a *child's* descriptors, is no fence at all. The answer is the function's
 # own status, so a function that went missing reads as 127 and not as a false no.
-canfence() { TRACKED_JOB_PROC_ROOT="$1" PATH="$2" HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; can_read_fence "$1"; echo "rc=$?"' "$TJ" "$j1" 2>/dev/null; }
+canfence() { TRACKED_JOB_PROC_ROOT="$1" PATH="$2" HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; can_read_fence "$1" "$2"; echo "rc=$?"' "$TJ" "$j1" "$3" 2>/dev/null; }
 # A PATH without lsof has to keep what the gate needs to run at all: bash to
 # start the seam, dirname for the helper's own directory, node for the metadata
 # reader, sleep and grep for the lsof probe. A missing one of those reads as an
@@ -347,17 +347,19 @@ mkdir -p "$TEST_ROOT/emptyproc" "$TEST_ROOT/nolsof"
 for b in bash dirname node sleep grep; do ln -sf "$(command -v "$b")" "$TEST_ROOT/nolsof/$b"; done
 # the tree is the reader wherever one is supplied, so lsof must not answer
 # behind it: this PATH has lsof and the answer must still be no.
-out=$(canfence "$TEST_ROOT/emptyproc" "$PATH")
-if [ "$out" = "rc=1" ]; then pass "a proc tree that does not hold the job is an unreadable fence, and lsof is not consulted behind it"; else fail "a proc tree that does not hold the job is an unreadable fence, and lsof is not consulted behind it (got: $out)"; fi
-mkdir -p "$TEST_ROOT/treeproc/$(meta "$j1" pid)"
-out=$(canfence "$TEST_ROOT/treeproc" "$TEST_ROOT/nolsof")
-if [ "$out" = "rc=0" ]; then pass "a proc tree that holds the job's leader is a readable fence, with no lsof on the host"; else fail "a proc tree that holds the job's leader is a readable fence, with no lsof on the host (got: $out)"; fi
-out=$(canfence /proc "$TEST_ROOT/nolsof")
-if [ "$out" = "rc=1" ]; then pass "a host with neither a tree that holds the job nor lsof has no readable fence"; else fail "a host with neither a tree that holds the job nor lsof has no readable fence (got: $out)"; fi
+out=$(canfence "$TEST_ROOT/emptyproc" "$PATH" "4241 4242")
+if [ "$out" = "rc=1" ]; then pass "a proc tree that holds none of the group is an unreadable fence, and lsof is not consulted behind it"; else fail "a proc tree that holds none of the group is an unreadable fence, and lsof is not consulted behind it (got: $out)"; fi
+# one live member is enough, and it need not be the leader: 4241 stands for a
+# leader that has exited and left 4242 running.
+mkdir -p "$TEST_ROOT/treeproc/4242"
+out=$(canfence "$TEST_ROOT/treeproc" "$TEST_ROOT/nolsof" "4241 4242")
+if [ "$out" = "rc=0" ]; then pass "a proc tree that holds any live member of the group is a readable fence, with no lsof on the host"; else fail "a proc tree that holds any live member of the group is a readable fence, with no lsof on the host (got: $out)"; fi
+out=$(canfence /proc "$TEST_ROOT/nolsof" "4241 4242")
+if [ "$out" = "rc=1" ]; then pass "a host with neither a tree that holds the group nor lsof has no readable fence"; else fail "a host with neither a tree that holds the group nor lsof has no readable fence (got: $out)"; fi
 if [ -d /proc ]; then skip "lsof answers the gate for a child where there is no proc tree (this host has /proc)"
 elif ! command -v lsof >/dev/null 2>&1; then skip "lsof answers the gate for a child where there is no proc tree (lsof unavailable)"
 else
-  out=$(canfence /proc "$PATH")
+  out=$(canfence /proc "$PATH" "4241 4242")
   if [ "$out" = "rc=0" ]; then pass "lsof answers the gate for a child where there is no proc tree"; else fail "lsof answers the gate for a child where there is no proc tree (got: $out)"; fi
 fi
 # lost-job sweep: fenced survivors ended one by one; a fenceless process in the group left alone (ps only).
@@ -404,6 +406,19 @@ if [ "$HAVE_PS" -eq 1 ]; then
     if [ "$rc" -eq 7 ] && [ "$out" = "status=lost-unswept pgid=$(meta "$j26" pgid)" ] && [ "$(meta "$j26" state)" = lost-unswept ] && kill -0 "$leader26" 2>/dev/null; then pass "a lost job read against a tree that cannot see it is lost-unswept, and nothing is signalled"; else fail "a lost job read against a tree that cannot see it is lost-unswept, and nothing is signalled (rc=$rc: $out, state=$(meta "$j26" state))"; fi
     kill -KILL -- "-$(meta "$j26" pgid)" 2>/dev/null
   fi
+  # a leader that exited while its children run: the tree holds no entry for
+  # the dead leader, but every live member's fence is readable there, so the
+  # sweep must proceed rather than refuse.
+  j27=$(newjob deadleader); ( tj run "$j27" -- bash -c 'sleep 60 & echo $! > e.pid; sleep 2; exit 0' >/dev/null 2>&1 ) &
+  if ! wait_launched "$j27"; then fail "a lost job whose leader has exited is swept through its live members (the launch did not open within 10s)"
+  else
+    wait_file "$repo/e.pid"; child27=$(cat "$repo/e.pid" 2>/dev/null)
+    kill -KILL "$(meta "$j27" run_pid)"; sleep 4
+    dtree="$TEST_ROOT/deadleaderproc"; mkdir -p "$dtree/$child27/fd"; ln -s "$j27/out.log" "$dtree/$child27/fd/1"
+    out=$(TRACKED_JOB_PROC_ROOT="$dtree" TRACKED_JOB_GRACE_S=1 tj stop "$j27"); rc=$?; sleep 1
+    if [ "$rc" -eq 0 ] && [ "$out" = "status=stopped" ] && [ -n "$child27" ] && ! kill -0 "$child27" 2>/dev/null && [ "$(meta "$j27" state)" = stopped ] && [ "$(meta "$j27" skipped)" = 0 ] && [ "$(meta "$j27" survivors)" = 0 ] && ! kill -0 "$(meta "$j27" pid)" 2>/dev/null; then pass "a lost job whose leader has exited is swept through its live members"; else fail "a lost job whose leader has exited is swept through its live members (rc=$rc: $out, state=$(meta "$j27" state), child=$child27, skipped=$(meta "$j27" skipped))"; fi
+    kill -KILL -- "-$(meta "$j27" pgid)" 2>/dev/null; rm -rf "$dtree"
+  fi
   # the descriptor half on its own: the command scrubs the variable from its
   # child's environment but the child keeps the descriptors it inherited, so
   # the sweep still owns it and skips nothing.
@@ -426,6 +441,7 @@ else
   skip "the supplied proc tree signals the environment-fenced and the descriptor-fenced process; the unreadable one and the fenceless one are skipped and counted (ps unavailable)"
   skip "a second stop on the swept job is not-running (ps unavailable)"
   skip "a lost job read against a tree that cannot see it is lost-unswept, and nothing is signalled (ps unavailable)"
+  skip "a lost job whose leader has exited is swept through its live members (ps unavailable)"
   skip "a child that kept only the out.log descriptor is still swept (ps unavailable)"
 fi
 kill -KILL -- "-$(meta "$j15" pgid)" 2>/dev/null

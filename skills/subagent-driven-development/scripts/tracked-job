@@ -237,11 +237,17 @@ finish_run() { # <code>
   done
 }
 abort_launch() { # <reason>
+  # The launch has failed, so a late signal has nothing left to stop; armed, its
+  # handler would write a stop-request back after the cleanup below removed one.
+  trap '' TERM INT HUP
   [ -z "$RUN_PID" ] || { kill -KILL -- "-$RUN_PGID" 2>/dev/null; wait "$RUN_PID" 2>/dev/null; }
   # The job goes back to allocated for a retry, so a stop-request the trap
-  # wrote during this failed launch must not cancel that retry on sight.
-  rmdir "$RUN_DIR/launch.lock" 2>/dev/null; rm -f "$RUN_DIR/go" "$RUN_DIR/stop-request" 2>/dev/null
+  # wrote during this failed launch must not cancel that retry on sight. The
+  # metadata goes first and the launch lock last, so a retry that races this
+  # abort never finds a directory that is only half cleaned.
   meta_set "$RUN_DIR" "state=allocated" "launch_error=$1 at $(utc_ms)" >/dev/null 2>&1
+  rm -f "$RUN_DIR/go" "$RUN_DIR/stop-request" 2>/dev/null
+  rmdir "$RUN_DIR/launch.lock" 2>/dev/null
   echo "status=error"; exit 2
 }
 cmd_run() {
@@ -263,6 +269,11 @@ cmd_run() {
   # the command had already started.
   trap 'RUN_PENDING_STOP=1; { : > "$RUN_DIR/stop-request"; } 2>/dev/null' TERM INT HUP
   mkdir "$dir/launch.lock" 2>/dev/null || { echo "status=already-launched"; exit 2; }
+  # A job in allocated has no supervisor, and stop answers not-running for one
+  # without writing, so a marker standing here is left over from a launch that
+  # was aborted earlier, not a cancellation of this one. This launch's own
+  # cancellation arrives through the trap above, which writes a fresh marker.
+  rm -f "$dir/stop-request" 2>/dev/null
   rm -f "$dir/go" 2>/dev/null
   mkfifo "$dir/go" 2>/dev/null || abort_launch "the launch barrier could not be created"
   : > "$dir/out.log"

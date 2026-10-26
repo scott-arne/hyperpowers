@@ -123,9 +123,15 @@ fi
 # and the next run reaches the command.
 jr=$(newjob reqretry); : > "$jr/stop-request"
 out=$(HYPERPOWERS_TEST_FAIL_META=1 tj run "$jr" -- bash -c 'echo ran > retry-ran.txt'); rc=$?
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(meta "$jr" state)" = allocated ] && [ ! -e "$jr/stop-request" ]; then pass "an aborted launch takes the stop-request with it"; else fail "an aborted launch takes the stop-request with it (rc=$rc: $out, state=$(meta "$jr" state), marker=$([ -e "$jr/stop-request" ] && echo yes || echo no))"; fi
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(meta "$jr" state)" = allocated ] && [ ! -e "$jr/stop-request" ] && [ ! -d "$jr/launch.lock" ]; then pass "an aborted launch takes the stop-request with it"; else fail "an aborted launch takes the stop-request with it (rc=$rc: $out, state=$(meta "$jr" state), marker=$([ -e "$jr/stop-request" ] && echo yes || echo no), lock=$([ -d "$jr/launch.lock" ] && echo yes || echo no))"; fi
 tj run "$jr" -- bash -c 'echo ran > retry-ran.txt' >/dev/null 2>&1
 if [ "$(cat "$jr/exit" 2>/dev/null)" = 0 ] && [ "$(meta "$jr" state)" = exited ] && [ "$(cat "$repo/retry-ran.txt" 2>/dev/null)" = ran ]; then pass "the retry after an aborted launch runs the command"; else fail "the retry after an aborted launch runs the command (exit=$(cat "$jr/exit" 2>/dev/null), state=$(meta "$jr" state), ran=$([ -f "$repo/retry-ran.txt" ] && echo yes || echo no))"; fi
+# a marker that is already standing when a launch takes its lock cannot have
+# come from this launch: the job was allocated, where there is no supervisor to
+# stop. It must not cancel the command.
+jsr=$(newjob stalereq); : > "$jsr/stop-request"
+tj run "$jsr" -- bash -c 'echo ran > stale-ran.txt' >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(cat "$jsr/exit" 2>/dev/null)" = 0 ] && [ "$(meta "$jsr" state)" = exited ] && [ "$(cat "$repo/stale-ran.txt" 2>/dev/null)" = ran ]; then pass "a stale stop-request does not cancel the launch that finds it"; else fail "a stale stop-request does not cancel the launch that finds it (rc=$rc, exit=$(cat "$jsr/exit" 2>/dev/null), state=$(meta "$jsr" state), ran=$([ -f "$repo/stale-ran.txt" ] && echo yes || echo no))"; fi
 jh2=$(newjob heldgo); held=0
 ( HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER="$TEST_ROOT/go-2" tj run "$jh2" -- bash -c 'echo released > held-go.txt' >/dev/null 2>&1 ) &
 if ! wait_meta "$jh2" run_pid; then fail "a launch held at the barrier runs as usual once it is released (no run_pid within 10s)"

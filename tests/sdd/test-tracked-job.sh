@@ -325,6 +325,20 @@ else
 fi
 out=$(tj stop "$j4"); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=not-running" ]; then pass "stop on a finished job is not-running"; else fail "stop on a finished job is not-running (rc=$rc: $out)"; fi
+# run writes no terminal line — wait and stop do — so a job nobody waited on
+# still owes one when stop reads it, and the once-key keeps a repeat silent.
+j28=$(newjob unwaited); tj run "$j28" -- bash -c 'exit 4' >/dev/null 2>&1
+out=$(tj stop "$j28"); rc=$?
+out2=$(tj stop "$j28"); rc2=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=not-running" ] && [ "$rc2" -eq 0 ] && [ "$out2" = "status=not-running" ] && [ "$(grep -c "^job s1 .*: unwaited exited code=4 jobdir=$j28\$" "$ws/progress.md")" = 1 ]; then pass "stop on a job that exited unwaited records the terminal line once"; else fail "stop on a job that exited unwaited records the terminal line once (rc=$rc: $out, rc2=$rc2: $out2, lines=$(grep -c "unwaited exited" "$ws/progress.md"))"; fi
+# a line that does not land leaves the job unrecorded, so nothing may be
+# claimed for it: stop is busy, and the next stop writes the line once and
+# whole.
+j29=$(newjob faulted); tj run "$j29" -- bash -c 'exit 0' >/dev/null 2>&1
+out=$(HYPERPOWERS_TEST_FAIL_APPEND=1 tj stop "$j29"); rc=$?
+mid=$(grep -c "^job s1 .*: faulted exited code=0 jobdir=$j29\$" "$ws/progress.md")
+out2=$(tj stop "$j29"); rc2=$?
+if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$mid" = 0 ] && [ "$rc2" -eq 0 ] && [ "$out2" = "status=not-running" ] && [ "$(grep -c "^job s1 .*: faulted exited code=0 jobdir=$j29\$" "$ws/progress.md")" = 1 ]; then pass "a terminal line that fails to land is busy, and the next stop writes it once"; else fail "a terminal line that fails to land is busy, and the next stop writes it once (rc=$rc: $out, after the fault=$mid, rc2=$rc2: $out2, lines=$(grep -c "^job s1 .*: faulted exited code=0 jobdir=$j29\$" "$ws/progress.md"))"; fi
 # the fence's two halves, read straight against a supplied proc tree, which
 # needs no ps: the variable, the descriptor on the job's out.log, both dropped,
 # and a process with nothing to read.
@@ -362,6 +376,15 @@ else
   out=$(canfence /proc "$PATH" "4241 4242")
   if [ "$out" = "rc=0" ]; then pass "lsof answers the gate for a child where there is no proc tree"; else fail "lsof answers the gate for a child where there is no proc tree (got: $out)"; fi
 fi
+# the process table is tri-state: a listing that could not be read must not
+# read as an empty group, because that is what stop decides a clean stop from.
+# The shim answers the self probe and the start-time query, and refuses the
+# full table, which is the shape a restricted host gives.
+psfail="$TEST_ROOT/psfail"; mkdir -p "$psfail"
+printf '#!/usr/bin/env bash\ncase "$*" in *-eo*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v ps)" > "$psfail/ps"
+chmod 755 "$psfail/ps"
+out=$(PATH="$psfail:$PATH" HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; m=$(group_pids 1); echo "rc=$? out=$m"' "$TJ" 2>/dev/null)
+if [ "$out" = "rc=1 out=" ]; then pass "a process table that cannot be read is a failed listing, not an empty group"; else fail "a process table that cannot be read is a failed listing, not an empty group (got: $out)"; fi
 # lost-job sweep: fenced survivors ended one by one; a fenceless process in the group left alone (ps only).
 j15=$(newjob survivors); ( tj run "$j15" -- bash -c 'sleep 60 & env -u TRACKED_JOB_DIR sleep 60 >/dev/null 2>&1 & echo $! > stranger.pid; wait' >/dev/null 2>&1 ) &
 stranger=""; out=""; rc=99
@@ -431,6 +454,32 @@ if [ "$HAVE_PS" -eq 1 ]; then
     if [ "$rc" -eq 0 ] && [ "$out" = "status=stopped" ] && [ -n "$dpid" ] && ! kill -0 "$dpid" 2>/dev/null && [ "$(meta "$j24" skipped)" = 0 ] && [ "$(meta "$j24" survivors)" = 0 ]; then pass "a child that kept only the out.log descriptor is still swept"; else fail "a child that kept only the out.log descriptor is still swept (rc=$rc: $out, child=$dpid, skipped=$(meta "$j24" skipped), survivors=$(meta "$j24" survivors))"; fi
     kill -KILL -- "-$(meta "$j24" pgid)" 2>/dev/null
   fi
+  # a TERM handler that forks: the new child is in the group and carries the
+  # fence, but it appears after the list the TERM pass was built from, so a
+  # KILL pass that reuses that list leaves it running while the job is
+  # recorded stopped.
+  j30=$(newjob regrowing)
+  ( tj run "$j30" -- bash -c "trap 'sleep 60 & echo \$! > regrown.pid; wait' TERM; sleep 60 & wait" >/dev/null 2>&1 ) &
+  if ! wait_launched "$j30"; then fail "a fenced child forked during the grace does not outlive the sweep (the launch did not open within 10s)"
+  else
+    kill -KILL "$(meta "$j30" run_pid)"; sleep 1
+    out=$(TRACKED_JOB_GRACE_S=2 tj stop "$j30"); rc=$?; sleep 1
+    regrown=$(cat "$repo/regrown.pid" 2>/dev/null)
+    if [ "$rc" -eq 0 ] && [ "$out" = "status=stopped" ] && [ -n "$regrown" ] && ! kill -0 "$regrown" 2>/dev/null && ! kill -0 "$(meta "$j30" pid)" 2>/dev/null && [ "$(meta "$j30" survivors)" = 0 ]; then pass "a fenced child forked during the grace does not outlive the sweep"; else fail "a fenced child forked during the grace does not outlive the sweep (rc=$rc: $out, forked=$regrown, survivors=$(meta "$j30" survivors))"; fi
+    kill -KILL -- "-$(meta "$j30" pgid)" 2>/dev/null
+  fi
+  # a process table that answers the self probe but not the full listing: the
+  # group cannot be enumerated at all, which must refuse the sweep rather than
+  # read as a group with no members and conclude a clean stop over live
+  # children.
+  j31=$(newjob tableless); ( tj run "$j31" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
+  if ! wait_launched "$j31"; then fail "a lost job whose process table cannot be listed is lost-unswept, and nothing is signalled (the launch did not open within 10s)"
+  else
+    leader31=$(meta "$j31" pid); kill -KILL "$(meta "$j31" run_pid)"; sleep 1
+    out=$(PATH="$psfail:$PATH" TRACKED_JOB_GRACE_S=1 tj stop "$j31"); rc=$?
+    if [ "$rc" -eq 7 ] && [ "$out" = "status=lost-unswept pgid=$(meta "$j31" pgid)" ] && [ "$(meta "$j31" state)" = lost-unswept ] && kill -0 "$leader31" 2>/dev/null; then pass "a lost job whose process table cannot be listed is lost-unswept, and nothing is signalled"; else fail "a lost job whose process table cannot be listed is lost-unswept, and nothing is signalled (rc=$rc: $out, state=$(meta "$j31" state), leader=$(kill -0 "${leader31:-0}" 2>/dev/null && echo alive || echo gone))"; fi
+    kill -KILL -- "-$(meta "$j31" pgid)" 2>/dev/null
+  fi
 else
   if [ "$rc" -eq 7 ] && [ "$out" = "status=lost-unswept pgid=$(meta "$j15" pgid)" ] && [ "$(meta "$j15" state)" = lost-unswept ] && [ "$(grep -c "^job s1 .*: survivors lost-unswept pgid=$(meta "$j15" pgid) jobdir=$j15\$" "$ws/progress.md")" = 1 ]; then pass "without ps, stop on a lost job refuses to signal, names the group and records lost-unswept"; else fail "without ps, stop on a lost job refuses to signal and names the group (rc=$rc: $out)"; fi
   out=$(tj wait "$j15" --max-ms 1000); rc=$?
@@ -443,6 +492,8 @@ else
   skip "a lost job read against a tree that cannot see it is lost-unswept, and nothing is signalled (ps unavailable)"
   skip "a lost job whose leader has exited is swept through its live members (ps unavailable)"
   skip "a child that kept only the out.log descriptor is still swept (ps unavailable)"
+  skip "a fenced child forked during the grace does not outlive the sweep (ps unavailable)"
+  skip "a lost job whose process table cannot be listed is lost-unswept, and nothing is signalled (ps unavailable)"
 fi
 kill -KILL -- "-$(meta "$j15" pgid)" 2>/dev/null
 # concurrent wait and stop on a lost job: whichever writes first wins, the job never ends lost with survivors, no outcome line repeats.

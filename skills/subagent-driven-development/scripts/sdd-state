@@ -352,7 +352,7 @@ cmd_import() {
   # installed="" is "nothing this attempt published": the finish of a cutover
   # interrupted after publication reaches import_finish without setting it,
   # and an abort there must not remove the destination it found.
-  local plan cache candidates c t ref dest dest_phys seen="" stage e name rel stage_manifest backup link rc restored installed="" conflicts=0 dbody src_ledger_size src_manifest_rest published_prefix_size legacy_root quarantine q
+  local plan cache candidates c t ref dest dest_phys seen="" stage e name rel stage_manifest backup link rc restored installed="" conflicts=0 dbody src_ledger_size src_manifest_rest published_prefix_size legacy_root quarantine q repair
   [ $# -eq 1 ] || usage
   plan=$1
   command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 2; }
@@ -413,22 +413,39 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
         hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2
       fi
     fi
-    # A candidate whose whole legacy root the plain-cache reclaim set aside
-    # is not an absent one: the dossier is still there, under the root's
-    # staging, quarantine or deletion name, and passing it by would let
-    # sdd-dir start an empty workspace beside a ledger that waits in
-    # quarantine. The repair is a move a human makes, so the line names
-    # both paths; the quarantine keeps the tree for 14 days.
+    # A candidate with no ledger of its own, while the plain-cache reclaim
+    # holds one for this workspace under the root's staging, quarantine or
+    # deletion name: the dossier is still there, and passing it by would
+    # start a fresh ledger beside a tree phase two deletes in 14 days. The
+    # candidate need not be absent for that. On the plain backend sdd-dir
+    # recreates the root and the empty workspace directory before it calls
+    # import, and its no-argument form recreates the cwd key's root, so
+    # after a reclaim the live candidate is usually an empty directory
+    # rather than a missing one. What a quarantine holds under plans/<ws>
+    # is always a workspace no import ever reached, because an import
+    # renames its source aside to .importing-* or .imported-* first. A
+    # candidate that does hold a ledger keeps the handling below: a
+    # quarantined duplicate beside an established ledger is a split that
+    # predates this check and stays manual.
     if [ -L "$c" ]; then t=$(readlink "$c"); else t=$c; fi
     case "$t" in
       */plans/*)
         legacy_root=${t%/plans/*}
-        if [ ! -e "$legacy_root" ]; then
+        if [ ! -f "$t/progress.md" ]; then
           for q in "$legacy_root".claiming-*/plans/"${t##*/}"/progress.md "$legacy_root".reclaiming-*/plans/"${t##*/}"/progress.md "$legacy_root".gone-*/plans/"${t##*/}"/progress.md; do
             [ -f "$q" ] || continue
             quarantine=${q%/plans/*}
+            # The repair is a move a human makes, and which move depends on
+            # the root: a recreated one cannot take the whole quarantine,
+            # because BSD mv would nest it inside, so only the workspace
+            # moves, after the empty directory sdd-dir left is removed.
+            if [ -e "$legacy_root" ]; then
+              repair="rmdir $t && mv $quarantine/plans/${t##*/} $t"
+            else
+              repair="mv $quarantine $legacy_root"
+            fi
             hp_unlock
-            echo "sdd-state: the legacy workspace for this plan sits in a cache root the plain-cache reclaim set aside at $quarantine; move it back (mv $quarantine $legacy_root) and run sdd-state import $plan again" >&2
+            echo "sdd-state: the legacy workspace for this plan sits in a cache root the plain-cache reclaim set aside at $quarantine; move it back ($repair) and run sdd-state import $plan again" >&2
             echo "status=error"; return 2
           done
         fi

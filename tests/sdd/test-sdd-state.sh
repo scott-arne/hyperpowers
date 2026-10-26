@@ -956,6 +956,23 @@ mkdir -p "$root_i28/plans/$(basename "$wsi28")"; printf '# SDD ledger — plan: 
 mv "$root_i28" "$root_i28.claiming-424242"
 out=$(run_state "$i28" import docs/plan.md 2>"$TEST_ROOT/i28.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "set aside at $root_i28.claiming-424242;" "$TEST_ROOT/i28.err"; then pass "a legacy root under a claim in progress is named the same way"; else fail "a legacy root under a claim in progress is named the same way (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/i28.err"))"; fi
+# The same once the root is back: on the plain backend sdd-dir recreates it,
+# and the empty workspace directory with it, before it calls import, so the
+# candidate exists and holds no ledger. The repair then moves the workspace
+# and not the root, which a recreated root would nest inside itself.
+i29="$TEST_ROOT/i29"; make_repo "$i29"
+mkdir -p "$i29/docs"; : > "$i29/docs/plan.md"; git -C "$i29" add docs; git -C "$i29" commit -qm plan
+wsi29=$(ws_path "$i29" "$i29/docs/plan.md"); name_i29=$(basename "$wsi29")
+root_i29="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i29")"
+mkdir -p "$root_i29.reclaiming-424242/plans/$name_i29"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$root_i29.reclaiming-424242/plans/$name_i29/progress.md"
+mkdir -p "$root_i29/plans/$name_i29"
+repair_i29="rmdir $root_i29/plans/$name_i29 && mv $root_i29.reclaiming-424242/plans/$name_i29 $root_i29/plans/$name_i29"
+out=$(run_state "$i29" import docs/plan.md 2>"$TEST_ROOT/i29.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "set aside at $root_i29.reclaiming-424242;" "$TEST_ROOT/i29.err" && grep -qF "$repair_i29" "$TEST_ROOT/i29.err"; then pass "a recreated root with an empty workspace beside a quarantine is refused, with the repair that moves the workspace"; else fail "a recreated root with an empty workspace beside a quarantine is refused (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/i29.err"))"; fi
+rmdir "$root_i29/plans/$name_i29" && mv "$root_i29.reclaiming-424242/plans/$name_i29" "$root_i29/plans/$name_i29"
+out=$(run_state "$i29" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$root_i29/plans/$name_i29" ] && [ "$(sed -n 2p "$wsi29/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "after that repair the import completes with the ledger in place"; else fail "after that repair the import completes with the ledger in place (rc=$rc: $out)"; fi
 
 echo ""
 echo "=== sdd-dir and the plain fallback over branch state ==="

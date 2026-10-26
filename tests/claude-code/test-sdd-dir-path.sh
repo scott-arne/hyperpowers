@@ -570,6 +570,30 @@ case "$out" in
 esac
 out2=$(cd "$TEST_ROOT/repo-plain" && bash "$SDD_DIR_SCRIPT" plan.md 2>/dev/null)
 if [ "$out2" = "$out" ] && [ "$(head -n1 "$STATE_ROOT/$plain_key.backend")" = plain ]; then pass "the plain backend persists for later calls"; else fail "the plain backend persists for later calls"; fi
+echo ""
+echo "Test: a quarantined dossier stops the plain backend instead of starting a fresh ledger"
+# On the plain backend sdd-dir recreates the cache root and the empty
+# workspace directory before it calls import, so after another repository's
+# reclaim has taken the root the live candidate is an empty directory, not a
+# missing one; the dossier waits in the quarantine until phase two deletes it.
+make_repo "$TEST_ROOT/repo-quar"
+git -C "$TEST_ROOT/repo-quar" commit -q --allow-empty -m "initial"
+mkdir -p "$TEST_ROOT/repo-quar/docs/a"; echo plan > "$TEST_ROOT/repo-quar/docs/a/plan.md"
+quar_root="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$TEST_ROOT/repo-quar")"
+qws=$(cd "$TEST_ROOT/repo-quar" && HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>/dev/null)
+qname=$(basename "$qws")
+printf '# SDD ledger — plan: docs/a/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$qws/progress.md"
+mv "$quar_root" "$quar_root.reclaiming-424242"
+qrepair="rmdir $quar_root/plans/$qname && mv $quar_root.reclaiming-424242/plans/$qname $quar_root/plans/$qname"
+rc=0
+out=$(cd "$TEST_ROOT/repo-quar" && bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/quar.err") || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -qF "set aside at $quar_root.reclaiming-424242" "$TEST_ROOT/quar.err" && grep -qF "$qrepair" "$TEST_ROOT/quar.err" && grep -q '^sdd-dir: importing a legacy workspace failed' "$TEST_ROOT/quar.err" && [ -f "$quar_root.reclaiming-424242/plans/$qname/progress.md" ]; then pass "a quarantined dossier stops sdd-dir on the plain backend, naming the quarantine and the repair"; else fail "a quarantined dossier stops sdd-dir on the plain backend (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/quar.err"))"; fi
+# The repair exactly as the message gives it: the root is there again, so
+# only the workspace moves (a whole-root mv would nest it inside).
+rmdir "$quar_root/plans/$qname" && mv "$quar_root.reclaiming-424242/plans/$qname" "$quar_root/plans/$qname"
+rc=0
+out=$(cd "$TEST_ROOT/repo-quar" && bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/quar2.err") || rc=$?
+if [ "$rc" -eq 0 ] && [ -n "$out" ] && [ "$(sed -n 2p "$out/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "after the repair the same call prints the workspace with its ledger"; else fail "after the repair the same call prints the workspace with its ledger (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/quar2.err"))"; fi
 
 echo ""
 echo "Test: a legacy workspace is imported on the first call"

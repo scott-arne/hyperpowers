@@ -1486,6 +1486,13 @@ cmd_sync() {
   }
   # Writes the stamp for the endpoint the fetch contacted, or refuses.
   stamp_fetched() {
+    # The alias check runs again here: a remote named like the alias and
+    # configured during the fetch could have shadowed the pin.
+    if git -C "$PLAN_DIR" config --get-regexp "^remote\.hp-fetch-$$\." >/dev/null 2>&1; then
+      rm -f "$stamp"
+      echo "sdd-state: the repository configured a remote named hp-fetch-$$ during the sync; nothing was stamped. Remove that section from its git config and run sdd-state sync again" >&2
+      return 1
+    fi
     fp_after=$(hp_remote_fingerprint "$PLAN_DIR") || fp_after=unavailable
     if [ "$fp_after" != "$fp_before" ] || [ "$(hp_state_remote "$PLAN_DIR") $(hp_state_branch "$PLAN_DIR")" != "$REMOTE $BRANCH" ]; then
       rm -f "$stamp"

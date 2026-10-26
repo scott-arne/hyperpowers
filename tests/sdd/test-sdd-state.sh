@@ -160,8 +160,13 @@ for sec in $(git -C "$PAIR_A" config --name-only --get-regexp '^remote\.hp-fetch
 real_git=$(command -v git); mkdir -p "$TEST_ROOT/fakegit"; printf '#!/bin/sh\nif [ "$1" = --version ]; then echo "git version 2.30.2"; exit 0; fi\nexec "%s" "$@"\n' "$real_git" > "$TEST_ROOT/fakegit/git"; chmod 755 "$TEST_ROOT/fakegit/git"
 out=$(cd "$PAIR_A" && PATH="$TEST_ROOT/fakegit:$PATH" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1-oldgit.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q '2.31 or newer' "$TEST_ROOT/p1-oldgit.err" && [ ! -e "$STATE_ROOT/$(state_key "$PAIR_A").fetched" ]; then pass "a git older than 2.31 is refused by name before the fetch"; else fail "a git older than 2.31 is refused by name before the fetch (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p1-oldgit.err"))"; fi
-out=$(cd "$PAIR_A" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=outer bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ]; then pass "a caller's own environment configuration survives the pinned fetch"; else fail "a caller's own environment configuration survives the pinned fetch (rc=$rc: $out)"; fi
+# The caller's entry is one the fetch depends on: a global policy forbids
+# the file transport and only the caller's environment entry allows it, so
+# a pin that replaced the caller's entries would end offline (get-url
+# expands insteadOf rewrites, so a rewrite cannot play that part).
+printf '[protocol "file"]\n\tallow = never\n' > "$TEST_ROOT/p1-global.gitconfig"
+out=$(cd "$PAIR_A" && GIT_CONFIG_GLOBAL="$TEST_ROOT/p1-global.gitconfig" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.file.allow GIT_CONFIG_VALUE_0=always bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ]; then pass "a caller's own environment configuration survives the pinned fetch"; else fail "a caller's own environment configuration survives the pinned fetch (rc=$rc: $out: $(cat "$STATE_ROOT/$(state_key "$PAIR_A").fetched" 2>/dev/null))"; fi
 # Those syncs created the orphan; the checkout, the branch and the stamp go
 # again, so the hand-written stamp below is what lets the next creation
 # happen.

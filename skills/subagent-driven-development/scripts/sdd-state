@@ -1469,7 +1469,7 @@ apply_target() {
   esac
 }
 cmd_sync() {
-  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure url_before fp_before fp_after n
+  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure url_before url_pin fp_before fp_after n
   REMOTE_FINISHED=""
   # remove_verified (Task 6) and recover_apply live in this file; sync, finish, handoff and snapshot share them.
   while [ $# -gt 0 ]; do
@@ -1533,7 +1533,17 @@ cmd_sync() {
   # configuration (the URL stays out of argv); the remote, branch and URL
   # are read again after the fetch, and any difference means a repoint
   # raced it, so nothing is stamped.
+  #
+  # Two readings of one URL. get-url expands url.<base>.insteadOf, which is
+  # the endpoint the fetch will contact and so the string to fingerprint;
+  # the pin takes the URL as written, because git applies one rewrite to
+  # whatever a remote carries and a pin on the expanded form would let a
+  # chained rule rewrite it a second time, to an endpoint the fingerprint
+  # never named. A remote with no url entry at all has nothing written to
+  # pin, so the expanded form stands in.
   url_before=$(git -C "$PLAN_DIR" remote get-url "$REMOTE" 2>/dev/null) || url_before=""
+  url_pin=$(git -C "$PLAN_DIR" config --get "remote.$REMOTE.url" 2>/dev/null) || url_pin=""
+  [ -n "$url_pin" ] || url_pin=$url_before
   if [ -n "$url_before" ]; then
     fp_before=$(hp_url_fingerprint "$url_before") || { echo "sdd-state: the remote's URL could not be fingerprinted (node is required); nothing was stamped. Run sdd-state sync again" >&2; echo "status=error"; return 2; }
   else
@@ -1555,7 +1565,7 @@ cmd_sync() {
   # The pin is appended to whatever GIT_CONFIG_* the caller supplied, never
   # substituted for it, and the URL travels in the environment, not argv.
   n=${GIT_CONFIG_COUNT:-0}; case "$n" in ''|*[!0-9]*) n=0 ;; esac
-  printf -v "GIT_CONFIG_KEY_$n" '%s' "remote.hp-fetch-$$.url"; printf -v "GIT_CONFIG_VALUE_$n" '%s' "$url_before"
+  printf -v "GIT_CONFIG_KEY_$n" '%s' "remote.hp-fetch-$$.url"; printf -v "GIT_CONFIG_VALUE_$n" '%s' "$url_pin"
   export "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
   err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 GIT_CONFIG_COUNT=$((n + 1)) git -C "$PLAN_DIR" fetch -q "hp-fetch-$$" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?
   unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"

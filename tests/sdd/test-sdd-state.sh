@@ -180,6 +180,38 @@ git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
 out=$(ensure "$PAIR_B"); rc=$?
 if [ "$rc" -eq 0 ] && [ "$(git -C "$PAIR_B" rev-parse hyperpowers/state)" = "$(git -C "$PAIR_A" rev-parse hyperpowers/state)" ] && [ "$(git -C "$PAIR_B" config branch.hyperpowers/state.remote)" = origin ]; then pass "a fetched state branch is checked out tracking the remote"; else fail "a fetched state branch is checked out tracking the remote (rc=$rc)"; fi
+# A chained url.<base>.insteadOf rewrite. git applies one rewrite to
+# whatever URL a remote carries, so a fetch pinned to the already-rewritten
+# URL is rewritten a second time and reaches an endpoint the fingerprint
+# never named. The remote's configured URL is rewritten to the good
+# repository, and the good repository's path to the evil one.
+p1_a="$PAIR_A"
+make_pair p1c
+chain_a="$PAIR_A"
+chain_good="$TEST_ROOT/p1c-good.git"; chain_evil="$TEST_ROOT/p1c-evil.git"
+git init -q --bare -b main "$chain_good"; git init -q --bare -b main "$chain_evil"
+mkdir -p "$chain_a/docs"; : > "$chain_a/docs/plan.md"; git -C "$chain_a" add docs; git -C "$chain_a" commit -qm plan
+# Two state branches built the way this module builds one, so each carries a
+# valid root sentinel; only their ledger lines differ.
+for side in good evil; do
+    src_1c="$TEST_ROOT/p1c-src-$side"; make_repo "$src_1c"
+    mkdir -p "$src_1c/docs"; : > "$src_1c/docs/plan.md"; git -C "$src_1c" add docs; git -C "$src_1c" commit -qm plan
+    ws_1c=$(ws_path "$src_1c" "$src_1c/docs/plan.md"); mkdir -p "$ws_1c"
+    printf '# SDD ledger — plan: docs/plan.md\nTask 1: the %s endpoint\n' "$side" > "$ws_1c/progress.md"
+    run_state "$src_1c" snapshot docs/plan.md >/dev/null
+    git -C "$src_1c" push -q "$TEST_ROOT/p1c-$side.git" hyperpowers/state:refs/heads/hyperpowers/state 2>/dev/null
+done
+name_1c=$(basename "$ws_1c")
+url_1c=$(git -C "$chain_a" config --get remote.origin.url)
+git -C "$chain_a" remote set-url origin chain:origin
+git -C "$chain_a" config "url.$chain_good.insteadOf" chain:origin
+git -C "$chain_a" config "url.$chain_evil.insteadOf" "$chain_good"
+out=$(run_state "$chain_a" sync docs/plan.md 2>"$TEST_ROOT/p1c.err"); rc=$?
+co_1c="$STATE_ROOT/$(state_key "$chain_a")"
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && grep -q '^Task 1: the good endpoint$' "$co_1c/plans/$name_1c/progress.md" && ! grep -q 'evil endpoint' "$co_1c/plans/$name_1c/progress.md" && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$chain_a").fetched")" = "origin hyperpowers/state $(fp "$chain_a")" ]; then pass "a chained insteadOf rewrite cannot move the pinned fetch: the once-rewritten endpoint is reconciled and stamped"; else fail "a chained insteadOf rewrite cannot move the pinned fetch (rc=$rc: $out: $(sed -n 2p "$co_1c/plans/$name_1c/progress.md" 2>/dev/null): $(tr '\n' '|' < "$TEST_ROOT/p1c.err"))"; fi
+git -C "$chain_a" remote set-url origin "$url_1c"
+git -C "$chain_a" config --remove-section "url.$chain_good"
+git -C "$chain_a" config --remove-section "url.$chain_evil"
 
 # Crash after the worktree add: the next call starts clean.
 r4="$TEST_ROOT/r4"; make_repo "$r4"

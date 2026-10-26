@@ -19,8 +19,10 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=sdd-common.sh
 . "$HERE/sdd-common.sh"
 GRACE=${TRACKED_JOB_GRACE_S:-5}
-# shellcheck disable=SC2034 # stop's own wait bound; its reader arrives with the stop subcommand
 STOP_WAIT=${TRACKED_JOB_STOP_WAIT_S:-10}
+# The proc tree the identity fence is read from; a test supplies one on a host
+# that has none.
+PROC_ROOT=${TRACKED_JOB_PROC_ROOT:-/proc}
 
 usage() {
   printf '%s\n' 'usage: tracked-job new PLAN_FILE NAME --budget-ms N [--session SID]' \
@@ -346,13 +348,168 @@ cmd_run() {
   finish_run "$code"
 }
 
+# supervisor_reused <jobdir>: the recorded supervisor pid answers kill -0 but
+# its start time is not the one recorded at launch, so another process owns
+# the pid now (ps only; without ps the residual stated in deviation 2 stands).
+supervisor_reused() {
+  local want
+  have_ps || return 1
+  want=$(meta_get "$1" run_lstart); [ -n "$want" ] || return 1
+  [ "$(lstart_of "$(meta_get "$1" run_pid)")" != "$want" ]
+}
+# exit_code <jobdir>: the command's status, empty while the job has not
+# concluded. The exit file is the published record; when it could not be
+# written (finish_run says so in out.log) the code is still in meta.json,
+# which a terminal state makes trustworthy. A job swept after a loss is
+# terminal with no code of its own, and stays empty here.
+exit_code() {
+  if [ -f "$1/exit" ]; then cat "$1/exit"; return 0; fi
+  case "$(meta_get "$1" state)" in exited|stopped) meta_get "$1" code ;; esac
+}
+# terminal_line <jobdir> <code>: the ledger line for a job that has concluded.
+terminal_line() {
+  if [ "$(meta_get "$1" state)" = stopped ]; then printf 'stopped'; else printf 'exited code=%s' "$2"; fi
+}
+cmd_wait() {
+  local dir="" max="" state deadline code now rc
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --max-ms) [ $# -ge 2 ] || usage; max=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$dir" ] || usage; dir=$1; shift ;;
+    esac
+  done
+  [ -n "$dir" ] && [ -n "$max" ] || usage
+  case "$max" in ''|*[!0-9]*) usage ;; esac
+  [ "$max" -le 600000 ] || usage
+  job_dir_ok "$dir" || { echo "status=error"; exit 2; }
+  deadline=$(( $(date +%s) + (max + 999) / 1000 ))
+  while :; do
+    state=$(meta_get "$dir" state)
+    code=$(exit_code "$dir")
+    if [ -n "$code" ]; then
+      # A supervisor that could not take the lock left the state running: repair it from the exit file.
+      [ "$state" != running ] || conclude "$dir" running exited "" "code:=$code" >/dev/null
+      ledger_append_once "$dir" "$(terminal_line "$dir" "$code")"
+      echo "status=exited code=$code"; [ "$code" = 0 ] && exit 0; exit 1
+    fi
+    case "$state" in
+      lost) ledger_append_once "$dir" "lost"; echo "status=lost"; exit 4 ;;
+      lost-unswept) echo "status=lost-unswept pgid=$(meta_get "$dir" pgid)"; exit 7 ;;
+      stopped)
+        # Swept after a loss (the job concluded with no status of its own, or
+        # the branch above would have reported it): the job was lost.
+        echo "status=lost"; exit 4 ;;
+      running)
+        # Loss is the supervisor's death: its pid answers ESRCH (deviation 2),
+        # or, where ps works, its pid now carries a different start time (reused).
+        # The transition is a conclude from running: when stop concluded the job
+        # first (lost-unswept, stopped), the loop reports what stop decided; a
+        # lock that could not be taken (rc 1) leaves the state alone and the
+        # job reads as running until the bound.
+        if ! alive "$(meta_get "$dir" run_pid)"; then sleep 2
+          if [ ! -f "$dir/exit" ]; then
+            conclude "$dir" running lost "lost" >/dev/null; rc=$?
+            case "$rc" in 0) echo "status=lost"; exit 4 ;; 2) continue ;; esac
+          fi
+        elif supervisor_reused "$dir"; then
+          conclude "$dir" running lost "lost" >/dev/null; rc=$?
+          case "$rc" in 0) echo "status=lost"; exit 4 ;; 2) continue ;; esac
+        fi ;;
+    esac
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      case "$state" in allocated) echo "status=not-started"; exit 5 ;; *) echo "status=running"; exit 3 ;; esac
+    fi
+    sleep 1
+  done
+}
+
+# env_of <pid>: the process's environment, one entry per line: /proc on Linux,
+# ps -E on macOS (whose output splits on spaces, so a cache path containing a
+# space never matches and the process is skipped, never signalled). Status 1
+# when it cannot be read.
+env_of() {
+  if [ -r "$PROC_ROOT/$1/environ" ]; then tr '\0' '\n' < "$PROC_ROOT/$1/environ"; return 0; fi
+  if [ ! -d "$PROC_ROOT" ]; then ps -E -o command= -p "$1" 2>/dev/null | tr ' ' '\n'; return "${PIPESTATUS[0]}"; fi
+  return 1
+}
+can_read_env() { [ -d "$PROC_ROOT" ] || ps -E -o command= -p $$ >/dev/null 2>&1; }
+# fenced <pid> <jobdir>: the process carries this job's fence, read now.
+fenced() { env_of "$1" 2>/dev/null | grep -Fxq "TRACKED_JOB_DIR=$2"; }
+# fenced_pids <jobdir> <pgid>: the recorded group's fenced processes.
+fenced_pids() {
+  local dir=$1 pgid=$2 p
+  for p in $(ps -o pid= -g "$pgid" 2>/dev/null); do fenced "$p" "$dir" && printf '%s\n' "$p"; done
+}
+cmd_stop() {
+  local dir=${1:-} state i pgid pids p skipped survivors rc
+  [ -n "$dir" ] || usage
+  job_dir_ok "$dir" || { echo "status=error"; exit 2; }
+  state=$(meta_get "$dir" state)
+  # An allocated job has no supervisor to ask and no group to sweep: run
+  # clears a stale marker when it takes the launch lock, so writing one here
+  # would only cancel a launch that has not happened yet.
+  case "$state" in exited|stopped|allocated) echo "status=not-running"; exit 0 ;; esac
+  if [ "$state" = running ] && alive "$(meta_get "$dir" run_pid)" && ! supervisor_reused "$dir"; then
+    : > "$dir/stop-request"
+    i=0; while [ "$i" -lt "$STOP_WAIT" ] && [ ! -f "$dir/exit" ]; do sleep 1; i=$((i + 1)); done
+    if [ -f "$dir/exit" ]; then ledger_append_once "$dir" "$(terminal_line "$dir" "$(cat "$dir/exit")")"; echo "status=stopped"; exit 0; fi
+    echo "status=stop-timeout"; exit 6
+  fi
+  # The supervisor is dead: record the loss (wait may have already), then sweep by identity only.
+  # Every conclude result is checked: a lock that cannot be taken is status=busy (3), the state
+  # is left as it was, and nothing is claimed; the controller retries stop.
+  if [ "$state" = running ]; then
+    conclude "$dir" running lost "lost" >/dev/null; rc=$?
+    [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
+    state=$(meta_get "$dir" state)
+  fi
+  case "$state" in lost|lost-unswept) ;; *) echo "status=not-running"; exit 0 ;; esac
+  pgid=$(meta_get "$dir" pgid)
+  # Without the process table there is no way to tell the job's survivors from
+  # whatever else now shares the recorded group, and a group signal would hit
+  # both. The state names the group instead and the human partner sweeps it.
+  if ! have_ps || ! can_read_env; then
+    if [ "$state" != lost-unswept ]; then
+      conclude "$dir" lost lost-unswept "lost-unswept pgid=$pgid" >/dev/null; rc=$?
+      [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
+    fi
+    echo "status=lost-unswept pgid=$pgid"; exit 7
+  fi
+  if [ "$(ps -o pid= -g "$pgid" 2>/dev/null | grep -c .)" -eq 0 ]; then
+    conclude "$dir" "$state" stopped "stopped" "survivors:=0" "skipped:=0" >/dev/null; rc=$?
+    [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
+    echo "status=not-running"; exit 0
+  fi
+  # The fence is read again immediately before each signal: a pid that left
+  # the job between the listing and the signal is no longer this job's.
+  pids=$(fenced_pids "$dir" "$pgid")
+  for p in $pids; do if fenced "$p" "$dir"; then kill -TERM "$p" 2>/dev/null; fi; done
+  sleep "$GRACE"
+  for p in $pids; do if fenced "$p" "$dir"; then kill -KILL "$p" 2>/dev/null; fi; done
+  sleep 1
+  survivors=$(fenced_pids "$dir" "$pgid" | grep -c .)
+  skipped=$(( $(ps -o pid= -g "$pgid" 2>/dev/null | grep -c .) - survivors ))
+  i=0
+  while :; do
+    conclude "$dir" "$state" stopped "stopped" "survivors:=$survivors" "skipped:=$skipped" >/dev/null; rc=$?
+    [ "$rc" -eq 1 ] || break
+    i=$((i + 1)); [ "$i" -lt 5 ] || { echo "status=busy"; exit 3; }
+    sleep 1
+  done
+  if [ "$rc" -eq 2 ]; then echo "status=not-running"; exit 0; fi
+  echo "status=stopped"; exit 0
+}
+
 # The suite sources this file to exercise the shared functions on their own;
 # a sourced copy must not run a subcommand.
 if [ "${HYPERPOWERS_TEST_LIB_ONLY:-}" != 1 ]; then
   case "${1:-}" in
     new) shift; cmd_new "$@" ;;
     run) shift; cmd_run "$@" ;;
-    wait|stop) echo "tracked-job: $1 arrives with Task 4" >&2; exit 2 ;;
+    wait) shift; cmd_wait "$@" ;;
+    stop) shift; cmd_stop "${1:-}" ;;
     *) usage ;;
   esac
 fi

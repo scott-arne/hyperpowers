@@ -38,6 +38,17 @@ newjob() { tj new docs/plan.md "$1" --budget-ms 60000 --session s1 | sed -n 's/^
 # 10 s, and a timeout leaves the case to fail on its own assertion.
 wait_meta() { local i=0; while [ "$i" -lt 100 ]; do [ -n "$(meta "$1" "$2")" ] && return 0; sleep 0.1; i=$((i + 1)); done; return 1; }
 wait_file() { local i=0; while [ "$i" -lt 100 ] && [ ! -e "$1" ]; do sleep 0.1; i=$((i + 1)); done; }
+# A case that kills the supervisor, suspends it or signals the command needs
+# the launch barrier open first: until it is, the child is blocked in open(2)
+# on the FIFO, and a supervisor killed before it writes leaves that child
+# blocked for ever. run removes the FIFO as soon as the barrier is taken, so
+# its absence, once the metadata is durable, is the ready signal.
+wait_launched() {
+  local i=0
+  wait_meta "$1" run_pid || return 1
+  while [ "$i" -lt 100 ] && [ -e "$1/go" ]; do sleep 0.1; i=$((i + 1)); done
+  [ ! -e "$1/go" ]
+}
 err="$TEST_ROOT/stderr.txt"
 
 echo "=== tracked-job new ==="
@@ -223,6 +234,194 @@ else
   skip "a KILL to the child's group leaves the supervisor alive to record 137 (ps unavailable)"
 fi
 
+echo "=== tracked-job wait ==="
+# an exited job: exited code=0, the terminal line once, repeats append nothing.
+out=$(tj wait "$j1" --max-ms 1000); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=exited code=0" ] && [ "$(grep -c "^job s1 .*: soak exited code=0 jobdir=$j1\$" "$ws/progress.md")" = 1 ]; then pass "wait reports exited code=0 and appends the terminal line once"; else fail "wait reports exited code=0 and appends the terminal line once (rc=$rc: $out)"; fi
+tj wait "$j1" --max-ms 1000 >/dev/null; tj wait "$j1" --max-ms 1000 >/dev/null
+if [ "$(grep -c "^job s1 .*: soak exited code=0 jobdir=$j1\$" "$ws/progress.md")" = 1 ]; then pass "repeated waits append nothing"; else fail "repeated waits append nothing"; fi
+out=$(tj wait "$j4" --max-ms 1000); rc=$?
+if [ "$rc" -eq 1 ] && [ "$out" = "status=exited code=3" ]; then pass "a nonzero exit is reported with exit 1"; else fail "a nonzero exit is reported with exit 1 (rc=$rc: $out)"; fi
+# the exit file that could not be published (jx above, whose command put a
+# directory in its place): the code is in meta.json, which a terminal state
+# makes trustworthy, so wait still reports the command's status.
+out=$(tj wait "$jx" --max-ms 1000); rc=$?
+if [ "$rc" -eq 1 ] && [ "$out" = "status=exited code=5" ]; then pass "wait falls back to the code in meta.json when the exit file could not be published"; else fail "wait falls back to the code in meta.json when the exit file could not be published (rc=$rc: $out)"; fi
+out=$(tj wait "$j2" --max-ms 1500); rc=$?
+if [ "$rc" -eq 5 ] && [ "$out" = "status=not-started" ]; then pass "wait on an allocated job is not-started at the bound"; else fail "wait on an allocated job is not-started at the bound (rc=$rc: $out)"; fi
+j10=$(newjob slow); ( tj run "$j10" -- bash -c 'sleep 4; exit 0' >/dev/null 2>&1 ) &
+if ! wait_launched "$j10"; then
+  fail "wait returns running within its bound while the command runs (the launch did not open within 10s)"
+  fail "the same job is exited once the command ends (the launch did not open within 10s)"
+else
+  t0=$(date +%s); out=$(tj wait "$j10" --max-ms 1000); rc=$?; t1=$(date +%s)
+  if [ "$rc" -eq 3 ] && [ "$out" = "status=running" ] && [ $((t1 - t0)) -le 3 ]; then pass "wait returns running within its bound while the command runs"; else fail "wait returns running within its bound while the command runs (rc=$rc: $out, $((t1 - t0))s)"; fi
+  out=$(tj wait "$j10" --max-ms 10000); rc=$?
+  if [ "$rc" -eq 0 ] && [ "$out" = "status=exited code=0" ]; then pass "the same job is exited once the command ends"; else fail "the same job is exited once the command ends (rc=$rc: $out)"; fi
+fi
+# a suspended supervisor is running, never lost (deviation 2).
+j11=$(newjob frozen); ( tj run "$j11" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
+if ! wait_launched "$j11"; then
+  fail "a stopped supervisor keeps the job running (the launch did not open within 10s)"
+  fail "a supervisor that does not answer yields stop-timeout and the job stays running (the launch did not open within 10s)"
+else
+  rp=$(meta "$j11" run_pid); kill -STOP "$rp"; sleep 3
+  out=$(tj wait "$j11" --max-ms 1000); rc=$?
+  if [ "$rc" -eq 3 ] && [ "$out" = "status=running" ]; then pass "a stopped supervisor keeps the job running"; else fail "a stopped supervisor keeps the job running (rc=$rc: $out)"; fi
+  out=$(TRACKED_JOB_STOP_WAIT_S=2 tj stop "$j11"); rc=$?
+  if [ "$rc" -eq 6 ] && [ "$out" = "status=stop-timeout" ] && [ "$(meta "$j11" state)" = running ]; then pass "a supervisor that does not answer yields stop-timeout and the job stays running"; else fail "a supervisor that does not answer yields stop-timeout (rc=$rc: $out)"; fi
+  kill -CONT "$rp"; TRACKED_JOB_GRACE_S=1 tj stop "$j11" >/dev/null 2>&1
+fi
+# lost: the supervisor killed with KILL; its pid answers ESRCH; wait says lost once.
+j12=$(newjob lost); ( tj run "$j12" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
+if ! wait_launched "$j12"; then fail "a killed supervisor leaves a lost job that wait reports once (the launch did not open within 10s)"
+else
+  kill -KILL "$(meta "$j12" run_pid)"; sleep 1
+  out=$(tj wait "$j12" --max-ms 1000); rc=$?
+  if [ "$rc" -eq 4 ] && [ "$out" = "status=lost" ] && [ "$(meta "$j12" state)" = lost ] && [ "$(grep -c "^job s1 .*: lost lost jobdir=$j12\$" "$ws/progress.md")" = 1 ]; then pass "a killed supervisor leaves a lost job that wait reports once"; else fail "a killed supervisor leaves a lost job that wait reports once (rc=$rc: $out)"; fi
+  kill -KILL -- "-$(meta "$j12" pgid)" 2>/dev/null
+fi
+# a reused supervisor pid: alive, but not the process recorded at launch (ps only).
+if [ "$HAVE_PS" -eq 1 ]; then
+  j18=$(newjob reused); ( tj run "$j18" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
+  if ! wait_launched "$j18"; then
+    fail "a supervisor pid now owned by another process reads as lost (the launch did not open within 10s)"
+    fail "stop on the reused pid does not wait on the stranger (the launch did not open within 10s)"
+  else
+    realrun=$(meta "$j18" run_pid)
+    node -e 'const fs=require("fs"),p=process.argv[1]+"/meta.json",m=JSON.parse(fs.readFileSync(p,"utf8"));m.run_pid=Number(process.argv[2]);fs.writeFileSync(p,JSON.stringify(m))' "$j18" "$$"
+    out=$(tj wait "$j18" --max-ms 1000); rc=$?
+    if [ "$rc" -eq 4 ] && [ "$out" = "status=lost" ] && [ "$(meta "$j18" state)" = lost ]; then pass "a supervisor pid now owned by another process reads as lost"; else fail "a supervisor pid now owned by another process reads as lost (rc=$rc: $out)"; fi
+    out=$(TRACKED_JOB_STOP_WAIT_S=2 TRACKED_JOB_GRACE_S=1 tj stop "$j18"); rc=$?
+    if [ "$rc" -ne 6 ]; then pass "stop on the reused pid does not wait on the stranger"; else fail "stop on the reused pid does not wait on the stranger (rc=$rc: $out)"; fi
+    kill -TERM "$realrun" 2>/dev/null; sleep 3
+  fi
+else
+  skip "a supervisor pid now owned by another process reads as lost (ps unavailable)"
+  skip "stop on the reused pid does not wait on the stranger (ps unavailable)"
+fi
+
+echo "=== tracked-job stop ==="
+j13=$(newjob stubborn); ( tj run "$j13" -- bash -c 'trap "" TERM; sleep 60' >/dev/null 2>&1 ) &
+if ! wait_launched "$j13"; then fail "stop ends a TERM-resistant command through the supervisor, records 137 and the line once (the launch did not open within 10s)"
+else
+  t0=$(date +%s); out=$(TRACKED_JOB_GRACE_S=1 tj stop "$j13"); rc=$?; t1=$(date +%s)
+  if [ "$rc" -eq 0 ] && [ "$out" = "status=stopped" ] && [ "$(cat "$j13/exit" 2>/dev/null)" = 137 ] && [ "$(meta "$j13" state)" = stopped ] && [ $((t1 - t0)) -le 15 ] && [ "$(grep -c "^job s1 .*: stubborn stopped jobdir=$j13\$" "$ws/progress.md")" = 1 ]; then pass "stop ends a TERM-resistant command through the supervisor, records 137 and the line once"; else fail "stop ends a TERM-resistant command through the supervisor (rc=$rc: $out, exit=$(cat "$j13/exit" 2>/dev/null))"; fi
+fi
+j14=$(newjob parent); ( tj run "$j14" -- bash -c 'sleep 60 & echo $! > child.pid; wait' >/dev/null 2>&1 ) &
+if ! wait_launched "$j14"; then fail "stop ends the command's children with it (the launch did not open within 10s)"
+else
+  wait_file "$repo/child.pid"; childpid=$(cat "$repo/child.pid" 2>/dev/null)
+  out=$(TRACKED_JOB_GRACE_S=1 tj stop "$j14"); rc=$?; sleep 1
+  if [ "$rc" -eq 0 ] && [ -n "$childpid" ] && ! kill -0 "$childpid" 2>/dev/null; then pass "stop ends the command's children with it"; else fail "stop ends the command's children with it (rc=$rc: $out, child=$childpid)"; fi
+fi
+# the leader exits on TERM while a descendant ignores it: KILL still reaches the group.
+j19=$(newjob orphaning); ( tj run "$j19" -- bash -c '(trap "" TERM; exec sleep 60) & echo $! > inner.pid; trap "exit 0" TERM; wait' >/dev/null 2>&1 ) &
+if ! wait_launched "$j19"; then fail "stop ends a TERM-ignoring descendant after its leader exits on TERM (the launch did not open within 10s)"
+else
+  wait_file "$repo/inner.pid"; inner=$(cat "$repo/inner.pid" 2>/dev/null)
+  out=$(TRACKED_JOB_GRACE_S=1 tj stop "$j19"); rc=$?; sleep 1
+  if [ "$rc" -eq 0 ] && [ -n "$inner" ] && ! kill -0 "$inner" 2>/dev/null && [ "$(meta "$j19" state)" = stopped ]; then pass "stop ends a TERM-ignoring descendant after its leader exits on TERM"; else fail "stop ends a TERM-ignoring descendant after its leader exits on TERM (rc=$rc: $out, inner=$inner)"; fi
+fi
+out=$(tj stop "$j4"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=not-running" ]; then pass "stop on a finished job is not-running"; else fail "stop on a finished job is not-running (rc=$rc: $out)"; fi
+# lost-job sweep: fenced survivors ended one by one; a fenceless process in the group left alone (ps only).
+j15=$(newjob survivors); ( tj run "$j15" -- bash -c 'sleep 60 & env -u TRACKED_JOB_DIR sleep 60 & echo $! > stranger.pid; wait' >/dev/null 2>&1 ) &
+stranger=""; out=""; rc=99
+if ! wait_launched "$j15"; then fail "the lost job's sweep has no launch to sweep (the launch did not open within 10s)"
+else
+  wait_file "$repo/stranger.pid"; stranger=$(cat "$repo/stranger.pid" 2>/dev/null)
+  kill -KILL "$(meta "$j15" run_pid)"; sleep 1
+  out=$(TRACKED_JOB_GRACE_S=1 tj stop "$j15"); rc=$?; sleep 1
+fi
+if [ "$HAVE_PS" -eq 1 ]; then
+  if [ "$rc" -eq 0 ] && [ "$out" = "status=stopped" ] && ! kill -0 "$(meta "$j15" pid)" 2>/dev/null && kill -0 "$stranger" 2>/dev/null && [ "$(meta "$j15" skipped)" = 1 ] && [ "$(meta "$j15" state)" = stopped ]; then pass "stop on a lost job ends the fenced survivors and leaves the fenceless process, counting it as skipped"; else fail "stop on a lost job ends the fenced survivors and leaves the fenceless process (rc=$rc: $out, skipped=$(meta "$j15" skipped))"; fi
+  if [ "$(grep -c "^job s1 .*: survivors stopped jobdir=$j15\$" "$ws/progress.md")" = 1 ]; then pass "the lost job's stopped line is written once"; else fail "the lost job's stopped line is written once"; fi
+  out=$(tj stop "$j15"); rc=$?
+  if [ "$rc" -eq 0 ] && [ "$out" = "status=not-running" ]; then pass "a second stop on the swept job is not-running"; else fail "a second stop on the swept job is not-running (rc=$rc: $out)"; fi
+  out=$(tj wait "$j15" --max-ms 1000); rc=$?
+  if [ "$rc" -eq 4 ] && [ "$out" = "status=lost" ]; then pass "wait on a swept lost job reports lost"; else fail "wait on a swept lost job reports lost (rc=$rc: $out)"; fi
+  # the Linux fence (/proc/<pid>/environ) through a supplied proc tree: only the process whose environ carries the fence is signalled.
+  j21=$(newjob procfence); ( tj run "$j21" -- bash -c 'sleep 60 & echo $! > a.pid; sleep 60 & echo $! > b.pid; env -u TRACKED_JOB_DIR sleep 60 & echo $! > c.pid; wait' >/dev/null 2>&1 ) &
+  if ! wait_launched "$j21"; then fail "the /proc fence signals only the processes whose environ carries it (the launch did not open within 10s)"
+  else
+    wait_file "$repo/c.pid"
+    pa=$(cat "$repo/a.pid" 2>/dev/null); pb=$(cat "$repo/b.pid" 2>/dev/null); pc=$(cat "$repo/c.pid" 2>/dev/null); leader=$(meta "$j21" pid)
+    kill -KILL "$(meta "$j21" run_pid)"; sleep 1
+    # the group holds four processes: the leader and pa fenced in the fake tree, pb with no environ (unreadable), pc fenceless.
+    proc="$TEST_ROOT/proc"; mkdir -p "$proc/$leader" "$proc/$pa" "$proc/$pc"
+    printf 'TRACKED_JOB_DIR=%s\0HOME=/x\0' "$j21" > "$proc/$leader/environ"
+    printf 'TRACKED_JOB_DIR=%s\0HOME=/x\0' "$j21" > "$proc/$pa/environ"
+    printf 'OTHER=1\0' > "$proc/$pc/environ"
+    out=$(TRACKED_JOB_PROC_ROOT="$proc" TRACKED_JOB_GRACE_S=1 tj stop "$j21"); rc=$?; sleep 1
+    if [ "$rc" -eq 0 ] && [ "$out" = "status=stopped" ] && ! kill -0 "$leader" 2>/dev/null && ! kill -0 "$pa" 2>/dev/null && kill -0 "$pb" 2>/dev/null && kill -0 "$pc" 2>/dev/null && [ "$(meta "$j21" skipped)" = 2 ] && [ "$(meta "$j21" survivors)" = 0 ]; then pass "the /proc fence signals only the processes whose environ carries it; the unreadable one and the fenceless one are skipped and counted"; else fail "the /proc fence signals only the processes whose environ carries it (rc=$rc: $out, skipped=$(meta "$j21" skipped), survivors=$(meta "$j21" survivors))"; fi
+    kill -KILL "$pb" "$pc" 2>/dev/null; rm -rf "$proc"
+  fi
+else
+  if [ "$rc" -eq 7 ] && [ "$out" = "status=lost-unswept pgid=$(meta "$j15" pgid)" ] && [ "$(meta "$j15" state)" = lost-unswept ] && [ "$(grep -c "^job s1 .*: survivors lost-unswept pgid=$(meta "$j15" pgid) jobdir=$j15\$" "$ws/progress.md")" = 1 ]; then pass "without ps, stop on a lost job refuses to signal, names the group and records lost-unswept"; else fail "without ps, stop on a lost job refuses to signal and names the group (rc=$rc: $out)"; fi
+  out=$(tj wait "$j15" --max-ms 1000); rc=$?
+  if [ "$rc" -eq 7 ] && [ "$out" = "status=lost-unswept pgid=$(meta "$j15" pgid)" ]; then pass "wait on a lost-unswept job repeats the state"; else fail "wait on a lost-unswept job repeats the state (rc=$rc: $out)"; fi
+  skip "stop on a lost job ends the fenced survivors and leaves the fenceless process (ps unavailable)"
+  skip "the lost job's stopped line is written once (ps unavailable)"
+  skip "wait on a swept lost job reports lost (ps unavailable)"
+  skip "the /proc fence signals only the processes whose environ carries it (ps unavailable)"
+fi
+kill -KILL -- "-$(meta "$j15" pgid)" 2>/dev/null
+# concurrent wait and stop on a lost job: whichever writes first wins, the job never ends lost with survivors, no outcome line repeats.
+j20=$(newjob raced); ( tj run "$j20" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
+if ! wait_launched "$j20"; then fail "concurrent wait and stop on a lost job never leave it lost and never repeat a line (the launch did not open within 10s)"
+else
+  kill -KILL "$(meta "$j20" run_pid)"; sleep 1
+  ( tj wait "$j20" --max-ms 8000 > "$TEST_ROOT/raced-wait.out" 2>&1 ) & rw=$!
+  ( TRACKED_JOB_GRACE_S=1 tj stop "$j20" > "$TEST_ROOT/raced-stop.out" 2>&1 ) & rs=$!
+  wait "$rw" "$rs"
+  final=$(meta "$j20" state)
+  # The timestamp carries colons, so the outcome is cut by field, not to the
+  # first colon: a dedup that leaves the timestamp in finds no duplicate ever.
+  dups=$(grep -F "jobdir=$j20" "$ws/progress.md" | sed -E 's/ ?jobdir=.*//; s/^job [^ ]+ [^ ]+: raced ?//' | sort | uniq -d | grep -c .)
+  if { [ "$final" = stopped ] || [ "$final" = lost-unswept ]; } && [ "$dups" = 0 ]; then pass "concurrent wait and stop on a lost job never leave it lost and never repeat a line"; else fail "concurrent wait and stop on a lost job never leave it lost and never repeat a line (final=$final dups=$dups; wait: $(cat "$TEST_ROOT/raced-wait.out"); stop: $(cat "$TEST_ROOT/raced-stop.out"))"; fi
+  kill -KILL -- "-$(meta "$j20" pgid)" 2>/dev/null
+fi
+# a held workspace lock: no terminal record is written and no success is claimed; the record repairs once the lock is free.
+j22=$(newjob locked); j23=$(newjob lockedexit)
+( tj run "$j22" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
+if ! wait_launched "$j22"; then
+  fail "stop under a held lock is busy and records nothing (the launch did not open within 10s)"
+  fail "wait under a held lock reads running at its bound and records nothing (the launch did not open within 10s)"
+  fail "a supervisor that cannot take the lock still writes exit and says so in out.log (the launch did not open within 10s)"
+  fail "wait repairs the state from the exit file once the lock is free (the launch did not open within 10s)"
+  fail "stop on the lost job proceeds once the lock is free (the launch did not open within 10s)"
+else
+  kill -KILL "$(meta "$j22" run_pid)"; sleep 1
+  mkdir -p "$lockdir"; printf 'pid=1\n' > "$lockdir/owner"
+  out=$(HYPERPOWERS_LOCK_WAIT_STEPS=2 tj stop "$j22"); rc=$?
+  if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$(meta "$j22" state)" = running ]; then pass "stop under a held lock is busy and records nothing"; else fail "stop under a held lock is busy and records nothing (rc=$rc: $out, state=$(meta "$j22" state))"; fi
+  out=$(HYPERPOWERS_LOCK_WAIT_STEPS=2 tj wait "$j22" --max-ms 3000); rc=$?
+  if [ "$rc" -eq 3 ] && [ "$out" = "status=running" ] && [ "$(meta "$j22" state)" = running ]; then pass "wait under a held lock reads running at its bound and records nothing"; else fail "wait under a held lock reads running at its bound and records nothing (rc=$rc: $out, state=$(meta "$j22" state))"; fi
+  ( HYPERPOWERS_LOCK_WAIT_STEPS=2 tj run "$j23" -- bash -c 'exit 0' >/dev/null 2>&1 ) &
+  # The supervisor retries the record five times a second apart before it
+  # gives up and publishes the exit anyway, so this outlasts the usual bound.
+  i=0; while [ "$i" -lt 40 ] && [ ! -f "$j23/exit" ]; do sleep 1; i=$((i + 1)); done
+  if [ "$(cat "$j23/exit" 2>/dev/null)" = 0 ] && [ "$(meta "$j23" state)" = running ] && grep -q 'terminal state exited not recorded' "$j23/out.log"; then pass "a supervisor that cannot take the lock still writes exit and says so in out.log"; else fail "a supervisor that cannot take the lock still writes exit and says so in out.log (exit=$(cat "$j23/exit" 2>/dev/null), state=$(meta "$j23" state))"; fi
+  rm -rf "$lockdir"
+  out=$(tj wait "$j23" --max-ms 1000); rc=$?
+  if [ "$rc" -eq 0 ] && [ "$out" = "status=exited code=0" ] && [ "$(meta "$j23" state)" = exited ]; then pass "wait repairs the state from the exit file once the lock is free"; else fail "wait repairs the state from the exit file once the lock is free (rc=$rc: $out, state=$(meta "$j23" state))"; fi
+  out=$(TRACKED_JOB_GRACE_S=1 tj stop "$j22"); rc=$?
+  case "$rc" in 0|7) pass "stop on the lost job proceeds once the lock is free" ;; *) fail "stop on the lost job proceeds once the lock is free (rc=$rc: $out)" ;; esac
+  kill -KILL -- "-$(meta "$j22" pgid)" 2>/dev/null
+fi
+# a stale leader whose group has no fenced member: not-running (ps only).
+if [ "$HAVE_PS" -eq 1 ]; then
+  j16=$(newjob stale); ( tj run "$j16" -- bash -c 'sleep 2' >/dev/null 2>&1 ) &
+  if ! wait_launched "$j16"; then fail "a lost job whose group is already gone is not-running (the launch did not open within 10s)"
+  else
+    kill -KILL "$(meta "$j16" run_pid)"; sleep 3
+    out=$(tj stop "$j16"); rc=$?
+    if [ "$rc" -eq 0 ] && [ "$out" = "status=not-running" ] && [ "$(meta "$j16" state)" = stopped ]; then pass "a lost job whose group is already gone is not-running"; else fail "a lost job whose group is already gone is not-running (rc=$rc: $out)"; fi
+  fi
+else
+  skip "a lost job whose group is already gone is not-running (ps unavailable)"
+fi
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures, $skips skipped)"; exit 1; fi
 echo "STATUS: PASSED ($skips skipped)"

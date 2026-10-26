@@ -1044,6 +1044,14 @@ out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$"; then pass "tracked paths named like leftovers are listed as neither tomb nor quarantine"; else fail "tracked paths named like leftovers are listed as neither tomb nor quarantine (rc=$rc: $out)"; fi
 out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ -f "$co_pr/plans/.removing-legacy-12345678/progress.md" ] && [ -f "$co_pr/plans/.pruned-legacy-12345678/progress.md" ] && [ -f "$co_pr/plans/.quarantining-legacy-12345678/progress.md" ] && [ -z "$(git -C "$co_pr" status --porcelain -- plans/)" ]; then pass "an --apply leaves tracked paths named like leftovers untouched"; else fail "an --apply leaves tracked paths named like leftovers untouched (rc=$rc: $out: $(git -C "$co_pr" status --porcelain -- plans/ | tr '\n' '|'))"; fi
+# The same guard alone, with no tomb name beside the staged one: the
+# put-back is refused because the branch tracks the path, not because its
+# destination is occupied.
+quar2="$co_pr/plans/.quarantining-legacy2-12345678"; mkdir -p "$quar2"; printf 'legacy dossier\n' > "$quar2/progress.md"
+git -C "$co_pr" add -A plans/ && git -C "$co_pr" commit -qm legacy2
+touch -t 202401010000 "$quar2/progress.md" "$quar2"
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$quar2/progress.md" ] && [ ! -e "$co_pr/plans/.removing-legacy2-12345678" ] && [ -z "$(git -C "$co_pr" status --porcelain -- plans/)" ]; then pass "a tracked staged-copy name with no tomb name beside it is never put back"; else fail "a tracked staged-copy name with no tomb name beside it is never put back (rc=$rc: $out: $(git -C "$co_pr" status --porcelain -- plans/ | tr '\n' '|'))"; fi
 echo ""
 echo "=== sync ==="
 make_pair p7
@@ -1313,6 +1321,31 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying"
 rm "$co_b/plans"; mv "$plansroot7o" "$co_b/plans"; rm -f "$wsb/progress.md.new.123"
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7o: complete' "$wsb/progress.md" && [ -z "$(git -C "$co_b" status --porcelain)" ]; then pass "with plans/ a real directory again the recovery completes"; else fail "with plans/ a real directory again the recovery completes (rc=$rc: $out)"; fi
+# A ledger a writer recreated from scratch while the marker was down, in a
+# deletion-only apply: the restore meets a live file it did not write, so
+# it reconciles instead of leaving it for the next snapshot to publish over
+# the branch's ledger.
+printf 'fourth report\n' > "$wsa/task-4-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+rm -f "$wsa/task-4-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/progress.md"; printf 'concurrent write\n' > "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && [ "$(cat "$wsb/progress.md")" = "concurrent write" ] && git -C "$co_b" show "refs/heads/hyperpowers/state:plans/$(basename "$wsb")/progress.md" | grep -q '^Task 7o: complete'; then pass "a ledger recreated under a deletion-only apply is reconciled, and the branch's is intact"; else fail "a ledger recreated under a deletion-only apply is reconciled, and the branch's is intact (rc=$rc: $out: $(head -n 2 "$wsb/progress.md" 2>/dev/null | tr '\n' '|'))"; fi
+rm -f "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7o: complete' "$wsb/progress.md" && [ ! -e "$wsb/task-4-report.md" ] && [ -z "$(git -C "$co_b" status --porcelain)" ]; then pass "with that ledger removed the deletion-only recovery publishes the branch's"; else fail "with that ledger removed the deletion-only recovery publishes the branch's (rc=$rc: $out)"; fi
+# A link at the .restore sidecar: nothing is swept or staged through it,
+# and the directory behind it stays empty.
+printf 'Task 7q: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/task-1-report.md"
+mkdir -p "$TEST_ROOT/victim-restore"; ln -s "$TEST_ROOT/victim-restore" "$co_b/.restore"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7q.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q '\.restore is a symbolic link' "$TEST_ROOT/p7q.err" && [ -z "$(ls -A "$TEST_ROOT/victim-restore")" ]; then pass "a link at the .restore sidecar stops the sync and nothing is written through it"; else fail "a link at the .restore sidecar stops the sync and nothing is written through it (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7q.err"): $(ls -A "$TEST_ROOT/victim-restore" | tr '\n' '|'))"; fi
+rm "$co_b/.restore"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7q: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ -z "$(git -C "$co_b" status --porcelain)" ]; then pass "with the link removed the restore completes"; else fail "with the link removed the restore completes (rc=$rc: $out)"; fi
 
 # A remote finish racing a local writer: refused, nothing changed. The seam
 # writes after the pending check and right before the rename.
@@ -1763,6 +1796,22 @@ if [ "$rc" -eq 3 ] && [ "${out%% *}" = "status=busy" ] && grep -q "plans/$legacy
 printf 'report v1\n' > "$co_b/plans/$legacy11/task-1-report.md"
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(cat "$co_b/plans/$legacy11/task-1-report.md")" = "report v2" ]; then pass "with the local edit put back the apply proceeds and the remote change lands"; else fail "with the local edit put back the apply proceeds and the remote change lands (rc=$rc: $out)"; fi
+# The same for a tracked file directly under plans/ whose name reads like a
+# leftover: a file is not a workspace directory, so the tracked lookup must
+# not ask for a tree, or the exemption would swallow the file's dirty row
+# and the apply would write over the local bytes.
+file11="plans/.removing-trackedfile-12345678"
+printf 'tracked v1\n' > "$co_a11/$file11"
+git -C "$co_a11" add -A plans/ && git -C "$co_a11" commit -qm trackedfile && git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+printf 'local edit\n' > "$co_b/$file11"
+printf 'tracked v2\n' > "$co_a11/$file11"; git -C "$co_a11" add -A plans/ && git -C "$co_a11" commit -qm trackedfile2 && git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p11d.out" 2> "$TEST_ROOT/p11d.err"; rc=$?
+out=$(cat "$TEST_ROOT/p11d.out")
+if [ "$rc" -eq 3 ] && [ "${out%% *}" = "status=busy" ] && grep -q "$file11" "$TEST_ROOT/p11d.err" && [ "$(cat "$co_b/$file11")" = "local edit" ]; then pass "a dirty tracked file under plans/ named like a leftover holds the apply and is not overwritten"; else fail "a dirty tracked file under plans/ named like a leftover holds the apply and is not overwritten (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p11d.err"))"; fi
+printf 'tracked v1\n' > "$co_b/$file11"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(cat "$co_b/$file11")" = "tracked v2" ]; then pass "with that edit reverted the apply fast-forwards and the remote change lands"; else fail "with that edit reverted the apply fast-forwards and the remote change lands (rc=$rc: $out)"; fi
 # A leftover as the only entry under plans/: with no tracked entry there,
 # git collapses the directory to one `?? plans/` row, which no exemption
 # names and whose advice (move or delete the dossier root) is wrong; the

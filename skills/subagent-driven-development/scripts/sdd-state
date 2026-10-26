@@ -454,10 +454,10 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
     fi
     # The cutover is a transaction: the source is renamed aside first, so
     # no new opener can write to it; the staged copy is verified against
-    # that quiesced tree; the legacy path is relinked only after the
-    # installed tree is verified; the backup goes last, after a late ledger
-    # append is reconciled. Any failure removes the installed ledger and
-    # puts the source back.
+    # that quiesced tree; the installed tree is verified; then a late
+    # ledger append is reconciled, the backup is set aside as the kept
+    # copy, and the relink of the legacy path goes last. Any failure
+    # removes the installed ledger and puts the source back.
     backup="$ref.importing-$$"
     # The source's root is touched before anything is renamed aside, so the
     # 14-day reclaim of plain-cache roots does not take the backup with it.
@@ -1139,15 +1139,29 @@ apply_files() {
   # temporary copy in the .restore sidecar at the checkout root (never
   # inside a workspace, where a crash would leave it for a snapshot to
   # commit), so a file a writer creates between the check and the publish
-  # is theirs; a ledger a writer creates there is reconciled, never
-  # adopted.
+  # is theirs; a ledger a writer creates there, before the check or after
+  # it, is reconciled, never adopted.
   i=0
   while [ "$i" -lt "${#touched_ws[@]}" ]; do
     ws=${touched_ws[$i]}; i=$((i + 1))
     while IFS=$'\t' read -r meta path; do
       [ -n "$path" ] || continue
       hp_contained "$CO" "$path" || return 4
-      [ ! -e "$CO/$path" ] || continue
+      if [ -e "$CO/$path" ]; then
+        # A ledger that is already there is one a writer recreated while
+        # the marker was down: reconciled against the branch's, never left
+        # for the next snapshot to publish over it.
+        case "$path" in plans/*/progress.md) [ -f "$CO/$path" ] || return 2; ledger_apply "$path" "$S" "$target" || return $? ;; esac
+        continue
+      fi
+      # recover_apply checked the sidecar at the top of the locked section,
+      # with the whole apply between that check and this write; mkdir -p on
+      # a link to a directory keeps the link, so the copy would land
+      # outside the checkout.
+      if [ -L "$CO/.restore" ]; then
+        echo "sdd-state: $CO/.restore is a symbolic link; refusing to stage a restore copy through it" >&2
+        return 2
+      fi
       mkdir -p "$(dirname "$CO/$path")" "$CO/.restore" || return 2
       n=$((n + 1)); tmp="$CO/.restore/$$.$n"; rm -f "$tmp"
       git -C "$CO" show "$target:$path" > "$tmp" || { rm -f "$tmp"; return 2; }
@@ -1188,8 +1202,10 @@ say_link_repair() {
 # until the tree is repaired.
 recover_apply() {
   local S="" target="" rc head j path dir tracked
-  # Both paths this helper writes at the checkout root are read below, the
-  # journals before anything else: a link at either one would have the
+  # Four paths at the checkout root are checked for a link before anything
+  # uses them: .rewrite, .sync-applying and .restore, which this helper or
+  # its callers write, and plans, which it only reads. The journals come
+  # before anything else, and a link at any of the four would have the
   # recovery walk, and finish, whatever it points at.
   if [ -L "$CO/.rewrite" ]; then
     echo "sdd-state: $CO/.rewrite is a symbolic link; refusing to journal a ledger rewrite through it" >&2
@@ -1339,9 +1355,12 @@ apply_target() {
         # workspace from before this release may carry such a name, and
         # its dirty rows hold the apply like any other's (snapshot_pending
         # skips dotted directories, so nothing else would publish them).
+        # The lookup asks for any entry, not -d: a tracked file directly
+        # under plans/ is no more a leftover than a tracked directory, and
+        # -d would answer nothing for it and exempt its dirty row.
         # A lookup that fails counts as tracked.
         top=${path#plans/}; top=${top%%/*}
-        tracked=$(git -C "$CO" ls-tree -d "$S" -- "plans/$top" 2>/dev/null) || tracked=x
+        tracked=$(git -C "$CO" ls-tree "$S" -- "plans/$top" 2>/dev/null) || tracked=x
         [ -n "$tracked" ] || continue ;;
     esac
     # A tracked file missing from a workspace: the restore above left the

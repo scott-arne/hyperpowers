@@ -4,8 +4,10 @@
 # written whatever the status, and ledger lines written once.
 # Design: docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md (Design §2),
 # with plan deviations 1 (bash job control instead of setsid), 2 (loss is the
-# supervisor's death read with kill -0; the sweep of a lost job needs ps) and
-# 3 (terminal lines carry jobdir= as their once-key).
+# supervisor's death read with kill -0; the sweep of a lost job needs ps),
+# 3 (terminal lines carry jobdir= as their once-key) and 4 (the identity fence
+# has a second half, an open descriptor on the job's out.log, because macOS
+# ps -E prints the environment of the calling process alone).
 #
 # Usage:
 #   tracked-job new PLAN_FILE NAME --budget-ms N [--session SID]   -> jobdir=<path>
@@ -21,7 +23,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 GRACE=${TRACKED_JOB_GRACE_S:-5}
 STOP_WAIT=${TRACKED_JOB_STOP_WAIT_S:-10}
 # The proc tree the identity fence is read from; a test supplies one on a host
-# that has none.
+# that has none. Where it exists it is the only reader used, so a supplied
+# tree is never mixed with readings of the live host.
 PROC_ROOT=${TRACKED_JOB_PROC_ROOT:-/proc}
 
 usage() {
@@ -425,18 +428,57 @@ cmd_wait() {
   done
 }
 
-# env_of <pid>: the process's environment, one entry per line: /proc on Linux,
-# ps -E on macOS (whose output splits on spaces, so a cache path containing a
-# space never matches and the process is skipped, never signalled). Status 1
-# when it cannot be read.
-env_of() {
-  if [ -r "$PROC_ROOT/$1/environ" ]; then tr '\0' '\n' < "$PROC_ROOT/$1/environ"; return 0; fi
-  if [ ! -d "$PROC_ROOT" ]; then ps -E -o command= -p "$1" 2>/dev/null | tr ' ' '\n'; return "${PIPESTATUS[0]}"; fi
-  return 1
+# The identity fence has two halves, because a command can drop either one:
+# TRACKED_JOB_DIR in its environment, and an open descriptor on the job's
+# out.log, which every process of the command's tree inherits from the
+# supervisor. The second half is deviation 4: the spec reads the first with
+# ps -E on macOS, and ps -E there prints the environment of the calling
+# process alone, never a child's, so on that platform the descriptors are the
+# whole fence and there is no environment reader at all.
+#
+# fence_env <pid> <jobdir>: the process's environment carries the fence.
+fence_env() {
+  [ -d "$PROC_ROOT" ] && [ -r "$PROC_ROOT/$1/environ" ] || return 1
+  tr '\0' '\n' < "$PROC_ROOT/$1/environ" | grep -Fxq "TRACKED_JOB_DIR=$2"
 }
-can_read_env() { [ -d "$PROC_ROOT" ] || ps -E -o command= -p $$ >/dev/null 2>&1; }
-# fenced <pid> <jobdir>: the process carries this job's fence, read now.
-fenced() { env_of "$1" 2>/dev/null | grep -Fxq "TRACKED_JOB_DIR=$2"; }
+# fence_fd <pid> <jobdir>: one of the process's open descriptors is the job's
+# out.log: the fd/ symlinks under a proc tree, lsof where there is none.
+fence_fd() {
+  local e
+  if [ -d "$PROC_ROOT" ]; then
+    for e in "$PROC_ROOT/$1/fd"/*; do
+      [ -L "$e" ] || continue
+      [ "$(readlink "$e" 2>/dev/null)" = "$2/out.log" ] && return 0
+    done
+    return 1
+  fi
+  lsof -p "$1" -Fn 2>/dev/null | grep -Fxq "n$2/out.log"
+}
+# fenced <pid> <jobdir>: the process carries this job's fence, read now. A
+# process that carries neither half, or whose fence cannot be read at all, is
+# not this job's and is never signalled.
+fenced() { fence_env "$1" "$2" || fence_fd "$1" "$2"; }
+# can_read_fence <jobdir>: this host can read another process's fence at all.
+# A proc tree answers by existing. Elsewhere lsof is the only reader, and the
+# question is whether it can list a *child's* descriptors rather than this
+# process's own, so the probe is a real short-lived child holding the job's
+# out.log open. A self-test on $$ is what made ps -E look workable on macOS:
+# it answers for the caller and for nobody else.
+can_read_fence() {
+  local pid i=0 rc=1
+  [ -d "$PROC_ROOT/$$" ] && return 0
+  command -v lsof >/dev/null 2>&1 || return 1
+  sleep 5 >> "$1/out.log" 2>/dev/null &
+  pid=$!
+  # The child opens the file between the fork and its exec, so a single read
+  # can be early; five are not.
+  while [ "$i" -lt 5 ]; do
+    if lsof -p "$pid" -Fn 2>/dev/null | grep -Fxq "n$1/out.log"; then rc=0; break; fi
+    i=$((i + 1)); sleep 0.1
+  done
+  kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  return "$rc"
+}
 # fenced_pids <jobdir> <pgid>: the recorded group's fenced processes.
 fenced_pids() {
   local dir=$1 pgid=$2 p
@@ -467,10 +509,11 @@ cmd_stop() {
   fi
   case "$state" in lost|lost-unswept) ;; *) echo "status=not-running"; exit 0 ;; esac
   pgid=$(meta_get "$dir" pgid)
-  # Without the process table there is no way to tell the job's survivors from
-  # whatever else now shares the recorded group, and a group signal would hit
-  # both. The state names the group instead and the human partner sweeps it.
-  if ! have_ps || ! can_read_env; then
+  # Without the process table, or without a fence this host can read, there is
+  # no way to tell the job's survivors from whatever else now shares the
+  # recorded group, and a group signal would hit both. The state names the
+  # group instead and the human partner sweeps it.
+  if ! have_ps || ! can_read_fence "$dir"; then
     if [ "$state" != lost-unswept ]; then
       conclude "$dir" lost lost-unswept "lost-unswept pgid=$pgid" >/dev/null; rc=$?
       [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }

@@ -325,8 +325,37 @@ else
 fi
 out=$(tj stop "$j4"); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=not-running" ]; then pass "stop on a finished job is not-running"; else fail "stop on a finished job is not-running (rc=$rc: $out)"; fi
+# the fence's two halves, read straight against a supplied proc tree, which
+# needs no ps: the variable, the descriptor on the job's out.log, both dropped,
+# and a process with nothing to read.
+fp="$TEST_ROOT/fenceproc"; mkdir -p "$fp/11" "$fp/12/fd" "$fp/13/fd"
+printf 'TRACKED_JOB_DIR=%s\0HOME=/x\0' "$j1" > "$fp/11/environ"
+ln -s "$j1/out.log" "$fp/12/fd/1"
+printf 'OTHER=1\0' > "$fp/13/environ"; ln -s /dev/null "$fp/13/fd/1"
+out=$(TRACKED_JOB_PROC_ROOT="$fp" HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; for p in 11 12 13 14; do if fenced "$p" "$1"; then printf "%s=yes " "$p"; else printf "%s=no " "$p"; fi; done' "$TJ" "$j1" 2>/dev/null)
+if [ "$out" = "11=yes 12=yes 13=no 14=no " ]; then pass "the fence is the TRACKED_JOB_DIR variable or an out.log descriptor, and nothing else"; else fail "the fence is the TRACKED_JOB_DIR variable or an out.log descriptor, and nothing else (got: $out)"; fi
+# the readability gate asks whether a *child's* fence can be read: ps -E answers
+# for the caller alone, so a self-test would pass on a host that cannot answer.
+canfence() { TRACKED_JOB_PROC_ROOT="$1" PATH="$2" HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; if can_read_fence "$1"; then echo yes; else echo no; fi' "$TJ" "$j1" 2>/dev/null; }
+# A PATH without lsof has to keep what the probe needs to run at all: bash to
+# start the seam, dirname for the helper's own directory, node for the
+# metadata reader, sleep and grep for the probe itself. A missing one of those
+# reads as an empty answer below rather than as a false "no".
+mkdir -p "$TEST_ROOT/emptyproc" "$TEST_ROOT/nolsof"
+for b in bash dirname node sleep grep; do ln -sf "$(command -v "$b")" "$TEST_ROOT/nolsof/$b"; done
+if [ -d "/proc/$$" ]; then skip "the fence is unreadable where neither a proc tree nor lsof can answer (this host has /proc)"
+else
+  out=$(canfence "$TEST_ROOT/emptyproc" "$TEST_ROOT/nolsof")
+  if [ "$out" = no ]; then pass "the fence is unreadable where neither a proc tree nor lsof can answer"; else fail "the fence is unreadable where neither a proc tree nor lsof can answer (got: $out)"; fi
+fi
+if [ -d "/proc/$$" ] || command -v lsof >/dev/null 2>&1; then
+  out=$(canfence /proc "$PATH")
+  if [ "$out" = yes ]; then pass "the fence is readable where a proc tree or lsof answers for a child"; else fail "the fence is readable where a proc tree or lsof answers for a child (got: $out)"; fi
+else
+  skip "the fence is readable where a proc tree or lsof answers for a child (no proc tree and no lsof)"
+fi
 # lost-job sweep: fenced survivors ended one by one; a fenceless process in the group left alone (ps only).
-j15=$(newjob survivors); ( tj run "$j15" -- bash -c 'sleep 60 & env -u TRACKED_JOB_DIR sleep 60 & echo $! > stranger.pid; wait' >/dev/null 2>&1 ) &
+j15=$(newjob survivors); ( tj run "$j15" -- bash -c 'sleep 60 & env -u TRACKED_JOB_DIR sleep 60 >/dev/null 2>&1 & echo $! > stranger.pid; wait' >/dev/null 2>&1 ) &
 stranger=""; out=""; rc=99
 if ! wait_launched "$j15"; then fail "the lost job's sweep has no launch to sweep (the launch did not open within 10s)"
 else
@@ -341,21 +370,35 @@ if [ "$HAVE_PS" -eq 1 ]; then
   if [ "$rc" -eq 0 ] && [ "$out" = "status=not-running" ]; then pass "a second stop on the swept job is not-running"; else fail "a second stop on the swept job is not-running (rc=$rc: $out)"; fi
   out=$(tj wait "$j15" --max-ms 1000); rc=$?
   if [ "$rc" -eq 4 ] && [ "$out" = "status=lost" ]; then pass "wait on a swept lost job reports lost"; else fail "wait on a swept lost job reports lost (rc=$rc: $out)"; fi
-  # the Linux fence (/proc/<pid>/environ) through a supplied proc tree: only the process whose environ carries the fence is signalled.
+  # the fence through a supplied proc tree: only the processes one of whose halves carries it are signalled.
   j21=$(newjob procfence); ( tj run "$j21" -- bash -c 'sleep 60 & echo $! > a.pid; sleep 60 & echo $! > b.pid; env -u TRACKED_JOB_DIR sleep 60 & echo $! > c.pid; wait' >/dev/null 2>&1 ) &
-  if ! wait_launched "$j21"; then fail "the /proc fence signals only the processes whose environ carries it (the launch did not open within 10s)"
+  if ! wait_launched "$j21"; then fail "the supplied proc tree signals only the fenced processes (the launch did not open within 10s)"
   else
     wait_file "$repo/c.pid"
     pa=$(cat "$repo/a.pid" 2>/dev/null); pb=$(cat "$repo/b.pid" 2>/dev/null); pc=$(cat "$repo/c.pid" 2>/dev/null); leader=$(meta "$j21" pid)
     kill -KILL "$(meta "$j21" run_pid)"; sleep 1
-    # the group holds four processes: the leader and pa fenced in the fake tree, pb with no environ (unreadable), pc fenceless.
-    proc="$TEST_ROOT/proc"; mkdir -p "$proc/$leader" "$proc/$pa" "$proc/$pc"
+    # the group holds four processes, one per fence shape: the leader fenced by
+    # its environment, pa by a descriptor on out.log alone, pb with no entry at
+    # all (unreadable), pc with both halves dropped.
+    proc="$TEST_ROOT/proc"; mkdir -p "$proc/$leader" "$proc/$pa/fd" "$proc/$pc/fd"
     printf 'TRACKED_JOB_DIR=%s\0HOME=/x\0' "$j21" > "$proc/$leader/environ"
-    printf 'TRACKED_JOB_DIR=%s\0HOME=/x\0' "$j21" > "$proc/$pa/environ"
-    printf 'OTHER=1\0' > "$proc/$pc/environ"
+    ln -s "$j21/out.log" "$proc/$pa/fd/1"
+    printf 'OTHER=1\0' > "$proc/$pc/environ"; ln -s /dev/null "$proc/$pc/fd/1"
     out=$(TRACKED_JOB_PROC_ROOT="$proc" TRACKED_JOB_GRACE_S=1 tj stop "$j21"); rc=$?; sleep 1
-    if [ "$rc" -eq 0 ] && [ "$out" = "status=stopped" ] && ! kill -0 "$leader" 2>/dev/null && ! kill -0 "$pa" 2>/dev/null && kill -0 "$pb" 2>/dev/null && kill -0 "$pc" 2>/dev/null && [ "$(meta "$j21" skipped)" = 2 ] && [ "$(meta "$j21" survivors)" = 0 ]; then pass "the /proc fence signals only the processes whose environ carries it; the unreadable one and the fenceless one are skipped and counted"; else fail "the /proc fence signals only the processes whose environ carries it (rc=$rc: $out, skipped=$(meta "$j21" skipped), survivors=$(meta "$j21" survivors))"; fi
+    if [ "$rc" -eq 0 ] && [ "$out" = "status=stopped" ] && ! kill -0 "$leader" 2>/dev/null && ! kill -0 "$pa" 2>/dev/null && kill -0 "$pb" 2>/dev/null && kill -0 "$pc" 2>/dev/null && [ "$(meta "$j21" skipped)" = 2 ] && [ "$(meta "$j21" survivors)" = 0 ]; then pass "the supplied proc tree signals the environment-fenced and the descriptor-fenced process; the unreadable one and the fenceless one are skipped and counted"; else fail "the supplied proc tree signals only the fenced processes (rc=$rc: $out, skipped=$(meta "$j21" skipped), survivors=$(meta "$j21" survivors))"; fi
     kill -KILL "$pb" "$pc" 2>/dev/null; rm -rf "$proc"
+  fi
+  # the descriptor half on its own: the command scrubs the variable from its
+  # child's environment but the child keeps the descriptors it inherited, so
+  # the sweep still owns it and skips nothing.
+  j24=$(newjob descfence); ( tj run "$j24" -- bash -c 'env -u TRACKED_JOB_DIR sleep 60 & echo $! > d.pid; wait' >/dev/null 2>&1 ) &
+  if ! wait_launched "$j24"; then fail "a child that kept only the out.log descriptor is still swept (the launch did not open within 10s)"
+  else
+    wait_file "$repo/d.pid"; dpid=$(cat "$repo/d.pid" 2>/dev/null)
+    kill -KILL "$(meta "$j24" run_pid)"; sleep 1
+    out=$(TRACKED_JOB_GRACE_S=1 tj stop "$j24"); rc=$?; sleep 1
+    if [ "$rc" -eq 0 ] && [ "$out" = "status=stopped" ] && [ -n "$dpid" ] && ! kill -0 "$dpid" 2>/dev/null && [ "$(meta "$j24" skipped)" = 0 ] && [ "$(meta "$j24" survivors)" = 0 ]; then pass "a child that kept only the out.log descriptor is still swept"; else fail "a child that kept only the out.log descriptor is still swept (rc=$rc: $out, child=$dpid, skipped=$(meta "$j24" skipped), survivors=$(meta "$j24" survivors))"; fi
+    kill -KILL -- "-$(meta "$j24" pgid)" 2>/dev/null
   fi
 else
   if [ "$rc" -eq 7 ] && [ "$out" = "status=lost-unswept pgid=$(meta "$j15" pgid)" ] && [ "$(meta "$j15" state)" = lost-unswept ] && [ "$(grep -c "^job s1 .*: survivors lost-unswept pgid=$(meta "$j15" pgid) jobdir=$j15\$" "$ws/progress.md")" = 1 ]; then pass "without ps, stop on a lost job refuses to signal, names the group and records lost-unswept"; else fail "without ps, stop on a lost job refuses to signal and names the group (rc=$rc: $out)"; fi
@@ -364,7 +407,8 @@ else
   skip "stop on a lost job ends the fenced survivors and leaves the fenceless process (ps unavailable)"
   skip "the lost job's stopped line is written once (ps unavailable)"
   skip "wait on a swept lost job reports lost (ps unavailable)"
-  skip "the /proc fence signals only the processes whose environ carries it (ps unavailable)"
+  skip "the supplied proc tree signals the environment-fenced and the descriptor-fenced process; the unreadable one and the fenceless one are skipped and counted (ps unavailable)"
+  skip "a child that kept only the out.log descriptor is still swept (ps unavailable)"
 fi
 kill -KILL -- "-$(meta "$j15" pgid)" 2>/dev/null
 # concurrent wait and stop on a lost job: whichever writes first wins, the job never ends lost with survivors, no outcome line repeats.

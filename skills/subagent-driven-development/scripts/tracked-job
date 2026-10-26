@@ -184,14 +184,14 @@ RUN_DIR=""; RUN_PID=""; RUN_PGID=""; RUN_STOPPED=0; RUN_PENDING_STOP=0
 # group_alive: any member of the command's group, leader or descendant; kill -0
 # on the negative group id asks the kernel, so it needs no ps.
 group_alive() { kill -0 -- "-$RUN_PGID" 2>/dev/null; }
-stop_group() { # TERM, grace, then KILL while any member survives; marks the job stopped
-  RUN_STOPPED=1
+sweep_group() { # TERM, grace, then KILL while any member survives
   kill -TERM -- "-$RUN_PGID" 2>/dev/null
   # Five polls to the second: the grace is still GRACE seconds, but a command
   # that goes down at once is concluded at once.
   local i=0; while [ "$i" -lt $((GRACE * 5)) ] && group_alive; do sleep 0.2; i=$((i + 1)); done
   group_alive && kill -KILL -- "-$RUN_PGID" 2>/dev/null
 }
+stop_group() { RUN_STOPPED=1; sweep_group; } # the same sweep, marking the job stopped
 # publish_exit <code>: the exit file, written to an exact destination. A shell
 # mv would move the file *into* an "exit" directory the command could have
 # made through TRACKED_JOB_DIR and report success; rename(2) refuses that, and
@@ -208,6 +208,15 @@ finish_run() { # <code>
   # their own handlers, which exit.
   HP_LOCK_KEEP_DISPOSITIONS=1
   [ "$RUN_STOPPED" -eq 1 ] && state=stopped
+  # A terminal record has to mean that nothing of the job still runs, which is
+  # what the stop guard reads from it. A leader can exit with backgrounded
+  # descendants still in its group, so the group is swept here as a stop
+  # sweeps it, and the count below records what outlived the KILL. The state
+  # stays the leader's: this is not a stop.
+  if group_alive; then
+    printf "tracked-job: the command's group outlived its leader (exit %s); sweeping\n" "$code" >> "$RUN_DIR/out.log"
+    sweep_group
+  fi
   if have_ps; then survivors=$(ps -o pid= -g "$RUN_PGID" 2>/dev/null | grep -c .); elif ! group_alive; then survivors=0; fi
   # The terminal state goes first, under the lock and only from running, and
   # the exit file second: a reader that sees exit also sees the state, and a

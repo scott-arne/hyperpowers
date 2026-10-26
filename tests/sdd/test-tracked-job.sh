@@ -91,6 +91,19 @@ if [ "$(cat "$jg/exit" 2>/dev/null)" = 0 ] && [ "$(cat "$repo/fifo-ran.txt" 2>/d
 jx=$(newjob exitdir)
 tj run "$jx" -- bash -c 'mkdir "$TRACKED_JOB_DIR/exit"; exit 5' >/dev/null 2>&1
 if [ "$(meta "$jx" state)" = exited ] && [ "$(meta "$jx" code)" = 5 ] && [ ! -f "$jx/exit" ] && grep -q 'exit file not written' "$jx/out.log"; then pass "an exit file that cannot be published is reported, not faked"; else fail "an exit file that cannot be published is reported, not faked (state=$(meta "$jx" state), code=$(meta "$jx" code), exit file=$([ -f "$jx/exit" ] && echo yes || echo no))"; fi
+# a leader that exits while a backgrounded descendant is still in its group:
+# the record says exited with the leader's code, and nothing of the job is
+# left running behind it.
+jb=$(newjob bgleaf)
+tj run "$jb" -- bash -c 'sleep 30 & echo $! > bg.pid; exit 0' >/dev/null 2>&1
+wait_file "$jb/exit"; bgpid=$(cat "$repo/bg.pid" 2>/dev/null)
+if [ "$(cat "$jb/exit" 2>/dev/null)" = 0 ] && [ "$(meta "$jb" state)" = exited ] && [ "$(meta "$jb" survivors)" = 0 ] && [ -n "$bgpid" ] && ! kill -0 "$bgpid" 2>/dev/null && ! kill -0 -- "-$(meta "$jb" pgid)" 2>/dev/null && grep -q 'outlived its leader' "$jb/out.log"; then pass "a group that outlives its leader is swept before the exit is published"; else fail "a group that outlives its leader is swept before the exit is published (exit=$(cat "$jb/exit" 2>/dev/null), state=$(meta "$jb" state), survivors=$(meta "$jb" survivors), descendant=$(kill -0 "${bgpid:-0}" 2>/dev/null && echo alive || echo gone), swept=$(grep -c 'outlived its leader' "$jb/out.log"))"; fi
+# the same with a descendant that ignores TERM, so the sweep's KILL half runs;
+# a one-second grace keeps the case to a couple of seconds.
+jk=$(newjob bgkill)
+TRACKED_JOB_GRACE_S=1 tj run "$jk" -- bash -c '(trap "" TERM; exec sleep 30) & echo $! > bg2.pid; exit 0' >/dev/null 2>&1
+wait_file "$jk/exit"; bgpid2=$(cat "$repo/bg2.pid" 2>/dev/null)
+if [ "$(cat "$jk/exit" 2>/dev/null)" = 0 ] && [ "$(meta "$jk" state)" = exited ] && [ "$(meta "$jk" survivors)" = 0 ] && [ -n "$bgpid2" ] && ! kill -0 "$bgpid2" 2>/dev/null && ! kill -0 -- "-$(meta "$jk" pgid)" 2>/dev/null && grep -q 'outlived its leader' "$jk/out.log"; then pass "a descendant that ignores TERM is killed before the exit is published"; else fail "a descendant that ignores TERM is killed before the exit is published (exit=$(cat "$jk/exit" 2>/dev/null), state=$(meta "$jk" state), survivors=$(meta "$jk" survivors), descendant=$(kill -0 "${bgpid2:-0}" 2>/dev/null && echo alive || echo gone))"; fi
 # the supervisor's own TERM: the group is swept, the result recorded, state stopped.
 j8=$(newjob trapped); ( tj run "$j8" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
 if ! wait_meta "$j8" run_pid; then fail "a TERM to the supervisor sweeps the command and records the result (no run_pid within 10s)"

@@ -480,6 +480,23 @@ if [ "$HAVE_PS" -eq 1 ]; then
     if [ "$rc" -eq 7 ] && [ "$out" = "status=lost-unswept pgid=$(meta "$j31" pgid)" ] && [ "$(meta "$j31" state)" = lost-unswept ] && kill -0 "$leader31" 2>/dev/null; then pass "a lost job whose process table cannot be listed is lost-unswept, and nothing is signalled"; else fail "a lost job whose process table cannot be listed is lost-unswept, and nothing is signalled (rc=$rc: $out, state=$(meta "$j31" state), leader=$(kill -0 "${leader31:-0}" 2>/dev/null && echo alive || echo gone))"; fi
     kill -KILL -- "-$(meta "$j31" pgid)" 2>/dev/null
   fi
+  # a table that stops answering in the middle of the sweep. Three full
+  # listings precede the first KILL pass's own: the group before the fence
+  # gate, the pre-TERM listing, and then the pass itself, so a shim that
+  # serves two and refuses the rest fails exactly that pass. The TERM has
+  # been sent and a TERM-resistant member is still alive, so concluding
+  # stopped here would record a job that is still running.
+  psmid="$TEST_ROOT/psmid"; mkdir -p "$psmid"; rm -f "$psmid/n"
+  printf '#!/usr/bin/env bash\ncase "$*" in *-eo*) n=$(( $(cat %s 2>/dev/null || echo 0) + 1 )); echo "$n" > %s; [ "$n" -le 2 ] || exit 1 ;; esac\nexec %s "$@"\n' "$psmid/n" "$psmid/n" "$(command -v ps)" > "$psmid/ps"
+  chmod 755 "$psmid/ps"
+  j32=$(newjob midtable); ( tj run "$j32" -- bash -c 'trap "" TERM; sleep 60' >/dev/null 2>&1 ) &
+  if ! wait_launched "$j32"; then fail "a table that fails at the first KILL pass refuses the sweep rather than recording it stopped (the launch did not open within 10s)"
+  else
+    leader32=$(meta "$j32" pid); kill -KILL "$(meta "$j32" run_pid)"; sleep 1
+    out=$(PATH="$psmid:$PATH" TRACKED_JOB_GRACE_S=1 tj stop "$j32"); rc=$?
+    if [ "$rc" -eq 7 ] && [ "$out" = "status=lost-unswept pgid=$(meta "$j32" pgid)" ] && [ "$(meta "$j32" state)" = lost-unswept ] && kill -0 "$leader32" 2>/dev/null; then pass "a table that fails at the first KILL pass refuses the sweep rather than recording it stopped"; else fail "a table that fails at the first KILL pass refuses the sweep rather than recording it stopped (rc=$rc: $out, state=$(meta "$j32" state), survivor=$(kill -0 "${leader32:-0}" 2>/dev/null && echo alive || echo gone), listings=$(cat "$psmid/n" 2>/dev/null))"; fi
+    kill -KILL -- "-$(meta "$j32" pgid)" 2>/dev/null
+  fi
 else
   if [ "$rc" -eq 7 ] && [ "$out" = "status=lost-unswept pgid=$(meta "$j15" pgid)" ] && [ "$(meta "$j15" state)" = lost-unswept ] && [ "$(grep -c "^job s1 .*: survivors lost-unswept pgid=$(meta "$j15" pgid) jobdir=$j15\$" "$ws/progress.md")" = 1 ]; then pass "without ps, stop on a lost job refuses to signal, names the group and records lost-unswept"; else fail "without ps, stop on a lost job refuses to signal and names the group (rc=$rc: $out)"; fi
   out=$(tj wait "$j15" --max-ms 1000); rc=$?
@@ -494,6 +511,7 @@ else
   skip "a child that kept only the out.log descriptor is still swept (ps unavailable)"
   skip "a fenced child forked during the grace does not outlive the sweep (ps unavailable)"
   skip "a lost job whose process table cannot be listed is lost-unswept, and nothing is signalled (ps unavailable)"
+  skip "a table that fails at the first KILL pass refuses the sweep rather than recording it stopped (ps unavailable)"
 fi
 kill -KILL -- "-$(meta "$j15" pgid)" 2>/dev/null
 # concurrent wait and stop on a lost job: whichever writes first wins, the job never ends lost with survivors, no outcome line repeats.

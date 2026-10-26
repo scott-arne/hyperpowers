@@ -608,22 +608,25 @@ cmd_stop() {
   # the job stopped. A pass that finds nothing fenced left ends the sweep.
   # The bound is for what a KILL cannot reach — a process the kernel will
   # not interrupt — which is counted as a survivor, as before.
+  #
+  # Every one of these listings is checked, the counting pass included. A
+  # table that stops answering halfway through the sweep leaves the job in
+  # the state the refusal before the TERM leaves it in: nothing has been
+  # proven dead, so the record names the group and a later stop retries,
+  # rather than concluding stopped over a member a KILL never reached.
   i=0
-  while pids=$(fenced_pids "$dir" "$pgid"); do
+  while :; do
+    pids=$(fenced_pids "$dir" "$pgid") || unswept "$dir" "$state" "$pgid"
     [ -n "$pids" ] || break
     for p in $pids; do if fenced "$p" "$dir"; then kill -KILL "$p" 2>/dev/null; fi; done
     i=$((i + 1))
     sleep 1
     [ "$i" -lt 3 ] || break
   done
-  # Both counts stay at the unreadable marker when the listing fails here:
-  # the sweep has signalled by now, so refusing is no longer truthful, but a
-  # zero would say the group was read and found empty.
-  survivors=-1; skipped=-1
-  if pids=$(fenced_pids "$dir" "$pgid"); then
-    survivors=$(printf '%s\n' "$pids" | grep -c .)
-    if members=$(group_pids "$pgid"); then skipped=$(( $(printf '%s\n' "$members" | grep -c .) - survivors )); fi
-  fi
+  pids=$(fenced_pids "$dir" "$pgid") || unswept "$dir" "$state" "$pgid"
+  survivors=$(printf '%s\n' "$pids" | grep -c .)
+  members=$(group_pids "$pgid") || unswept "$dir" "$state" "$pgid"
+  skipped=$(( $(printf '%s\n' "$members" | grep -c .) - survivors ))
   i=0
   while :; do
     conclude "$dir" "$state" stopped "stopped" "survivors:=$survivors" "skipped:=$skipped" >/dev/null; rc=$?

@@ -224,6 +224,22 @@ git -C "$read_a" remote set-url origin "$chain_good"
 out=$(cd "$read_a" && HYPERPOWERS_TEST_WRITER_AT="sync-after-url-read:$chain_evil" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1r.err"); rc=$?
 co_1r="$STATE_ROOT/$(state_key "$read_a")"
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && [ "$(git -C "$read_a" rev-parse hyperpowers/state)" = "$(git -C "$chain_good" rev-parse hyperpowers/state)" ] && grep -q '^Task 1: the good endpoint$' "$co_1r/plans/$name_1c/progress.md" && ! grep -q 'evil endpoint' "$co_1r/plans/$name_1c/progress.md" && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$read_a").fetched")" = "origin hyperpowers/state $(fp "$read_a")" ]; then pass "a remote repointed right after its URL is read cannot move the fetch: the configured endpoint is reconciled and stamped"; else fail "a remote repointed right after its URL is read cannot move the fetch (rc=$rc: $out: $(sed -n 2p "$co_1r/plans/$name_1c/progress.md" 2>/dev/null): $(tr '\n' '|' < "$TEST_ROOT/p1r.err"))"; fi
+# A url.<base>.insteadOf rule added after the probe. The probe and the
+# fetch are separate git invocations, so a rule that appears between them
+# would rewrite the captured string a second way while both fingerprint
+# checks still agreed; the fetch carries a one-time name instead, which no
+# rule can have been written for.
+make_pair p1w
+rule_a="$PAIR_A"
+mkdir -p "$rule_a/docs"; : > "$rule_a/docs/plan.md"; git -C "$rule_a" add docs; git -C "$rule_a" commit -qm plan
+git -C "$rule_a" remote set-url origin "$chain_good"
+out=$(cd "$rule_a" && HYPERPOWERS_TEST_WRITER_AT="sync-aba-rewrite:$chain_evil" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1w.err"); rc=$?
+co_1w="$STATE_ROOT/$(state_key "$rule_a")"
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && [ "$(git -C "$rule_a" rev-parse hyperpowers/state)" = "$(git -C "$chain_good" rev-parse hyperpowers/state)" ] && grep -q '^Task 1: the good endpoint$' "$co_1w/plans/$name_1c/progress.md" && ! grep -q 'evil endpoint' "$co_1w/plans/$name_1c/progress.md" && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$rule_a").fetched")" = "origin hyperpowers/state $(fp "$rule_a")" ]; then pass "a rewrite rule added after the probe cannot move the fetch: the probed endpoint is reconciled and stamped"; else fail "a rewrite rule added after the probe cannot move the fetch (rc=$rc: $out: $(sed -n 2p "$co_1w/plans/$name_1c/progress.md" 2>/dev/null): $(tr '\n' '|' < "$TEST_ROOT/p1w.err"))"; fi
+# The pin lives in the environment for the length of one fetch: neither the
+# alias, nor the one-time name, nor the endpoint it maps to is written to
+# the repository's config, and the seam's own rule is gone with it.
+if ! git -C "$rule_a" config --get-regexp '^remote\.hp-fetch-' >/dev/null 2>&1 && ! git -C "$rule_a" config --get-regexp '^url\.' >/dev/null 2>&1; then pass "the pinned fetch leaves no alias and no url rewrite in the repository's config"; else fail "the pinned fetch leaves no alias and no url rewrite in the repository's config ($(git -C "$rule_a" config --get-regexp '^remote\.hp-fetch-'; git -C "$rule_a" config --get-regexp '^url\.'))"; fi
 # The fetched tip is read from a private ref, refs/hp-fetch/<pid>. Read
 # from the shared remote-tracking ref, a fetch another process finished in
 # between would hand this sync a commit the pinned endpoint never served.
@@ -257,7 +273,7 @@ git -C "$PAIR_B" update-ref -d "refs/hp-fetch/$$"
 # No private ref outlives a sync, whatever its outcome: the fixtures above
 # cover a refused stamp, an absent branch, a refused alias, a pinned fetch
 # and a reconciled one.
-if [ -z "$(git -C "$p1_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$chain_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$read_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_A" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_B" for-each-ref refs/hp-fetch)" ]; then pass "no private fetch ref outlives a sync"; else fail "no private fetch ref outlives a sync ($(git -C "$p1_a" for-each-ref refs/hp-fetch; git -C "$chain_a" for-each-ref refs/hp-fetch; git -C "$read_a" for-each-ref refs/hp-fetch; git -C "$PAIR_A" for-each-ref refs/hp-fetch; git -C "$PAIR_B" for-each-ref refs/hp-fetch))"; fi
+if [ -z "$(git -C "$p1_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$chain_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$read_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$rule_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_A" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_B" for-each-ref refs/hp-fetch)" ]; then pass "no private fetch ref outlives a sync"; else fail "no private fetch ref outlives a sync ($(git -C "$p1_a" for-each-ref refs/hp-fetch; git -C "$chain_a" for-each-ref refs/hp-fetch; git -C "$read_a" for-each-ref refs/hp-fetch; git -C "$rule_a" for-each-ref refs/hp-fetch; git -C "$PAIR_A" for-each-ref refs/hp-fetch; git -C "$PAIR_B" for-each-ref refs/hp-fetch))"; fi
 
 # Crash after the worktree add: the next call starts clean.
 r4="$TEST_ROOT/r4"; make_repo "$r4"

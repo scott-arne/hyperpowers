@@ -209,11 +209,15 @@ would be rewritten a second time, to an endpoint the fingerprint never
 named; the fingerprint is of that captured string after one rewriting,
 obtained by expanding the pinned alias itself rather than by reading
 the remote again, so no repoint between the read and the stamp can
-part the two, and the stamp names the effective endpoint while a
-changed rewrite asks for a `sync` like a changed URL). The stamp
-governs creation only: a state branch that already exists here is
-continued, and the next `sync` reconciles it with whatever the remote
-holds.
+part the two. The fetch is then pinned not to the captured URL but to
+a one-time name the environment maps to the endpoint that expansion
+returned, so a rewrite rule that changes after it cannot move the
+fetch either: the endpoint probed, the endpoint fingerprinted and the
+endpoint contacted are one string. The stamp names the effective
+endpoint, and a changed rewrite asks for a `sync` like a changed
+URL). The stamp governs creation only: a state branch that already
+exists here is continued, and the next `sync` reconciles it with
+whatever the remote holds.
 Without either, `sdd-dir` exits 2 with `status=needs-sync`: a fresh host
 that is offline must not invent an empty dossier while a remote one may
 exist. `sync --assume-absent PLAN` writes the stamp without fetching, for
@@ -358,7 +362,9 @@ substitute a commit this endpoint never served;
 compare-and-swap against the value it held before the fetch, and a swap
 this sync loses belongs to the fetch that won it. The private ref is
 removed on every exit from the fetch, and one whose owner is gone is
-removed before it. `sync` writes the
+removed before it. The fetch itself is addressed by a one-time name the
+environment maps to the endpoint the pin was resolved to, so no rewrite
+rule that appears afterwards can redirect it. `sync` writes the
 `<key>.fetched` stamp (`<remote> <branch> <fingerprint>`, the fingerprint
 being the first 12 hex digits of the SHA-256 of the remote's fetch URL, or
 `none` when the remote has no URL) on every outcome except

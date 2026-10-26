@@ -1492,7 +1492,7 @@ apply_target() {
   esac
 }
 cmd_sync() {
-  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure url_before url_pin fp_before fp_after n fetch_ref stale_ref old_remote
+  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure url_before url_pin fp_before fp_after n nonce pin_count fetch_ref stale_ref old_remote
   REMOTE_FINISHED=""
   # remove_verified (Task 6) and recover_apply live in this file; sync, finish, handoff and snapshot share them.
   while [ $# -gt 0 ]; do
@@ -1608,6 +1608,40 @@ cmd_sync() {
   else
     url_before=""; fp_before=none
   fi
+  # Test hook: a rewrite rule for the probed endpoint, added in the window
+  # between the probe and the fetch and removed right after it.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-aba-rewrite:*) git -C "$PLAN_DIR" config "url.${HYPERPOWERS_TEST_WRITER_AT#sync-aba-rewrite:}.insteadOf" "$url_before" ;; esac
+  # The probe and the fetch are separate git invocations, each applying the
+  # rewrite rules it finds, so a rule added between them would send the
+  # fetch somewhere the fingerprint never named. The fetch therefore does
+  # not carry the captured URL at all: the alias is repinned to a one-time
+  # name, and a second environment entry maps that name to the endpoint the
+  # probe returned. git rewrites a URL once and prefers the strictly
+  # longest matching insteadOf, so the only rule that could compete is one
+  # whose insteadOf is this exact name, and the name is 128 bits this sync
+  # invented a moment ago: no config file can hold a rule for it, and a
+  # repository rule for the endpoint itself never applies, because what is
+  # matched is the one-time name and not the endpoint. That is why the
+  # uniqueness check above covers the alias and not url.<endpoint>. Should
+  # the mapping somehow fail to apply, the fetch is handed the hp-pin://
+  # URL itself, which no git transport serves, so it fails and reads as
+  # offline instead of contacting anything.
+  pin_count=$((n + 1))
+  if [ -n "$url_before" ]; then
+    nonce=$(node -e 'process.stdout.write(require("crypto").randomBytes(16).toString("hex"))' 2>/dev/null) || nonce=""
+    case "$nonce" in ????????????????????????????????) ;; *) nonce="" ;; esac
+    case "$nonce" in *[!0-9a-f]*) nonce="" ;; esac
+    if [ -z "$nonce" ]; then
+      unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
+      echo "sdd-state: the one-time name the pinned fetch is addressed by could not be generated (node is required); nothing was stamped. Run sdd-state sync again" >&2
+      echo "status=error"; return 2
+    fi
+    printf -v "GIT_CONFIG_VALUE_$n" '%s' "hp-pin://$nonce/"
+    printf -v "GIT_CONFIG_KEY_$((n + 1))" '%s' "url.$url_before.insteadOf"
+    printf -v "GIT_CONFIG_VALUE_$((n + 1))" '%s' "hp-pin://$nonce/"
+    export "GIT_CONFIG_KEY_$((n + 1))" "GIT_CONFIG_VALUE_$((n + 1))"
+    pin_count=$((n + 2))
+  fi
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
     sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-aba-fetch:}" ;;
   esac
@@ -1623,13 +1657,14 @@ cmd_sync() {
     hp_pid_gone "${stale_ref##*/}" && git -C "$PLAN_DIR" update-ref -d "$stale_ref" 2>/dev/null
   done
   old_remote=$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")
-  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 GIT_CONFIG_COUNT=$((n + 1)) git -C "$PLAN_DIR" fetch -q "hp-fetch-$$" "+refs/heads/$BRANCH:$fetch_ref" 2>&1); rc=$?
-  unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
+  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 GIT_CONFIG_COUNT=$pin_count git -C "$PLAN_DIR" fetch -q "hp-fetch-$$" "+refs/heads/$BRANCH:$fetch_ref" 2>&1); rc=$?
+  unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n" "GIT_CONFIG_KEY_$((n + 1))" "GIT_CONFIG_VALUE_$((n + 1))"
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
     # Both repoint seams put the captured URL back, so stamp_fetched's
     # re-read sees the remote the fingerprint named.
     sync-aba-fetch:*|sync-after-url-read:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "$url_pin" ;;
     sync-after-fetch-set-url:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch-set-url:}" ;;
+    sync-aba-rewrite:*) git -C "$PLAN_DIR" config --remove-section "url.${HYPERPOWERS_TEST_WRITER_AT#sync-aba-rewrite:}" ;;
     # Test hook: another process's fetch finishes between this one and the
     # read of its tip, leaving its own commit in the shared ref.
     sync-after-fetch:*) git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch:}" 2>/dev/null ;;

@@ -32,7 +32,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Set by remove_verified when it leaves a verified copy at its tomb.
 TOMB=""
-# Set by remove_verified the moment it starts deleting a verified copy, and
+# Set by discard_tomb, the one primitive that deletes a verified copy, and
 # never cleared: from that point the deletion may have taken the ledger
 # with it, so a staged receipt is the only copy left and is never discarded.
 REMOVAL_BEGAN=0
@@ -639,6 +639,9 @@ restore_tomb() {
 # <tomb>: delete a verified copy. A copy that survives the deletion is named;
 # the caller decides whether what remains goes back.
 discard_tomb() {
+  # The deletion starts here: from this line on the copy may be partly
+  # gone, the ledger with it, so a staged receipt is never discarded.
+  REMOVAL_BEGAN=1
   rm -rf "$1" 2>/dev/null
   [ ! -e "$1" ] || { echo "sdd-state: could not delete the removed copy at $1" >&2; return 2; }
   TOMB=""
@@ -698,9 +701,6 @@ remove_verified() {
   if [ -e "$dir" ] || [ -L "$dir" ]; then restore_tomb "$dir" "$tomb"; return 1; fi
   TOMB=$tomb
   [ -z "$keep" ] || return 0
-  # Past this line the copy is being unlinked: a deletion that fails part
-  # way has already taken whatever it reached, the ledger included.
-  REMOVAL_BEGAN=1
   discard_tomb "$tomb" || { restore_tomb "$dir" "$tomb"; return 2; }
   return 0
 }
@@ -712,35 +712,83 @@ remove_verified() {
 # is the record a reader needs, not an archive.
 RECEIPT_STAGING=""; RECEIPT_FINAL=""
 stage_receipt() {
-  local src=$1 name=$2 root stamp j
+  local src=$1 name=$2 root stamp
   root="$(hp_cache_root)/receipts"
   mkdir -p "$root" || return 1
   [ -f "$src/progress.md" ] || { echo "sdd-state: $src has no progress.md; refusing to finish a workspace whose record cannot be kept" >&2; return 1; }
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
-  RECEIPT_FINAL="$root/$name-$stamp"; [ -e "$RECEIPT_FINAL" ] && RECEIPT_FINAL="$RECEIPT_FINAL-$$"
-  RECEIPT_STAGING="$root/.staging-$(basename "$RECEIPT_FINAL")"
-  mkdir "$RECEIPT_STAGING" 2>/dev/null || { echo "sdd-state: the receipt for $name could not be staged at $RECEIPT_STAGING; finish removes nothing it cannot record" >&2; return 1; }
-  cp "$src/progress.md" "$RECEIPT_STAGING/progress.md" || { rm -rf "$RECEIPT_STAGING"; return 1; }
-  if [ -f "$src/stop-guard.jsonl" ]; then cp "$src/stop-guard.jsonl" "$RECEIPT_STAGING/stop-guard.jsonl" || { rm -rf "$RECEIPT_STAGING"; return 1; }; fi
+  RECEIPT_FINAL="$root/$name-$stamp"
+  RECEIPT_STAGING="$root/.staging-$name-$stamp"
+  # A staging of that name belongs to another finish of this same second
+  # (another repository whose plan has this name): take a private one
+  # rather than refuse. The final name is resolved at publication.
+  if ! mkdir "$RECEIPT_STAGING" 2>/dev/null; then
+    RECEIPT_STAGING="$RECEIPT_STAGING-$$"
+    mkdir "$RECEIPT_STAGING" 2>/dev/null || { echo "sdd-state: the receipt for $name could not be staged at $RECEIPT_STAGING; finish removes nothing it cannot record" >&2; return 1; }
+  fi
+  # The owner, as the lock writes one: prune leaves an unmarked staging
+  # alone while the finish building it is alive, whatever --days says.
+  hp_write_owner "$RECEIPT_STAGING/owner" 2>/dev/null || { rm -rf "$RECEIPT_STAGING"; echo "sdd-state: the receipt for $name could not record its owner at $RECEIPT_STAGING; finish removes nothing it cannot record" >&2; return 1; }
+  copy_records "$src" || { rm -rf "$RECEIPT_STAGING"; echo "sdd-state: the records of $src could not be copied into $RECEIPT_STAGING; finish removes nothing it cannot record" >&2; return 1; }
+  return 0
+}
+# copy_records <src>: the records a receipt holds, copied into the staging.
+# It runs twice. Once when the staging is created, so a finish that cannot
+# record refuses before it removes anything; once from the copy the removal
+# has verified, immediately before that copy is deleted, so a line appended
+# between the two does not go to the grave with the workspace while the
+# receipt keeps the older bytes.
+copy_records() { # <src>
+  local src=$1 j
+  [ -f "$src/progress.md" ] || return 1
+  cp "$src/progress.md" "$RECEIPT_STAGING/progress.md" || return 1
+  if [ -f "$src/stop-guard.jsonl" ]; then cp "$src/stop-guard.jsonl" "$RECEIPT_STAGING/stop-guard.jsonl" || return 1; fi
+  rm -rf "$RECEIPT_STAGING/jobs"
   for j in "$src"/jobs/*/; do
     [ -f "$j/meta.json" ] || continue
-    mkdir -p "$RECEIPT_STAGING/jobs/$(basename "$j")" || { rm -rf "$RECEIPT_STAGING"; return 1; }
-    cp "$j/meta.json" "$RECEIPT_STAGING/jobs/$(basename "$j")/meta.json" || { rm -rf "$RECEIPT_STAGING"; return 1; }
-    if [ -f "$j/exit" ]; then cp "$j/exit" "$RECEIPT_STAGING/jobs/$(basename "$j")/exit" || { rm -rf "$RECEIPT_STAGING"; return 1; }; fi
+    mkdir -p "$RECEIPT_STAGING/jobs/$(basename "$j")" || return 1
+    cp "$j/meta.json" "$RECEIPT_STAGING/jobs/$(basename "$j")/meta.json" || return 1
+    if [ -f "$j/exit" ]; then cp "$j/exit" "$RECEIPT_STAGING/jobs/$(basename "$j")/exit" || return 1; fi
   done
+  return 0
+}
+# refresh_receipt <src>: the second copy, from the verified <src> (the
+# renamed-aside copy under the plain backend, the snapshotted workspace
+# under the branch backend). A refresh that fails stops the finish before
+# anything is removed.
+refresh_receipt() { # <src>
+  copy_records "$1" || { echo "sdd-state: the receipt at $RECEIPT_STAGING could not be refreshed from $1; nothing was removed" >&2; return 1; }
   return 0
 }
 # commit_receipt runs after the removal, so it never discards: the rename is
 # retried, and a staging that still cannot be renamed is marked FINISHED and
 # reported as the receipt under its staging name.
 RECEIPT_PATH=""; RECEIPT_STAGED=""
+# publish_receipt: the rename that turns the staging into a receipt. It goes
+# through node because rename(2) refuses to replace a non-empty directory,
+# where a shell mv on macOS moves the staging inside it; the name another
+# repository's finish took in this same second is left alone and this
+# receipt takes the next numeric suffix, which is the name reported.
+publish_receipt() {
+  local target=$RECEIPT_FINAL n=2
+  # Test hook: another finish holds the name this one computed.
+  if [ -n "${HYPERPOWERS_TEST_OCCUPY_RECEIPT:-}" ]; then mkdir -p "$RECEIPT_FINAL" 2>/dev/null; printf 'theirs\n' > "$RECEIPT_FINAL/progress.md" 2>/dev/null; fi
+  while [ "$n" -le 10 ]; do
+    if [ ! -e "$target" ] && node -e 'require("fs").renameSync(process.argv[1], process.argv[2])' "$RECEIPT_STAGING" "$target" 2>/dev/null; then
+      RECEIPT_PATH=$target; return 0
+    fi
+    target="$RECEIPT_FINAL-$n"; n=$((n + 1))
+  done
+  return 1
+}
 commit_receipt() {
   local i=0
   # The marker first: it says Finish's removal and commit are done, so it may
-  # exist only from here on; a renamed receipt keeps it harmlessly.
-  if [ -z "${HYPERPOWERS_TEST_FAIL_MARKER:-}" ]; then : > "$RECEIPT_STAGING/FINISHED" 2>/dev/null; fi
+  # exist only from here on; a renamed receipt keeps it harmlessly. The owner
+  # goes with it, having only ever meant "a finish is still building this".
+  if [ -z "${HYPERPOWERS_TEST_FAIL_MARKER:-}" ]; then : > "$RECEIPT_STAGING/FINISHED" 2>/dev/null && rm -f "$RECEIPT_STAGING/owner" 2>/dev/null; fi
   while [ "$i" -lt 3 ]; do
-    if [ -z "${HYPERPOWERS_TEST_FAIL_RENAME:-}" ] && mv "$RECEIPT_STAGING" "$RECEIPT_FINAL" 2>/dev/null; then RECEIPT_PATH=$RECEIPT_FINAL; return 0; fi
+    if [ -z "${HYPERPOWERS_TEST_FAIL_RENAME:-}" ] && publish_receipt; then return 0; fi
     i=$((i + 1))
     if [ "$i" -lt 3 ]; then sleep 1; fi
   done
@@ -753,20 +801,22 @@ commit_receipt() {
 discard_receipt() { [ -n "$RECEIPT_STAGING" ] && rm -rf "$RECEIPT_STAGING"; RECEIPT_STAGING=""; }
 # release_receipt <wsdir>: what a failed finish does with its staging. A
 # removal that refused before deleting anything leaves the workspace whole,
-# so the staging is discarded; once the deletion has begun the staging can
-# be the only copy of the ledger left, so it is published and named.
+# so the staging is discarded. Once the deletion has begun the staging can
+# be the only copy of the ledger left, so it stays — but unmarked and under
+# its staging name, because this finish did not finish: no reader counts an
+# unmarked staging as a receipt. It is named on stderr for its human.
 release_receipt() {
   if [ "$REMOVAL_BEGAN" -eq 1 ]; then
-    commit_receipt
-    echo "sdd-state: the removal of $1 failed after it had begun; the record is at $(receipt_where)" >&2
+    echo "sdd-state: the removal of $1 failed after it had begun; the record is at $RECEIPT_STAGING, which is not a receipt: no finish is recorded" >&2
     return 0
   fi
   discard_receipt
 }
-# The receipt field of a finished line. Receipt paths print unencoded: one
-# key, one reading rule, wherever receipt= appears.
+# The receipt field of a finished line. Both paths go through enc, the
+# script's one encoding for a path-valued stdout field (a space becomes
+# %20), so the line stays readable as space-separated key=value pairs.
 receipt_field() {
-  if [ "$RECEIPT_PATH" = none ]; then printf 'receipt=none staging=%s' "$RECEIPT_STAGED"; else printf 'receipt=%s' "$RECEIPT_PATH"; fi
+  if [ "$RECEIPT_PATH" = none ]; then printf 'receipt=none staging=%s' "$(enc "$RECEIPT_STAGED")"; else printf 'receipt=%s' "$(enc "$RECEIPT_PATH")"; fi
 }
 # The same location in a sentence a human reads.
 receipt_where() {
@@ -803,18 +853,30 @@ cmd_finish() {
   # destroyed without a durable copy of its record. Every failure before
   # the removal discards the staging; none after it does.
   stage_receipt "$WSDIR" "$WS" || { hp_unlock; echo "status=error"; return 2; }
+  # Test hook: an unlocked append that lands after the staging, which the
+  # refresh below has to carry into the receipt.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in finish-after-stage:*) printf 'concurrent write\n' >> "$WSDIR/${HYPERPOWERS_TEST_WRITER_AT#finish-after-stage:}" ;; esac
   if [ "$BACKEND" != branch ]; then
     SIZE_BEFORE=$(wc -c < "$WSDIR/progress.md" 2>/dev/null | tr -d ' ')
-    remove_verified "$WSDIR" ""; rc=$?
-    hp_unlock
+    # `keep` so the copy the size check verified is still there to be read:
+    # the receipt records what is deleted, not what was staged before it.
+    remove_verified "$WSDIR" "" keep; rc=$?
     case "$rc" in
-      0) commit_receipt; echo "status=finished backend=plain $(receipt_field)"; return 0 ;;
-      1) release_receipt "$WSDIR"; echo "status=busy"; return 3 ;;
-      *) release_receipt "$WSDIR"; echo "status=error"; return 2 ;;
+      0) ;;
+      1) release_receipt "$WSDIR"; hp_unlock; echo "status=busy"; return 3 ;;
+      *) release_receipt "$WSDIR"; hp_unlock; echo "status=error"; return 2 ;;
     esac
+    if ! refresh_receipt "$TOMB"; then restore_tomb "$WSDIR" "$TOMB"; release_receipt "$WSDIR"; hp_unlock; echo "status=error"; return 2; fi
+    if ! discard_tomb "$TOMB"; then restore_tomb "$WSDIR" "$TOMB"; release_receipt "$WSDIR"; hp_unlock; echo "status=error"; return 2; fi
+    hp_unlock
+    commit_receipt; echo "status=finished backend=plain $(receipt_field)"; return 0
   fi
   hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: snapshot before finish" "plans/$WS" >/dev/null || { release_receipt "$WSDIR"; hp_unlock; echo "status=error"; return 2; }
   last=$(git -C "$CO" rev-parse "refs/heads/$BRANCH")
+  # What the snapshot holds is what the receipt holds: the commit above has
+  # just recorded the workspace, and the removal below verifies it against
+  # that same commit.
+  refresh_receipt "$WSDIR" || { release_receipt "$WSDIR"; hp_unlock; echo "status=error"; return 2; }
   # Controllers append without the lock: the removal renames the directory
   # aside and verifies it against the snapshot before deleting it.
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
@@ -862,8 +924,17 @@ mtime_of() { # <path>
 # it is listed as stale=1 and pruned like the rest. Receipts belong to the
 # cache, not to any one repository: this path needs no repository and takes
 # no lock.
+# pid_alive <pid>: kill -0 with only "No such process" read as dead. EPERM
+# is another user's live process, or a sandbox that will not say, and counts
+# as alive: the question here is whether a staging may still be in use.
+pid_alive() { # <pid>
+  local err
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  err=$(LC_ALL=C kill -0 "$1" 2>&1) && return 0
+  case "$err" in *"No such process"*) return 1 ;; *) return 0 ;; esac
+}
 prune_receipts() { # <days> <apply>
-  local days=$1 apply=$2 root d now cutoff m age n=0 stale
+  local days=$1 apply=$2 root d now cutoff m age mark owner listed=0 removed=0 failed=0
   root="$(hp_cache_root)/receipts"
   now=$(date +%s); cutoff=$((now - days * 86400))
   for d in "$root"/*/ "$root"/.staging-*/; do
@@ -873,13 +944,29 @@ prune_receipts() { # <days> <apply>
     [ -n "$m" ] || continue
     [ "$m" -lt "$cutoff" ] || continue
     age=$(( (now - m) / 86400 ))
-    stale=""
-    case "$(basename "$d")" in .staging-*) [ -f "$d/FINISHED" ] || stale=" stale=1" ;; esac
-    printf 'receipt=%s age_days=%s%s\n' "$d" "$age" "$stale"
-    n=$((n + 1))
-    if [ "$apply" -eq 1 ]; then rm -rf "$d"; fi
+    # An unmarked staging is either a finish still building one, which no
+    # threshold may take away, or the remains of one that died.
+    mark=""
+    case "$(basename "$d")" in
+      .staging-*)
+        if [ ! -f "$d/FINISHED" ]; then
+          owner=$(sed -n 's/^pid=//p' "$d/owner" 2>/dev/null)
+          if pid_alive "$owner"; then mark=" active=1"; else mark=" stale=1"; fi
+        fi ;;
+    esac
+    printf 'receipt=%s age_days=%s%s\n' "$(enc "$d")" "$age" "$mark"
+    listed=$((listed + 1))
+    case "$mark" in *active=1*) continue ;; esac
+    [ "$apply" -eq 1 ] || continue
+    rm -rf "$d" 2>/dev/null
+    if [ -e "$d" ]; then echo "sdd-state: the receipt at $d could not be deleted" >&2; failed=1; continue; fi
+    removed=$((removed + 1))
   done
-  if [ "$apply" -eq 1 ]; then echo "status=pruned receipts=$n"; else echo "status=listed receipts=$n"; fi
+  if [ "$apply" -eq 0 ]; then echo "status=listed receipts=$listed"; return 0; fi
+  # Only confirmed removals are counted, and one that failed is an error:
+  # a prune that leaves receipts behind has not pruned them.
+  [ "$failed" -eq 0 ] || { echo "status=error"; return 2; }
+  echo "status=pruned receipts=$removed"
   return 0
 }
 # Lists, and with --apply removes, plan directories idle for N days (last

@@ -777,6 +777,10 @@ wsp2=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp2/progre
 out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -q '^concurrent write$' "$wsp2/progress.md" && ! ls -d "$wsp2"/.removing-* >/dev/null 2>&1 && [ "$(cat "$wsp2".reappeared-*/task-2-report.md 2>/dev/null)" = "written after rename" ]; then pass "under the plain backend a changed copy restored over a recreated workspace is not nested either"; else fail "under the plain backend a changed copy restored over a recreated workspace is not nested (rc=$rc: $out)"; fi
 rm -rf "$wsp2".reappeared-*
+wsp4=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp4/progress.md"
+out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="finish-after-stage:progress.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
+recp4=$(printf '%s' "$out" | sed -n 's/.*receipt=\([^ ]*\).*/\1/p')
+if [ "$rc" -eq 0 ] && [ -f "$recp4/progress.md" ] && grep -q '^concurrent write$' "$recp4/progress.md" && [ ! -d "$wsp4" ]; then pass "under the plain backend the receipt holds a line appended after the staging"; else fail "under the plain backend the receipt holds a line appended after the staging (rc=$rc: $out)"; fi
 wsp3=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp3/progress.md"; mkdir "$wsp3/held"; : > "$wsp3/held/f"; chmod 555 "$wsp3/held"
 out=$(run_state "$rp" finish docs/plan.md 2>"$TEST_ROOT/wsp3.err"); rc=$?
 err=$(cat "$TEST_ROOT/wsp3.err")
@@ -785,7 +789,17 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && printf '%s' "$err" | grep -
 # The failed deletion already took the ledger: the receipt is the only copy
 # of it left, so a finish that fails after the deletion began keeps it.
 recp3=$(sed -n 's/.*the record is at \([^ ,]*\).*/\1/p' "$TEST_ROOT/wsp3.err")
-if [ -n "$recp3" ] && [ -f "$recp3/progress.md" ] && [ "$(cat "$recp3/progress.md")" = "x" ] && [ ! -e "$wsp3/progress.md" ]; then pass "a deletion that had begun keeps the receipt as the only copy of the ledger and names it"; else fail "a deletion that had begun keeps the receipt as the only copy of the ledger and names it (receipt='$recp3'; err=$err)"; fi
+case "$(basename "$recp3")" in .staging-*) unmarked3=1 ;; *) unmarked3=0 ;; esac
+if [ -n "$recp3" ] && [ -f "$recp3/progress.md" ] && [ "$(cat "$recp3/progress.md")" = "x" ] && [ ! -e "$wsp3/progress.md" ] && [ "$unmarked3" = 1 ] && [ ! -e "$recp3/FINISHED" ]; then pass "a deletion that had begun keeps the copy of the ledger as an unmarked staging and names it"; else fail "a deletion that had begun keeps the copy of the ledger as an unmarked staging and names it (receipt='$recp3'; err=$err)"; fi
+# A consumer discovers final names and FINISHED-marked stagings: a finish
+# that returned status=error is not among them.
+seen3=0
+for c in "$XDG_CACHE_HOME"/hyperpowers/receipts/*/ "$XDG_CACHE_HOME"/hyperpowers/receipts/.staging-*/; do
+    [ -d "$c" ] || continue
+    case "$(basename "$c")" in .staging-*) [ -f "$c/FINISHED" ] || continue ;; esac
+    [ "${c%/}" = "$recp3" ] && seen3=1
+done
+if [ "$seen3" -eq 0 ]; then pass "no consumer reads the failed finish's copy as a finished plan"; else fail "no consumer reads the failed finish's copy as a finished plan ($recp3)"; fi
 rm -rf "$wsp3"
 
 echo ""

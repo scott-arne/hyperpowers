@@ -86,18 +86,58 @@ printf '# SDD ledger — plan: docs/plan.md\nsession s4: mode worktree on main a
 out=$(HYPERPOWERS_TEST_FAIL_RENAME=1 HYPERPOWERS_TEST_FAIL_MARKER=1 run_state "$repo" finish docs/plan.md); rc=$?
 st=$(printf '%s' "$out" | sed -n 's/.*staging=\([^ ]*\).*/\1/p')
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^status=finished' && printf '%s' "$out" | grep -q ' receipt=none staging=' && [ -f "$st/progress.md" ] && [ ! -e "$st/FINISHED" ] && [ ! -d "$ws" ]; then pass "a staging that can be neither renamed nor marked is reported as receipt=none with its path"; else fail "a staging that can be neither renamed nor marked is reported as receipt=none with its path (rc=$rc: $out)"; fi
+# an append that lands after the staging is in the receipt: the record is
+# refreshed from the copy the removal verified, not from the older bytes.
+ws=$(run_sdd_dir "$repo" docs/plan.md 2>/dev/null)
+printf '# SDD ledger — plan: docs/plan.md\nsession s5: mode worktree on main at %s started 2026-10-23T00:00:00Z\n' "$repo" > "$ws/progress.md"
+out=$(cd "$repo" && HYPERPOWERS_TEST_WRITER_AT="finish-after-stage:progress.md" bash "$SDD_STATE" finish docs/plan.md); rc=$?
+r=$(printf '%s' "$out" | sed -n 's/.*receipt=\([^ ]*\).*/\1/p')
+if [ "$rc" -eq 0 ] && [ -f "$r/progress.md" ] && grep -q '^concurrent write$' "$r/progress.md" && [ ! -d "$ws" ]; then pass "a line appended after the staging is in the receipt the finish publishes"; else fail "a line appended after the staging is in the receipt the finish publishes (rc=$rc: $out)"; fi
+# the published receipt carries no owner file: it only ever meant "a finish is still building this"
+if [ ! -e "$r/owner" ] && [ -f "$r/FINISHED" ]; then pass "the owner file does not outlive the staging"; else fail "the owner file does not outlive the staging ($(ls -A "$r" | tr '\n' ' '))"; fi
+# another repository's finish took the final name in the same second: the
+# rename never replaces it or nests inside it, the receipt takes a suffix.
+ws=$(run_sdd_dir "$repo" docs/plan.md 2>/dev/null)
+printf '# SDD ledger — plan: docs/plan.md\nsession s6: mode worktree on main at %s started 2026-10-23T00:00:00Z\n' "$repo" > "$ws/progress.md"
+out=$(cd "$repo" && HYPERPOWERS_TEST_OCCUPY_RECEIPT=1 bash "$SDD_STATE" finish docs/plan.md); rc=$?
+r=$(printf '%s' "$out" | sed -n 's/.*receipt=\([^ ]*\).*/\1/p')
+if [ "$rc" -eq 0 ] && [ "${r%-2}" != "$r" ] && [ -f "$r/FINISHED" ] && grep -q '^session s6' "$r/progress.md" && [ "$(cat "${r%-2}/progress.md")" = "theirs" ]; then pass "a receipt whose name is taken is published beside it under a numeric suffix"; else fail "a receipt whose name is taken is published beside it under a numeric suffix (rc=$rc: $out)"; fi
+# a plan name with a space: one token on the line, decoded with the script's %20 convention
+mkdir -p "$repo/docs"; printf '# Plan\n\n### Task 1: one\n' > "$repo/docs/my plan.md"
+git -C "$repo" add "docs/my plan.md"; git -C "$repo" commit -qm "plan with a space"
+wsx=$(run_sdd_dir "$repo" "docs/my plan.md" 2>/dev/null)
+printf '# SDD ledger — plan: docs/my plan.md\nsession s7: mode worktree on main at %s started 2026-10-23T00:00:00Z\n' "$repo" > "$wsx/progress.md"
+out=$(run_state "$repo" finish "docs/my plan.md"); rc=$?
+r=$(printf '%s' "$out" | sed -n 's/.*receipt=\([^ ]*\).*/\1/p')
+dec=$(printf '%s' "$r" | sed 's/%20/ /g')
+if [ "$rc" -eq 0 ] && [ -n "$r" ] && [ "$r" != "$dec" ] && [ -f "$dec/progress.md" ] && [ ! -d "$wsx" ]; then pass "a plan name with a space leaves receipt= one token that decodes to the receipt"; else fail "a plan name with a space leaves receipt= one token that decodes to the receipt (rc=$rc: $out)"; fi
+rm -rf "$dec"
 # a finished receipt keeps its marker harmlessly, and the hook and analyzer accept it by name alone (Tasks 6 and 14).
+young_final=$(find "$RECEIPTS" -maxdepth 1 -mindepth 1 ! -name '.*' | wc -l | tr -d ' ')
+young_staging=$(find "$RECEIPTS" -maxdepth 1 -mindepth 1 -name '.staging-*' | wc -l | tr -d ' ')
 old="$RECEIPTS/old-ws-20200101T000000Z"; mkdir -p "$old"; printf 'x\n' > "$old/progress.md"; touch -t 202001010000 "$old" "$old/progress.md"
 stale="$RECEIPTS/.staging-old2-20200101T000000Z"; mkdir -p "$stale"; touch -t 202001010000 "$stale"
 finished="$RECEIPTS/.staging-old3-20200101T000000Z"; mkdir -p "$finished"; printf 'x\n' > "$finished/progress.md"; : > "$finished/FINISHED"; touch -t 202001010000 "$finished" "$finished/progress.md" "$finished/FINISHED"
 out=$(run_state "$repo" prune --receipts --days 30); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "old-ws-20200101T000000Z" && printf '%s' "$out" | grep -q ".staging-old2.*stale=1" && printf '%s' "$out" | grep -q ".staging-old3" && ! printf '%s' "$out" | grep -q ".staging-old3.*stale=1" && [ -d "$old" ] && printf '%s' "$out" | grep -q '^status=listed receipts=3$'; then pass "prune --receipts lists old receipts, marks stale stagings, and leaves everything without --apply"; else fail "prune --receipts lists old receipts, marks stale stagings, and leaves everything without --apply (rc=$rc: $out)"; fi
 out=$(run_state "$repo" prune --receipts --days 30 --apply); rc=$?
-if [ "$rc" -eq 0 ] && [ ! -d "$old" ] && [ ! -d "$stale" ] && [ ! -d "$finished" ] && [ "$(find "$RECEIPTS" -maxdepth 1 -mindepth 1 ! -name '.*' | wc -l | tr -d ' ')" = 2 ] && [ "$(find "$RECEIPTS" -maxdepth 1 -mindepth 1 -name '.staging-*' | wc -l | tr -d ' ')" = 2 ] && printf '%s' "$out" | grep -q '^status=pruned receipts=3$'; then pass "prune --receipts --apply removes only the old ones and keeps the two young stagings"; else fail "prune --receipts --apply removes only the old ones and keeps the two young stagings (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ ! -d "$old" ] && [ ! -d "$stale" ] && [ ! -d "$finished" ] && [ "$(find "$RECEIPTS" -maxdepth 1 -mindepth 1 ! -name '.*' | wc -l | tr -d ' ')" = "$young_final" ] && [ "$(find "$RECEIPTS" -maxdepth 1 -mindepth 1 -name '.staging-*' | wc -l | tr -d ' ')" = "$young_staging" ] && printf '%s' "$out" | grep -q '^status=pruned receipts=3$'; then pass "prune --receipts --apply removes only the old ones and keeps every young one"; else fail "prune --receipts --apply removes only the old ones and keeps every young one (rc=$rc: $out)"; fi
 out=$(run_state "$repo" prune --receipts --days 30); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=listed receipts=0" ]; then pass "a receipt younger than --days is left out of the listing"; else fail "a receipt younger than --days is left out of the listing (rc=$rc: $out)"; fi
 out=$(run_state "$repo" prune --receipts --repo "$repo" 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "prune refuses --receipts together with --repo"; else fail "prune refuses --receipts together with --repo (rc=$rc: $out)"; fi
+# a receipt that cannot be deleted is an error, and only confirmed removals are counted
+bad="$RECEIPTS/bad-ws-20200101T000000Z"; mkdir -p "$bad/held"; : > "$bad/held/f"; printf 'x\n' > "$bad/progress.md"; chmod 555 "$bad/held"; touch -t 202001010000 "$bad"
+out=$(run_state "$repo" prune --receipts --days 30 --apply 2>"$TEST_ROOT/prune.err"); rc=$?
+chmod 755 "$bad/held" 2>/dev/null
+if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q '^status=error$' && ! printf '%s' "$out" | grep -q '^status=pruned' && grep -q 'could not be deleted' "$TEST_ROOT/prune.err" && [ -f "$bad/held/f" ]; then pass "a receipt that cannot be deleted makes prune an error and is not counted"; else fail "a receipt that cannot be deleted makes prune an error and is not counted (rc=$rc: $out; $(cat "$TEST_ROOT/prune.err"))"; fi
+rm -rf "$bad"
+# a staging a live finish owns is never pruned, whatever --days says; one whose owner is gone is
+act="$RECEIPTS/.staging-active-20200101T000000Z"; mkdir -p "$act"; printf 'x\n' > "$act/progress.md"; printf 'pid=%s\n' "$$" > "$act/owner"; touch -t 202001010000 "$act"
+sh -c 'exit 0' & deadpid=$!; wait "$deadpid" 2>/dev/null
+gone="$RECEIPTS/.staging-gone-20200101T000000Z"; mkdir -p "$gone"; printf 'x\n' > "$gone/progress.md"; printf 'pid=%s\n' "$deadpid" > "$gone/owner"; touch -t 202001010000 "$gone"
+out=$(run_state "$repo" prune --receipts --days 0 --apply); rc=$?
+if [ "$rc" -eq 0 ] && [ -d "$act" ] && [ -f "$act/progress.md" ] && [ ! -d "$gone" ] && printf '%s' "$out" | grep -q '.staging-active.*active=1'; then pass "prune leaves a staging whose owner is alive and removes one whose owner is gone"; else fail "prune leaves a staging whose owner is alive and removes one whose owner is gone (rc=$rc: $out)"; fi
 # a workspace with no ledger is a workspace with no record to keep: finish says so and removes nothing
 wsn=$(run_sdd_dir "$repo" docs/plan.md 2>/dev/null); rm -f "$wsn/progress.md"
 out=$(run_state "$repo" finish docs/plan.md 2>"$TEST_ROOT/noledger.err"); rc=$?

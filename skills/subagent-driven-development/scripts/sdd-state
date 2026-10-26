@@ -436,16 +436,24 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
             [ -f "$q" ] || continue
             quarantine=${q%/plans/*}
             # The repair is a move a human makes, and which move depends on
-            # the root: a recreated one cannot take the whole quarantine,
-            # because BSD mv would nest it inside, so only the workspace
-            # moves, after the empty directory sdd-dir left is removed.
-            if [ -e "$legacy_root" ]; then
+            # the workspace directory rather than on the root. A root that
+            # is back cannot take the whole quarantine, because BSD mv
+            # would nest it inside, so only the workspace moves; whether
+            # that move needs the empty directory sdd-dir left removed
+            # first, or plans/ created first, is what the root alone does
+            # not say. The root can be there without plans/<ws>: the
+            # no-argument form of sdd-dir creates it that way, so does the
+            # plan form's pointer bookkeeping, and so does a human who
+            # cleared the empty directory after an earlier refusal.
+            if [ ! -e "$legacy_root" ]; then
+              repair="mv $quarantine $legacy_root"
+            elif [ -e "$t" ]; then
               repair="rmdir $t && mv $quarantine/plans/${t##*/} $t"
             else
-              repair="mv $quarantine $legacy_root"
+              repair="mkdir -p ${t%/*} && mv $quarantine/plans/${t##*/} $t"
             fi
             hp_unlock
-            echo "sdd-state: the legacy workspace for this plan sits in a cache root the plain-cache reclaim set aside at $quarantine; move it back ($repair) and run sdd-state import $plan again" >&2
+            echo "sdd-state: the legacy workspace for this plan sits in a cache root the plain-cache reclaim set aside at $quarantine; move it back ($repair) and run sdd-state import $plan again, or remove it (rm -rf $quarantine) if you know that copy is stale" >&2
             echo "status=error"; return 2
           done
         fi

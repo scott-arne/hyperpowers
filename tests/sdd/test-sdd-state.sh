@@ -973,6 +973,24 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "set aside at $roo
 rmdir "$root_i29/plans/$name_i29" && mv "$root_i29.reclaiming-424242/plans/$name_i29" "$root_i29/plans/$name_i29"
 out=$(run_state "$i29" import docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$root_i29/plans/$name_i29" ] && [ "$(sed -n 2p "$wsi29/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "after that repair the import completes with the ledger in place"; else fail "after that repair the import completes with the ledger in place (rc=$rc: $out)"; fi
+# The third state: the root is there but the workspace directory is not.
+# The no-argument form of sdd-dir creates the root without plans/, so does
+# the plan form's pointer bookkeeping, and a human who removed the empty
+# directory after an earlier refusal lands here too. The rmdir form would
+# fail at its first command and the && would stop the move.
+i30="$TEST_ROOT/i30"; make_repo "$i30"
+mkdir -p "$i30/docs"; : > "$i30/docs/plan.md"; git -C "$i30" add docs; git -C "$i30" commit -qm plan
+wsi30=$(ws_path "$i30" "$i30/docs/plan.md"); name_i30=$(basename "$wsi30")
+root_i30="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i30")"
+mkdir -p "$root_i30.reclaiming-424242/plans/$name_i30"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$root_i30.reclaiming-424242/plans/$name_i30/progress.md"
+mkdir -p "$root_i30"
+repair_i30="mkdir -p $root_i30/plans && mv $root_i30.reclaiming-424242/plans/$name_i30 $root_i30/plans/$name_i30"
+out=$(run_state "$i30" import docs/plan.md 2>"$TEST_ROOT/i30.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "$repair_i30" "$TEST_ROOT/i30.err" && grep -qF "rm -rf $root_i30.reclaiming-424242" "$TEST_ROOT/i30.err"; then pass "a root without its workspace directory is refused with the repair that creates plans/ first, and the line offers the stale-copy route"; else fail "a root without its workspace directory is refused with the repair that creates plans/ first (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/i30.err"))"; fi
+mkdir -p "$root_i30/plans" && mv "$root_i30.reclaiming-424242/plans/$name_i30" "$root_i30/plans/$name_i30"
+out=$(run_state "$i30" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$root_i30/plans/$name_i30" ] && [ "$(sed -n 2p "$wsi30/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "after that repair the import completes with the ledger in place"; else fail "after that repair the import completes with the ledger in place (rc=$rc: $out)"; fi
 
 echo ""
 echo "=== sdd-dir and the plain fallback over branch state ==="

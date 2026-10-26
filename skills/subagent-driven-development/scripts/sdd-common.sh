@@ -447,9 +447,27 @@ hp_refuse_tip() {
   return 2
 }
 
+# <dir>: the state checkout's ignore rules. Everything here is regenerable
+# or local to one host, so the branch carries none of it. A job's scratch is
+# the last group: out.log can be large, go is a FIFO git cannot index at
+# all, and the launch lock and the stop request are live signalling.
+hp_write_ignore() { # <dir>
+  printf '%s\n' '# Regenerable on any host: briefs come from task-brief, packages from review-package.' 'plans/*/task-*-brief.md' 'plans/*/review-*.diff' '# A copy an import left beside an entry it could not install: local to that host, for a human to merge.' 'plans/*/*.from-import' '# Job scratch (tracked-job): the record is meta.json and exit.' 'plans/*/jobs/*/out.log' 'plans/*/jobs/*/go' 'plans/*/jobs/*/launch.lock' 'plans/*/jobs/*/stop-request' > "$1/.gitignore"
+}
+
+# <checkout>: a checkout an older plugin created carries that plugin's
+# ignore rules. They are regenerable, so every call that hands an existing
+# checkout to a writer brings them up to date; the job patterns are the
+# sentinel. The rewrite stays uncommitted on purpose: git reads the working
+# tree's .gitignore, and the branch takes the lines from whichever host
+# creates it.
+hp_refresh_ignore() { # <checkout>
+  grep -q 'plans/\*/jobs/\*/out.log' "$1/.gitignore" 2>/dev/null || hp_write_ignore "$1"
+}
+
 hp_write_root_files() { # <dir>
   printf 'hyperpowers-state 1\n' > "$1/.hyperpowers-state"
-  printf '%s\n' '# Regenerable on any host: briefs come from task-brief, packages from review-package.' 'plans/*/task-*-brief.md' 'plans/*/review-*.diff' '# A copy an import left beside an entry it could not install: local to that host, for a human to merge.' 'plans/*/*.from-import' > "$1/.gitignore"
+  hp_write_ignore "$1"
   printf 'plans/*/progress.md merge=union\n' > "$1/.gitattributes"
   printf '%s\n' '# hyperpowers state' '' 'This branch holds the SDD dossiers of this repository (progress ledgers, implementer reports, claims), one directory per plan under plans/. hyperpowers maintains it through skills/subagent-driven-development/scripts/sdd-state.' 'It shares no history with the code and is never merged into a code branch.' 'Design: docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md in the hyperpowers repository.' > "$1/README.md"
 }
@@ -530,6 +548,7 @@ hp_ensure_checkout() {
   if [ "$backend" = plain ]; then printf 'plain %s\n' "$(hp_plain_root "$repo")"; return 0; fi
   if [ -e "$co/.git" ]; then
     hp_verify_checkout "$repo" "$co" "$br" || return 2
+    hp_refresh_ignore "$co"
     if [ "$backend" != branch ]; then
       # A crash between the move and the backend write left it unrecorded.
       hp_lock "$repo" || return 2
@@ -543,6 +562,7 @@ hp_ensure_checkout() {
   if [ "$(hp_backend "$repo")" = plain ]; then hp_unlock; printf 'plain %s\n' "$(hp_plain_root "$repo")"; return 0; fi
   if [ -e "$co/.git" ]; then
     hp_verify_checkout "$repo" "$co" "$br" || { hp_unlock; return 2; }
+    hp_refresh_ignore "$co"
     hp_write_backend "$repo" branch || { hp_unlock; return 2; }
     hp_unlock; printf 'branch %s\n' "$co"; return 0
   fi

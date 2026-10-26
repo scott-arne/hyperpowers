@@ -79,7 +79,12 @@ expected_ignore='# Regenerable on any host: briefs come from task-brief, package
 plans/*/task-*-brief.md
 plans/*/review-*.diff
 # A copy an import left beside an entry it could not install: local to that host, for a human to merge.
-plans/*/*.from-import'
+plans/*/*.from-import
+# Job scratch (tracked-job): the record is meta.json and exit.
+plans/*/jobs/*/out.log
+plans/*/jobs/*/go
+plans/*/jobs/*/launch.lock
+plans/*/jobs/*/stop-request'
 if [ "$(git -C "$r1" show hyperpowers/state:.gitignore 2>/dev/null)" = "$expected_ignore" ]; then pass ".gitignore keeps briefs and packages local"; else fail ".gitignore keeps briefs and packages local"; fi
 if [ "$(git -C "$r1" show hyperpowers/state:.gitattributes 2>/dev/null)" = "plans/*/progress.md merge=union" ]; then pass ".gitattributes gives the ledger the union driver"; else fail ".gitattributes gives the ledger the union driver"; fi
 if [ -f "$co1/README.md" ] && grep -q 'never merged into a code branch' "$co1/README.md"; then pass "README names the branch's purpose"; else fail "README names the branch's purpose"; fi
@@ -694,8 +699,8 @@ printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsf/pr
 out=$(run_state "$f1" finish docs/plan.md); rc=$?
 last=$(printf '%s' "$out" | sed -n 's/.* last=\([0-9a-f]*\).*/\1/p')
 case "$out" in
-    "status=finished sha="???????" last="????????????????????????????????????????" push=origin/hyperpowers/state") pass "finish prints the finish sha, the full last sha and the push target" ;;
-    *) fail "finish prints the finish sha, the full last sha and the push target (rc=$rc: $out)" ;;
+    "status=finished sha="???????" last="????????????????????????????????????????" push=origin/hyperpowers/state receipt=/"*) pass "finish prints the finish sha, the full last sha, the push target and the receipt" ;;
+    *) fail "finish prints the finish sha, the full last sha, the push target and the receipt (rc=$rc: $out)" ;;
 esac
 if [ ! -d "$wsf" ] && ! git -C "$co_f1" ls-tree -r --name-only hyperpowers/state | grep -q "plans/$(basename "$wsf")/"; then pass "finish removes the workspace from the tree and the disk"; else fail "finish removes the workspace from the tree and the disk"; fi
 if [ "$(git -C "$co_f1" show "$last:plans/$(basename "$wsf")/progress.md" 2>/dev/null | sed -n 2p)" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "the last sha still shows the ledger"; else fail "the last sha still shows the ledger"; fi
@@ -764,7 +769,8 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recreated during f
 rm -rf "$wsf12"
 wsp=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp/progress.md"
 out=$(run_state "$rp" finish docs/plan.md 2>/dev/null)
-if [ "$out" = "status=finished backend=plain" ] && [ ! -d "$wsp" ]; then pass "finish under the plain backend removes the plain workspace"; else fail "finish under the plain backend removes the plain workspace ($out)"; fi
+case "$out" in "status=finished backend=plain receipt=/"*) plainline=1 ;; *) plainline=0 ;; esac
+if [ "$plainline" = 1 ] && [ ! -d "$wsp" ]; then pass "finish under the plain backend removes the plain workspace and names the receipt"; else fail "finish under the plain backend removes the plain workspace and names the receipt ($out)"; fi
 wsp2=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp2/progress.md"
 out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -q '^concurrent write$' "$wsp2/progress.md" && ! ls -d "$wsp2"/.removing-* >/dev/null 2>&1 && [ "$(cat "$wsp2".reappeared-*/task-2-report.md 2>/dev/null)" = "written after rename" ]; then pass "under the plain backend a changed copy restored over a recreated workspace is not nested either"; else fail "under the plain backend a changed copy restored over a recreated workspace is not nested (rc=$rc: $out)"; fi
@@ -2027,5 +2033,32 @@ rm -f "$ws30/fragments.log"
 rm -rf "$ws30"
 out=$(run_state "$repo30" complete docs/plan.md 1 --commits 1111111..2222222 --session s30); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace" ]; then pass "complete without a ledger is no-workspace"; else fail "complete without a ledger is no-workspace (rc=$rc: $out)"; fi
+# --- a job's scratch stays out of the state branch (stop guard, 2026-10-23) --
+make_pair p31
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+co31="$STATE_ROOT/$(state_key "$PAIR_A")"
+miss31=""
+for p in 'plans/*/jobs/*/out.log' 'plans/*/jobs/*/go' 'plans/*/jobs/*/launch.lock' 'plans/*/jobs/*/stop-request'; do
+    grep -Fxq "$p" "$co31/.gitignore" || miss31="$miss31 $p"
+done
+if [ -z "$miss31" ]; then pass "the checkout's .gitignore excludes a job's scratch"; else fail "the checkout's .gitignore excludes a job's scratch (missing:$miss31)"; fi
+ws31=$(run_sdd_dir "$PAIR_A" docs/plan.md)
+printf '# SDD ledger — plan: docs/plan.md\n' > "$ws31/progress.md"
+mkdir -p "$ws31/jobs/x-0001"
+printf '{"name":"x","state":"exited"}\n' > "$ws31/jobs/x-0001/meta.json"
+printf '0\n' > "$ws31/jobs/x-0001/exit"
+printf 'noise\n' > "$ws31/jobs/x-0001/out.log"
+: > "$ws31/jobs/x-0001/stop-request"
+# the launch barrier is a FIFO git cannot index at all: an unignored one fails the commit
+mkfifo "$ws31/jobs/x-0001/go"; mkdir "$ws31/jobs/x-0001/launch.lock"
+out=$(run_state "$PAIR_A" snapshot docs/plan.md); rc=$?
+names31=$(git -C "$co31" show --name-only --format= HEAD)
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=snapshot" ] && grep -q "jobs/x-0001/meta.json\$" < <(printf '%s\n' "$names31") && grep -q "jobs/x-0001/exit\$" < <(printf '%s\n' "$names31") && ! grep -qE 'jobs/x-0001/(out\.log|stop-request|go|launch\.lock)$' < <(printf '%s\n' "$names31"); then pass "snapshot commits a job's meta.json and exit and leaves its scratch behind"; else fail "snapshot commits a job's meta.json and exit and leaves its scratch behind (rc=$rc: $out; $(printf '%s' "$names31" | tr '\n' ' '))"; fi
+# A checkout an older plugin created has no job lines; the next ensure adds them.
+printf '%s\n' '# Regenerable on any host: briefs come from task-brief, packages from review-package.' 'plans/*/task-*-brief.md' 'plans/*/review-*.diff' > "$co31/.gitignore"
+ensure "$PAIR_A" >/dev/null
+if grep -Fxq 'plans/*/jobs/*/out.log' "$co31/.gitignore" && grep -Fxq 'plans/*/task-*-brief.md' "$co31/.gitignore"; then pass "an older checkout's .gitignore gains the job lines on the next ensure"; else fail "an older checkout's .gitignore gains the job lines on the next ensure ($(tr '\n' ' ' < "$co31/.gitignore"))"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

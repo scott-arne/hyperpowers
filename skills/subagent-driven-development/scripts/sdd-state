@@ -10,7 +10,7 @@
 #   sdd-state handoff PLAN_FILE [--push] [--plan-untracked-ok] [--code-dirty-ok] [--code-repo DIR]
 #   sdd-state finish PLAN_FILE [--force]
 #   sdd-state import PLAN_FILE
-#   sdd-state prune [--days N] [--apply] --repo DIR
+#   sdd-state prune [--receipts] [--days N] [--apply] [--repo DIR]
 #   sdd-state claim PLAN_FILE N --session SID [--takeover]
 #   sdd-state complete PLAN_FILE N --commits BASE..HEAD [--session SID]
 #   sdd-state handback PLAN_FILE --reason TEXT [--session SID]
@@ -48,7 +48,7 @@ usage() {
     '  handoff PLAN_FILE [--push] [--plan-untracked-ok] [--code-dirty-ok] [--code-repo DIR]' \
     '  finish PLAN_FILE [--force]' \
     '  import PLAN_FILE' \
-    '  prune [--days N] [--apply] --repo DIR' \
+    '  prune [--receipts] [--days N] [--apply] [--repo DIR]' \
     '  claim PLAN_FILE N --session SID [--takeover]' \
     '  complete PLAN_FILE N --commits BASE..HEAD [--session SID]' \
     '  handback PLAN_FILE --reason TEXT [--session SID]' >&2
@@ -655,6 +655,9 @@ discard_tomb() {
 remove_verified() {
   local dir=$1 prefix=$2 keep=${3:-} tomb f committed live
   TOMB=""
+  # Test hook: a removal that refuses, so finish's cleanup of a staged
+  # receipt is provable.
+  [ -z "${HYPERPOWERS_TEST_FAIL_REMOVE:-}" ] || return 2
   tomb="$(dirname "$dir")/.removing-$(basename "$dir")-$$"
   # A tomb left by a killed run plus pid reuse would make mv nest the live
   # workspace inside it: refuse instead.
@@ -694,6 +697,57 @@ remove_verified() {
   discard_tomb "$tomb" || { restore_tomb "$dir" "$tomb"; return 2; }
   return 0
 }
+# stage_receipt <wsdir> <ws name>: the durable copy of what finish removes,
+# built under a dot-prefixed staging name; finish renames it into place only
+# after the removal and its commit succeed. progress.md is required; the hook
+# log and job records are copied when present. Anything else a workspace
+# holds (a job's scratch, a fragments.log) is left where it is: the receipt
+# is the record a reader needs, not an archive.
+RECEIPT_STAGING=""; RECEIPT_FINAL=""
+stage_receipt() {
+  local src=$1 name=$2 root stamp j
+  root="$(hp_cache_root)/receipts"
+  mkdir -p "$root" || return 1
+  [ -f "$src/progress.md" ] || return 1
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  RECEIPT_FINAL="$root/$name-$stamp"; [ -e "$RECEIPT_FINAL" ] && RECEIPT_FINAL="$RECEIPT_FINAL-$$"
+  RECEIPT_STAGING="$root/.staging-$(basename "$RECEIPT_FINAL")"
+  mkdir "$RECEIPT_STAGING" 2>/dev/null || return 1
+  cp "$src/progress.md" "$RECEIPT_STAGING/progress.md" || { rm -rf "$RECEIPT_STAGING"; return 1; }
+  if [ -f "$src/stop-guard.jsonl" ]; then cp "$src/stop-guard.jsonl" "$RECEIPT_STAGING/stop-guard.jsonl" || { rm -rf "$RECEIPT_STAGING"; return 1; }; fi
+  for j in "$src"/jobs/*/; do
+    [ -f "$j/meta.json" ] || continue
+    mkdir -p "$RECEIPT_STAGING/jobs/$(basename "$j")" || { rm -rf "$RECEIPT_STAGING"; return 1; }
+    cp "$j/meta.json" "$RECEIPT_STAGING/jobs/$(basename "$j")/meta.json" || { rm -rf "$RECEIPT_STAGING"; return 1; }
+    if [ -f "$j/exit" ]; then cp "$j/exit" "$RECEIPT_STAGING/jobs/$(basename "$j")/exit" || { rm -rf "$RECEIPT_STAGING"; return 1; }; fi
+  done
+  return 0
+}
+# commit_receipt runs after the removal, so it never discards: the rename is
+# retried, and a staging that still cannot be renamed is marked FINISHED and
+# reported as the receipt under its staging name.
+RECEIPT_PATH=""; RECEIPT_STAGED=""
+commit_receipt() {
+  local i=0
+  # The marker first: it says Finish's removal and commit are done, so it may
+  # exist only from here on; a renamed receipt keeps it harmlessly.
+  if [ -z "${HYPERPOWERS_TEST_FAIL_MARKER:-}" ]; then : > "$RECEIPT_STAGING/FINISHED" 2>/dev/null; fi
+  while [ "$i" -lt 3 ]; do
+    if [ -z "${HYPERPOWERS_TEST_FAIL_RENAME:-}" ] && mv "$RECEIPT_STAGING" "$RECEIPT_FINAL" 2>/dev/null; then RECEIPT_PATH=$RECEIPT_FINAL; return 0; fi
+    i=$((i + 1)); sleep 1
+  done
+  if [ -f "$RECEIPT_STAGING/FINISHED" ]; then RECEIPT_PATH=$RECEIPT_STAGING; return 0; fi
+  # Neither the rename nor the marker could be written: the record exists but
+  # no consumer accepts it; say so instead of claiming a receipt.
+  RECEIPT_PATH=none; RECEIPT_STAGED=$RECEIPT_STAGING
+  return 0
+}
+discard_receipt() { [ -n "$RECEIPT_STAGING" ] && rm -rf "$RECEIPT_STAGING"; RECEIPT_STAGING=""; }
+# The receipt field of a finished line. Receipt paths print unencoded: one
+# key, one reading rule, wherever receipt= appears.
+receipt_field() {
+  if [ "$RECEIPT_PATH" = none ]; then printf 'receipt=none staging=%s' "$RECEIPT_STAGED"; else printf 'receipt=%s' "$RECEIPT_PATH"; fi
+}
 cmd_finish() {
   local plan="" force=0 open last commit rc t
   while [ $# -gt 0 ]; do
@@ -721,13 +775,21 @@ cmd_finish() {
   # look, or a takeover in flight, is seen before anything is removed.
   open=$(open_claims)
   if [ -n "$open" ] && [ "$force" -eq 0 ]; then hp_unlock; echo "status=open-claims tasks=$open"; return 6; fi
+  # The receipt is built before anything is removed: a workspace is never
+  # destroyed without a durable copy of its record. Every failure before
+  # the removal discards the staging; none after it does.
+  stage_receipt "$WSDIR" "$WS" || { hp_unlock; echo "status=error"; return 2; }
   if [ "$BACKEND" != branch ]; then
     SIZE_BEFORE=$(wc -c < "$WSDIR/progress.md" 2>/dev/null | tr -d ' ')
     remove_verified "$WSDIR" ""; rc=$?
     hp_unlock
-    case "$rc" in 0) echo "status=finished backend=plain"; return 0 ;; 1) echo "status=busy"; return 3 ;; *) echo "status=error"; return 2 ;; esac
+    case "$rc" in
+      0) commit_receipt; echo "status=finished backend=plain $(receipt_field)"; return 0 ;;
+      1) discard_receipt; echo "status=busy"; return 3 ;;
+      *) discard_receipt; echo "status=error"; return 2 ;;
+    esac
   fi
-  hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: snapshot before finish" "plans/$WS" >/dev/null || { hp_unlock; echo "status=error"; return 2; }
+  hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: snapshot before finish" "plans/$WS" >/dev/null || { discard_receipt; hp_unlock; echo "status=error"; return 2; }
   last=$(git -C "$CO" rev-parse "refs/heads/$BRANCH")
   # Controllers append without the lock: the removal renames the directory
   # aside and verifies it against the snapshot before deleting it.
@@ -736,7 +798,7 @@ cmd_finish() {
     finish-before-remove-link:*) ln -s progress.md "$CO/${HYPERPOWERS_TEST_WRITER_AT#finish-before-remove-link:}" ;;
   esac
   remove_verified "$WSDIR" "$last:plans/$WS" keep; rc=$?
-  case "$rc" in 0) ;; 1) hp_unlock; echo "status=busy"; return 3 ;; *) hp_unlock; echo "status=error"; return 2 ;; esac
+  case "$rc" in 0) ;; 1) discard_receipt; hp_unlock; echo "status=busy"; return 3 ;; *) discard_receipt; hp_unlock; echo "status=error"; return 2 ;; esac
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in finish-after-verify:*) mkdir -p "$WSDIR"; printf 'late\n' > "$WSDIR/${HYPERPOWERS_TEST_WRITER_AT#finish-after-verify:}" ;; esac
   # The removal is committed from the tip's tree, never from the live path,
   # so a workspace recreated after the verification neither enters the
@@ -744,34 +806,83 @@ cmd_finish() {
   # commit that fails puts the verified copy back; only a committed removal
   # deletes it, and a copy that survives the deletion is named on stderr.
   commit=$(hp_commit_paths --remove "$CO" "$BRANCH" "sdd $SLUG: finish" "plans/$WS"); rc=$?
-  if [ "$rc" -ne 0 ]; then restore_tomb "$WSDIR" "$TOMB"; hp_unlock; echo "status=error"; return 2; fi
+  if [ "$rc" -ne 0 ]; then restore_tomb "$WSDIR" "$TOMB"; discard_receipt; hp_unlock; echo "status=error"; return 2; fi
   discard_tomb "$TOMB" || true
   hp_unlock
   if [ -d "$WSDIR" ]; then
+    # The removal is committed, so the record stands and the receipt is
+    # published; this line reports the recreated workspace, which is the
+    # problem a human has to resolve.
+    commit_receipt
     echo "sdd-state: $WSDIR was recreated during finish; the removal is committed (last=$last) and the new files remain there, uncommitted" >&2
     echo "status=error"; return 2
   fi
-  echo "status=finished sha=${commit:0:7} last=$last push=$REMOTE/$BRANCH"
+  commit_receipt
+  echo "status=finished sha=${commit:0:7} last=$last push=$REMOTE/$BRANCH $(receipt_field)"
 }
 
 # --- prune -------------------------------------------------------------------
+# The modification time of a path in seconds, GNU stat first and BSD stat
+# second, empty when neither reads it. GNU stat takes -f as a request for
+# the file system and answers an unknown directive with the directive
+# itself, so the answer is accepted only when it is a number.
+mtime_of() { # <path>
+  local m
+  m=$(stat -c %Y "$1" 2>/dev/null) || m=$(stat -f %m "$1" 2>/dev/null) || return 1
+  case "$m" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$m"
+}
+# <days> <apply>: the receipts finish left behind, older than <days> by the
+# receipt directory's own modification time. A staging without the FINISHED
+# marker is a record whose finish never completed: no reader accepts it, so
+# it is listed as stale=1 and pruned like the rest. Receipts belong to the
+# cache, not to any one repository: this path needs no repository and takes
+# no lock.
+prune_receipts() { # <days> <apply>
+  local days=$1 apply=$2 root d now cutoff m age n=0 stale
+  root="$(hp_cache_root)/receipts"
+  now=$(date +%s); cutoff=$((now - days * 86400))
+  for d in "$root"/*/ "$root"/.staging-*/; do
+    [ -d "$d" ] || continue
+    d=${d%/}
+    m=$(mtime_of "$d")
+    [ -n "$m" ] || continue
+    [ "$m" -lt "$cutoff" ] || continue
+    age=$(( (now - m) / 86400 ))
+    stale=""
+    case "$(basename "$d")" in .staging-*) [ -f "$d/FINISHED" ] || stale=" stale=1" ;; esac
+    printf 'receipt=%s age_days=%s%s\n' "$d" "$age" "$stale"
+    n=$((n + 1))
+    if [ "$apply" -eq 1 ]; then rm -rf "$d"; fi
+  done
+  if [ "$apply" -eq 1 ]; then echo "status=pruned receipts=$n"; else echo "status=listed receipts=$n"; fi
+  return 0
+}
 # Lists, and with --apply removes, plan directories idle for N days (last
-# commit and newest file both older) and checkouts whose clone is gone. Never
-# runs implicitly.
+# commit and newest file both older) and checkouts whose clone is gone, or
+# with --receipts the finish receipts older than N days. Never runs
+# implicitly.
 cmd_prune() {
-  local repo="" days=30 apply=0 repo_dir co br d name now cutoff c key list="" dead_list="" i tip gd ck
+  local repo="" days=30 apply=0 receipts=0 repo_dir co br d name now cutoff c key list="" dead_list="" i tip gd ck
   local plans=() dead=() tombs=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --days) [ $# -ge 2 ] || usage; days=$2; shift 2 ;;
       --apply) apply=1; shift ;;
+      --receipts) receipts=1; shift ;;
       --repo) [ $# -ge 2 ] || usage; repo=$2; shift 2 ;;
       *) usage ;;
     esac
   done
-  [ -n "$repo" ] || usage
   case "$days" in ''|*[!0-9]*) usage ;; esac
   days=$((10#$days))
+  # The two selections have nothing in common but the age: one walks a
+  # repository's state branch, the other the cache's receipts.
+  if [ "$receipts" -eq 1 ]; then
+    [ -z "$repo" ] || usage
+    prune_receipts "$days" "$apply"; return $?
+  fi
+  [ -n "$repo" ] || usage
   repo_dir=$(hp_physical_dir "$repo") || usage
   git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $repo" >&2; exit 2; }
   if [ "$(hp_backend "$repo_dir")" = plain ]; then echo "status=plain"; return 0; fi

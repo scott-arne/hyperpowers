@@ -299,6 +299,15 @@ tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.sync-applying
 if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .sync-applying" ]; then pass "hp_tree_refusal names a committed sync marker"; else fail "hp_tree_refusal names a committed sync marker (rc=$tr_rc: $tr_out)"; fi
 tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.restore/12345.1")"); tr_rc=$?
 if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .restore/12345.1" ]; then pass "hp_tree_refusal names a committed restore copy"; else fail "hp_tree_refusal names a committed restore copy (rc=$tr_rc: $tr_out)"; fi
+# The sidecar names as exact entries: a blob at .restore or .rewrite would
+# otherwise pass the whole-tree check, reach disk, and have the next
+# recover_apply refuse every publishing subcommand on the tracked sidecar.
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.restore")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .restore" ]; then pass "hp_tree_refusal names a root blob at the restore sidecar's own name"; else fail "hp_tree_refusal names a root blob at the restore sidecar's own name (rc=$tr_rc: $tr_out)"; fi
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.rewrite")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .rewrite" ]; then pass "hp_tree_refusal names a root blob at the rewrite sidecar's own name"; else fail "hp_tree_refusal names a root blob at the rewrite sidecar's own name (rc=$tr_rc: $tr_out)"; fi
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.sync-applying/held")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .sync-applying/held" ]; then pass "hp_tree_refusal names a tree at the sync marker's name"; else fail "hp_tree_refusal names a tree at the sync marker's name (rc=$tr_rc: $tr_out)"; fi
 tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "120000,$tr_link,escape")"); tr_rc=$?
 if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "symbolic link escape" ]; then pass "hp_tree_refusal reaches a link at the tree's root"; else fail "hp_tree_refusal reaches a link at the tree's root (rc=$tr_rc: $tr_out)"; fi
 # A tree this host cannot read is its own sentence. The refusal above is

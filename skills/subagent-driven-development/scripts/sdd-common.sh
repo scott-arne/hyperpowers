@@ -422,9 +422,12 @@ hp_check_sentinel() {
 # and returns 1; silent and 0 for a clean tree, 2 when the tree cannot be
 # read. A dossier holds plain files, and so do the branch's root files: a
 # symbolic link or a submodule entry anywhere would take a later write out
-# of the cache, and a recovery sidecar (.sync-applying, .rewrite/,
-# .restore/) is this host's own interrupted state, which the next recovery
-# executes, so no commit may carry one whatever its mode.
+# of the cache, and a recovery sidecar (.sync-applying, .rewrite, .restore)
+# is this host's own interrupted state, which the next recovery executes,
+# so no commit may carry one whatever its mode. Each name is refused as an
+# entry of its own as well as a directory: a blob at .restore reaches disk
+# as readily as .restore/<copy>, and recover_apply then refuses every
+# publishing subcommand on the sidecar the branch tracks.
 hp_tree_refusal() {
   local out line mode path
   # --full-tree: ls-tree is otherwise limited to the directory git runs in,
@@ -441,7 +444,7 @@ hp_tree_refusal() {
     # A path git had to quote keeps its opening quote here; both forms are
     # matched rather than unquoted, since only the refusal depends on it.
     case "$path" in
-      .sync-applying|.rewrite/*|.restore/*|'".sync-applying'*|'".rewrite/'*|'".restore/'*) printf 'recovery sidecar %s\n' "$path"; return 1 ;;
+      .sync-applying|.rewrite|.restore|.sync-applying/*|.rewrite/*|.restore/*|'".sync-applying'*|'".rewrite'*|'".restore'*) printf 'recovery sidecar %s\n' "$path"; return 1 ;;
     esac
   done < <(printf '%s\n' "$out")
   return 0

@@ -2444,5 +2444,40 @@ if [ "$(id -u)" -ne 0 ]; then
 else
   pass "an unreported materialization failure gets exactly one generic sdd-dir line (skipped: root ignores directory modes)"
 fi
+# g. A root blob at a sidecar's own name. A tree at .restore/ was already
+# refused; a blob at exactly .restore passed, reached disk, and had the
+# next recover_apply refuse every publishing subcommand on the sidecar the
+# branch tracks. All three routes a tree takes to disk refuse it.
+make_pair p28
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa28=$(run_sdd_dir "$PAIR_A" docs/plan.md); ws28=$(basename "$wsa28")
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa28/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+clean28=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+idx28="$TEST_ROOT/p28.index"
+bb28=$(printf 'a restore copy the branch carries\n' | git -C "$PAIR_A" hash-object -w --stdin)
+rm -f "$idx28"; GIT_INDEX_FILE=$idx28 git -C "$PAIR_A" read-tree "$clean28"
+GIT_INDEX_FILE=$idx28 git -C "$PAIR_A" update-index --add --cacheinfo "100644,$bb28,.restore"
+evil28=$(printf 'the restore sidecar as a root blob\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$(GIT_INDEX_FILE=$idx28 git -C "$PAIR_A" write-tree)" -p "$clean28")
+git -C "$PAIR_A" push -q origin "$evil28:refs/heads/hyperpowers/state" 2>/dev/null
+co_b28="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p28.out" 2> "$TEST_ROOT/p28.err"; rc=$?
+out=$(cat "$TEST_ROOT/p28.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recovery sidecar at \.restore' "$TEST_ROOT/p28.err" && [ ! -e "$co_b28/.git" ] && [ ! -e "$co_b28/.restore" ]; then pass "a root blob at .restore is refused when the checkout would be created"; else fail "a root blob at .restore is refused when the checkout would be created (rc=$rc: $out: $(cat "$TEST_ROOT/p28.err"))"; fi
+# The same blob arriving by fast-forward at a host that already has a checkout.
+git -C "$PAIR_A" push -q -f origin "$clean28:refs/heads/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null 2>&1
+wsb28="$co_b28/plans/$ws28"; before28=$(git -C "$co_b28" hash-object "$wsb28/progress.md")
+git -C "$PAIR_A" push -q origin "$evil28:refs/heads/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p28b.out" 2> "$TEST_ROOT/p28b.err"; rc=$?
+out=$(cat "$TEST_ROOT/p28b.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recovery sidecar at \.restore' "$TEST_ROOT/p28b.err" && [ ! -e "$co_b28/.restore" ] && [ ! -f "$co_b28/.sync-applying" ] && [ "$(git -C "$co_b28" hash-object "$wsb28/progress.md")" = "$before28" ]; then pass "a root blob at .restore arriving by fast-forward is refused on apply, with nothing written"; else fail "a root blob at .restore arriving by fast-forward is refused on apply (rc=$rc: $out: $(cat "$TEST_ROOT/p28b.err"))"; fi
+# And on the plain backend, where git archive would write it straight into
+# the cache. The remote tip B just fetched carries the blob.
+plain28="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$PAIR_B")"
+err=$(materialize "$PAIR_B" "$ws28" "$plain28/plans/$ws28" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'recovery sidecar at .restore' && [ ! -e "$plain28/plans/$ws28" ] && [ ! -e "$plain28/.restore" ]; then pass "a root blob at .restore is refused before the plain fallback extracts the tip"; else fail "a root blob at .restore is refused before the plain fallback extracts the tip (rc=$rc: $err)"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

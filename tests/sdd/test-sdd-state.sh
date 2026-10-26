@@ -1442,6 +1442,19 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying"
 rm "$co_b/.restore"
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7q: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ -z "$(git -C "$co_b" status --porcelain)" ]; then pass "with the link removed the restore completes"; else fail "with the link removed the restore completes (rc=$rc: $out)"; fi
+# The same link planted in the window recover_apply cannot cover: the whole
+# apply runs between its check at the top of the locked section and the
+# staging mkdir, and mkdir -p through a link to a directory keeps the link,
+# so the copy would land outside the checkout.
+printf 'Task 7r: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/task-1-report.md"
+mkdir -p "$TEST_ROOT/victim-restore-write"
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-link-restore:$TEST_ROOT/victim-restore-write" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p7r.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'refusing to stage a restore copy' "$TEST_ROOT/p7r.err" && [ -z "$(ls -A "$TEST_ROOT/victim-restore-write")" ]; then pass "a link planted at the .restore sidecar during the apply stops it before the copy, and nothing is staged through it"; else fail "a link planted at the .restore sidecar during the apply stops it before the copy (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7r.err"): $(ls -A "$TEST_ROOT/victim-restore-write" | tr '\n' '|'))"; fi
+rm "$co_b/.restore"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7r: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ -z "$(git -C "$co_b" status --porcelain)" ]; then pass "with that link removed the restore completes too"; else fail "with that link removed the restore completes too (rc=$rc: $out)"; fi
 
 # A remote finish racing a local writer: refused, nothing changed. The seam
 # writes after the pending check and right before the rename.

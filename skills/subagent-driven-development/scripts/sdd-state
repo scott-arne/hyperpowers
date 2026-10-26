@@ -1179,6 +1179,8 @@ apply_files() {
       # with the whole apply between that check and this write; mkdir -p on
       # a link to a directory keeps the link, so the copy would land
       # outside the checkout.
+      # Test hook: a writer replaces the sidecar with a link in that window.
+      case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-link-restore:*) rm -rf "$CO/.restore"; ln -s "${HYPERPOWERS_TEST_WRITER_AT#sync-link-restore:}" "$CO/.restore" ;; esac
       if [ -L "$CO/.restore" ]; then
         echo "sdd-state: $CO/.restore is a symbolic link; refusing to stage a restore copy through it" >&2
         return 2

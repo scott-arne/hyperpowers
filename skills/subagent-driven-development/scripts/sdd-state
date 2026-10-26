@@ -1469,7 +1469,7 @@ apply_target() {
   esac
 }
 cmd_sync() {
-  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure url_before url_pin fp_before fp_after n
+  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure url_before url_pin fp_before fp_after n fetch_ref stale_ref old_remote
   REMOTE_FINISHED=""
   # remove_verified (Task 6) and recover_apply live in this file; sync, finish, handoff and snapshot share them.
   while [ $# -gt 0 ]; do
@@ -1503,6 +1503,8 @@ cmd_sync() {
     echo "status=$1 local=$(short "$S") remote=none age=$(age_of "$CO" "$S")"
     return "$2"
   }
+  # Removes this process's private fetch ref, on every exit from the fetch.
+  drop_fetch_ref() { git -C "$PLAN_DIR" update-ref -d "$fetch_ref" 2>/dev/null || true; }
   # Writes the stamp for the endpoint the fetch contacted, or refuses.
   stamp_fetched() {
     # The alias check runs again here: a remote named like the alias and
@@ -1562,18 +1564,34 @@ cmd_sync() {
     echo "sdd-state: the repository configures a remote named hp-fetch-$$, which the pinned fetch needs for itself; remove that section from its git config and run sdd-state sync again" >&2
     echo "status=error"; return 2
   fi
+  # The fetch lands in a ref of this process's own, never straight in the
+  # shared remote-tracking ref: the tip is read from the private ref, so a
+  # fetch another process finishes in between cannot hand this sync a
+  # commit the pinned endpoint never served. A ref whose owner is gone is
+  # a crashed sync's leftover and is swept first; one whose owner is alive
+  # belongs to a sync still running.
+  fetch_ref="refs/hp-fetch/$$"
+  for stale_ref in $(git -C "$PLAN_DIR" for-each-ref --format='%(refname)' refs/hp-fetch 2>/dev/null); do
+    case "${stale_ref##*/}" in ''|*[!0-9]*) continue ;; esac
+    hp_pid_gone "${stale_ref##*/}" && git -C "$PLAN_DIR" update-ref -d "$stale_ref" 2>/dev/null
+  done
+  old_remote=$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")
   # The pin is appended to whatever GIT_CONFIG_* the caller supplied, never
   # substituted for it, and the URL travels in the environment, not argv.
   n=${GIT_CONFIG_COUNT:-0}; case "$n" in ''|*[!0-9]*) n=0 ;; esac
   printf -v "GIT_CONFIG_KEY_$n" '%s' "remote.hp-fetch-$$.url"; printf -v "GIT_CONFIG_VALUE_$n" '%s' "$url_pin"
   export "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
-  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 GIT_CONFIG_COUNT=$((n + 1)) git -C "$PLAN_DIR" fetch -q "hp-fetch-$$" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?
+  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 GIT_CONFIG_COUNT=$((n + 1)) git -C "$PLAN_DIR" fetch -q "hp-fetch-$$" "+refs/heads/$BRANCH:$fetch_ref" 2>&1); rc=$?
   unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
     sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "$url_before" ;;
     sync-after-fetch-set-url:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch-set-url:}" ;;
+    # Test hook: another process's fetch finishes between this one and the
+    # read of its tip, leaving its own commit in the shared ref.
+    sync-after-fetch:*) git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch:}" 2>/dev/null ;;
   esac
   if [ "$rc" -ne 0 ]; then
+    drop_fetch_ref
     case "$err" in
       *"couldn't find remote ref"*) stamp_fetched || { echo "status=error"; return 2; }; settle absent 0; return $? ;;
     esac
@@ -1592,11 +1610,21 @@ cmd_sync() {
     echo "status=offline-no-state local=none remote=none age=0"
     return 1
   fi
-  stamp_fetched || { echo "status=error"; return 2; }
-  # The remote tip is read once, here, and that sha alone is reconciled: a
-  # fetch by another process cannot swap in a different commit later.
-  R=$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")
-  [ -n "$R" ] || { echo "status=error"; return 2; }
+  stamp_fetched || { drop_fetch_ref; echo "status=error"; return 2; }
+  # The remote tip is read once, here, from this process's own ref, and
+  # that sha alone is reconciled.
+  R=$(tip_of "$PLAN_DIR" "$fetch_ref")
+  [ -n "$R" ] || { drop_fetch_ref; echo "status=error"; return 2; }
+  # The shared remote-tracking ref is then published by compare-and-swap
+  # against the value it held before the fetch (an empty one means it must
+  # not exist yet). A swap this sync loses was won by another fetch of the
+  # same branch, whose tip is as current as this one's, so it is left alone.
+  if [ -n "$old_remote" ]; then
+    git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "$R" "$old_remote" 2>/dev/null || true
+  else
+    git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "$R" "$(hp_zero_oid "$PLAN_DIR")" 2>/dev/null || true
+  fi
+  drop_fetch_ref
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-pin:*) git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-pin:}" 2>/dev/null ;; esac
   # A branch at the state name whose root lacks the exact sentinel belongs
   # to someone else: it is never reconciled or written, and refs and files

@@ -198,13 +198,17 @@ added after a `no-remote` sync means a fresh `sync`). A `sync` whose
 remote, branch or URL changed while its fetch ran, or whose fingerprint
 cannot be computed (node is required), ends `status=error` and stamps
 nothing, so the stamp always names the endpoint that was fetched (the
-fetch itself is pinned to that URL through git's environment
+fetch itself is pinned to that remote's URL through git's environment
 configuration, which needs git 2.31 or newer; that fetch consults no
 other `remote.<name>.*` setting of the alias, so a per-remote `proxy`
 or `uploadpack` does not apply to it, while `http.*`,
-`url.*.insteadOf` and credential helpers do; the URL is taken after
-git's `insteadOf` rewriting, so the stamp names the effective endpoint
-and a changed rewrite asks for a `sync` like a changed URL). The
+`url.*.insteadOf` and credential helpers do; the pin is the URL as
+written in `remote.<name>.url`, because git rewrites a remote's URL
+once and a pin on the already-rewritten form would be rewritten a
+second time, to an endpoint the fingerprint never named, while the
+fingerprint is of the URL after that one rewriting, so the stamp names
+the effective endpoint and a changed rewrite asks for a `sync` like a
+changed URL). The
 stamp governs creation only: a state branch that already exists here is
 continued, and the next `sync` reconciles it with whatever the remote
 holds.
@@ -344,8 +348,15 @@ that `sync` on divergence prints a second line `merge=<command>`. Exit 2 is
 usage or internal error throughout; other exits are listed per subcommand.
 
 **`sync PLAN_FILE [--assume-absent]`** (or `sync --repo REPO_DIR` for
-callers without a plan). Fetches
-`<remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>`, writes the
+callers without a plan). Fetches `+refs/heads/<branch>` from the pinned
+endpoint into a private ref, `refs/hp-fetch/<pid>`, and reads the tip it
+reconciles there, so a fetch another process finishes meanwhile cannot
+substitute a commit this endpoint never served;
+`refs/remotes/<remote>/<branch>` is then published from that tip by
+compare-and-swap against the value it held before the fetch, and a swap
+this sync loses belongs to the fetch that won it. The private ref is
+removed on every exit from the fetch, and one whose owner is gone is
+removed before it. `sync` writes the
 `<key>.fetched` stamp (`<remote> <branch> <fingerprint>`, the fingerprint
 being the first 12 hex digits of the SHA-256 of the remote's fetch URL, or
 `none` when the remote has no URL) on every outcome except

@@ -212,6 +212,40 @@ if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && grep -q '^Task 1: t
 git -C "$chain_a" remote set-url origin "$url_1c"
 git -C "$chain_a" config --remove-section "url.$chain_good"
 git -C "$chain_a" config --remove-section "url.$chain_evil"
+# The fetched tip is read from a private ref, refs/hp-fetch/<pid>. Read
+# from the shared remote-tracking ref, a fetch another process finished in
+# between would hand this sync a commit the pinned endpoint never served.
+# The shared ref is published afterwards by compare-and-swap, so the sync
+# that won the race keeps it.
+make_pair p1p
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa1p=$(run_sdd_dir "$PAIR_A" docs/plan.md); name_1p=$(basename "$wsa1p")
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa1p/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+co_b1p="$STATE_ROOT/$(state_key "$PAIR_B")"
+held_1p=$(git -C "$PAIR_B" rev-parse refs/remotes/origin/hyperpowers/state)
+# A second valid state commit that lives in B's object database and nowhere
+# else: the tip a racing fetch would leave in the shared ref.
+other_1p=$(printf 'a tip another fetch left behind\n' | git -C "$PAIR_B" -c user.name=t -c user.email=t@example.com commit-tree "$(git -C "$PAIR_B" rev-parse "$held_1p^{tree}")" -p "$held_1p")
+printf 'Task 2: complete (commits 3333333..4444444, review clean)\n' >> "$wsa1p/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+served_1p=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+# Two private refs from earlier runs: one whose owner is gone, one whose
+# owner is this suite and so still running.
+sleep 0.01 & gone_1p=$!; wait "$gone_1p" 2>/dev/null
+git -C "$PAIR_B" update-ref "refs/hp-fetch/$gone_1p" "$held_1p"
+git -C "$PAIR_B" update-ref "refs/hp-fetch/$$" "$held_1p"
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-after-fetch:$other_1p" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1p.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(git -C "$co_b1p" rev-parse refs/heads/hyperpowers/state)" = "$served_1p" ] && grep -q '^Task 2: complete' "$co_b1p/plans/$name_1p/progress.md" && [ "$(git -C "$PAIR_B" rev-parse refs/remotes/origin/hyperpowers/state)" = "$other_1p" ]; then pass "the tip a sync reconciles is the one the pinned endpoint served, and a lost compare-and-swap leaves the shared ref to the fetch that won it"; else fail "the tip a sync reconciles is the one the pinned endpoint served (rc=$rc: $out: local=$(git -C "$co_b1p" rev-parse refs/heads/hyperpowers/state), served=$served_1p, other=$other_1p, shared=$(git -C "$PAIR_B" rev-parse refs/remotes/origin/hyperpowers/state))"; fi
+if ! git -C "$PAIR_B" rev-parse -q --verify "refs/hp-fetch/$gone_1p" >/dev/null && [ "$(git -C "$PAIR_B" rev-parse -q --verify "refs/hp-fetch/$$")" = "$held_1p" ]; then pass "a private fetch ref whose owner is gone is swept before the fetch, and a live owner's is left alone"; else fail "a private fetch ref whose owner is gone is swept before the fetch (gone: $(git -C "$PAIR_B" rev-parse -q --verify "refs/hp-fetch/$gone_1p" || echo swept), live: $(git -C "$PAIR_B" rev-parse -q --verify "refs/hp-fetch/$$" || echo swept))"; fi
+git -C "$PAIR_B" update-ref -d "refs/hp-fetch/$$"
+# No private ref outlives a sync, whatever its outcome: the fixtures above
+# cover a refused stamp, an absent branch, a refused alias, a pinned fetch
+# and a reconciled one.
+if [ -z "$(git -C "$p1_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$chain_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_A" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_B" for-each-ref refs/hp-fetch)" ]; then pass "no private fetch ref outlives a sync"; else fail "no private fetch ref outlives a sync ($(git -C "$p1_a" for-each-ref refs/hp-fetch; git -C "$chain_a" for-each-ref refs/hp-fetch; git -C "$PAIR_A" for-each-ref refs/hp-fetch; git -C "$PAIR_B" for-each-ref refs/hp-fetch))"; fi
 
 # Crash after the worktree add: the next call starts clean.
 r4="$TEST_ROOT/r4"; make_repo "$r4"

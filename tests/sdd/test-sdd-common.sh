@@ -28,9 +28,6 @@ make_repo() { # <path>
     git -C "$1" config user.email "test@example.com"
     git -C "$1" commit -q --allow-empty -m "initial"
 }
-# fp <repo>: the repository's remote fingerprint as the library computes it.
-# shellcheck source=/dev/null
-fp() { ( . "$LIB"; hp_remote_fingerprint "$1" ); }
 
 echo "=== sdd-common.sh ==="
 
@@ -300,6 +297,8 @@ tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.rewrite/plan-
 if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .rewrite/plan-deadbeef.journal" ]; then pass "hp_tree_refusal names a committed rewrite journal, regular as it is"; else fail "hp_tree_refusal names a committed rewrite journal, regular as it is (rc=$tr_rc: $tr_out)"; fi
 tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.sync-applying")"); tr_rc=$?
 if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .sync-applying" ]; then pass "hp_tree_refusal names a committed sync marker"; else fail "hp_tree_refusal names a committed sync marker (rc=$tr_rc: $tr_out)"; fi
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.restore/12345.1")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .restore/12345.1" ]; then pass "hp_tree_refusal names a committed restore copy"; else fail "hp_tree_refusal names a committed restore copy (rc=$tr_rc: $tr_out)"; fi
 tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "120000,$tr_link,escape")"); tr_rc=$?
 if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "symbolic link escape" ]; then pass "hp_tree_refusal reaches a link at the tree's root"; else fail "hp_tree_refusal reaches a link at the tree's root (rc=$tr_rc: $tr_out)"; fi
 # A tree this host cannot read is its own sentence. The refusal above is

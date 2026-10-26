@@ -262,8 +262,9 @@ prints. It no longer touches or reclaims anything inside the checkout.
 
 `sdd-dir` with no argument prints `${cache}/hyperpowers/sdd/<key>` with the
 common-directory key: the repository-level root that optimizing-performance
-uses for baselines stays in the plain cache, shared across worktrees from now
-on, and keeps its 14-day idle reclaim of sibling roots.
+uses for baselines stays in the plain cache, shared across worktrees from
+now on, and keeps its two-phase idle reclaim of sibling roots: a root is
+claimed after 14 idle days and deleted after 14 more quiet ones.
 
 **Cross-repository pointers.** When the cwd's repository differs from the
 plan's, `sdd-dir` leaves a symlink
@@ -348,7 +349,10 @@ callers without a plan). Fetches
 `<key>.fetched` stamp (`<remote> <branch> <fingerprint>`, the fingerprint
 being the first 12 hex digits of the SHA-256 of the remote's fetch URL, or
 `none` when the remote has no URL) on every outcome except
-`offline`, `offline-no-state` and `no-remote` (which removes any stamp), runs `ensure_checkout`, and reconciles under the lock. A remote, branch or URL that changed while the fetch ran, or a fingerprint that cannot be computed, ends the sync with `status=error` and nothing stamped.
+`offline`, `offline-no-state` and `no-remote` (which removes any stamp),
+runs `ensure_checkout`, and reconciles under the lock. A remote, branch or
+URL that changed while the fetch ran, or a fingerprint that cannot be
+computed, ends the sync with `status=error` and nothing stamped.
 Reconciliation starts by snapshotting every plan directory with pending
 tracked changes, so the working tree equals the local tip S and no local
 edit can be lost, then compares S with the fetched tip R:
@@ -387,10 +391,10 @@ fresh host whose human partner knows no remote dossier exists.
 The branch is content from other hosts, so a tree is inspected whole before
 any of it reaches disk: a tip or an incoming commit that carries a symbolic
 link, a submodule entry, or a recovery sidecar (`.sync-applying`, anything
-under `.rewrite/`) anywhere in its tree is refused entire, both when the
-checkout is created from it and when a commit is applied to an existing
-one, and `sdd-dir` refuses a workspace that holds a symbolic link rather
-than printing a path the writers would follow out of the cache.
+under `.rewrite/` or `.restore/`) anywhere in its tree is refused entire,
+both when the checkout is created from it and when a commit is applied to
+an existing one, and `sdd-dir` refuses a workspace that holds a symbolic
+link rather than printing a path the writers would follow out of the cache.
 
 Controllers and subagents write ledger and report files without the lock,
 so reconciliation treats the working tree as live. After computing the
@@ -536,12 +540,12 @@ plain-cache reclaim sets that root aside under a `.reclaiming-` name once
 nothing under it is newer than 14 days and deletes it on a later call after
 14 more quiet days; an import interrupted between those two steps leaves the
 kept copy and no pointer, and the next import completes the relink and
-prints `status=moved`) (a pointer candidate is
-relinked to the new workspace instead); a failed verification leaves the
-source untouched and exits 2 with `status=import-failed`. The copied
-ledger's first line is rewritten to the repo-relative form when it holds an
-absolute path inside the plan repository. If the checkout already has a
-ledger, the candidate is left alone: `status=skipped reason=ledger-exists
+prints `status=moved`; a pointer candidate is relinked to the new workspace
+instead); a failed verification leaves the source untouched and exits 2
+with `status=import-failed`. The copied ledger's first line is rewritten to
+the repo-relative form when it holds an absolute path inside the plan
+repository. If the checkout already has a ledger, the candidate is left
+alone: `status=skipped reason=ledger-exists
 path=<candidate>`. Otherwise `status=moved from=<path>`, with `conflicts=<n>` appended when `n` destination entries differed from their legacy copies and were kept (the legacy copy of a report or review sits beside it as `<name>.from-import`, ignored by the branch, for a human to merge; a conflicting brief or review package regenerates and is not copied), or `status=none`.
 Idempotent: a second call prints `status=none`. Under `plain` the
 destination is the plain-cache workspace, the state branch is the first
@@ -568,12 +572,12 @@ under the lock after re-checking it, and touches it so the clock restarts
 deletes it and verifies it is gone. The `status=pruned` line prints the
 names renamed this run as `tombs=` and the names deleted this run as
 `quarantined=`; a copy that fails any re-check is kept where it is.
-With
-`--apply` it removes the listed plan directories in one private-index commit
-`sdd: prune <slugs>` and `rm -rf`s the dead checkouts together with their
-backend and lock files. Nothing calls `prune` implicitly. Under `plain`:
-`status=plain`; plain workspaces are left to the plain cache's own 14-day
-reclaim.
+With `--apply` it removes the listed plan directories in one private-index
+commit `sdd: prune <slugs>` and `rm -rf`s the dead checkouts together with
+their backend and lock files. Nothing calls `prune` implicitly. Under
+`plain`: `status=plain`; plain workspaces are left to the plain cache's own
+two-phase reclaim, which claims a root after 14 idle days and deletes it
+after 14 more quiet ones.
 
 **`claim PLAN_FILE N --session SID [--takeover]`.** Prepares
 `plans/<ws>/claims/.tmp-<random>/owner` with the complete record below, then
@@ -750,12 +754,13 @@ pushes only if the human partner asks. "A clean finish that leaves the
 workspace behind is an INCOMPLETE finish" stays true of the working tree; the
 branch history keeping the dossier is the point.
 
-**Pruning.** No automatic reclaim runs inside a checkout: a plan idle on this
-host may be active on another. `sdd-state prune` is the only remover. The
-plain cache keeps today's 14-day reclaim for legacy workspaces, the
-no-argument roots, pointers, and gate directories. Because `import` leaves a
-symlink where a legacy workspace was, a legacy `<key>` directory that holds
-only symlinks ages out as a whole.
+**Pruning.** No automatic reclaim runs inside a checkout: a plan idle on
+this host may be active on another. `sdd-state prune` is the only remover.
+The plain cache keeps today's two-phase reclaim for legacy workspaces, the
+no-argument roots, pointers, and gate directories: a root is claimed after
+14 idle days and deleted after 14 more quiet ones. Because `import` leaves
+a symlink where a legacy workspace was, a legacy `<key>` directory that
+holds only symlinks ages out as a whole.
 
 **Migration.** The first `sdd-dir PLAN` after the upgrade imports the plan's
 legacy workspace (section 2, `import`). No manual step. Two caveats go in the

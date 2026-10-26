@@ -1565,7 +1565,15 @@ cmd_sync() {
   # never named. A remote with no url entry has nothing written, so the
   # rewritten form, which is all get-url can give, stands in; that read is
   # then the single one.
-  url_pin=$(git -C "$PLAN_DIR" config --get "remote.$REMOTE.url" 2>/dev/null) || url_pin=""
+  #
+  # remote.<name>.url is multi-valued, and the value wanted is the first:
+  # git fetches from a remote's first URL and get-url reports that one, so
+  # a stamp taken from any other would name an endpoint the fetch never
+  # contacts. config --get returns the last value, hence --get-all and the
+  # first record of it; -z, because a value may hold a newline and a
+  # line-oriented read would truncate it.
+  url_pin=""
+  IFS= read -r -d '' url_pin < <(git -C "$PLAN_DIR" config -z --get-all "remote.$REMOTE.url" 2>/dev/null) || url_pin=""
   if [ -z "$url_pin" ]; then
     url_pin=$(git -C "$PLAN_DIR" remote get-url "$REMOTE" 2>/dev/null) || url_pin=""
   fi

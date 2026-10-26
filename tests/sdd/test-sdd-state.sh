@@ -240,6 +240,19 @@ if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && [ "$(git -C "$rule_
 # alias, nor the one-time name, nor the endpoint it maps to is written to
 # the repository's config, and the seam's own rule is gone with it.
 if ! git -C "$rule_a" config --get-regexp '^remote\.hp-fetch-' >/dev/null 2>&1 && ! git -C "$rule_a" config --get-regexp '^url\.' >/dev/null 2>&1; then pass "the pinned fetch leaves no alias and no url rewrite in the repository's config"; else fail "the pinned fetch leaves no alias and no url rewrite in the repository's config ($(git -C "$rule_a" config --get-regexp '^remote\.hp-fetch-'; git -C "$rule_a" config --get-regexp '^url\.'))"; fi
+# A remote with two URLs. git fetches from the first and git remote get-url
+# reports that one, so the single read has to take the first too; reading
+# it with config --get would take the last, probe and pin the endpoint the
+# fetch was never meant to use, and leave every sync disagreeing with its
+# own stamp.
+make_pair p1m
+multi_a="$PAIR_A"
+mkdir -p "$multi_a/docs"; : > "$multi_a/docs/plan.md"; git -C "$multi_a" add docs; git -C "$multi_a" commit -qm plan
+git -C "$multi_a" remote set-url origin "$chain_good"
+git -C "$multi_a" remote set-url --add origin "$chain_evil"
+out=$(run_state "$multi_a" sync docs/plan.md 2>"$TEST_ROOT/p1m.err"); rc=$?
+co_1m="$STATE_ROOT/$(state_key "$multi_a")"
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && [ "$(git -C "$multi_a" rev-parse hyperpowers/state)" = "$(git -C "$chain_good" rev-parse hyperpowers/state)" ] && grep -q '^Task 1: the good endpoint$' "$co_1m/plans/$name_1c/progress.md" && ! grep -q 'evil endpoint' "$co_1m/plans/$name_1c/progress.md" && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$multi_a").fetched")" = "origin hyperpowers/state $(fp "$multi_a")" ]; then pass "a remote with two URLs is probed, fetched and stamped on the first, the one git itself would fetch from"; else fail "a remote with two URLs is probed, fetched and stamped on the first (rc=$rc: $out: $(sed -n 2p "$co_1m/plans/$name_1c/progress.md" 2>/dev/null): $(tr '\n' '|' < "$TEST_ROOT/p1m.err"))"; fi
 # The fetched tip is read from a private ref, refs/hp-fetch/<pid>. Read
 # from the shared remote-tracking ref, a fetch another process finished in
 # between would hand this sync a commit the pinned endpoint never served.

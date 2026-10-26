@@ -76,3 +76,35 @@ child=48276 pgid=48276 sid=0 run=48226 pgid=32250 sid=0
 
 Result: `STATUS: PASSED (0 skipped)`, 36 cases; inside the sandbox,
 `STATUS: PASSED (2 skipped)`.
+
+## The fence on macOS (Task 4, a deviation from Design 2)
+
+The spec names `ps -E` as the reader of another process's environment where
+`/proc` is absent. On this host (macOS, Darwin 25.6) it is not one: `ps -E`
+prints the environment of the calling process only. Controller probes
+outside the Bash sandbox on 2026-10-25, all against a direct child of the
+shell with the same uid, returned the child's command line without its
+environment under `ps -E -o command= -p`, `ps -eE`, `ps -axE`, with `-ww`,
+and for a child started with a two-variable `env -i` environment. The first
+unsandboxed run of Task 4's suite failed its lost-job sweep for that reason:
+the fenced survivor and the fenceless stranger both counted as skipped.
+
+The human partner chose to keep the sweep working here. A process now
+carries a job's fence when its environment holds `TRACKED_JOB_DIR=<jobdir>`
+or one of its open descriptors resolves to `<jobdir>/out.log` (every process
+of the command's tree inherits stdout and stderr on that file); the readers
+are `/proc` (`environ` and `fd/`) where it exists and `lsof -p PID -Fn`
+otherwise, the `ps -E` reader is gone, and `can_read_fence` probes a real
+child instead of the supervisor's own pid. A process that drops both halves
+is fenceless and skipped; a host with neither `/proc` nor lsof degrades a
+lost job to `lost-unswept`. The spec text stays as written; this note and the
+decision records carry the deviation.
+
+The suite's last unsandboxed run at Task 4's final helper, f560544, printed:
+
+```
+child=11280 pgid=11280 sid=0 run=11148 pgid=81830 sid=0
+```
+
+Result: `STATUS: PASSED (0 skipped)`, 79 cases; inside the sandbox,
+`STATUS: PASSED (16 skipped)`.

@@ -61,6 +61,10 @@ alive() {
   case "$err" in *"No such process"*) return 1 ;; *) return 0 ;; esac
 }
 have_ps() { ps -o pid= -p $$ >/dev/null 2>&1; }
+# group_pids <pgid>: the members of a process group. ps -g takes a numeric
+# argument as a *session* under Linux procps and as a process group under BSD
+# ps, so the group is filtered out of the full listing rather than selected.
+group_pids() { ps -eo pid=,pgid= 2>/dev/null | awk -v g="$1" '$2==g {print $1}'; }
 lstart_of() { ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//;s/ *$//'; }
 
 # job_dir_ok <jobdir>: 0 when the directory is a real path under a hyperpowers
@@ -222,7 +226,7 @@ finish_run() { # <code>
     printf "tracked-job: the command's group outlived its leader (exit %s); sweeping\n" "$code" >> "$RUN_DIR/out.log"
     sweep_group
   fi
-  if have_ps; then survivors=$(ps -o pid= -g "$RUN_PGID" 2>/dev/null | grep -c .); elif ! group_alive; then survivors=0; fi
+  if have_ps; then survivors=$(group_pids "$RUN_PGID" | grep -c .); elif ! group_alive; then survivors=0; fi
   # The terminal state goes first, under the lock and only from running, and
   # the exit file second: a reader that sees exit also sees the state, and a
   # concurrent wait or stop never races this writer. A lock that stays held
@@ -458,15 +462,18 @@ fence_fd() {
 # process that carries neither half, or whose fence cannot be read at all, is
 # not this job's and is never signalled.
 fenced() { fence_env "$1" "$2" || fence_fd "$1" "$2"; }
-# can_read_fence <jobdir>: this host can read another process's fence at all.
-# A proc tree answers by existing. Elsewhere lsof is the only reader, and the
+# can_read_fence <jobdir>: the fence of this job's processes can be read at
+# all. The question is about the reader that will actually be used, so a proc
+# tree answers it alone wherever the readers use one: a tree that does not
+# hold the job's own leader would let the sweep find no fenced process and
+# call that a clean stop. Where there is no tree, lsof is the reader, and the
 # question is whether it can list a *child's* descriptors rather than this
 # process's own, so the probe is a real short-lived child holding the job's
 # out.log open. A self-test on $$ is what made ps -E look workable on macOS:
 # it answers for the caller and for nobody else.
 can_read_fence() {
   local pid i=0 rc=1
-  [ -d "$PROC_ROOT/$$" ] && return 0
+  [ -d "$PROC_ROOT" ] && { [ -d "$PROC_ROOT/$(meta_get "$1" pid)" ]; return $?; }
   command -v lsof >/dev/null 2>&1 || return 1
   sleep 5 >> "$1/out.log" 2>/dev/null &
   pid=$!
@@ -482,10 +489,21 @@ can_read_fence() {
 # fenced_pids <jobdir> <pgid>: the recorded group's fenced processes.
 fenced_pids() {
   local dir=$1 pgid=$2 p
-  for p in $(ps -o pid= -g "$pgid" 2>/dev/null); do fenced "$p" "$dir" && printf '%s\n' "$p"; done
+  for p in $(group_pids "$pgid"); do fenced "$p" "$dir" && printf '%s\n' "$p"; done
+}
+# unswept <jobdir> <state> <pgid>: the job cannot be swept by identity here,
+# so nothing is signalled and the record names the group for the human
+# partner. Exits; a lock it cannot take is status=busy, nothing changed.
+unswept() {
+  local rc
+  if [ "$2" != lost-unswept ]; then
+    conclude "$1" lost lost-unswept "lost-unswept pgid=$3" >/dev/null; rc=$?
+    [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
+  fi
+  echo "status=lost-unswept pgid=$3"; exit 7
 }
 cmd_stop() {
-  local dir=${1:-} state i pgid pids p skipped survivors rc
+  local dir=${1:-} state i pgid pids p code skipped survivors rc
   [ -n "$dir" ] || usage
   job_dir_ok "$dir" || { echo "status=error"; exit 2; }
   state=$(meta_get "$dir" state)
@@ -495,36 +513,46 @@ cmd_stop() {
   case "$state" in exited|stopped|allocated) echo "status=not-running"; exit 0 ;; esac
   if [ "$state" = running ] && alive "$(meta_get "$dir" run_pid)" && ! supervisor_reused "$dir"; then
     : > "$dir/stop-request"
-    i=0; while [ "$i" -lt "$STOP_WAIT" ] && [ ! -f "$dir/exit" ]; do sleep 1; i=$((i + 1)); done
-    if [ -f "$dir/exit" ]; then ledger_append_once "$dir" "$(terminal_line "$dir" "$(cat "$dir/exit")")"; echo "status=stopped"; exit 0; fi
+    # The wait is for the job to conclude, not for the exit file: a supervisor
+    # that recorded the status but could not publish the file has stopped the
+    # job all the same, and reporting a timeout for it would cost a retry.
+    i=0; while [ "$i" -lt "$STOP_WAIT" ] && [ -z "$(exit_code "$dir")" ]; do sleep 1; i=$((i + 1)); done
+    code=$(exit_code "$dir")
+    if [ -n "$code" ]; then ledger_append_once "$dir" "$(terminal_line "$dir" "$code")"; echo "status=stopped"; exit 0; fi
     echo "status=stop-timeout"; exit 6
   fi
-  # The supervisor is dead: record the loss (wait may have already), then sweep by identity only.
-  # Every conclude result is checked: a lock that cannot be taken is status=busy (3), the state
-  # is left as it was, and nothing is claimed; the controller retries stop.
+  # The supervisor is dead. A job that concluded while the workspace lock was
+  # held has a status of its own, published but unrecorded, and calling it
+  # lost would put a false line in the ledger: repair that record exactly as
+  # wait does. Every conclude result is checked: a lock that cannot be taken
+  # is status=busy (3), the state is left as it was, and nothing is claimed.
   if [ "$state" = running ]; then
+    code=$(exit_code "$dir")
+    if [ -n "$code" ]; then
+      conclude "$dir" running exited "" "code:=$code" >/dev/null; rc=$?
+      [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
+      ledger_append_once "$dir" "$(terminal_line "$dir" "$code")"
+      echo "status=not-running"; exit 0
+    fi
     conclude "$dir" running lost "lost" >/dev/null; rc=$?
     [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
     state=$(meta_get "$dir" state)
   fi
   case "$state" in lost|lost-unswept) ;; *) echo "status=not-running"; exit 0 ;; esac
   pgid=$(meta_get "$dir" pgid)
-  # Without the process table, or without a fence this host can read, there is
-  # no way to tell the job's survivors from whatever else now shares the
-  # recorded group, and a group signal would hit both. The state names the
-  # group instead and the human partner sweeps it.
-  if ! have_ps || ! can_read_fence "$dir"; then
-    if [ "$state" != lost-unswept ]; then
-      conclude "$dir" lost lost-unswept "lost-unswept pgid=$pgid" >/dev/null; rc=$?
-      [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
-    fi
-    echo "status=lost-unswept pgid=$pgid"; exit 7
-  fi
-  if [ "$(ps -o pid= -g "$pgid" 2>/dev/null | grep -c .)" -eq 0 ]; then
+  # Without the process table the group cannot be listed at all.
+  have_ps || unswept "$dir" "$state" "$pgid"
+  # A group with no members needs no fence: there is nothing left to tell
+  # apart, and nothing to signal.
+  if [ "$(group_pids "$pgid" | grep -c .)" -eq 0 ]; then
     conclude "$dir" "$state" stopped "stopped" "survivors:=0" "skipped:=0" >/dev/null; rc=$?
     [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
     echo "status=not-running"; exit 0
   fi
+  # The group has members, so the fence decides which of them are the job's.
+  # A fence that cannot be read would leave every one of them unsignalled and
+  # call that a clean stop, so the record names the group instead.
+  can_read_fence "$dir" || unswept "$dir" "$state" "$pgid"
   # The fence is read again immediately before each signal: a pid that left
   # the job between the listing and the signal is no longer this job's.
   pids=$(fenced_pids "$dir" "$pgid")
@@ -533,7 +561,7 @@ cmd_stop() {
   for p in $pids; do if fenced "$p" "$dir"; then kill -KILL "$p" 2>/dev/null; fi; done
   sleep 1
   survivors=$(fenced_pids "$dir" "$pgid" | grep -c .)
-  skipped=$(( $(ps -o pid= -g "$pgid" 2>/dev/null | grep -c .) - survivors ))
+  skipped=$(( $(group_pids "$pgid" | grep -c .) - survivors ))
   i=0
   while :; do
     conclude "$dir" "$state" stopped "stopped" "survivors:=$survivors" "skipped:=$skipped" >/dev/null; rc=$?

@@ -334,25 +334,31 @@ ln -s "$j1/out.log" "$fp/12/fd/1"
 printf 'OTHER=1\0' > "$fp/13/environ"; ln -s /dev/null "$fp/13/fd/1"
 out=$(TRACKED_JOB_PROC_ROOT="$fp" HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; for p in 11 12 13 14; do if fenced "$p" "$1"; then printf "%s=yes " "$p"; else printf "%s=no " "$p"; fi; done' "$TJ" "$j1" 2>/dev/null)
 if [ "$out" = "11=yes 12=yes 13=no 14=no " ]; then pass "the fence is the TRACKED_JOB_DIR variable or an out.log descriptor, and nothing else"; else fail "the fence is the TRACKED_JOB_DIR variable or an out.log descriptor, and nothing else (got: $out)"; fi
-# the readability gate asks whether a *child's* fence can be read: ps -E answers
-# for the caller alone, so a self-test would pass on a host that cannot answer.
-canfence() { TRACKED_JOB_PROC_ROOT="$1" PATH="$2" HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; if can_read_fence "$1"; then echo yes; else echo no; fi' "$TJ" "$j1" 2>/dev/null; }
-# A PATH without lsof has to keep what the probe needs to run at all: bash to
-# start the seam, dirname for the helper's own directory, node for the
-# metadata reader, sleep and grep for the probe itself. A missing one of those
-# reads as an empty answer below rather than as a false "no".
+# the readability gate asks whether the reader that will be used can see this
+# job's processes: a tree that holds none of them, or a host where lsof cannot
+# list a *child's* descriptors, is no fence at all. The answer is the function's
+# own status, so a function that went missing reads as 127 and not as a false no.
+canfence() { TRACKED_JOB_PROC_ROOT="$1" PATH="$2" HYPERPOWERS_TEST_LIB_ONLY=1 bash -c '. "$0"; can_read_fence "$1"; echo "rc=$?"' "$TJ" "$j1" 2>/dev/null; }
+# A PATH without lsof has to keep what the gate needs to run at all: bash to
+# start the seam, dirname for the helper's own directory, node for the metadata
+# reader, sleep and grep for the lsof probe. A missing one of those reads as an
+# empty answer below rather than as a false rc.
 mkdir -p "$TEST_ROOT/emptyproc" "$TEST_ROOT/nolsof"
 for b in bash dirname node sleep grep; do ln -sf "$(command -v "$b")" "$TEST_ROOT/nolsof/$b"; done
-if [ -d "/proc/$$" ]; then skip "the fence is unreadable where neither a proc tree nor lsof can answer (this host has /proc)"
+# the tree is the reader wherever one is supplied, so lsof must not answer
+# behind it: this PATH has lsof and the answer must still be no.
+out=$(canfence "$TEST_ROOT/emptyproc" "$PATH")
+if [ "$out" = "rc=1" ]; then pass "a proc tree that does not hold the job is an unreadable fence, and lsof is not consulted behind it"; else fail "a proc tree that does not hold the job is an unreadable fence, and lsof is not consulted behind it (got: $out)"; fi
+mkdir -p "$TEST_ROOT/treeproc/$(meta "$j1" pid)"
+out=$(canfence "$TEST_ROOT/treeproc" "$TEST_ROOT/nolsof")
+if [ "$out" = "rc=0" ]; then pass "a proc tree that holds the job's leader is a readable fence, with no lsof on the host"; else fail "a proc tree that holds the job's leader is a readable fence, with no lsof on the host (got: $out)"; fi
+out=$(canfence /proc "$TEST_ROOT/nolsof")
+if [ "$out" = "rc=1" ]; then pass "a host with neither a tree that holds the job nor lsof has no readable fence"; else fail "a host with neither a tree that holds the job nor lsof has no readable fence (got: $out)"; fi
+if [ -d /proc ]; then skip "lsof answers the gate for a child where there is no proc tree (this host has /proc)"
+elif ! command -v lsof >/dev/null 2>&1; then skip "lsof answers the gate for a child where there is no proc tree (lsof unavailable)"
 else
-  out=$(canfence "$TEST_ROOT/emptyproc" "$TEST_ROOT/nolsof")
-  if [ "$out" = no ]; then pass "the fence is unreadable where neither a proc tree nor lsof can answer"; else fail "the fence is unreadable where neither a proc tree nor lsof can answer (got: $out)"; fi
-fi
-if [ -d "/proc/$$" ] || command -v lsof >/dev/null 2>&1; then
   out=$(canfence /proc "$PATH")
-  if [ "$out" = yes ]; then pass "the fence is readable where a proc tree or lsof answers for a child"; else fail "the fence is readable where a proc tree or lsof answers for a child (got: $out)"; fi
-else
-  skip "the fence is readable where a proc tree or lsof answers for a child (no proc tree and no lsof)"
+  if [ "$out" = "rc=0" ]; then pass "lsof answers the gate for a child where there is no proc tree"; else fail "lsof answers the gate for a child where there is no proc tree (got: $out)"; fi
 fi
 # lost-job sweep: fenced survivors ended one by one; a fenceless process in the group left alone (ps only).
 j15=$(newjob survivors); ( tj run "$j15" -- bash -c 'sleep 60 & env -u TRACKED_JOB_DIR sleep 60 >/dev/null 2>&1 & echo $! > stranger.pid; wait' >/dev/null 2>&1 ) &
@@ -388,6 +394,16 @@ if [ "$HAVE_PS" -eq 1 ]; then
     if [ "$rc" -eq 0 ] && [ "$out" = "status=stopped" ] && ! kill -0 "$leader" 2>/dev/null && ! kill -0 "$pa" 2>/dev/null && kill -0 "$pb" 2>/dev/null && kill -0 "$pc" 2>/dev/null && [ "$(meta "$j21" skipped)" = 2 ] && [ "$(meta "$j21" survivors)" = 0 ]; then pass "the supplied proc tree signals the environment-fenced and the descriptor-fenced process; the unreadable one and the fenceless one are skipped and counted"; else fail "the supplied proc tree signals only the fenced processes (rc=$rc: $out, skipped=$(meta "$j21" skipped), survivors=$(meta "$j21" survivors))"; fi
     kill -KILL "$pb" "$pc" 2>/dev/null; rm -rf "$proc"
   fi
+  # a proc tree that holds none of the job's processes: the sweep would find
+  # nothing to signal and record a clean stop, so the gate refuses instead.
+  j26=$(newjob blindtree); ( tj run "$j26" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
+  if ! wait_launched "$j26"; then fail "a lost job read against a tree that cannot see it is lost-unswept, and nothing is signalled (the launch did not open within 10s)"
+  else
+    leader26=$(meta "$j26" pid); kill -KILL "$(meta "$j26" run_pid)"; sleep 1
+    out=$(TRACKED_JOB_PROC_ROOT="$TEST_ROOT/emptyproc" tj stop "$j26"); rc=$?
+    if [ "$rc" -eq 7 ] && [ "$out" = "status=lost-unswept pgid=$(meta "$j26" pgid)" ] && [ "$(meta "$j26" state)" = lost-unswept ] && kill -0 "$leader26" 2>/dev/null; then pass "a lost job read against a tree that cannot see it is lost-unswept, and nothing is signalled"; else fail "a lost job read against a tree that cannot see it is lost-unswept, and nothing is signalled (rc=$rc: $out, state=$(meta "$j26" state))"; fi
+    kill -KILL -- "-$(meta "$j26" pgid)" 2>/dev/null
+  fi
   # the descriptor half on its own: the command scrubs the variable from its
   # child's environment but the child keeps the descriptors it inherited, so
   # the sweep still owns it and skips nothing.
@@ -408,6 +424,8 @@ else
   skip "the lost job's stopped line is written once (ps unavailable)"
   skip "wait on a swept lost job reports lost (ps unavailable)"
   skip "the supplied proc tree signals the environment-fenced and the descriptor-fenced process; the unreadable one and the fenceless one are skipped and counted (ps unavailable)"
+  skip "a second stop on the swept job is not-running (ps unavailable)"
+  skip "a lost job read against a tree that cannot see it is lost-unswept, and nothing is signalled (ps unavailable)"
   skip "a child that kept only the out.log descriptor is still swept (ps unavailable)"
 fi
 kill -KILL -- "-$(meta "$j15" pgid)" 2>/dev/null
@@ -427,7 +445,7 @@ else
   kill -KILL -- "-$(meta "$j20" pgid)" 2>/dev/null
 fi
 # a held workspace lock: no terminal record is written and no success is claimed; the record repairs once the lock is free.
-j22=$(newjob locked); j23=$(newjob lockedexit)
+j22=$(newjob locked); j23=$(newjob lockedexit); j25=$(newjob lockedstop)
 ( tj run "$j22" -- bash -c 'sleep 60' >/dev/null 2>&1 ) &
 if ! wait_launched "$j22"; then
   fail "stop under a held lock is busy and records nothing (the launch did not open within 10s)"
@@ -435,6 +453,7 @@ if ! wait_launched "$j22"; then
   fail "a supervisor that cannot take the lock still writes exit and says so in out.log (the launch did not open within 10s)"
   fail "wait repairs the state from the exit file once the lock is free (the launch did not open within 10s)"
   fail "stop on the lost job proceeds once the lock is free (the launch did not open within 10s)"
+  fail "stop repairs a job that concluded under the lock instead of calling it lost (the launch did not open within 10s)"
 else
   kill -KILL "$(meta "$j22" run_pid)"; sleep 1
   mkdir -p "$lockdir"; printf 'pid=1\n' > "$lockdir/owner"
@@ -442,14 +461,21 @@ else
   if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$(meta "$j22" state)" = running ]; then pass "stop under a held lock is busy and records nothing"; else fail "stop under a held lock is busy and records nothing (rc=$rc: $out, state=$(meta "$j22" state))"; fi
   out=$(HYPERPOWERS_LOCK_WAIT_STEPS=2 tj wait "$j22" --max-ms 3000); rc=$?
   if [ "$rc" -eq 3 ] && [ "$out" = "status=running" ] && [ "$(meta "$j22" state)" = running ]; then pass "wait under a held lock reads running at its bound and records nothing"; else fail "wait under a held lock reads running at its bound and records nothing (rc=$rc: $out, state=$(meta "$j22" state))"; fi
+  # Two jobs in the same shape, so that wait's repair and stop's are both
+  # tried against a job that concluded with its state left behind.
   ( HYPERPOWERS_LOCK_WAIT_STEPS=2 tj run "$j23" -- bash -c 'exit 0' >/dev/null 2>&1 ) &
+  ( HYPERPOWERS_LOCK_WAIT_STEPS=2 tj run "$j25" -- bash -c 'exit 0' >/dev/null 2>&1 ) &
   # The supervisor retries the record five times a second apart before it
   # gives up and publishes the exit anyway, so this outlasts the usual bound.
-  i=0; while [ "$i" -lt 40 ] && [ ! -f "$j23/exit" ]; do sleep 1; i=$((i + 1)); done
+  i=0; while [ "$i" -lt 40 ] && { [ ! -f "$j23/exit" ] || [ ! -f "$j25/exit" ]; }; do sleep 1; i=$((i + 1)); done
   if [ "$(cat "$j23/exit" 2>/dev/null)" = 0 ] && [ "$(meta "$j23" state)" = running ] && grep -q 'terminal state exited not recorded' "$j23/out.log"; then pass "a supervisor that cannot take the lock still writes exit and says so in out.log"; else fail "a supervisor that cannot take the lock still writes exit and says so in out.log (exit=$(cat "$j23/exit" 2>/dev/null), state=$(meta "$j23" state))"; fi
   rm -rf "$lockdir"
   out=$(tj wait "$j23" --max-ms 1000); rc=$?
   if [ "$rc" -eq 0 ] && [ "$out" = "status=exited code=0" ] && [ "$(meta "$j23" state)" = exited ]; then pass "wait repairs the state from the exit file once the lock is free"; else fail "wait repairs the state from the exit file once the lock is free (rc=$rc: $out, state=$(meta "$j23" state))"; fi
+  # the same repair from stop: a job that exited while the lock was held is
+  # finished, not lost, and its ledger line says so.
+  out=$(tj stop "$j25"); rc=$?
+  if [ "$rc" -eq 0 ] && [ "$out" = "status=not-running" ] && [ "$(meta "$j25" state)" = exited ] && [ "$(grep -c "^job s1 .*: lockedstop exited code=0 jobdir=$j25\$" "$ws/progress.md")" = 1 ] && [ "$(grep -c "lockedstop lost jobdir=$j25\$" "$ws/progress.md")" = 0 ]; then pass "stop repairs a job that concluded under the lock instead of calling it lost"; else fail "stop repairs a job that concluded under the lock instead of calling it lost (rc=$rc: $out, state=$(meta "$j25" state))"; fi
   out=$(TRACKED_JOB_GRACE_S=1 tj stop "$j22"); rc=$?
   case "$rc" in 0|7) pass "stop on the lost job proceeds once the lock is free" ;; *) fail "stop on the lost job proceeds once the lock is free (rc=$rc: $out)" ;; esac
   kill -KILL -- "-$(meta "$j22" pgid)" 2>/dev/null

@@ -65,4 +65,14 @@ child=51098 pgid=51098 sid=0 run=50973 pgid=34374 sid=0
 ```
 
 Result: `STATUS: PASSED (0 skipped)`, 20 cases; inside the sandbox,
+`STATUS: PASSED (2 skipped)`. That run was at 422d539. The task's fix rounds
+added cases and a discriminating assertion (the child is not a session
+leader: its `sess` differs from its pid, which fails under `setsid`); the run
+at the task's final helper, a9a7396, printed:
+
+```
+child=48276 pgid=48276 sid=0 run=48226 pgid=32250 sid=0
+```
+
+Result: `STATUS: PASSED (0 skipped)`, 36 cases; inside the sandbox,
 `STATUS: PASSED (2 skipped)`.

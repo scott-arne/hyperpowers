@@ -400,6 +400,12 @@ for c in bash git dirname basename mkdir touch find ls rm cat sed date head tr w
 rc=0
 err=$(cd "$TEST_ROOT/repo-plan" && PATH="$nonode" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>&1 >/dev/null) || rc=$?
 if [ "$rc" -eq 2 ] && [ "$err" = "sdd-dir: node not found" ]; then pass "sdd-dir refuses with exit 2 when node is not on PATH"; else fail "sdd-dir refuses with exit 2 when node is not on PATH (rc=$rc: $err)"; fi
+# The no-argument form reaches none of that: it derives and touches the
+# plain root and runs the reclaim, whose only node use reads a missing node
+# as a live process, so it adopts no crashed claim and keeps working.
+rc=0
+out=$(cd "$TEST_ROOT/repo-plan" && PATH="$nonode" bash "$SDD_DIR_SCRIPT" 2>"$TEST_ROOT/nonode-root.err") || rc=$?
+if [ "$rc" -eq 0 ] && [ -d "$out" ] && [ "$out" = "$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$TEST_ROOT/repo-plan")" ]; then pass "the no-argument form prints the plain root and exits 0 without node"; else fail "the no-argument form prints the plain root and exits 0 without node (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/nonode-root.err"))"; fi
 # A claim whose owner is still running is that call's to finish or put back.
 idle_live="$XDG_CACHE_HOME/hyperpowers/sdd/idlelive00000000000a"
 mkdir -p "$idle_live.claiming-$$/plans/some-plan-deadbeef"; : > "$idle_live.claiming-$$/plans/some-plan-deadbeef/progress.md"

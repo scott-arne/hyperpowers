@@ -49,10 +49,6 @@ else
     exit 2
   }
 fi
-# hp_materialize_plain publishes through node and hp_stamp_ok fingerprints
-# the remote's URL with it, both on the path below, so a missing node is a
-# refusal here rather than a creation that stops halfway.
-command -v node >/dev/null 2>&1 || { echo "sdd-dir: node not found" >&2; exit 2; }
 
 base="$(hp_cache_root)/sdd"
 
@@ -179,6 +175,14 @@ if [ -z "$plan_dir" ]; then
   printf '%s\n' "$dir"
   exit 0
 fi
+
+# hp_materialize_plain publishes through node and hp_stamp_ok fingerprints
+# the remote's URL with it, both on the plan form's path below, so a
+# missing node is a refusal here rather than a creation that stops halfway.
+# The no-argument form above reaches neither: its only node use, the
+# reclaim's hp_pid_gone, reads a missing node as a live process, so it
+# adopts no crashed claim and otherwise works as it always did.
+command -v node >/dev/null 2>&1 || { echo "sdd-dir: node not found" >&2; exit 2; }
 
 key=$(hp_key "$plan_dir") || { echo "sdd-dir: could not derive the repository key for: $plan" >&2; exit 2; }
 ws=$(hp_plan_ws_name "$plan") || { echo "sdd-dir: plan file must be a regular file inside the repository, not a symlink: $plan" >&2; exit 2; }

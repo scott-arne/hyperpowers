@@ -766,6 +766,8 @@ rm -rf "$(dirname "$wsf11")"/.removing-*
 wsf12=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf12/progress.md"
 out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-after-verify:task-3-report.md" bash "$SDD_STATE" finish docs/plan.md 2>"$TEST_ROOT/wsf12.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recreated during finish' "$TEST_ROOT/wsf12.err" && ! git -C "$co_f1" ls-tree -r --name-only hyperpowers/state | grep -q "plans/$(basename "$wsf12")/" && [ "$(cat "$wsf12/task-3-report.md")" = "late" ] && [ ! -e "$wsf12/progress.md" ] && ! ls -d "$(dirname "$wsf12")"/.removing-* >/dev/null 2>&1; then pass "a workspace recreated after the verification stays on disk, is named, and never enters the removal commit"; else fail "a workspace recreated after the verification stays on disk, is named, and never enters the removal commit (rc=$rc: $out)"; fi
+rec12=$(sed -n 's/.*the record is at \([^ ,]*\).*/\1/p' "$TEST_ROOT/wsf12.err")
+if [ -n "$rec12" ] && [ -f "$rec12/progress.md" ] && [ -f "$rec12/FINISHED" ]; then pass "a workspace recreated during finish still has its record, named on stderr"; else fail "a workspace recreated during finish still has its record, named on stderr (receipt='$rec12'; $(cat "$TEST_ROOT/wsf12.err"))"; fi
 rm -rf "$wsf12"
 wsp=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp/progress.md"
 out=$(run_state "$rp" finish docs/plan.md 2>/dev/null)
@@ -776,9 +778,14 @@ out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -q '^concurrent write$' "$wsp2/progress.md" && ! ls -d "$wsp2"/.removing-* >/dev/null 2>&1 && [ "$(cat "$wsp2".reappeared-*/task-2-report.md 2>/dev/null)" = "written after rename" ]; then pass "under the plain backend a changed copy restored over a recreated workspace is not nested either"; else fail "under the plain backend a changed copy restored over a recreated workspace is not nested (rc=$rc: $out)"; fi
 rm -rf "$wsp2".reappeared-*
 wsp3=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp3/progress.md"; mkdir "$wsp3/held"; : > "$wsp3/held/f"; chmod 555 "$wsp3/held"
-err=$(run_state "$rp" finish docs/plan.md 2>&1 >/dev/null); rc=$?
+out=$(run_state "$rp" finish docs/plan.md 2>"$TEST_ROOT/wsp3.err"); rc=$?
+err=$(cat "$TEST_ROOT/wsp3.err")
 chmod 755 "$wsp3/held" 2>/dev/null; chmod 755 "$(dirname "$wsp3")"/.removing-*/held 2>/dev/null
-if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'could not delete' && [ -f "$wsp3/held/f" ] && ! ls -d "$(dirname "$wsp3")"/.removing-* >/dev/null 2>&1; then pass "under the plain backend a deletion that fails is an error and what remains is restored"; else fail "under the plain backend a deletion that fails is an error and what remains is restored (rc=$rc: $err)"; fi
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && printf '%s' "$err" | grep -q 'could not delete' && [ -f "$wsp3/held/f" ] && ! ls -d "$(dirname "$wsp3")"/.removing-* >/dev/null 2>&1; then pass "under the plain backend a deletion that fails is an error and what remains is restored"; else fail "under the plain backend a deletion that fails is an error and what remains is restored (rc=$rc: $err)"; fi
+# The failed deletion already took the ledger: the receipt is the only copy
+# of it left, so a finish that fails after the deletion began keeps it.
+recp3=$(sed -n 's/.*the record is at \([^ ,]*\).*/\1/p' "$TEST_ROOT/wsp3.err")
+if [ -n "$recp3" ] && [ -f "$recp3/progress.md" ] && [ "$(cat "$recp3/progress.md")" = "x" ] && [ ! -e "$wsp3/progress.md" ]; then pass "a deletion that had begun keeps the receipt as the only copy of the ledger and names it"; else fail "a deletion that had begun keeps the receipt as the only copy of the ledger and names it (receipt='$recp3'; err=$err)"; fi
 rm -rf "$wsp3"
 
 echo ""

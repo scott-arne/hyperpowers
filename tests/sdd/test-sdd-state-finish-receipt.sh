@@ -69,9 +69,9 @@ if [ "$rc" -eq 0 ] && [ -f "$r/stop-guard.jsonl" ] && [ -f "$r/jobs/a-x-0001/met
 ws=$(run_sdd_dir "$repo" docs/plan.md 2>/dev/null)
 printf '# SDD ledger — plan: docs/plan.md\nsession s3: mode worktree on main at %s started 2026-10-23T00:00:00Z\n' "$repo" > "$ws/progress.md"
 chmod 500 "$RECEIPTS"
-out=$(run_state "$repo" finish docs/plan.md); rc=$?
+out=$(run_state "$repo" finish docs/plan.md 2>"$TEST_ROOT/stage.err"); rc=$?
 chmod 700 "$RECEIPTS"
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$ws/progress.md" ]; then pass "a receipt that cannot be staged stops finish with the workspace intact"; else fail "a receipt that cannot be staged stops finish with the workspace intact (rc=$rc: $out)"; fi
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$ws/progress.md" ] && grep -q 'could not be staged' "$TEST_ROOT/stage.err"; then pass "a receipt that cannot be staged stops finish with the workspace intact and says why"; else fail "a receipt that cannot be staged stops finish with the workspace intact and says why (rc=$rc: $out; $(cat "$TEST_ROOT/stage.err"))"; fi
 # a failure after staging (the removal refused) removes the staging and leaves no receipt.
 out=$(HYPERPOWERS_TEST_FAIL_REMOVE=1 run_state "$repo" finish docs/plan.md); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$ws/progress.md" ] && ! ls -d "$RECEIPTS"/.staging-* >/dev/null 2>&1 && [ "$(find "$RECEIPTS" -maxdepth 1 -mindepth 1 ! -name '.*' | wc -l | tr -d ' ')" = 2 ]; then pass "a finish that fails after staging removes the staging and writes no receipt"; else fail "a finish that fails after staging removes the staging and writes no receipt (rc=$rc: $out)"; fi
@@ -98,6 +98,10 @@ out=$(run_state "$repo" prune --receipts --days 30); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=listed receipts=0" ]; then pass "a receipt younger than --days is left out of the listing"; else fail "a receipt younger than --days is left out of the listing (rc=$rc: $out)"; fi
 out=$(run_state "$repo" prune --receipts --repo "$repo" 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "prune refuses --receipts together with --repo"; else fail "prune refuses --receipts together with --repo (rc=$rc: $out)"; fi
+# a workspace with no ledger is a workspace with no record to keep: finish says so and removes nothing
+wsn=$(run_sdd_dir "$repo" docs/plan.md 2>/dev/null); rm -f "$wsn/progress.md"
+out=$(run_state "$repo" finish docs/plan.md 2>"$TEST_ROOT/noledger.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'no progress.md' "$TEST_ROOT/noledger.err" && [ -d "$wsn" ]; then pass "a workspace with no ledger is refused with the reason named"; else fail "a workspace with no ledger is refused with the reason named (rc=$rc: $out; $(cat "$TEST_ROOT/noledger.err"))"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

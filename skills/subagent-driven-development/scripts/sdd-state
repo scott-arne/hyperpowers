@@ -32,6 +32,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Set by remove_verified when it leaves a verified copy at its tomb.
 TOMB=""
+# Set by remove_verified the moment it starts deleting a verified copy, and
+# never cleared: from that point the deletion may have taken the ledger
+# with it, so a staged receipt is the only copy left and is never discarded.
+REMOVAL_BEGAN=0
 # Set once a leftover entry under plans/ has been named on stderr, so the
 # caller's three attempts do not repeat the same diagnosis.
 NAMED_LEFTOVER=0
@@ -694,6 +698,9 @@ remove_verified() {
   if [ -e "$dir" ] || [ -L "$dir" ]; then restore_tomb "$dir" "$tomb"; return 1; fi
   TOMB=$tomb
   [ -z "$keep" ] || return 0
+  # Past this line the copy is being unlinked: a deletion that fails part
+  # way has already taken whatever it reached, the ledger included.
+  REMOVAL_BEGAN=1
   discard_tomb "$tomb" || { restore_tomb "$dir" "$tomb"; return 2; }
   return 0
 }
@@ -708,11 +715,11 @@ stage_receipt() {
   local src=$1 name=$2 root stamp j
   root="$(hp_cache_root)/receipts"
   mkdir -p "$root" || return 1
-  [ -f "$src/progress.md" ] || return 1
+  [ -f "$src/progress.md" ] || { echo "sdd-state: $src has no progress.md; refusing to finish a workspace whose record cannot be kept" >&2; return 1; }
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   RECEIPT_FINAL="$root/$name-$stamp"; [ -e "$RECEIPT_FINAL" ] && RECEIPT_FINAL="$RECEIPT_FINAL-$$"
   RECEIPT_STAGING="$root/.staging-$(basename "$RECEIPT_FINAL")"
-  mkdir "$RECEIPT_STAGING" 2>/dev/null || return 1
+  mkdir "$RECEIPT_STAGING" 2>/dev/null || { echo "sdd-state: the receipt for $name could not be staged at $RECEIPT_STAGING; finish removes nothing it cannot record" >&2; return 1; }
   cp "$src/progress.md" "$RECEIPT_STAGING/progress.md" || { rm -rf "$RECEIPT_STAGING"; return 1; }
   if [ -f "$src/stop-guard.jsonl" ]; then cp "$src/stop-guard.jsonl" "$RECEIPT_STAGING/stop-guard.jsonl" || { rm -rf "$RECEIPT_STAGING"; return 1; }; fi
   for j in "$src"/jobs/*/; do
@@ -734,7 +741,8 @@ commit_receipt() {
   if [ -z "${HYPERPOWERS_TEST_FAIL_MARKER:-}" ]; then : > "$RECEIPT_STAGING/FINISHED" 2>/dev/null; fi
   while [ "$i" -lt 3 ]; do
     if [ -z "${HYPERPOWERS_TEST_FAIL_RENAME:-}" ] && mv "$RECEIPT_STAGING" "$RECEIPT_FINAL" 2>/dev/null; then RECEIPT_PATH=$RECEIPT_FINAL; return 0; fi
-    i=$((i + 1)); sleep 1
+    i=$((i + 1))
+    if [ "$i" -lt 3 ]; then sleep 1; fi
   done
   if [ -f "$RECEIPT_STAGING/FINISHED" ]; then RECEIPT_PATH=$RECEIPT_STAGING; return 0; fi
   # Neither the rename nor the marker could be written: the record exists but
@@ -743,10 +751,26 @@ commit_receipt() {
   return 0
 }
 discard_receipt() { [ -n "$RECEIPT_STAGING" ] && rm -rf "$RECEIPT_STAGING"; RECEIPT_STAGING=""; }
+# release_receipt <wsdir>: what a failed finish does with its staging. A
+# removal that refused before deleting anything leaves the workspace whole,
+# so the staging is discarded; once the deletion has begun the staging can
+# be the only copy of the ledger left, so it is published and named.
+release_receipt() {
+  if [ "$REMOVAL_BEGAN" -eq 1 ]; then
+    commit_receipt
+    echo "sdd-state: the removal of $1 failed after it had begun; the record is at $(receipt_where)" >&2
+    return 0
+  fi
+  discard_receipt
+}
 # The receipt field of a finished line. Receipt paths print unencoded: one
 # key, one reading rule, wherever receipt= appears.
 receipt_field() {
   if [ "$RECEIPT_PATH" = none ]; then printf 'receipt=none staging=%s' "$RECEIPT_STAGED"; else printf 'receipt=%s' "$RECEIPT_PATH"; fi
+}
+# The same location in a sentence a human reads.
+receipt_where() {
+  if [ "$RECEIPT_PATH" = none ]; then printf 'an unmarked staging at %s' "$RECEIPT_STAGED"; else printf '%s' "$RECEIPT_PATH"; fi
 }
 cmd_finish() {
   local plan="" force=0 open last commit rc t
@@ -785,11 +809,11 @@ cmd_finish() {
     hp_unlock
     case "$rc" in
       0) commit_receipt; echo "status=finished backend=plain $(receipt_field)"; return 0 ;;
-      1) discard_receipt; echo "status=busy"; return 3 ;;
-      *) discard_receipt; echo "status=error"; return 2 ;;
+      1) release_receipt "$WSDIR"; echo "status=busy"; return 3 ;;
+      *) release_receipt "$WSDIR"; echo "status=error"; return 2 ;;
     esac
   fi
-  hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: snapshot before finish" "plans/$WS" >/dev/null || { discard_receipt; hp_unlock; echo "status=error"; return 2; }
+  hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: snapshot before finish" "plans/$WS" >/dev/null || { release_receipt "$WSDIR"; hp_unlock; echo "status=error"; return 2; }
   last=$(git -C "$CO" rev-parse "refs/heads/$BRANCH")
   # Controllers append without the lock: the removal renames the directory
   # aside and verifies it against the snapshot before deleting it.
@@ -798,7 +822,7 @@ cmd_finish() {
     finish-before-remove-link:*) ln -s progress.md "$CO/${HYPERPOWERS_TEST_WRITER_AT#finish-before-remove-link:}" ;;
   esac
   remove_verified "$WSDIR" "$last:plans/$WS" keep; rc=$?
-  case "$rc" in 0) ;; 1) discard_receipt; hp_unlock; echo "status=busy"; return 3 ;; *) discard_receipt; hp_unlock; echo "status=error"; return 2 ;; esac
+  case "$rc" in 0) ;; 1) release_receipt "$WSDIR"; hp_unlock; echo "status=busy"; return 3 ;; *) release_receipt "$WSDIR"; hp_unlock; echo "status=error"; return 2 ;; esac
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in finish-after-verify:*) mkdir -p "$WSDIR"; printf 'late\n' > "$WSDIR/${HYPERPOWERS_TEST_WRITER_AT#finish-after-verify:}" ;; esac
   # The removal is committed from the tip's tree, never from the live path,
   # so a workspace recreated after the verification neither enters the
@@ -806,7 +830,7 @@ cmd_finish() {
   # commit that fails puts the verified copy back; only a committed removal
   # deletes it, and a copy that survives the deletion is named on stderr.
   commit=$(hp_commit_paths --remove "$CO" "$BRANCH" "sdd $SLUG: finish" "plans/$WS"); rc=$?
-  if [ "$rc" -ne 0 ]; then restore_tomb "$WSDIR" "$TOMB"; discard_receipt; hp_unlock; echo "status=error"; return 2; fi
+  if [ "$rc" -ne 0 ]; then restore_tomb "$WSDIR" "$TOMB"; release_receipt "$WSDIR"; hp_unlock; echo "status=error"; return 2; fi
   discard_tomb "$TOMB" || true
   hp_unlock
   if [ -d "$WSDIR" ]; then
@@ -814,7 +838,7 @@ cmd_finish() {
     # published; this line reports the recreated workspace, which is the
     # problem a human has to resolve.
     commit_receipt
-    echo "sdd-state: $WSDIR was recreated during finish; the removal is committed (last=$last) and the new files remain there, uncommitted" >&2
+    echo "sdd-state: $WSDIR was recreated during finish; the removal is committed (last=$last), the record is at $(receipt_where), and the new files remain there, uncommitted" >&2
     echo "status=error"; return 2
   fi
   commit_receipt

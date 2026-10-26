@@ -1553,40 +1553,64 @@ cmd_sync() {
   # remote named later, so none is left and creation rests on hp_has_remote.
   if ! hp_has_remote "$PLAN_DIR"; then rm -f "$stamp"; settle no-remote 0; return $?; fi
   # The stamp names the endpoint that was fetched. The remote alias is
-  # mutable, so the URL is read once, fingerprinted as that string, and the
-  # fetch is pinned to it through a private alias in git's environment
-  # configuration (the URL stays out of argv); the remote, branch and URL
-  # are read again after the fetch, and any difference means a repoint
-  # raced it, so nothing is stamped.
+  # mutable, so its URL is read exactly once, here, and both the pin and
+  # the fingerprint come from that one captured string: a repoint anywhere
+  # after this line reaches neither, and the remote, branch and URL are
+  # read again after the fetch, so one that is not undone is caught there
+  # and nothing is stamped.
   #
-  # Two readings of one URL. get-url expands url.<base>.insteadOf, which is
-  # the endpoint the fetch will contact and so the string to fingerprint;
-  # the pin takes the URL as written, because git applies one rewrite to
-  # whatever a remote carries and a pin on the expanded form would let a
-  # chained rule rewrite it a second time, to an endpoint the fingerprint
-  # never named. A remote with no url entry at all has nothing written to
-  # pin, so the expanded form stands in.
-  url_before=$(git -C "$PLAN_DIR" remote get-url "$REMOTE" 2>/dev/null) || url_before=""
+  # The read takes the URL as written. git applies url.<base>.insteadOf
+  # once to whatever a remote carries, so a pin on the already-rewritten
+  # form would be rewritten a second time, to an endpoint the fingerprint
+  # never named. A remote with no url entry has nothing written, so the
+  # rewritten form, which is all get-url can give, stands in; that read is
+  # then the single one.
   url_pin=$(git -C "$PLAN_DIR" config --get "remote.$REMOTE.url" 2>/dev/null) || url_pin=""
-  [ -n "$url_pin" ] || url_pin=$url_before
-  if [ -n "$url_before" ]; then
-    fp_before=$(hp_url_fingerprint "$url_before") || { echo "sdd-state: the remote's URL could not be fingerprinted (node is required); nothing was stamped. Run sdd-state sync again" >&2; echo "status=error"; return 2; }
-  else
-    fp_before=none
+  if [ -z "$url_pin" ]; then
+    url_pin=$(git -C "$PLAN_DIR" remote get-url "$REMOTE" 2>/dev/null) || url_pin=""
   fi
+  # Test hook: a repoint in the interval a second read would have been
+  # exposed to, undone right after the fetch so the stamp check passes.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-url-read:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-url-read:}" ;; esac
   # Environment configuration needs git 2.31; an older git ignores it and
   # would fetch nothing, diagnosed as offline, so it is refused by name.
+  # The probe below reads the alias from that configuration too.
   hp_git_version_at_least 2 31 || { echo "sdd-state: git 2.31 or newer is required to pin the fetch to the fingerprinted URL (found $(git --version)); nothing was stamped" >&2; echo "status=error"; return 2; }
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
-    sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-aba-fetch:}" ;;
     sync-shadow-alias:*) git -C "$PLAN_DIR" config "remote.hp-fetch-$$.url" "${HYPERPOWERS_TEST_WRITER_AT#sync-shadow-alias:}" ;;
   esac
   # remote.<name>.url is multi-valued and git takes the first value, so a
-  # repository that configures the alias's name would shadow the pin.
+  # repository that configures the alias's name would shadow the pin, and
+  # the probe below with it.
   if git -C "$PLAN_DIR" config --get-regexp "^remote\.hp-fetch-$$\." >/dev/null 2>&1; then
     echo "sdd-state: the repository configures a remote named hp-fetch-$$, which the pinned fetch needs for itself; remove that section from its git config and run sdd-state sync again" >&2
     echo "status=error"; return 2
   fi
+  # The pin is appended to whatever GIT_CONFIG_* the caller supplied, never
+  # substituted for it, and the URL travels in the environment, not argv.
+  n=${GIT_CONFIG_COUNT:-0}; case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  printf -v "GIT_CONFIG_KEY_$n" '%s' "remote.hp-fetch-$$.url"; printf -v "GIT_CONFIG_VALUE_$n" '%s' "$url_pin"
+  export "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
+  # The endpoint the fetch will contact, derived from the captured string
+  # and nothing else: the alias the fetch will use is asked to expand it,
+  # which applies insteadOf exactly once, as the fetch does. ls-remote
+  # --get-url, not remote get-url, which refuses a remote that only
+  # environment configuration defines; neither contacts the endpoint, and
+  # the URL stays out of argv either way.
+  if [ -n "$url_pin" ]; then
+    url_before=$(GIT_CONFIG_COUNT=$((n + 1)) git -C "$PLAN_DIR" ls-remote --get-url "hp-fetch-$$" 2>/dev/null) || url_before=""
+    if [ -z "$url_before" ]; then
+      unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
+      echo "sdd-state: the remote's URL could not be expanded to the endpoint the fetch would contact; nothing was stamped. Run sdd-state sync again" >&2
+      echo "status=error"; return 2
+    fi
+    fp_before=$(hp_url_fingerprint "$url_before") || { unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"; echo "sdd-state: the remote's URL could not be fingerprinted (node is required); nothing was stamped. Run sdd-state sync again" >&2; echo "status=error"; return 2; }
+  else
+    url_before=""; fp_before=none
+  fi
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+    sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-aba-fetch:}" ;;
+  esac
   # The fetch lands in a ref of this process's own, never straight in the
   # shared remote-tracking ref: the tip is read from the private ref, so a
   # fetch another process finishes in between cannot hand this sync a
@@ -1599,15 +1623,12 @@ cmd_sync() {
     hp_pid_gone "${stale_ref##*/}" && git -C "$PLAN_DIR" update-ref -d "$stale_ref" 2>/dev/null
   done
   old_remote=$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")
-  # The pin is appended to whatever GIT_CONFIG_* the caller supplied, never
-  # substituted for it, and the URL travels in the environment, not argv.
-  n=${GIT_CONFIG_COUNT:-0}; case "$n" in ''|*[!0-9]*) n=0 ;; esac
-  printf -v "GIT_CONFIG_KEY_$n" '%s' "remote.hp-fetch-$$.url"; printf -v "GIT_CONFIG_VALUE_$n" '%s' "$url_pin"
-  export "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
   err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 GIT_CONFIG_COUNT=$((n + 1)) git -C "$PLAN_DIR" fetch -q "hp-fetch-$$" "+refs/heads/$BRANCH:$fetch_ref" 2>&1); rc=$?
   unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
-    sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "$url_before" ;;
+    # Both repoint seams put the captured URL back, so stamp_fetched's
+    # re-read sees the remote the fingerprint named.
+    sync-aba-fetch:*|sync-after-url-read:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "$url_pin" ;;
     sync-after-fetch-set-url:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch-set-url:}" ;;
     # Test hook: another process's fetch finishes between this one and the
     # read of its tip, leaving its own commit in the shared ref.

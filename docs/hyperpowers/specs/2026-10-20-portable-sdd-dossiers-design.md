@@ -202,15 +202,18 @@ fetch itself is pinned to that remote's URL through git's environment
 configuration, which needs git 2.31 or newer; that fetch consults no
 other `remote.<name>.*` setting of the alias, so a per-remote `proxy`
 or `uploadpack` does not apply to it, while `http.*`,
-`url.*.insteadOf` and credential helpers do; the pin is the URL as
-written in `remote.<name>.url`, because git rewrites a remote's URL
-once and a pin on the already-rewritten form would be rewritten a
-second time, to an endpoint the fingerprint never named, while the
-fingerprint is of the URL after that one rewriting, so the stamp names
-the effective endpoint and a changed rewrite asks for a `sync` like a
-changed URL). The stamp governs creation only: a state branch that
-already exists here is continued, and the next `sync` reconciles it
-with whatever the remote holds.
+`url.*.insteadOf` and credential helpers do; the URL is read exactly
+once per `sync`, as written in `remote.<name>.url`, because git
+rewrites a remote's URL once and a pin on the already-rewritten form
+would be rewritten a second time, to an endpoint the fingerprint never
+named; the fingerprint is of that captured string after one rewriting,
+obtained by expanding the pinned alias itself rather than by reading
+the remote again, so no repoint between the read and the stamp can
+part the two, and the stamp names the effective endpoint while a
+changed rewrite asks for a `sync` like a changed URL). The stamp
+governs creation only: a state branch that already exists here is
+continued, and the next `sync` reconciles it with whatever the remote
+holds.
 Without either, `sdd-dir` exits 2 with `status=needs-sync`: a fresh host
 that is offline must not invent an empty dossier while a remote one may
 exist. `sync --assume-absent PLAN` writes the stamp without fetching, for

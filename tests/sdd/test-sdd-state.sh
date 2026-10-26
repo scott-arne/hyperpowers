@@ -212,6 +212,18 @@ if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && grep -q '^Task 1: t
 git -C "$chain_a" remote set-url origin "$url_1c"
 git -C "$chain_a" config --remove-section "url.$chain_good"
 git -C "$chain_a" config --remove-section "url.$chain_evil"
+# A remote repointed between the read of its URL and the fetch, and put
+# back before the stamp. The URL is read once and the endpoint the fetch
+# will contact is derived from that captured string, so the repoint reaches
+# nothing; a second read of the remote's configuration would have pinned
+# the other endpoint while both fingerprint checks still saw this one.
+make_pair p1r
+read_a="$PAIR_A"
+mkdir -p "$read_a/docs"; : > "$read_a/docs/plan.md"; git -C "$read_a" add docs; git -C "$read_a" commit -qm plan
+git -C "$read_a" remote set-url origin "$chain_good"
+out=$(cd "$read_a" && HYPERPOWERS_TEST_WRITER_AT="sync-after-url-read:$chain_evil" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1r.err"); rc=$?
+co_1r="$STATE_ROOT/$(state_key "$read_a")"
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && [ "$(git -C "$read_a" rev-parse hyperpowers/state)" = "$(git -C "$chain_good" rev-parse hyperpowers/state)" ] && grep -q '^Task 1: the good endpoint$' "$co_1r/plans/$name_1c/progress.md" && ! grep -q 'evil endpoint' "$co_1r/plans/$name_1c/progress.md" && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$read_a").fetched")" = "origin hyperpowers/state $(fp "$read_a")" ]; then pass "a remote repointed right after its URL is read cannot move the fetch: the configured endpoint is reconciled and stamped"; else fail "a remote repointed right after its URL is read cannot move the fetch (rc=$rc: $out: $(sed -n 2p "$co_1r/plans/$name_1c/progress.md" 2>/dev/null): $(tr '\n' '|' < "$TEST_ROOT/p1r.err"))"; fi
 # The fetched tip is read from a private ref, refs/hp-fetch/<pid>. Read
 # from the shared remote-tracking ref, a fetch another process finished in
 # between would hand this sync a commit the pinned endpoint never served.
@@ -245,7 +257,7 @@ git -C "$PAIR_B" update-ref -d "refs/hp-fetch/$$"
 # No private ref outlives a sync, whatever its outcome: the fixtures above
 # cover a refused stamp, an absent branch, a refused alias, a pinned fetch
 # and a reconciled one.
-if [ -z "$(git -C "$p1_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$chain_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_A" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_B" for-each-ref refs/hp-fetch)" ]; then pass "no private fetch ref outlives a sync"; else fail "no private fetch ref outlives a sync ($(git -C "$p1_a" for-each-ref refs/hp-fetch; git -C "$chain_a" for-each-ref refs/hp-fetch; git -C "$PAIR_A" for-each-ref refs/hp-fetch; git -C "$PAIR_B" for-each-ref refs/hp-fetch))"; fi
+if [ -z "$(git -C "$p1_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$chain_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$read_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_A" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_B" for-each-ref refs/hp-fetch)" ]; then pass "no private fetch ref outlives a sync"; else fail "no private fetch ref outlives a sync ($(git -C "$p1_a" for-each-ref refs/hp-fetch; git -C "$chain_a" for-each-ref refs/hp-fetch; git -C "$read_a" for-each-ref refs/hp-fetch; git -C "$PAIR_A" for-each-ref refs/hp-fetch; git -C "$PAIR_B" for-each-ref refs/hp-fetch))"; fi
 
 # Crash after the worktree add: the next call starts clean.
 r4="$TEST_ROOT/r4"; make_repo "$r4"

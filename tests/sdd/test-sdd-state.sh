@@ -885,6 +885,36 @@ run_sdd_dir "$i26b" >/dev/null 2>&1
 if [ "$rc" -eq 99 ] && [ ! -e "$root_i26" ] && ls -d "$root_i26".reclaiming-*/plans/"$(basename "$wsi26")".imported-* >/dev/null 2>&1; then pass "the legacy root of a crashed direct import is claimed with its kept copy"; else fail "the legacy root of a crashed direct import is claimed with its kept copy (rc=$rc)"; fi
 out=$(run_state "$i26" import docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i26" ] && [ -L "$legacy_i26" ] && [ "$(cd "$legacy_i26" && pwd -P)" = "$(cd "$wsi26" && pwd -P)" ]; then pass "the import recreates the legacy root's plans directory and completes the relink"; else fail "the import recreates the legacy root's plans directory and completes the relink (rc=$rc: $out)"; fi
+# A legacy workspace the plain-cache reclaim has already set aside is not
+# an absent candidate: the dossier waits under the root's quarantine name,
+# and an import that passed it by would let sdd-dir start an empty
+# workspace beside it.
+i27="$TEST_ROOT/i27"; make_repo "$i27"
+mkdir -p "$i27/docs"; : > "$i27/docs/plan.md"; git -C "$i27" add docs; git -C "$i27" commit -qm plan
+wsi27=$(ws_path "$i27" "$i27/docs/plan.md"); name_i27=$(basename "$wsi27")
+root_i27="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i27")"
+legacy_i27="$root_i27/plans/$name_i27"
+mkdir -p "$legacy_i27"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$legacy_i27/progress.md"
+mv "$root_i27" "$root_i27.reclaiming-424242"
+out=$(run_state "$i27" import docs/plan.md 2>"$TEST_ROOT/i27.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "set aside at $root_i27.reclaiming-424242;" "$TEST_ROOT/i27.err" && grep -q "mv $root_i27.reclaiming-424242 $root_i27" "$TEST_ROOT/i27.err"; then pass "an import whose legacy root the reclaim set aside ends in error and names the quarantine and the move that repairs it"; else fail "an import whose legacy root the reclaim set aside ends in error and names the repair (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/i27.err"))"; fi
+rc=0; out=$(run_sdd_dir "$i27" docs/plan.md 2>"$TEST_ROOT/i27-dir.err") || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q "set aside at $root_i27.reclaiming-424242;" "$TEST_ROOT/i27-dir.err" && grep -q "^sdd-dir: importing a legacy workspace failed" "$TEST_ROOT/i27-dir.err"; then pass "sdd-dir stops on it, printing the import's line and its own"; else fail "sdd-dir stops on it, printing the import's line and its own (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/i27-dir.err"))"; fi
+# A put-back meets its destination first: BSD mv would nest the quarantine
+# inside a root that was recreated meanwhile.
+[ ! -e "$root_i27" ] || rmdir "$root_i27"
+mv "$root_i27.reclaiming-424242" "$root_i27"
+out=$(run_state "$i27" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i27" ] && [ "$(sed -n 2p "$wsi27/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "moved back, the next import completes with the ledger in place"; else fail "moved back, the next import completes with the ledger in place (rc=$rc: $out)"; fi
+# The same under the name a claim in progress carries.
+i28="$TEST_ROOT/i28"; make_repo "$i28"
+mkdir -p "$i28/docs"; : > "$i28/docs/plan.md"; git -C "$i28" add docs; git -C "$i28" commit -qm plan
+wsi28=$(ws_path "$i28" "$i28/docs/plan.md")
+root_i28="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i28")"
+mkdir -p "$root_i28/plans/$(basename "$wsi28")"; printf '# SDD ledger — plan: docs/plan.md\n' > "$root_i28/plans/$(basename "$wsi28")/progress.md"
+mv "$root_i28" "$root_i28.claiming-424242"
+out=$(run_state "$i28" import docs/plan.md 2>"$TEST_ROOT/i28.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "set aside at $root_i28.claiming-424242;" "$TEST_ROOT/i28.err"; then pass "a legacy root under a claim in progress is named the same way"; else fail "a legacy root under a claim in progress is named the same way (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/i28.err"))"; fi
 
 echo ""
 echo "=== sdd-dir and the plain fallback over branch state ==="

@@ -382,6 +382,24 @@ mkdir -p "$idle_touched/plans/some-plan-deadbeef"; : > "$idle_touched/plans/some
 find "$idle_touched" -depth -exec touch -mt "$OLDSTAMP" {} +
 _=$(cd "$TEST_ROOT/repo-plan" && HYPERPOWERS_TEST_RECLAIM_RACE="touch:$idle_touched" "$SDD_DIR_SCRIPT" docs/a/plan.md)
 if [ -d "$idle_touched" ] && [ -f "$idle_touched/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_touched".claiming-* >/dev/null 2>&1 && ! ls -d "$idle_touched".reclaiming-* >/dev/null 2>&1; then pass "an importer that has only touched the root keeps it under its own name"; else fail "an importer that has only touched the root keeps it under its own name (root: $([ -d "$idle_touched" ] && echo kept || echo gone))"; fi
+# The same importer, with a session in the other repository recreating the
+# live root while this pass walked the staged tree: BSD mv would nest the
+# staged root inside the new one, where no lookup finds it again.
+idle_occupied="$XDG_CACHE_HOME/hyperpowers/sdd/idleoccupied00000009"
+mkdir -p "$idle_occupied/plans/some-plan-deadbeef"; : > "$idle_occupied/plans/some-plan-deadbeef/progress.md"
+find "$idle_occupied" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && HYPERPOWERS_TEST_RECLAIM_RACE="occupy:$idle_occupied" "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/occupy.err")
+staged_oc=$(ls -d "$idle_occupied".claiming-* 2>/dev/null | head -n 1) || staged_oc=""
+if [ -n "$staged_oc" ] && [ -f "$staged_oc/plans/some-plan-deadbeef/progress.md" ] && [ "$(ls -A "$idle_occupied" | tr '\n' ' ')" = "writer " ] && [ ! -e "$idle_occupied/$(basename "$staged_oc")" ] && grep -q 'occupied again' "$TEST_ROOT/occupy.err"; then pass "a put-back whose root is occupied again leaves the staged copy named, not nested"; else fail "a put-back whose root is occupied again leaves the staged copy named, not nested (staged: '$staged_oc', root: $(ls -A "$idle_occupied" | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/occupy.err"))"; fi
+rm -rf "$staged_oc" "$idle_occupied"
+# node is on the creation path (hp_materialize_plain publishes through it,
+# hp_stamp_ok fingerprints the remote URL with it), so its absence is a
+# preflight refusal, not a failure partway through.
+nonode="$TEST_ROOT/nonode"; mkdir -p "$nonode"
+for c in bash git dirname basename mkdir touch find ls rm cat sed date head tr wc; do ln -sf "$(command -v "$c")" "$nonode/$c"; done
+rc=0
+err=$(cd "$TEST_ROOT/repo-plan" && PATH="$nonode" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>&1 >/dev/null) || rc=$?
+if [ "$rc" -eq 2 ] && [ "$err" = "sdd-dir: node not found" ]; then pass "sdd-dir refuses with exit 2 when node is not on PATH"; else fail "sdd-dir refuses with exit 2 when node is not on PATH (rc=$rc: $err)"; fi
 # A claim whose owner is still running is that call's to finish or put back.
 idle_live="$XDG_CACHE_HOME/hyperpowers/sdd/idlelive00000000000a"
 mkdir -p "$idle_live.claiming-$$/plans/some-plan-deadbeef"; : > "$idle_live.claiming-$$/plans/some-plan-deadbeef/progress.md"

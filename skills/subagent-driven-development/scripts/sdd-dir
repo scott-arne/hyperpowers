@@ -49,6 +49,10 @@ else
     exit 2
   }
 fi
+# hp_materialize_plain publishes through node and hp_stamp_ok fingerprints
+# the remote's URL with it, both on the path below, so a missing node is a
+# refusal here rather than a creation that stops halfway.
+command -v node >/dev/null 2>&1 || { echo "sdd-dir: node not found" >&2; exit 2; }
 
 base="$(hp_cache_root)/sdd"
 
@@ -87,13 +91,20 @@ reclaim_plain() {
     case "${r##*/}" in
       *.reclaiming-*)
         # Phase two: the copy a previous pass claimed, quiet ever since.
-        [ -z "$(find "$r" -mtime -14 2>/dev/null | head -n 1)" ] || continue
         ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
+        [ -z "$(find "$r" -mtime -14 2>/dev/null | head -n 1)" ] || continue
         gone="$r.gone-$$"
         if [ -e "$gone" ] || [ -L "$gone" ]; then continue; fi
         mv "$r" "$gone" 2>/dev/null || continue
         if [ -n "$(find "$gone" -mtime -14 2>/dev/null | head -n 1)" ] || ls -d "$gone"/plans/*.importing-* >/dev/null 2>&1; then
-          mv "$gone" "$r" 2>/dev/null || true
+          # A session in the other repository can recreate <key> while this
+          # pass walks the staged tree; BSD mv would nest the staged root
+          # inside the new one, where no lookup finds it again.
+          if [ -e "$r" ] || [ -L "$r" ]; then
+            echo "sdd-dir: the cache root staged at $gone could not be put back at $r, which is occupied again; move it back by hand" >&2
+          else
+            mv "$gone" "$r" 2>/dev/null || echo "sdd-dir: the cache root staged at $gone could not be put back at $r; move it back by hand" >&2
+          fi
           continue
         fi
         rm -rf "$gone" 2>/dev/null || true
@@ -116,9 +127,9 @@ reclaim_plain() {
         ;;
       *)
         # Phase one: claim an idle root, delete nothing.
+        ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
         [ -n "$(find "$r" -maxdepth 0 -mtime +14 2>/dev/null)" ] || continue
         [ -z "$(find "$r" -mtime -14 2>/dev/null | head -n 1)" ] || continue
-        ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
         staged="$r.claiming-$$"
         if [ -e "$staged" ] || [ -L "$staged" ]; then continue; fi
         mv "$r" "$staged" 2>/dev/null || continue
@@ -130,12 +141,22 @@ reclaim_plain() {
           # Test hook: the same importer one step earlier, the root touched
           # and its source not yet renamed aside.
           touch "$staged"
+        elif [ "${HYPERPOWERS_TEST_RECLAIM_RACE:-}" = "occupy:$r" ]; then
+          # Test hook: the same importer, and a session in the other
+          # repository that recreated the live root while this pass walked
+          # the staged tree.
+          mkdir -p "$staged/plans/x.importing-1"; touch "$staged"
+          mkdir -p "$r"; : > "$r/writer"
         fi
         # The staged tree still carries its own mtimes, so the re-check reads
         # the signals an importer leaves: a fresh root, a descendant written
         # during the window, or its backup.
         if [ -z "$(find "$staged" -maxdepth 0 -mtime +14 2>/dev/null)" ] || [ -n "$(find "$staged" -mindepth 1 -mtime -14 2>/dev/null | head -n 1)" ] || ls -d "$staged"/plans/*.importing-* >/dev/null 2>&1; then
-          mv "$staged" "$r" 2>/dev/null || true
+          if [ -e "$r" ] || [ -L "$r" ]; then
+            echo "sdd-dir: the cache root staged at $staged could not be put back at $r, which is occupied again; move it back by hand" >&2
+          else
+            mv "$staged" "$r" 2>/dev/null || echo "sdd-dir: the cache root staged at $staged could not be put back at $r; move it back by hand" >&2
+          fi
           continue
         fi
         claimed="$r.reclaiming-$$"

@@ -147,6 +147,21 @@ git -C "$PAIR_A" remote set-url origin "$url_was"
 aba_b="$TEST_ROOT/p1-aba.git"; git init -q --bare -b main "$aba_b"; git -C "$PAIR_A" push -q "$aba_b" main:refs/heads/hyperpowers/state 2>/dev/null
 out=$(cd "$PAIR_A" && HYPERPOWERS_TEST_WRITER_AT="sync-aba-fetch:$aba_b" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1-aba.err"); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ] && ! git -C "$PAIR_A" rev-parse -q --verify refs/remotes/origin/hyperpowers/state >/dev/null && [ "$(git -C "$PAIR_A" remote get-url origin)" = "$url_was" ]; then pass "a repoint away and back around the fetch never reaches the other endpoint: the fetch is pinned to the fingerprinted URL"; else fail "a repoint away and back around the fetch never reaches the other endpoint (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p1-aba.err"))"; fi
+# A repository that configures the pinned fetch's own alias name could
+# shadow the pin (remote.<name>.url is multi-valued, git takes the first):
+# the sync refuses by name and stamps nothing.
+rm -f "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+out=$(cd "$PAIR_A" && HYPERPOWERS_TEST_WRITER_AT="sync-shadow-alias:$aba_b" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1-shadow.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'configures a remote named hp-fetch-' "$TEST_ROOT/p1-shadow.err" && [ ! -e "$STATE_ROOT/$(state_key "$PAIR_A").fetched" ] && ! git -C "$PAIR_A" rev-parse -q --verify refs/remotes/origin/hyperpowers/state >/dev/null; then pass "a repository that configures the pinned alias's name is refused and nothing is stamped"; else fail "a repository that configures the pinned alias's name is refused (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p1-shadow.err"))"; fi
+for sec in $(git -C "$PAIR_A" config --name-only --get-regexp '^remote\.hp-fetch-' | sed 's/\.url$//'); do git -C "$PAIR_A" config --remove-section "$sec"; done
+# A git older than 2.31 ignores environment configuration: the sync says
+# so instead of failing as offline. The caller's own GIT_CONFIG_* entries
+# survive the pin.
+real_git=$(command -v git); mkdir -p "$TEST_ROOT/fakegit"; printf '#!/bin/sh\nif [ "$1" = --version ]; then echo "git version 2.30.2"; exit 0; fi\nexec "%s" "$@"\n' "$real_git" > "$TEST_ROOT/fakegit/git"; chmod 755 "$TEST_ROOT/fakegit/git"
+out=$(cd "$PAIR_A" && PATH="$TEST_ROOT/fakegit:$PATH" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1-oldgit.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q '2.31 or newer' "$TEST_ROOT/p1-oldgit.err" && [ ! -e "$STATE_ROOT/$(state_key "$PAIR_A").fetched" ]; then pass "a git older than 2.31 is refused by name before the fetch"; else fail "a git older than 2.31 is refused by name before the fetch (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p1-oldgit.err"))"; fi
+out=$(cd "$PAIR_A" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=outer bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ]; then pass "a caller's own environment configuration survives the pinned fetch"; else fail "a caller's own environment configuration survives the pinned fetch (rc=$rc: $out)"; fi
 # Those syncs created the orphan; the checkout, the branch and the stamp go
 # again, so the hand-written stamp below is what lets the next creation
 # happen.

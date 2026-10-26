@@ -1450,7 +1450,7 @@ apply_target() {
   esac
 }
 cmd_sync() {
-  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure url_before fp_before fp_after
+  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure url_before fp_before fp_after n
   REMOTE_FINISHED=""
   # remove_verified (Task 6) and recover_apply live in this file; sync, finish, handoff and snapshot share them.
   while [ $# -gt 0 ]; do
@@ -1513,8 +1513,26 @@ cmd_sync() {
   else
     fp_before=none
   fi
-  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-aba-fetch:}" ;; esac
-  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="remote.hp-fetch-$$.url" GIT_CONFIG_VALUE_0="$url_before" git -C "$PLAN_DIR" fetch -q "hp-fetch-$$" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?
+  # Environment configuration needs git 2.31; an older git ignores it and
+  # would fetch nothing, diagnosed as offline, so it is refused by name.
+  hp_git_version_at_least 2 31 || { echo "sdd-state: git 2.31 or newer is required to pin the fetch to the fingerprinted URL (found $(git --version)); nothing was stamped" >&2; echo "status=error"; return 2; }
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+    sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-aba-fetch:}" ;;
+    sync-shadow-alias:*) git -C "$PLAN_DIR" config "remote.hp-fetch-$$.url" "${HYPERPOWERS_TEST_WRITER_AT#sync-shadow-alias:}" ;;
+  esac
+  # remote.<name>.url is multi-valued and git takes the first value, so a
+  # repository that configures the alias's name would shadow the pin.
+  if git -C "$PLAN_DIR" config --get-regexp "^remote\.hp-fetch-$$\." >/dev/null 2>&1; then
+    echo "sdd-state: the repository configures a remote named hp-fetch-$$, which the pinned fetch needs for itself; remove that section from its git config and run sdd-state sync again" >&2
+    echo "status=error"; return 2
+  fi
+  # The pin is appended to whatever GIT_CONFIG_* the caller supplied, never
+  # substituted for it, and the URL travels in the environment, not argv.
+  n=${GIT_CONFIG_COUNT:-0}; case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  printf -v "GIT_CONFIG_KEY_$n" '%s' "remote.hp-fetch-$$.url"; printf -v "GIT_CONFIG_VALUE_$n" '%s' "$url_before"
+  export "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
+  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 GIT_CONFIG_COUNT=$((n + 1)) git -C "$PLAN_DIR" fetch -q "hp-fetch-$$" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?
+  unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
     sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "$url_before" ;;
     sync-after-fetch-set-url:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch-set-url:}" ;;

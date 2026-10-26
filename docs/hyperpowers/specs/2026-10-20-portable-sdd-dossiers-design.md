@@ -197,7 +197,9 @@ remote, branch or URL, an empty stamp from before 6.17.0, or a remote
 added after a `no-remote` sync means a fresh `sync`). A `sync` whose
 remote, branch or URL changed while its fetch ran, or whose fingerprint
 cannot be computed (node is required), ends `status=error` and stamps
-nothing, so the stamp always names the endpoint that was fetched. The
+nothing, so the stamp always names the endpoint that was fetched (the
+fetch itself is pinned to that URL through git's environment
+configuration, which needs git 2.31 or newer). The
 stamp governs creation only: a state branch that already exists here is
 continued, and the next `sync` reconciles it with whatever the remote
 holds.
@@ -946,7 +948,8 @@ Docs: `README.md`, `CHANGELOG.md`, `docs/testing.md`.
   Changes Require Evaluation"). The "your human partner" voice, the Red
   Flags tables, and the rationalization lists stay as they are apart from
   the one added row in using-git-worktrees.
-- Core skills depend on bash, git, and node only. No network access from
+- Core skills depend on bash, git (2.31 or newer, for the pinned
+  state-branch fetch) and node only. No network access from
   hooks, from `sdd-dir`, or from `verify`.
 - No skill pushes to a remote except `sdd-state handoff --push`, and that
   flag is passed only on the human partner's explicit hand-off request.

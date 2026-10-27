@@ -108,3 +108,103 @@ child=11280 pgid=11280 sid=0 run=11148 pgid=81830 sid=0
 
 Result: `STATUS: PASSED (0 skipped)`, 79 cases; inside the sandbox,
 `STATUS: PASSED (16 skipped)`.
+
+## Pre-registered rules
+
+The campaign's rule was fixed before its first counted run, in
+`evidence/2026-10-23-sdd-stop-guard/README.md` in hyperpowers-evals (branch
+`sdd-stop-guard`). That file carries the criteria verbatim, the measure
+definitions as the committed analyzer implements them, the void rules, the
+adjudication procedure, the analyzer and hook pins, and the field decision
+rule. The thresholds, restated:
+
+- H1, the hook ran: every valid run's decision record holds at least one line
+  for the plan (`plan_decisions >= 1`).
+- H2, nothing reached the user: the Gauntlet's STOP list has no `neither`
+  entry in any valid run, and every allow whose reason is `handback-text` or
+  `handback-line` is adjudicated a genuine hand-back.
+- H3, no false refusal: every `block` line is adjudicated as not a legitimate
+  hand-back, with no exceptions across the ten runs.
+- H4, the mechanism holds: pooled foreground dispatch share at least 0.9, no
+  untracked launch, both slow commands handled as the rule says in at least
+  nine of the ten runs, and no turn end with only a tracked shell live.
+- R: at least seven successful runs.
+
+The scenario passes when H1 to H4 and R hold. The ten counted runs are one
+arm under one pin; there is no control. Setup, transport and instrument voids
+are uncapped, every other void is capped at three, and a Claude Code version
+other than the pin restarts the campaign.
+
+The pin that every launch checks is `manifest.tsv` beside that README: the
+evals harness at `563fc1563`, the treatment at `4a4f354`, its detached
+worktree root, model `claude-opus-5-5` on Vertex, Claude Code 2.1.302 at a
+fixed path, the allowed subagent model set, Codex absent, and the task tools
+on.
+
+## Benchmark
+
+`tests/hooks/test-sdd-stop-guard.sh` prints four benchmark lines when
+`STOP_GUARD_BENCH` is set, each over a fixture of 50 candidate ledgers. The
+controller's covering runs of the committed suite printed
+`# bench no-plan cold 25 ms`, `# bench no-plan 14 ms`,
+`# bench no-plan process 120 ms` and `# bench with-plan 24 ms`. Task 9's runs
+on the same host, under load averages 11 to 13, printed cold 163 to 254 ms,
+warm 15 to 19 ms and with-plan 26 to 42 ms; its wider sampling put the cold
+call anywhere from 24 to 430 ms and the process line at 112 to 371 ms.
+
+Each line answers a different claim. `# bench no-plan` is the decision itself,
+the median of five calls after the first, and it is the number the spec's
+100 ms bound is about: 14 ms on the covering run, 15 to 19 ms under load.
+`# bench no-plan process` is what a Stop pays end to end, the real wrapper
+spawned once with the no-plan payload on stdin, node start-up and module
+import included: 120 ms on the covering run. `# bench no-plan cold` is the
+first call's cost in a fresh process, the first `cloneKey` git spawn, the JIT
+and the first touch of the fifty ledgers; it is the most load-sensitive
+reading and is bounded loosely at 1 s. `# bench with-plan` is the decision
+that reads a turn from a 300 MB transcript, bounded at 1 s: 24 ms on the
+covering run.
+
+## Field baseline
+
+The field rule compares the after-window against the baseline the previous
+campaign recorded, re-recorded under Correction 8, which bounds each
+qualifying session at its first in-window SDD invocation instead of at the
+window's start. The window is 2026-07-01T00:00:00+00:00 to
+2026-10-20T00:00:00+00:00 over the host's Zed SDD sessions, and its end is
+also the observation cutoff, so records appended later cannot change these
+numbers. The column of record is the second one, as
+`evals/evidence/2026-10-19-sdd-turn-liveness/field/baseline.txt` records it.
+
+| Measure | Baseline | Before Correction 8 |
+|---|---|---|
+| Sessions | 14 | 14 |
+| Task boundaries | 1434 | 1495 |
+| Premature stops | 296, 20.64 per 100 boundaries | 301, 20.13 per 100 boundaries |
+| Premature stops followed by a resume message | 21 | 21 |
+| Live-work turn ends | 2211 | 2228 |
+| Live-work resumes | 9, 0.63 per 100 boundaries | 9, 0.6 per 100 boundaries |
+| Censored stops, censored resumes | 1423, 144 | 1424, 144 |
+| Excluded turn ends | error 373, interrupt 17, killed 2, reload 69 | error 383, interrupt 20, killed 2, reload 71 |
+
+The after-window gets two measures: the transcript measure as before, and the
+hook's own record read by `field_hook.py` over the same cohort. With at least
+100 boundaries in the window, the follow-up opens if the after rate of
+premature stops reaching the user is at least half 20.64 per 100. The field
+result is appended to this note and never holds or reverts the release by
+itself.
+
+## Scenario results
+
+To be filled in by Task 20.
+
+## T1
+
+To be filled in by Task 19.
+
+## Zed checks
+
+To be filled in by Task 21.
+
+## Release
+
+To be filled in by Task 22.

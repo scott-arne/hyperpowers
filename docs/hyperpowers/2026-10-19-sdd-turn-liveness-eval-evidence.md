@@ -64,16 +64,21 @@ subagent model set, Codex absent, and the task tools on.
 also the observation cutoff, so records appended later cannot change these
 numbers.
 
-| Measure | Baseline |
-|---|---|
-| Sessions | 14 |
-| Task boundaries | 1495 |
-| Premature stops | 301, 20.13 per 100 boundaries |
-| Premature stops followed by a resume message | 21 |
-| Live-work turn ends | 2228 |
-| Live-work resumes | 9, 0.6 per 100 boundaries |
-| Censored stops, censored resumes | 1424, 144 |
-| Excluded turn ends | error 383, interrupt 20, killed 2, reload 71 |
+| Measure | Baseline | Before Correction 8 |
+|---|---|---|
+| Sessions | 14 | 14 |
+| Task boundaries | 1434 | 1495 |
+| Premature stops | 296, 20.64 per 100 boundaries | 301, 20.13 per 100 boundaries |
+| Premature stops followed by a resume message | 21 | 21 |
+| Live-work turn ends | 2211 | 2228 |
+| Live-work resumes | 9, 0.63 per 100 boundaries | 9, 0.6 per 100 boundaries |
+| Censored stops, censored resumes | 1423, 144 | 1424, 144 |
+| Excluded turn ends | error 373, interrupt 17, killed 2, reload 69 | error 383, interrupt 20, killed 2, reload 71 |
+
+The second column is what the instrument read before Correction 8, which
+bounds each qualifying session at its first in-window SDD invocation instead
+of at the window's start; the entry is under `## Corrections` in
+`evals/evidence/2026-10-19-sdd-turn-liveness/README.md`.
 
 A task boundary is a successful `TaskUpdate` completion, timestamped at its
 result. The two `killed` exclusions are turn ends cut by the observation

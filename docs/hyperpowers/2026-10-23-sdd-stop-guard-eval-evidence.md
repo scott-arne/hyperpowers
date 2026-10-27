@@ -149,8 +149,9 @@ controller's covering runs of the committed suite printed
 `# bench no-plan cold 25 ms`, `# bench no-plan 14 ms`,
 `# bench no-plan process 120 ms` and `# bench with-plan 24 ms`. Task 9's runs
 on the same host, under load averages 11 to 13, printed cold 163 to 254 ms,
-warm 15 to 19 ms and with-plan 26 to 42 ms; its wider sampling put the cold
-call anywhere from 24 to 430 ms and the process line at 112 to 371 ms.
+warm 15 to 19 ms and with-plan 21 to 43 ms; its wider sampling put the cold
+call anywhere from 24 to 430 ms, the process line at 112 to 371 ms and the
+with-plan decision at 26 to 265 ms.
 
 Each line answers a different claim. `# bench no-plan` is the decision itself,
 the median of five calls after the first, and it is the number the spec's

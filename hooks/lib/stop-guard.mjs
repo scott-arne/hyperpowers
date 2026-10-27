@@ -406,13 +406,21 @@ export function recordDecision({ workspaceLog, mirrorLog, marker, line }) {
 // heuristic this hook's decisions are adjudicated against.
 const APPROVAL = /(?<![\p{L}\p{N}_])(?:say (?:the word|["']?(?:continue|proceed|go|resume)["']?)|let me know|your call|which (?:option|one|do you)|do you want|would you like|shall i|should i|want me to|approve|for your review|for you to review|when(?:ever)? you(?:'re| are) ready|your go-ahead|decision is yours|is yours to make)(?![\p{L}\p{N}_])/iu;
 const SENTENCE_END = /(?<=[.!?])\s+/;
+// The second departure, for the same reason as the first. Python's
+// re.IGNORECASE folds İ (U+0130) and ı (U+0131) onto ASCII i; JavaScript's
+// /iu simple folding does not. Over U+0080 to U+2FFFF these are the only two
+// characters the two engines disagree about for the letters these
+// alternatives contain — U+017F and U+212A already fold alike — so the copy
+// handed to the pattern maps just them. Not toLowerCase, which turns İ into
+// i followed by a combining dot and would break the following letter.
+const DOTTED_I = /[İı]/g;
 export function asksOrBlocks(text) {
   if (text.includes('BLOCKED')) return true;
   const stripped = text.trim();
   if (!stripped) return false;
   const sentences = stripped.split(SENTENCE_END);
   if (sentences[sentences.length - 1].replace(/[ *_`)"']+$/, '').endsWith('?')) return true;
-  return APPROVAL.test(sentences.slice(-3).join(' '));
+  return APPROVAL.test(sentences.slice(-3).join(' ').replace(DOTTED_I, 'i'));
 }
 
 const handbackHint = (sid) => `If you are handing back to your human partner (a question only they can answer, a BLOCKED report, or they asked you to stop), run scripts/sdd-state handback PLAN_FILE --session ${sid} --reason "<why>" and end the turn with that message.`;

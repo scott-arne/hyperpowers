@@ -660,3 +660,20 @@ test('main: an authoritative log that cannot be written records log-failed carry
   assert.match(last.detail, /^hook-error: decision log unreadable: .*EACCES/);
   assert.deepEqual(readLines(wl).map((l) => l.reason), ['open-tasks']); // nothing was appended
 });
+test('the approval pattern folds the dotted and dotless i the way the field heuristic does', () => {
+  // Python's re.IGNORECASE equates U+0130 and U+0131 with ASCII i. Over
+  // U+0080 to U+2FFFF these are the only two characters whose folding the two
+  // engines disagree on for the letters these alternatives contain; U+017F
+  // (long s) and U+212A (Kelvin sign) already fold alike, and are asserted
+  // here so a later change to the pattern cannot quietly lose that.
+  const UP = 'İ'; const LOW = 'ı';
+  assert.equal(guard.asksOrBlocks(`The DEC${UP}S${UP}ON IS YOURS.`), true);
+  assert.equal(guard.asksOrBlocks(`Shall ${LOW} start the next design.`), true);
+  for (const text of [`wh${UP}ch opt${UP}on`, `wh${LOW}ch one`, `${LOW}s yours to make`, `shall ${UP}`, `should ${LOW}`,
+    `would you l${UP}ke`, `dec${LOW}sion is yours`, `for your rev${UP}ew`, `say cont${LOW}nue`, `ſhall i`, `let me Know`]) {
+    assert.equal(guard.asksOrBlocks(`Status update. ${text}.`), true, text);
+  }
+  for (const text of [`${LOW}approve now`, `approve${UP} now`, `${UP}shall i continue`, `shall i${LOW} continue`]) {
+    assert.equal(guard.asksOrBlocks(`Status update. ${text}.`), false, text);
+  }
+});

@@ -4,6 +4,7 @@ import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, mkdtempSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import * as guard from './stop-guard.mjs';
 
 const SID = 'sess-1234';
@@ -859,6 +860,14 @@ test('benchmark: no-plan under 100 ms with 50 candidate ledgers; a small last tu
     for (let i = 0; i < 5; i++) { const t = Date.now(); guard.main(noPlanInput, { XDG_CACHE_HOME: e.cache }); repeats.push(Date.now() - t); }
     const noPlan = repeats.sort((a, b) => a - b)[2];
     console.log(`# bench no-plan ${noPlan} ms`); assert.ok(noPlan < 100, `no-plan took ${noPlan} ms`);
+    // What a Stop actually pays: a fresh process running the real wrapper,
+    // node start-up and module import included. The bound is a
+    // gross-regression check, not a wall-clock claim about a shared host.
+    const hook = fileURLToPath(new URL('../sdd-stop-guard', import.meta.url));
+    const t1 = Date.now();
+    execFileSync(hook, [], { input: noPlanInput, env: { ...process.env, XDG_CACHE_HOME: e.cache }, encoding: 'utf8' });
+    const proc = Date.now() - t1;
+    console.log(`# bench no-plan process ${proc} ms`); assert.ok(proc < 1000, `no-plan process took ${proc} ms`);
     const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
     const big = join(e.root, 'big.jsonl'); const fd = openSync(big, 'w');
     const filler = JSON.stringify(assistant(1, 'x'.repeat(4000))) + '\n';

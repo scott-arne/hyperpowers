@@ -55,8 +55,21 @@ if node -e 'const l=JSON.parse(require("fs").readFileSync(0,"utf8"));if(l.sessio
 # malformed stdin, and a session id the mirror path must not take
 out=$(printf 'not json' | bash "$HOOK"); rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$out" ]; then pass "malformed input exits 0 silently"; else fail "malformed input exits 0 silently (rc=$rc: $out)"; fi
-out=$(printf '{"session_id":"../../etc/x","cwd":"%s"}' "$repo" | STOP_GUARD_FAULT=throw bash "$HOOK"); rc=$?
-if [ "$rc" -eq 0 ] && [ -z "$out" ] && [ ! -e "$XDG_CACHE_HOME/hyperpowers/stop-guard/../../etc" ]; then pass "a session id with path characters writes nothing"; else fail "a session id with path characters writes nothing (rc=$rc)"; fi
+# Node absent, so the bash side composes the mirror path itself: that fallback
+# is the only path the wrapper's own grammar check guards, and the cache tree
+# before and after proves nothing was created or appended anywhere under it.
+snapshot() { ( cd "$XDG_CACHE_HOME" && find . -print | sort | while IFS= read -r f; do if [ -f "$f" ]; then printf '%s %s\n' "$(wc -c < "$f")" "$f"; else printf 'dir %s\n' "$f"; fi; done ); }
+# Two ids: the second climbs only into a directory that already exists, so a
+# missing guard would really leave a file behind rather than fail on mkdir.
+snapshot > "$TEST_ROOT/cache.before"
+rc=0; out=""
+for sid in '../../etc/x' '../escaped'; do
+  o=$(printf '{"session_id":"%s","cwd":"%s"}' "$sid" "$repo" | PATH="$nopath" bash "$HOOK"); r=$?
+  [ "$r" -eq 0 ] || rc=$r
+  out="$out$o"
+done
+snapshot > "$TEST_ROOT/cache.after"
+if [ "$rc" -eq 0 ] && [ -z "$out" ] && [ ! -e "$XDG_CACHE_HOME/hyperpowers/stop-guard/../../etc" ] && [ ! -e "$XDG_CACHE_HOME/hyperpowers/escaped.jsonl" ] && cmp -s "$TEST_ROOT/cache.before" "$TEST_ROOT/cache.after"; then pass "a session id with path characters writes nothing"; else fail "a session id with path characters writes nothing (rc=$rc: $(diff "$TEST_ROOT/cache.before" "$TEST_ROOT/cache.after" | tr '\n' ' '))"; fi
 # a cap refusal sequence through the real wrapper: the hook-error allows above reset the count, so block, block, allow
 out1=$(printf '%s' "$input" | bash "$HOOK"); out2=$(printf '%s' "$input" | bash "$HOOK"); out3=$(printf '%s' "$input" | bash "$HOOK")
 printf '%s' "$out1" > "$TEST_ROOT/cap1.out"; printf '%s' "$out2" > "$TEST_ROOT/cap2.out"; tail -n 1 "$ws/stop-guard.jsonl" > "$TEST_ROOT/plan.last" 2>/dev/null
@@ -68,6 +81,13 @@ if grep -q '"decision":"block"' "$TEST_ROOT/cap1.out" && grep -q '"decision":"bl
 ln -s "$REPO_ROOT/hooks" "$TEST_ROOT/hooks-link"
 printf '%s' "$input" | bash "$TEST_ROOT/hooks-link/sdd-stop-guard" > "$TEST_ROOT/symlink.out" 2>/dev/null; rc=$?
 if [ "$rc" -eq 0 ] && grep -q '"decision":"block"' "$TEST_ROOT/symlink.out"; then pass "the guard still blocks when the hooks directory is reached through a symlink"; else fail "the guard still blocks when the hooks directory is reached through a symlink (rc=$rc: $(cat "$TEST_ROOT/symlink.out"))"; fi
+
+# A plugin root whose path carries URL-significant characters. The module has
+# to live there physically: realpath resolves a symlink's own name away, so
+# only a real directory puts a # or a % in the path node compares.
+odd="$TEST_ROOT/plug#in %root"; mkdir -p "$odd"; cp -R "$REPO_ROOT/hooks" "$odd/hooks"
+printf '%s' "$input" | bash "$odd/hooks/sdd-stop-guard" > "$TEST_ROOT/oddpath.out" 2>/dev/null; rc=$?
+if [ "$rc" -eq 0 ] && grep -q '"decision":"block"' "$TEST_ROOT/oddpath.out"; then pass "the guard still blocks from a plugin root whose path carries # and %"; else fail "the guard still blocks from a plugin root whose path carries # and % (rc=$rc: $(cat "$TEST_ROOT/oddpath.out"))"; fi
 
 echo "=== stop guard: key parity ==="
 # The module path travels in the environment: as argv[1] it would look like the

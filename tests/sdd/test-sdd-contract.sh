@@ -486,6 +486,7 @@ assert_contains "$SDD" '`lost-unswept pgid=<n>` leaves the job live, so report i
 assert_contains "$SDD" 'on `lost`, run `tracked-job stop <jobdir>` first and read its answer before you go on: only `stopped` or `not-running` means the survivors are swept and the job can be treated as failed' "a lost job counts as swept only on a terminal stop answer"
 assert_contains "$SDD" '`busy` means the lock was held and nothing was swept, so run `stop` again' "a busy stop on the lost path is retried"
 assert_contains "$SDD" '`status=error` means the job directory could not be read, so escalate it to your human partner naming the jobdir and leave the job live' "an errored stop on the lost path escalates and leaves the job live"
+assert_contains "$SDD" 'report a nonzero `skipped` to your human partner with the jobdir' "a stopped job reports its unfenced leftovers with the jobdir"
 assert_contains "$SDD" '`status=error` means the job directory could not be read, so escalate it the same way, naming the jobdir' "an errored stop on the budget path escalates too"
 assert_contains "$SDD" 'Completing the last task does not end the plan: it opens the final whole-branch review, and the plan ends only after Finish' "the last task opens the final review instead of ending the plan"
 assert_contains "$SDD" 'finishing the tasks is never a reason for it' "a hand-back is not written for finishing the tasks"

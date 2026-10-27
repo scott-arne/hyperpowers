@@ -797,3 +797,48 @@ test('every tool-use id a notice names is cleared, and a completion queued mid-t
   const t = guard.readTurn(transcript(root, [...launches, assistant(9, 'None back.')]));
   assert.deepEqual(t.liveAgents.sort(), ['a1', 'a2']); assert.deepEqual(t.liveShells, ['b1']);
 });
+const rawTranscript = (root, name, lines) => { const p = join(root, name); writeFileSync(p, lines.join('\n') + '\n'); return p; };
+// A transcript whose only human prompt sits at least `gapBytes` before the end.
+function promptBeforeTail(root, gapBytes) {
+  const filler = assistant(1, 'x'.repeat(1000));
+  const recs = [human(0, 'go')];
+  for (let i = 0, bytes = 0; bytes < gapBytes; i++) { const r = { ...filler, timestamp: at(1 + i) }; recs.push(r); bytes += JSON.stringify(r).length + 1; }
+  return rawTranscript(root, `gap-${gapBytes}.jsonl`, recs.map((r) => JSON.stringify(r)));
+}
+
+test('a line in the scanned region that is not a record makes the turn unreadable, never an older turn', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  const older = [JSON.stringify(human(0, 'first')), JSON.stringify(assistant(1, 'done'))];
+  const truncated = JSON.stringify(human(100, 'continue')).slice(0, -12);
+  assert.throws(() => JSON.parse(truncated)); // the fixture is really malformed
+  const t = guard.readTurn(rawTranscript(root, 'cut.jsonl', [...older, truncated, JSON.stringify(assistant(101, 'Working.'))]));
+  assert.equal(t.ok, false); assert.equal(t.tooLong, false); assert.equal(t.detail, 'malformed');
+  assert.equal(t.promptTs, null); // and in particular not at(0), the older turn's prompt
+  // a line that parses but is not a record is no more a record than one that does not parse
+  for (const notARecord of ['123', '"text"', 'null', '[]', 'true']) {
+    const r = guard.readTurn(rawTranscript(root, 'odd.jsonl', [...older, notARecord, JSON.stringify(assistant(101, 'Working.'))]));
+    assert.equal(r.ok, false, notARecord); assert.equal(r.detail, 'malformed', notARecord); assert.equal(r.promptTs, null, notARecord);
+  }
+  // a blank line is not a doubt: the turn still reads
+  const ok = guard.readTurn(rawTranscript(root, 'blank.jsonl', [...older, JSON.stringify(human(100, 'continue')), '   ', JSON.stringify(assistant(101, 'Working.'))]));
+  assert.equal(ok.ok, true); assert.equal(ok.promptTs, at(100)); assert.equal(ok.lastAssistantText, 'Working.');
+});
+test('the cap bounds bytes, not chunks, so a prompt beyond it is tooLong even within one chunk', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  const KB = 1024;
+  try {
+    // 128 KiB from the end: inside the 512 KiB chunk the reader starts with,
+    // outside a 64 KiB cap. Only a cap counted in bytes answers tooLong.
+    const p = promptBeforeTail(root, 128 * KB);
+    const capped = guard.readTurn(p, { capBytes: 64 * KB });
+    assert.equal(capped.ok, false); assert.equal(capped.tooLong, true); assert.equal(capped.detail, 'cap');
+    const reached = guard.readTurn(p, { capBytes: 512 * KB });
+    assert.equal(reached.ok, true); assert.equal(reached.promptTs, at(0));
+    // A cap that is not a multiple of the chunk size is exact too.
+    assert.equal(guard.readTurn(promptBeforeTail(root, 600 * KB), { capBytes: 700 * KB }).promptTs, at(0));
+    assert.equal(guard.readTurn(promptBeforeTail(root, 800 * KB), { capBytes: 700 * KB }).tooLong, true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test('the cap and chunk defaults are the module constants', () => {
+  assert.equal(guard.TAIL_CAP, 16 * 1024 * 1024); assert.equal(guard.TAIL_CHUNK, 512 * 1024);
+});

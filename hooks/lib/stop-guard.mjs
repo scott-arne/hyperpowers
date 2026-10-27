@@ -533,7 +533,9 @@ export function* linesFromEnd(path, capBytes, chunkBytes) {
     const size = fstatSync(fd).size;
     let pos = size; let carry = Buffer.alloc(0); let read = 0;
     while (pos > 0 && read < capBytes) {
-      const len = Math.min(chunkBytes, pos); pos -= len;
+      // The cap bounds bytes, not chunks: the last chunk is shortened to fit
+      // it, so a cap smaller than a chunk or not a multiple of one is exact.
+      const len = Math.min(chunkBytes, pos, capBytes - read); pos -= len;
       // A short read would leave the rest of the chunk zero-filled, which
       // would silently lose records; the caller answers unreadable instead.
       const buf = Buffer.alloc(len); if (readSync(fd, buf, 0, len, pos) !== len) throw new Error(`short read at ${pos}`); read += len;
@@ -562,8 +564,17 @@ export function readTurn(transcriptPath, { capBytes = TAIL_CAP, chunkBytes = TAI
   try {
     for (const l of linesFromEnd(transcriptPath, capBytes, chunkBytes)) {
       if (l === null) { tooLong = true; break; }
-      let rec; try { rec = JSON.parse(l); } catch { continue; }
-      if (!rec || rec.isSidechain) continue;
+      if (!l.trim()) continue;
+      // A line in the scanned region that is not a record leaves the turn's
+      // own boundary in doubt: carrying on would read the previous turn's
+      // prompt as this one's and attribute its hand-back line here. Skipping
+      // it is a guess; saying the turn is unreadable is the fail-open answer.
+      // A line that parses to a number, a string or a list is no more a
+      // record than one that does not parse at all: liveness.load drops both
+      // the same way.
+      let rec; try { rec = JSON.parse(l); } catch { return { ...none, detail: 'malformed' }; }
+      if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) return { ...none, detail: 'malformed' };
+      if (rec.isSidechain) continue;
       turnRecs.push(rec);
       if (isHumanPrompt(rec)) { found = true; break; }
     }

@@ -144,7 +144,11 @@ cmd_deps() {
   ref=$(plan_ref_of_ledger "$ledger"); [ -n "$ref" ] || ref=$(git -C "$REPO" branch --show-current 2>/dev/null)
   if [ -n "$from" ]; then
     [ -f "$from" ] || { echo "sdd-state: no such file: $from" >&2; echo "status=error"; return 2; }
-    tmp=$from; blob=$(git -C "$REPO" hash-object "$from")
+    # One absolute path for the hash and the parse: git -C "$REPO" would
+    # otherwise resolve a relative --from against the plan repository while the
+    # parser reads it from the caller's directory.
+    from=$(cd "$(dirname "$from")" 2>/dev/null && pwd -P)/$(basename "$from")
+    tmp=$from; blob=$(git -C "$REPO" hash-object "$from") || { echo "status=error"; return 2; }
   else
     pair=$(authoritative_plan_blob) || { echo "status=error"; return 2; }
     blob=${pair%% *}; tmp=${pair#* }

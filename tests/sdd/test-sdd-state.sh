@@ -2954,5 +2954,17 @@ git -C "$dr" commit -qam new; new_blob=$(git -C "$dr" rev-parse HEAD:docs/plan.m
 out=$(HYPERPOWERS_TEST_WRITER_AT="deps-after-resolve:$old_sha" run_state "$dr" deps docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=deps plan=${new_blob:0:7} tasks=3" ]; then pass "a branch moved after the id is resolved does not change the plan read"; else fail "plan id and text from one object (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
 
+# --from is read from the caller's directory, and its hash is of that same file.
+mkdir -p "$TEST_ROOT/elsewhere/docs"
+printf '### Task 1: A\n\n**Depends on:** none\n' > "$TEST_ROOT/elsewhere/docs/only-here.md"
+out=$(cd "$TEST_ROOT/elsewhere" && bash "$SDD_STATE" deps --from docs/only-here.md "$dp/docs/plan.md" 2>/dev/null); rc=$?
+want=$(git -C "$dp" hash-object "$TEST_ROOT/elsewhere/docs/only-here.md")
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=deps plan=${want:0:7} tasks=1" ]; then pass "--from outside the plan repository hashes the file it parsed"; else fail "--from relative to another cwd (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+printf '### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** none\n' > "$dp/docs/candidate.md"
+printf '### Task 1: A\n\n**Depends on:** none\n' > "$TEST_ROOT/elsewhere/docs/candidate.md"
+out=$(cd "$TEST_ROOT/elsewhere" && bash "$SDD_STATE" deps --from docs/candidate.md "$dp/docs/plan.md" 2>/dev/null); rc=$?
+want=$(git -C "$dp" hash-object "$TEST_ROOT/elsewhere/docs/candidate.md")
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=deps plan=${want:0:7} tasks=1" ]; then pass "a same-named file in the plan repository does not stand in for the caller's --from"; else fail "same-named --from (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

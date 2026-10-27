@@ -369,7 +369,10 @@ rule that appears afterwards can redirect it. `sync` writes the
 being the first 12 hex digits of the SHA-256 of the remote's fetch URL, or
 `none` when the remote has no URL) on every outcome except
 `offline`, `offline-no-state` and `no-remote` (which removes any stamp),
-runs `ensure_checkout`, and reconciles under the lock. A remote, branch or
+runs `ensure_checkout`, and reconciles under the lock. A repository with
+no state branch of its own yet gets one here, created from the tip this
+sync fetched rather than from the remote-tracking ref, which a lost swap
+may leave at another fetch's tip. A remote, branch or
 URL that changed while the fetch ran, or a fingerprint that cannot be
 computed, ends the sync with `status=error` and nothing stamped.
 Reconciliation starts by snapshotting every plan directory with pending

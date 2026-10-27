@@ -1736,19 +1736,40 @@ cmd_sync() {
   else
     git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "$R" "$(hp_zero_oid "$PLAN_DIR")" 2>/dev/null || true
   fi
-  drop_fetch_ref
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-pin:*) git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-pin:}" 2>/dev/null ;; esac
   # A branch at the state name whose root lacks the exact sentinel belongs
   # to someone else: it is never reconciled or written, and refs and files
   # stay as they are.
   if ! hp_has_sentinel "$PLAN_DIR" "$R"; then
     S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")
+    drop_fetch_ref
     echo "sdd-state: $REMOTE/$BRANCH exists but is not a hyperpowers state branch; set git config hyperpowers.stateBranch to another name" >&2
     echo "status=foreign local=$(short "$S") remote=$(short "$R") age=$(age_of "$PLAN_DIR" "$R")"
     return 2
   fi
+  # The first local branch is created here, from R, and never left to
+  # hp_ensure_checkout: with no local branch it builds one from the shared
+  # remote-tracking ref, which a lost compare-and-swap above leaves at
+  # another fetch's tip, and the branch would then hold a commit this sync
+  # neither fingerprinted nor reconciled while the stamp named its own
+  # endpoint. The tree is refused first, exactly as the checkout creation
+  # would refuse it, so a hostile tip never becomes a branch. The swap must
+  # find no branch; losing it means another process created one first, and
+  # hp_ensure_checkout continues from that as it always has.
+  if [ -z "$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")" ]; then
+    hp_refuse_tip "$PLAN_DIR" "$R" || { drop_fetch_ref; echo "status=error"; return 2; }
+    if git -C "$PLAN_DIR" update-ref "refs/heads/$BRANCH" "$R" "$(hp_zero_oid "$PLAN_DIR")" 2>/dev/null; then
+      # The tracking hp_ensure_checkout's remote mode would have recorded:
+      # it adds from the branch name now, so nothing else would.
+      git -C "$PLAN_DIR" config "branch.$BRANCH.remote" "$REMOTE" >/dev/null 2>&1 || true
+      git -C "$PLAN_DIR" config "branch.$BRANCH.merge" "refs/heads/$BRANCH" >/dev/null 2>&1 || true
+    fi
+  fi
   had_co=0; [ -e "$CO/.git" ] && had_co=1
-  ensure=$(hp_ensure_checkout "$PLAN_DIR") || { echo "status=error"; return 2; }
+  ensure=$(hp_ensure_checkout "$PLAN_DIR") || { drop_fetch_ref; echo "status=error"; return 2; }
+  # R is reachable from the branch or the checkout by now, so the private
+  # ref that kept it alive can go.
+  drop_fetch_ref
   if [ "${ensure%% *}" != branch ]; then echo "status=plain"; return 0; fi
   [ "$had_co" -eq 1 ] || created=created
   hp_lock "$PLAN_DIR" || return 2

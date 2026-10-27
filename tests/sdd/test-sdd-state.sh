@@ -287,6 +287,30 @@ git -C "$PAIR_B" update-ref -d "refs/hp-fetch/$$"
 # cover a refused stamp, an absent branch, a refused alias, a pinned fetch
 # and a reconciled one.
 if [ -z "$(git -C "$p1_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$chain_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$read_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$rule_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_A" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_B" for-each-ref refs/hp-fetch)" ]; then pass "no private fetch ref outlives a sync"; else fail "no private fetch ref outlives a sync ($(git -C "$p1_a" for-each-ref refs/hp-fetch; git -C "$chain_a" for-each-ref refs/hp-fetch; git -C "$read_a" for-each-ref refs/hp-fetch; git -C "$rule_a" for-each-ref refs/hp-fetch; git -C "$PAIR_A" for-each-ref refs/hp-fetch; git -C "$PAIR_B" for-each-ref refs/hp-fetch))"; fi
+# The same race on a repository that has no local state branch yet. The
+# first branch has to come from the tip this sync fetched: a lost swap
+# leaves another fetch's tip in the shared ref, and the checkout creation
+# reads that ref, so the branch would be seeded from a commit this sync
+# never fingerprinted.
+make_pair p1n
+first_a="$PAIR_A"; first_b="$PAIR_B"
+mkdir -p "$first_a/docs"; : > "$first_a/docs/plan.md"; git -C "$first_a" add docs; git -C "$first_a" commit -qm plan; git -C "$first_a" push -q origin main 2>/dev/null
+git -C "$first_b" pull -q origin main 2>/dev/null
+run_state "$first_a" sync docs/plan.md >/dev/null
+wsa1n=$(run_sdd_dir "$first_a" docs/plan.md); name_1n=$(basename "$wsa1n")
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa1n/progress.md"
+run_state "$first_a" snapshot docs/plan.md >/dev/null; git -C "$first_a" push -q origin hyperpowers/state 2>/dev/null
+served_1n=$(git -C "$first_a" rev-parse hyperpowers/state)
+# A second valid state commit in B's object database, reached by no ref B
+# reads: the tip a racing fetch would leave in the shared ref. B still has
+# no local branch, no remote-tracking ref and no checkout.
+git -C "$first_b" fetch -q origin "+refs/heads/hyperpowers/state:refs/hp-seed/x" 2>/dev/null
+other_1n=$(printf 'a tip another fetch left behind\n' | git -C "$first_b" -c user.name=t -c user.email=t@example.com commit-tree "$(git -C "$first_b" rev-parse "refs/hp-seed/x^{tree}")" -p "$served_1n")
+git -C "$first_b" update-ref -d refs/hp-seed/x
+co_b1n="$STATE_ROOT/$(state_key "$first_b")"
+out=$(cd "$first_b" && HYPERPOWERS_TEST_WRITER_AT="sync-after-fetch:$other_1n" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1n.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && [ "$(git -C "$first_b" rev-parse hyperpowers/state)" = "$served_1n" ] && grep -q '^Task 1: complete' "$co_b1n/plans/$name_1n/progress.md" && [ "$(git -C "$first_b" rev-parse refs/remotes/origin/hyperpowers/state)" = "$other_1n" ]; then pass "the first local branch is created from the fetched tip, not from the shared ref a lost swap left behind"; else fail "the first local branch is created from the fetched tip (rc=$rc: $out: local=$(git -C "$first_b" rev-parse hyperpowers/state 2>/dev/null), served=$served_1n, other=$other_1n: $(tr '\n' '|' < "$TEST_ROOT/p1n.err"))"; fi
+if [ "$(git -C "$first_b" config branch.hyperpowers/state.remote)" = origin ] && [ "$(git -C "$first_b" config branch.hyperpowers/state.merge)" = "refs/heads/hyperpowers/state" ]; then pass "the branch this sync created tracks the remote, as the checkout creation's own would"; else fail "the branch this sync created tracks the remote ($(git -C "$first_b" config branch.hyperpowers/state.remote))"; fi
 
 # Crash after the worktree add: the next call starts clean.
 r4="$TEST_ROOT/r4"; make_repo "$r4"

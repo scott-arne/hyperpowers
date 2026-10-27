@@ -3,8 +3,8 @@
 // a row per plan, logging every decision. Fails open on every doubt.
 // Design: docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md (Design §1).
 import { execFileSync } from 'node:child_process';
-import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 export const CANDIDATE_CAP = 64;
 export const REFUSAL_CAP = 2;
@@ -53,13 +53,18 @@ export function ledgerRecords(text) {
 // are excluded by name, because a copy of this session's ledger would read as
 // a second plan and make every Stop ambiguous.
 const LIFECYCLE_COPY = /\.import(ing)?-[0-9]+$/;
-function ledgersUnder(plansDir) {
+// Absent or uncertain, never "no": a path the hook is not allowed to look at
+// is recorded rather than dropped, because the plan it hides may be this
+// session's. Only ENOENT is absence.
+const absent = (err) => err?.code === 'ENOENT';
+function ledgersUnder(plansDir, unreadable) {
   const out = [];
-  if (!existsSync(plansDir)) return out;
-  for (const ws of readdirSync(plansDir)) {
+  let names;
+  try { names = readdirSync(plansDir); } catch (err) { if (!absent(err)) unreadable.push(plansDir); return out; }
+  for (const ws of names) {
     if (ws.startsWith('.') || LIFECYCLE_COPY.test(ws)) continue;
     const p = join(plansDir, ws, 'progress.md');
-    if (existsSync(p)) out.push(p);
+    try { if (statSync(p).isFile()) out.push(p); } catch (err) { if (!absent(err)) unreadable.push(p); }
   }
   return out;
 }
@@ -86,14 +91,16 @@ function carriesSession(path, sessionId, unreadable) {
 export function discover({ sessionId, cwd, cacheRoot }) {
   const hp = join(cacheRoot, 'hyperpowers');
   const key = cloneKey(cwd);
+  const unreadable = [];
   let candidates = [];
   for (const backend of ['state', 'sdd']) {
     const root = join(hp, backend);
-    if (key) candidates.push(...ledgersUnder(join(root, key, 'plans')));
-    else if (existsSync(root)) for (const k of readdirSync(root)) candidates.push(...ledgersUnder(join(root, k, 'plans')));
+    if (key) { candidates.push(...ledgersUnder(join(root, key, 'plans'), unreadable)); continue; }
+    let keys = [];
+    try { keys = readdirSync(root); } catch (err) { if (!absent(err)) unreadable.push(root); }
+    for (const k of keys) candidates.push(...ledgersUnder(join(root, k, 'plans'), unreadable));
   }
   if (candidates.length > CANDIDATE_CAP) return { kind: 'ambiguous', candidates: candidates.length, matches: [] };
-  const unreadable = [];
   candidates = newestFirst(candidates, unreadable);
   // An imported workspace leaves the plain cache path a symlink to the state
   // path (sdd-state's import), so one ledger can answer twice; the same file
@@ -163,12 +170,17 @@ export function planState({ workspace, cwd, sessionId }) {
 export function liveJobs(workspace) {
   const jobs = join(workspace, 'jobs');
   const out = { live: [], unreadable: [] };
-  if (!existsSync(jobs)) return out;
-  for (const d of readdirSync(jobs)) {
-    const metaPath = join(jobs, d, 'meta.json');
-    if (d.startsWith('.') || !existsSync(metaPath)) continue; // an allocation still in progress is not a job yet
+  let names;
+  try { names = readdirSync(jobs); } catch (err) { if (!absent(err)) out.unreadable.push('jobs'); return out; }
+  for (const d of names) {
+    if (d.startsWith('.')) continue;
+    let text;
+    // No meta.json is an allocation still in progress, not a job. A
+    // meta.json that cannot be read is a job whose state may well be
+    // running, so it is uncertainty, not absence.
+    try { text = readFileSync(join(jobs, d, 'meta.json'), 'utf8'); } catch (err) { if (!absent(err)) out.unreadable.push(d); continue; }
     try {
-      const m = JSON.parse(readFileSync(metaPath, 'utf8'));
+      const m = JSON.parse(text);
       if (LIVE_JOB_STATES.has(m.state) && !existsSync(join(jobs, d, 'exit'))) out.live.push(String(m.name || d));
     } catch { out.unreadable.push(d); }
   }
@@ -250,19 +262,55 @@ export function refusalsBefore({ workspaceLog, mirrorLog, sessionId }) {
 // hook's own paths reads them.
 export const testHooks = {};
 
+// <dir> and <levels> directories up, stopping at the filesystem root.
+function ancestorOf(dir, levels) {
+  let at = dir;
+  for (let i = 0; i < levels; i++) { const up = dirname(at); if (up === at) break; at = up; }
+  return at;
+}
+// <dir>'s components below <root>, created one at a time: an existing one
+// must be a real directory and never a symlink, because O_NOFOLLOW guards
+// only the file's own name and a link planted on the way to it would send
+// decisions outside the cache. <root> itself is the caller's configured
+// cache, reached through whatever the host's own layout uses (/tmp and a
+// home directory are symlinks on macOS), so it is created whole and not
+// inspected. False when a component is not a real directory this hook can
+// make or keep.
+function makeParents(root, dir) {
+  const parts = [];
+  let at = dir;
+  while (at !== root) {
+    const up = dirname(at);
+    if (up === at) return false; // dir is not under root
+    parts.unshift(basename(at));
+    at = up;
+  }
+  try { mkdirSync(root, { recursive: true }); } catch { return false; }
+  let cur = root;
+  for (const part of parts) {
+    cur = join(cur, part);
+    let st = null;
+    try { st = lstatSync(cur); } catch (err) { if (!absent(err)) return false; }
+    if (st) { if (!st.isDirectory()) return false; continue; } // a symlink is not a directory to lstat
+    try { mkdirSync(cur); continue; } catch (err) { if (err?.code !== 'EEXIST') return false; }
+    try { if (!lstatSync(cur).isDirectory()) return false; } catch { return false; }
+  }
+  return true;
+}
+
 // One JSON line, built whole, appended with one write to a file opened
 // without following a symlink: a link planted at a log must not send
 // decisions somewhere else, the reason hp_ledger_append opens O_NOFOLLOW too.
-// `mkdirs` is for the mirror alone and `confirmPath` for the authoritative
-// log — see recordDecision.
+// `mkdirsUnder` is for the mirror alone and `confirmPath` for the
+// authoritative log — see recordDecision.
 // A write that failed part-way leaves an unterminated line; this ends it with
 // the ledger's own fragment marker rather than gluing the next record to it,
 // and a write that lands short is a failure, not a record: the bytes that did
 // land are a fragment the next append fences off.
-export function appendLine(path, line, { mkdirs = false, confirmPath = false } = {}) {
+export function appendLine(path, line, { mkdirsUnder = null, confirmPath = false } = {}) {
   let fd = -1;
   try {
-    if (mkdirs) mkdirSync(dirname(path), { recursive: true });
+    if (mkdirsUnder && !makeParents(mkdirsUnder, dirname(path))) return false;
     fd = openSync(path, constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o644);
     let repair = '';
     const before = fstatSync(fd);
@@ -312,7 +360,10 @@ export function recordDecision({ workspaceLog, mirrorLog, marker, line }) {
   // The marker is cleared only once a line carrying mirror_failed reached a
   // log; a decision that reaches neither leaves it for the next one.
   const clear = () => { if (pending) { try { rmSync(marker); } catch { /* the next line repeats it */ } } };
-  const toMirror = (l) => appendLine(mirrorLog, l, { mkdirs: true });
+  // The mirror is <cache>/hyperpowers/stop-guard/<session>.jsonl: the two
+  // components under the cache root are this hook's to create, and each must
+  // be a real directory for the line to go there.
+  const toMirror = (l) => appendLine(mirrorLog, l, { mkdirsUnder: ancestorOf(dirname(mirrorLog), 2) });
   if (!workspaceLog) { const ok = toMirror(out); if (ok) clear(); return { line: out, loggedAs: ok ? 'mirror-only' : 'none' }; }
   const live = () => existsSync(join(dirname(workspaceLog), 'progress.md'));
   if (!live() || !appendLine(workspaceLog, out, { confirmPath: true }) || !live()) {

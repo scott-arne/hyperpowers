@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -340,6 +340,38 @@ test('recordDecision: a pending mirror_failed marker survives a double write fai
   chmodSync(wl, 0o644); chmodSync(ml, 0o644);
   r = guard.recordDecision({ workspaceLog: wl, mirrorLog: ml, marker, line: line('2026-10-23T10:01:00.000Z', 'allow', 'handback-text') });
   assert.equal(r.line.mirror_failed, true); assert.equal(existsSync(marker), false); assert.equal(readLines(wl).at(-1).mirror_failed, true); assert.equal(readLines(ml).at(-1).mirror_failed, true);
+});
+test('discover: a workspace directory the hook cannot search is an ambiguity, not an absence', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e);
+  let d;
+  chmodSync(ws, 0o000);
+  try { d = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache }); } finally { chmodSync(ws, 0o755); }
+  assert.equal(d.kind, 'ambiguous'); assert.deepEqual(d.matches, []);
+  assert.deepEqual(d.unreadable, [join(ws, 'progress.md')]);
+});
+test('liveJobs: a job directory the hook cannot read is unreadable, not an allocation still in progress', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e);
+  for (const name of ['a', 'b']) {
+    mkdirSync(join(ws, 'jobs', `${name}-x-0001`), { recursive: true });
+    writeFileSync(join(ws, 'jobs', `${name}-x-0001`, 'meta.json'), JSON.stringify({ name, state: 'running' }));
+  }
+  const shut = join(ws, 'jobs', 'b-x-0001');
+  chmodSync(shut, 0o000);
+  try { assert.deepEqual(guard.liveJobs(ws), { live: ['a'], unreadable: ['b-x-0001'] }); } finally { chmodSync(shut, 0o755); }
+});
+test('recordDecision: a symlink on the mirror path sends no decision outside the cache', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e);
+  const wl = join(ws, 'stop-guard.jsonl'); const ml = mirrorOf(e); const marker = join(ws, '.mirror-failed');
+  const outside = join(e.root, 'outside'); mkdirSync(outside);
+  mkdirSync(join(e.cache, 'hyperpowers'), { recursive: true });
+  symlinkSync(outside, join(e.cache, 'hyperpowers', 'stop-guard'));
+  let r = guard.recordDecision({ workspaceLog: wl, mirrorLog: ml, marker, line: line('2026-10-23T10:00:00.000Z', 'block', 'open-tasks', { refusals: 1 }) });
+  assert.equal(r.loggedAs, 'authoritative'); assert.equal(existsSync(marker), true);
+  assert.deepEqual(readdirSync(outside), []);
+  // with no plan log to fall back on, the brief's double failure: nothing recorded
+  r = guard.recordDecision({ workspaceLog: null, mirrorLog: ml, marker: null, line: line('2026-10-23T10:01:00.000Z', 'allow', 'ambiguous', { plan: null }) });
+  assert.equal(r.loggedAs, 'none');
+  assert.deepEqual(readdirSync(outside), []);
 });
 test('cloneKey: null outside a repository, stable inside one', () => {
   const e = env();

@@ -2038,6 +2038,40 @@ run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p11b.out" 2> "$TEST_ROOT/p11
 out=$(cat "$TEST_ROOT/p11b.out")
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ -f "$co_b11/plans/$(basename "$wsa")/progress.md" ] && [ -d "$sole11" ] && ! grep -q 'plans/ is not part of a plan workspace' "$TEST_ROOT/p11b.err"; then pass "a leftover that is the only entry under plans/ does not stop the apply"; else fail "a leftover that is the only entry under plans/ does not stop the apply (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p11b.err"))"; fi
 rm -rf "$sole11"
+# An incoming commit whose first version adds a tracked entry of a dotted
+# name a local removal or prune copy already holds. The exemption reads S
+# alone, so without the target's side of it the apply would write the
+# incoming files into that copy, which may be the only one of its dossier.
+# The helper never makes such a name (hp_plan_ws_name strips leading dots),
+# so the commit is built with plumbing.
+make_pair p11c
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa11c=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa11c/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+co_b11c="$STATE_ROOT/$(state_key "$PAIR_B")"
+dotted11c=".pruned-collide-1234abcd-999"
+copy11c="$co_b11c/plans/$dotted11c"
+mkdir -p "$copy11c"; printf '# SDD ledger — plan: docs/gone.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$copy11c/progress.md"; printf 'the only report\n' > "$copy11c/task-1-report.md"
+cp -a "$copy11c" "$TEST_ROOT/p11c-before"
+before11c=$(git -C "$PAIR_B" rev-parse hyperpowers/state)
+# The first version of that path on the branch, added by hand on A.
+idx11c="$TEST_ROOT/p11c.index"; tip11c=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+lb11c=$(printf 'incoming ledger\n' | git -C "$PAIR_A" hash-object -w --stdin)
+rm -f "$idx11c"; GIT_INDEX_FILE=$idx11c git -C "$PAIR_A" read-tree "$tip11c"
+GIT_INDEX_FILE=$idx11c git -C "$PAIR_A" update-index --add --cacheinfo "100644,$lb11c,plans/$dotted11c/progress.md"
+add11c=$(printf 'a dotted workspace added by hand\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$(GIT_INDEX_FILE=$idx11c git -C "$PAIR_A" write-tree)" -p "$tip11c")
+git -C "$PAIR_A" push -q origin "$add11c:refs/heads/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p11c.out" 2> "$TEST_ROOT/p11c.err"; rc=$?
+out=$(cat "$TEST_ROOT/p11c.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "plans/$dotted11c" "$TEST_ROOT/p11c.err" && diff -r "$TEST_ROOT/p11c-before" "$copy11c" >/dev/null 2>&1 && [ "$(git -C "$PAIR_B" rev-parse hyperpowers/state)" = "$before11c" ] && [ ! -f "$co_b11c/.sync-applying" ]; then pass "an incoming first-add of a dotted name a local removal copy holds is refused, the copy intact and the branch unmoved"; else fail "an incoming first-add of a dotted name a local removal copy holds is refused (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p11c.err"))"; fi
+# The repair the line names: the copy moves aside and the apply completes.
+mv "$copy11c" "$copy11c.aside-999"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(cat "$co_b11c/plans/$dotted11c/progress.md")" = "incoming ledger" ] && [ -f "$copy11c.aside-999/task-1-report.md" ]; then pass "with the local copy moved aside the incoming workspace of that name is applied"; else fail "with the local copy moved aside the incoming workspace of that name is applied (rc=$rc: $out)"; fi
+rm -rf "$copy11c.aside-999"
 
 echo ""
 echo "=== containment on the apply path ==="

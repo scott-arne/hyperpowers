@@ -377,7 +377,12 @@ URL that changed while the fetch ran, or a fingerprint that cannot be
 computed, ends the sync with `status=error` and nothing stamped.
 Reconciliation starts by snapshotting every plan directory with pending
 tracked changes, so the working tree equals the local tip S and no local
-edit can be lost, then compares S with the fetched tip R:
+edit can be lost, then compares S with the fetched tip R. The scan that
+guards the apply exempts a removal or prune copy under `plans/` only
+while neither S nor the incoming commit tracks an entry of that name; an
+incoming commit that first-adds one while a local copy holds it ends the
+apply with `status=error`, naming the path, because that copy may be the
+only one of its dossier and nothing may be written into it:
 
 | Outcome | `status=` | Exit |
 |---|---|---|

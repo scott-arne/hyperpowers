@@ -1364,7 +1364,7 @@ restore_tombs() {
 # after the ref moved (the marker stays; the next call finishes it), 2 error.
 # Controllers write without the lock, so the working tree is live.
 apply_target() {
-  local S=$1 target=$2 line status path top tracked left refusal rest res dir rc i refused tombs=() dirs=()
+  local S=$1 target=$2 line status path top tracked incoming left refusal rest res dir rc i refused tombs=() dirs=()
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-apply:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-apply:}" ;; esac
   if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = sync-before-apply ]; then
     : > "$CO/.sync-paused"
@@ -1399,7 +1399,7 @@ apply_target() {
     # would wedge every sync for as long as it sits.
     case "$path" in
       "plans/.removing-"*|"plans/.pruned-"*|"plans/.quarantining-"*)
-        # Only an entry the branch does not track at S is a leftover: a
+        # Only an entry neither side of the apply tracks is a leftover: a
         # workspace from before this release may carry such a name, and
         # its dirty rows hold the apply like any other's (snapshot_pending
         # skips dotted directories, so nothing else would publish them).
@@ -1409,7 +1409,19 @@ apply_target() {
         # A lookup that fails counts as tracked.
         top=${path#plans/}; top=${top%%/*}
         tracked=$(git -C "$CO" ls-tree "$S" -- "plans/$top" 2>/dev/null) || tracked=x
-        [ -n "$tracked" ] || continue ;;
+        incoming=$(git -C "$CO" ls-tree "$target" -- "plans/$top" 2>/dev/null) || incoming=x
+        if [ -z "$tracked" ] && [ -z "$incoming" ]; then continue; fi
+        if [ -z "$tracked" ]; then
+          # The target adds this name for the first time while a local
+          # removal or prune copy holds it. Exempting the row here would
+          # have the apply write the incoming files into that copy, which
+          # may be the only one of its dossier. The helper never makes a
+          # dotted workspace name (hp_plan_ws_name strips leading dots),
+          # so the incoming entry was committed by hand on some host; the
+          # human decides which of the two survives.
+          echo "sdd-state: the state branch adds plans/$top, and an untracked copy of that name is already at $CO/plans/$top; nothing was applied, because a removal or prune copy is never written into. Move the local copy aside (mv '$CO/plans/$top' '$CO/plans/$top.aside-$$', or any name outside $CO/plans) and run sdd-state sync again" >&2
+          return 2
+        fi ;;
     esac
     # A tracked file missing from a workspace: the restore above left the
     # copy that holds it only when the workspace is occupied again, and

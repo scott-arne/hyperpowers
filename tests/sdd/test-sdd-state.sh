@@ -57,6 +57,9 @@ ensure() { local repo=$1; shift; env "$@" bash -c '. "$1"; hp_ensure_checkout "$
 materialize() { ( . "$LIB"; hp_materialize_plain "$@" ); }
 # shellcheck source=/dev/null
 state_key() { ( . "$LIB"; hp_key "$1" ); }
+# fp <repo>: the repository's remote fingerprint as the library computes it.
+# shellcheck source=/dev/null
+fp() { ( . "$LIB"; hp_remote_fingerprint "$1" ); }
 run_state() { ( cd "$1" && shift && bash "$SDD_STATE" "$@" ); }
 run_sdd_dir() { ( cd "$1" && shift && bash "$SDD_DIR" "$@" ); }
 registrations() { git -C "$1" worktree list --porcelain | grep -c "^worktree $STATE_ROOT/"; }
@@ -106,7 +109,69 @@ if [ "$rc" -eq 0 ] && git -C "$r3" rev-parse -q --verify other/state >/dev/null 
 make_pair p1
 err=$(ensure "$PAIR_A" 2>&1 >/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync' && [ ! -d "$STATE_ROOT/$(state_key "$PAIR_A")" ]; then pass "a clone with a remote and no stamp gets needs-sync and no checkout"; else fail "a clone with a remote and no stamp gets needs-sync and no checkout (rc=$rc: $err)"; fi
-: > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"
+out=$(run_state "$PAIR_A" snapshot docs/plan.md 2>"$TEST_ROOT/ns-snapshot.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'needs-sync' "$TEST_ROOT/ns-snapshot.err"; then pass "snapshot prints status=error when the checkout cannot be created"; else fail "snapshot prints status=error when the checkout cannot be created (rc=$rc: '$out')"; fi
+out=$(run_state "$PAIR_A" verify docs/plan.md 2>"$TEST_ROOT/ns-verify.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'needs-sync' "$TEST_ROOT/ns-verify.err"; then pass "verify prints status=error when the checkout cannot be created"; else fail "verify prints status=error when the checkout cannot be created (rc=$rc: '$out')"; fi
+printf 'other hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+err=$(ensure "$PAIR_A" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q "needs-sync" && printf '%s' "$err" | grep -q "names 'other hyperpowers/state" && [ ! -d "$STATE_ROOT/$(state_key "$PAIR_A")" ]; then pass "a stamp for another remote is needs-sync and names the difference"; else fail "a stamp for another remote is needs-sync and names the difference (rc=$rc: $err)"; fi
+out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ]; then pass "sync writes the remote, branch and URL fingerprint into the stamp"; else fail "sync writes the remote, branch and URL fingerprint into the stamp (rc=$rc: $out: $(cat "$STATE_ROOT/$(state_key "$PAIR_A").fetched" 2>/dev/null))"; fi
+# A repointed remote: the stamp earned against one endpoint must not vouch
+# for another once the checkout and the local branch are gone.
+git -C "$PAIR_A" worktree remove --force "$STATE_ROOT/$(state_key "$PAIR_A")" >/dev/null 2>&1 || rm -rf "${STATE_ROOT:?}/$(state_key "$PAIR_A")"; git -C "$PAIR_A" worktree prune; git -C "$PAIR_A" branch -D hyperpowers/state >/dev/null 2>&1
+url_was=$(git -C "$PAIR_A" remote get-url origin); git -C "$PAIR_A" remote set-url origin "$TEST_ROOT/elsewhere.git"
+err=$(ensure "$PAIR_A" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync' && [ ! -d "$STATE_ROOT/$(state_key "$PAIR_A")" ] && ! git -C "$PAIR_A" rev-parse -q --verify hyperpowers/state >/dev/null; then pass "a repointed remote makes the stamp stale: needs-sync and no branch created"; else fail "a repointed remote makes the stamp stale (rc=$rc: $err)"; fi
+git -C "$PAIR_A" remote set-url origin "$url_was"
+# A fingerprint that cannot be computed stops the sync: nothing is stamped
+# and nothing is created.
+mkdir -p "$TEST_ROOT/fakebin"; printf '#!/bin/sh\nexit 9\n' > "$TEST_ROOT/fakebin/node"; chmod 755 "$TEST_ROOT/fakebin/node"
+rm -f "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+out=$(cd "$PAIR_A" && PATH="$TEST_ROOT/fakebin:$PATH" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1-node.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'could not be fingerprinted' "$TEST_ROOT/p1-node.err" && [ ! -e "$STATE_ROOT/$(state_key "$PAIR_A").fetched" ] && [ ! -d "$STATE_ROOT/$(state_key "$PAIR_A")" ]; then pass "a fingerprint that cannot be computed stops the sync with nothing stamped or created"; else fail "a fingerprint that cannot be computed stops the sync (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p1-node.err"))"; fi
+# A remote repointed while the fetch ran: the stamp must name the endpoint
+# that was fetched, so the sync refuses to stamp and nothing is created.
+race_b="$TEST_ROOT/p1-race.git"; git init -q --bare -b main "$race_b"
+out=$(cd "$PAIR_A" && HYPERPOWERS_TEST_WRITER_AT="sync-after-fetch-set-url:$race_b" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1-race.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'changed during the sync' "$TEST_ROOT/p1-race.err" && [ ! -e "$STATE_ROOT/$(state_key "$PAIR_A").fetched" ] && [ ! -d "$STATE_ROOT/$(state_key "$PAIR_A")" ] && ! git -C "$PAIR_A" rev-parse -q --verify hyperpowers/state >/dev/null; then pass "a remote repointed during the fetch is not stamped and nothing is created"; else fail "a remote repointed during the fetch is not stamped and nothing is created (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p1-race.err"))"; fi
+out=$(run_state "$PAIR_A" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ]; then pass "the next sync fetches the new endpoint and stamps it"; else fail "the next sync fetches the new endpoint and stamps it (rc=$rc: $out: $(cat "$STATE_ROOT/$(state_key "$PAIR_A").fetched" 2>/dev/null))"; fi
+git -C "$PAIR_A" remote set-url origin "$url_was"
+# A remote repointed to another endpoint between the fingerprint and the
+# fetch, and back before the stamp: the fetch is pinned to the fingerprinted
+# URL, so the other endpoint (which holds a branch under the state name) is
+# never contacted, the outcome is still absent, and the stamp stays true.
+aba_b="$TEST_ROOT/p1-aba.git"; git init -q --bare -b main "$aba_b"; git -C "$PAIR_A" push -q "$aba_b" main:refs/heads/hyperpowers/state 2>/dev/null
+out=$(cd "$PAIR_A" && HYPERPOWERS_TEST_WRITER_AT="sync-aba-fetch:$aba_b" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1-aba.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ] && ! git -C "$PAIR_A" rev-parse -q --verify refs/remotes/origin/hyperpowers/state >/dev/null && [ "$(git -C "$PAIR_A" remote get-url origin)" = "$url_was" ]; then pass "a repoint away and back around the fetch never reaches the other endpoint: the fetch is pinned to the fingerprinted URL"; else fail "a repoint away and back around the fetch never reaches the other endpoint (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p1-aba.err"))"; fi
+# A repository that configures the pinned fetch's own alias name could
+# shadow the pin (remote.<name>.url is multi-valued, git takes the first):
+# the sync refuses by name and stamps nothing.
+rm -f "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+out=$(cd "$PAIR_A" && HYPERPOWERS_TEST_WRITER_AT="sync-shadow-alias:$aba_b" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1-shadow.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'configures a remote named hp-fetch-' "$TEST_ROOT/p1-shadow.err" && [ ! -e "$STATE_ROOT/$(state_key "$PAIR_A").fetched" ] && ! git -C "$PAIR_A" rev-parse -q --verify refs/remotes/origin/hyperpowers/state >/dev/null; then pass "a repository that configures the pinned alias's name is refused and nothing is stamped"; else fail "a repository that configures the pinned alias's name is refused (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p1-shadow.err"))"; fi
+for sec in $(git -C "$PAIR_A" config --name-only --get-regexp '^remote\.hp-fetch-' | sed 's/\.url$//'); do git -C "$PAIR_A" config --remove-section "$sec"; done
+# A git older than 2.31 ignores environment configuration: the sync says
+# so instead of failing as offline. The caller's own GIT_CONFIG_* entries
+# survive the pin.
+real_git=$(command -v git); mkdir -p "$TEST_ROOT/fakegit"; printf '#!/bin/sh\nif [ "$1" = --version ]; then echo "git version 2.30.2"; exit 0; fi\nexec "%s" "$@"\n' "$real_git" > "$TEST_ROOT/fakegit/git"; chmod 755 "$TEST_ROOT/fakegit/git"
+out=$(cd "$PAIR_A" && PATH="$TEST_ROOT/fakegit:$PATH" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1-oldgit.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q '2.31 or newer' "$TEST_ROOT/p1-oldgit.err" && [ ! -e "$STATE_ROOT/$(state_key "$PAIR_A").fetched" ]; then pass "a git older than 2.31 is refused by name before the fetch"; else fail "a git older than 2.31 is refused by name before the fetch (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p1-oldgit.err"))"; fi
+# The caller's entry is one the fetch depends on: a global policy forbids
+# the file transport and only the caller's environment entry allows it, so
+# a pin that replaced the caller's entries would end offline (get-url
+# expands insteadOf rewrites, so a rewrite cannot play that part).
+printf '[protocol "file"]\n\tallow = never\n' > "$TEST_ROOT/p1-global.gitconfig"
+out=$(cd "$PAIR_A" && GIT_CONFIG_GLOBAL="$TEST_ROOT/p1-global.gitconfig" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.file.allow GIT_CONFIG_VALUE_0=always bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=absent" ] && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_A").fetched")" = "origin hyperpowers/state $(fp "$PAIR_A")" ]; then pass "a caller's own environment configuration survives the pinned fetch"; else fail "a caller's own environment configuration survives the pinned fetch (rc=$rc: $out: $(cat "$STATE_ROOT/$(state_key "$PAIR_A").fetched" 2>/dev/null))"; fi
+# Those syncs created the orphan; the checkout, the branch and the stamp go
+# again, so the hand-written stamp below is what lets the next creation
+# happen.
+git -C "$PAIR_A" worktree remove --force "$STATE_ROOT/$(state_key "$PAIR_A")" >/dev/null 2>&1 || rm -rf "${STATE_ROOT:?}/$(state_key "$PAIR_A")"; git -C "$PAIR_A" worktree prune; git -C "$PAIR_A" branch -D hyperpowers/state >/dev/null 2>&1; rm -f "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 out=$(ensure "$PAIR_A"); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "branch $STATE_ROOT/$(state_key "$PAIR_A")" ]; then pass "the stamp allows the orphan"; else fail "the stamp allows the orphan (rc=$rc, '$out')"; fi
 
@@ -115,6 +180,137 @@ git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
 out=$(ensure "$PAIR_B"); rc=$?
 if [ "$rc" -eq 0 ] && [ "$(git -C "$PAIR_B" rev-parse hyperpowers/state)" = "$(git -C "$PAIR_A" rev-parse hyperpowers/state)" ] && [ "$(git -C "$PAIR_B" config branch.hyperpowers/state.remote)" = origin ]; then pass "a fetched state branch is checked out tracking the remote"; else fail "a fetched state branch is checked out tracking the remote (rc=$rc)"; fi
+# A chained url.<base>.insteadOf rewrite. git applies one rewrite to
+# whatever URL a remote carries, so a fetch pinned to the already-rewritten
+# URL is rewritten a second time and reaches an endpoint the fingerprint
+# never named. The remote's configured URL is rewritten to the good
+# repository, and the good repository's path to the evil one.
+p1_a="$PAIR_A"
+make_pair p1c
+chain_a="$PAIR_A"
+chain_good="$TEST_ROOT/p1c-good.git"; chain_evil="$TEST_ROOT/p1c-evil.git"
+git init -q --bare -b main "$chain_good"; git init -q --bare -b main "$chain_evil"
+mkdir -p "$chain_a/docs"; : > "$chain_a/docs/plan.md"; git -C "$chain_a" add docs; git -C "$chain_a" commit -qm plan
+# Two state branches built the way this module builds one, so each carries a
+# valid root sentinel; only their ledger lines differ.
+for side in good evil; do
+    src_1c="$TEST_ROOT/p1c-src-$side"; make_repo "$src_1c"
+    mkdir -p "$src_1c/docs"; : > "$src_1c/docs/plan.md"; git -C "$src_1c" add docs; git -C "$src_1c" commit -qm plan
+    ws_1c=$(ws_path "$src_1c" "$src_1c/docs/plan.md"); mkdir -p "$ws_1c"
+    printf '# SDD ledger — plan: docs/plan.md\nTask 1: the %s endpoint\n' "$side" > "$ws_1c/progress.md"
+    run_state "$src_1c" snapshot docs/plan.md >/dev/null
+    git -C "$src_1c" push -q "$TEST_ROOT/p1c-$side.git" hyperpowers/state:refs/heads/hyperpowers/state 2>/dev/null
+done
+name_1c=$(basename "$ws_1c")
+url_1c=$(git -C "$chain_a" config --get remote.origin.url)
+git -C "$chain_a" remote set-url origin chain:origin
+git -C "$chain_a" config "url.$chain_good.insteadOf" chain:origin
+git -C "$chain_a" config "url.$chain_evil.insteadOf" "$chain_good"
+out=$(run_state "$chain_a" sync docs/plan.md 2>"$TEST_ROOT/p1c.err"); rc=$?
+co_1c="$STATE_ROOT/$(state_key "$chain_a")"
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && grep -q '^Task 1: the good endpoint$' "$co_1c/plans/$name_1c/progress.md" && ! grep -q 'evil endpoint' "$co_1c/plans/$name_1c/progress.md" && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$chain_a").fetched")" = "origin hyperpowers/state $(fp "$chain_a")" ]; then pass "a chained insteadOf rewrite cannot move the pinned fetch: the once-rewritten endpoint is reconciled and stamped"; else fail "a chained insteadOf rewrite cannot move the pinned fetch (rc=$rc: $out: $(sed -n 2p "$co_1c/plans/$name_1c/progress.md" 2>/dev/null): $(tr '\n' '|' < "$TEST_ROOT/p1c.err"))"; fi
+git -C "$chain_a" remote set-url origin "$url_1c"
+git -C "$chain_a" config --remove-section "url.$chain_good"
+git -C "$chain_a" config --remove-section "url.$chain_evil"
+# A remote repointed between the read of its URL and the fetch, and put
+# back before the stamp. The URL is read once and the endpoint the fetch
+# will contact is derived from that captured string, so the repoint reaches
+# nothing; a second read of the remote's configuration would have pinned
+# the other endpoint while both fingerprint checks still saw this one.
+make_pair p1r
+read_a="$PAIR_A"
+mkdir -p "$read_a/docs"; : > "$read_a/docs/plan.md"; git -C "$read_a" add docs; git -C "$read_a" commit -qm plan
+git -C "$read_a" remote set-url origin "$chain_good"
+out=$(cd "$read_a" && HYPERPOWERS_TEST_WRITER_AT="sync-after-url-read:$chain_evil" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1r.err"); rc=$?
+co_1r="$STATE_ROOT/$(state_key "$read_a")"
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && [ "$(git -C "$read_a" rev-parse hyperpowers/state)" = "$(git -C "$chain_good" rev-parse hyperpowers/state)" ] && grep -q '^Task 1: the good endpoint$' "$co_1r/plans/$name_1c/progress.md" && ! grep -q 'evil endpoint' "$co_1r/plans/$name_1c/progress.md" && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$read_a").fetched")" = "origin hyperpowers/state $(fp "$read_a")" ]; then pass "a remote repointed right after its URL is read cannot move the fetch: the configured endpoint is reconciled and stamped"; else fail "a remote repointed right after its URL is read cannot move the fetch (rc=$rc: $out: $(sed -n 2p "$co_1r/plans/$name_1c/progress.md" 2>/dev/null): $(tr '\n' '|' < "$TEST_ROOT/p1r.err"))"; fi
+# A url.<base>.insteadOf rule added after the probe. The probe and the
+# fetch are separate git invocations, so a rule that appears between them
+# would rewrite the captured string a second way while both fingerprint
+# checks still agreed; the fetch carries a one-time name instead, which no
+# rule can have been written for.
+make_pair p1w
+rule_a="$PAIR_A"
+mkdir -p "$rule_a/docs"; : > "$rule_a/docs/plan.md"; git -C "$rule_a" add docs; git -C "$rule_a" commit -qm plan
+git -C "$rule_a" remote set-url origin "$chain_good"
+out=$(cd "$rule_a" && HYPERPOWERS_TEST_WRITER_AT="sync-aba-rewrite:$chain_evil" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1w.err"); rc=$?
+co_1w="$STATE_ROOT/$(state_key "$rule_a")"
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && [ "$(git -C "$rule_a" rev-parse hyperpowers/state)" = "$(git -C "$chain_good" rev-parse hyperpowers/state)" ] && grep -q '^Task 1: the good endpoint$' "$co_1w/plans/$name_1c/progress.md" && ! grep -q 'evil endpoint' "$co_1w/plans/$name_1c/progress.md" && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$rule_a").fetched")" = "origin hyperpowers/state $(fp "$rule_a")" ]; then pass "a rewrite rule added after the probe cannot move the fetch: the probed endpoint is reconciled and stamped"; else fail "a rewrite rule added after the probe cannot move the fetch (rc=$rc: $out: $(sed -n 2p "$co_1w/plans/$name_1c/progress.md" 2>/dev/null): $(tr '\n' '|' < "$TEST_ROOT/p1w.err"))"; fi
+# The pin lives in the environment for the length of one fetch: neither the
+# alias, nor the one-time name, nor the endpoint it maps to is written to
+# the repository's config, and the seam's own rule is gone with it.
+if ! git -C "$rule_a" config --get-regexp '^remote\.hp-fetch-' >/dev/null 2>&1 && ! git -C "$rule_a" config --get-regexp '^url\.' >/dev/null 2>&1; then pass "the pinned fetch leaves no alias and no url rewrite in the repository's config"; else fail "the pinned fetch leaves no alias and no url rewrite in the repository's config ($(git -C "$rule_a" config --get-regexp '^remote\.hp-fetch-'; git -C "$rule_a" config --get-regexp '^url\.'))"; fi
+# A remote with two URLs. git fetches from the first and git remote get-url
+# reports that one, so the single read has to take the first too; reading
+# it with config --get would take the last, probe and pin the endpoint the
+# fetch was never meant to use, and leave every sync disagreeing with its
+# own stamp.
+make_pair p1m
+multi_a="$PAIR_A"
+mkdir -p "$multi_a/docs"; : > "$multi_a/docs/plan.md"; git -C "$multi_a" add docs; git -C "$multi_a" commit -qm plan
+git -C "$multi_a" remote set-url origin "$chain_good"
+git -C "$multi_a" remote set-url --add origin "$chain_evil"
+out=$(run_state "$multi_a" sync docs/plan.md 2>"$TEST_ROOT/p1m.err"); rc=$?
+co_1m="$STATE_ROOT/$(state_key "$multi_a")"
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && [ "$(git -C "$multi_a" rev-parse hyperpowers/state)" = "$(git -C "$chain_good" rev-parse hyperpowers/state)" ] && grep -q '^Task 1: the good endpoint$' "$co_1m/plans/$name_1c/progress.md" && ! grep -q 'evil endpoint' "$co_1m/plans/$name_1c/progress.md" && [ "$(head -n 1 "$STATE_ROOT/$(state_key "$multi_a").fetched")" = "origin hyperpowers/state $(fp "$multi_a")" ]; then pass "a remote with two URLs is probed, fetched and stamped on the first, the one git itself would fetch from"; else fail "a remote with two URLs is probed, fetched and stamped on the first (rc=$rc: $out: $(sed -n 2p "$co_1m/plans/$name_1c/progress.md" 2>/dev/null): $(tr '\n' '|' < "$TEST_ROOT/p1m.err"))"; fi
+# The fetched tip is read from a private ref, refs/hp-fetch/<pid>. Read
+# from the shared remote-tracking ref, a fetch another process finished in
+# between would hand this sync a commit the pinned endpoint never served.
+# The shared ref is published afterwards by compare-and-swap, so the sync
+# that won the race keeps it.
+make_pair p1p
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa1p=$(run_sdd_dir "$PAIR_A" docs/plan.md); name_1p=$(basename "$wsa1p")
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa1p/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+co_b1p="$STATE_ROOT/$(state_key "$PAIR_B")"
+held_1p=$(git -C "$PAIR_B" rev-parse refs/remotes/origin/hyperpowers/state)
+# A second valid state commit that lives in B's object database and nowhere
+# else: the tip a racing fetch would leave in the shared ref.
+other_1p=$(printf 'a tip another fetch left behind\n' | git -C "$PAIR_B" -c user.name=t -c user.email=t@example.com commit-tree "$(git -C "$PAIR_B" rev-parse "$held_1p^{tree}")" -p "$held_1p")
+printf 'Task 2: complete (commits 3333333..4444444, review clean)\n' >> "$wsa1p/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+served_1p=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+# Two private refs from earlier runs: one whose owner is gone, one whose
+# owner is this suite and so still running.
+sleep 0.01 & gone_1p=$!; wait "$gone_1p" 2>/dev/null
+git -C "$PAIR_B" update-ref "refs/hp-fetch/$gone_1p" "$held_1p"
+git -C "$PAIR_B" update-ref "refs/hp-fetch/$$" "$held_1p"
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-after-fetch:$other_1p" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1p.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(git -C "$co_b1p" rev-parse refs/heads/hyperpowers/state)" = "$served_1p" ] && grep -q '^Task 2: complete' "$co_b1p/plans/$name_1p/progress.md" && [ "$(git -C "$PAIR_B" rev-parse refs/remotes/origin/hyperpowers/state)" = "$other_1p" ]; then pass "the tip a sync reconciles is the one the pinned endpoint served, and a lost compare-and-swap leaves the shared ref to the fetch that won it"; else fail "the tip a sync reconciles is the one the pinned endpoint served (rc=$rc: $out: local=$(git -C "$co_b1p" rev-parse refs/heads/hyperpowers/state), served=$served_1p, other=$other_1p, shared=$(git -C "$PAIR_B" rev-parse refs/remotes/origin/hyperpowers/state))"; fi
+if ! git -C "$PAIR_B" rev-parse -q --verify "refs/hp-fetch/$gone_1p" >/dev/null && [ "$(git -C "$PAIR_B" rev-parse -q --verify "refs/hp-fetch/$$")" = "$held_1p" ]; then pass "a private fetch ref whose owner is gone is swept before the fetch, and a live owner's is left alone"; else fail "a private fetch ref whose owner is gone is swept before the fetch (gone: $(git -C "$PAIR_B" rev-parse -q --verify "refs/hp-fetch/$gone_1p" || echo swept), live: $(git -C "$PAIR_B" rev-parse -q --verify "refs/hp-fetch/$$" || echo swept))"; fi
+git -C "$PAIR_B" update-ref -d "refs/hp-fetch/$$"
+# The same race on a repository that has no local state branch yet. The
+# first branch has to come from the tip this sync fetched: a lost swap
+# leaves another fetch's tip in the shared ref, and the checkout creation
+# reads that ref, so the branch would be seeded from a commit this sync
+# never fingerprinted.
+make_pair p1n
+first_a="$PAIR_A"; first_b="$PAIR_B"
+mkdir -p "$first_a/docs"; : > "$first_a/docs/plan.md"; git -C "$first_a" add docs; git -C "$first_a" commit -qm plan; git -C "$first_a" push -q origin main 2>/dev/null
+git -C "$first_b" pull -q origin main 2>/dev/null
+run_state "$first_a" sync docs/plan.md >/dev/null
+wsa1n=$(run_sdd_dir "$first_a" docs/plan.md); name_1n=$(basename "$wsa1n")
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa1n/progress.md"
+run_state "$first_a" snapshot docs/plan.md >/dev/null; git -C "$first_a" push -q origin hyperpowers/state 2>/dev/null
+served_1n=$(git -C "$first_a" rev-parse hyperpowers/state)
+# A second valid state commit in B's object database, reached by no ref B
+# reads: the tip a racing fetch would leave in the shared ref. B still has
+# no local branch, no remote-tracking ref and no checkout.
+git -C "$first_b" fetch -q origin "+refs/heads/hyperpowers/state:refs/hp-seed/x" 2>/dev/null
+other_1n=$(printf 'a tip another fetch left behind\n' | git -C "$first_b" -c user.name=t -c user.email=t@example.com commit-tree "$(git -C "$first_b" rev-parse "refs/hp-seed/x^{tree}")" -p "$served_1n")
+git -C "$first_b" update-ref -d refs/hp-seed/x
+co_b1n="$STATE_ROOT/$(state_key "$first_b")"
+out=$(cd "$first_b" && HYPERPOWERS_TEST_WRITER_AT="sync-after-fetch:$other_1n" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1n.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && [ "$(git -C "$first_b" rev-parse hyperpowers/state)" = "$served_1n" ] && grep -q '^Task 1: complete' "$co_b1n/plans/$name_1n/progress.md" && [ "$(git -C "$first_b" rev-parse refs/remotes/origin/hyperpowers/state)" = "$other_1n" ]; then pass "the first local branch is created from the fetched tip, not from the shared ref a lost swap left behind"; else fail "the first local branch is created from the fetched tip (rc=$rc: $out: local=$(git -C "$first_b" rev-parse hyperpowers/state 2>/dev/null), served=$served_1n, other=$other_1n: $(tr '\n' '|' < "$TEST_ROOT/p1n.err"))"; fi
+if [ "$(git -C "$first_b" config branch.hyperpowers/state.remote)" = origin ] && [ "$(git -C "$first_b" config branch.hyperpowers/state.merge)" = "refs/heads/hyperpowers/state" ]; then pass "the branch this sync created tracks the remote, as the checkout creation's own would"; else fail "the branch this sync created tracks the remote ($(git -C "$first_b" config branch.hyperpowers/state.remote))"; fi
+# No private ref outlives a sync, whatever its outcome: the fixtures above
+# cover a refused stamp, an absent branch, a refused alias, a pinned fetch,
+# a reconciled one and a first checkout created from the fetched tip.
+if [ -z "$(git -C "$p1_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$chain_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$read_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$rule_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$first_b" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_A" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_B" for-each-ref refs/hp-fetch)" ]; then pass "no private fetch ref outlives a sync"; else fail "no private fetch ref outlives a sync ($(git -C "$p1_a" for-each-ref refs/hp-fetch; git -C "$chain_a" for-each-ref refs/hp-fetch; git -C "$read_a" for-each-ref refs/hp-fetch; git -C "$rule_a" for-each-ref refs/hp-fetch; git -C "$first_b" for-each-ref refs/hp-fetch; git -C "$PAIR_A" for-each-ref refs/hp-fetch; git -C "$PAIR_B" for-each-ref refs/hp-fetch))"; fi
 
 # Crash after the worktree add: the next call starts clean.
 r4="$TEST_ROOT/r4"; make_repo "$r4"
@@ -193,7 +389,7 @@ if [ "$rc" -eq 0 ] && [ "$out" = "branch $co9" ] && [ "$(git -C "$co9" symbolic-
 # foreign tip is refused before anything is read from it.
 make_pair p2
 keyA=$(state_key "$PAIR_A"); keyB=$(state_key "$PAIR_B")
-: > "$STATE_ROOT/$keyA.fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$keyA.fetched"
 coA="$STATE_ROOT/$keyA"
 ensure "$PAIR_A" >/dev/null
 mkdir -p "$coA/plans/demo-00000000"
@@ -201,7 +397,7 @@ printf '# SDD ledger — plan: docs/plan.md\n' > "$coA/plans/demo-00000000/progr
 # shellcheck source=/dev/null
 ( . "$LIB"; hp_commit_paths "$coA" hyperpowers/state "demo ledger" plans/demo-00000000/progress.md >/dev/null )
 git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
-: > "$STATE_ROOT/$keyB.fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_B")" > "$STATE_ROOT/$keyB.fetched"
 ensure "$PAIR_B" HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 >/dev/null 2>&1
 git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
 remote_tip=$(git -C "$PAIR_B" rev-parse origin/hyperpowers/state)
@@ -249,7 +445,7 @@ git -C "$PAIR_B" update-ref refs/remotes/origin/hyperpowers/state "$remote_tip"
 # smuggle a foreign commit in: remote mode creates from the validated
 # commit, and every mode verifies the temporary checkout before the move.
 make_pair p3
-: > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 ensure "$PAIR_A" >/dev/null
 git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
@@ -317,10 +513,11 @@ plain11="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$r11")"
 if [ "$rc" -eq 0 ] && [ "$out" = "plain $plain11" ] && [ ! -e "$STATE_ROOT/$(state_key "$r11")/.git" ] && [ "$(registrations "$r11")" -eq 0 ]; then pass "a waiter honors a plain backend persisted while it waited"; else fail "a waiter honors a plain backend persisted while it waited (rc=$rc, '$out')"; fi
 
 # Materialization publishes the whole workspace by one rename: a partial
-# destination without a ledger is replaced, a stale staging directory from
-# an interrupted run is removed, and no staging directory remains.
+# destination without a ledger is refused rather than cleared, and
+# published once a human has removed it; a stale staging directory from an
+# interrupted run is removed, and no staging directory remains.
 make_pair p4
-: > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 coA4="$STATE_ROOT/$(state_key "$PAIR_A")"
 ensure "$PAIR_A" >/dev/null
 mkdir -p "$coA4/plans/demo-00000000"
@@ -329,7 +526,7 @@ printf 'report\n' > "$coA4/plans/demo-00000000/task-1-report.md"
 # shellcheck source=/dev/null
 ( . "$LIB"; hp_commit_paths "$coA4" hyperpowers/state "demo ledger and report" plans/demo-00000000/progress.md plans/demo-00000000/task-1-report.md >/dev/null )
 git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
-: > "$STATE_ROOT/$(state_key "$PAIR_B").fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_B")" > "$STATE_ROOT/$(state_key "$PAIR_B").fetched"
 ensure "$PAIR_B" HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 >/dev/null 2>&1
 git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/origin/hyperpowers/state" 2>/dev/null
 plainB4="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$PAIR_B")"; destB4="$plainB4/plans/demo-00000000"
@@ -337,7 +534,10 @@ mkdir -p "$destB4" "$plainB4/.materialize.stale/plans/demo-00000000"
 printf 'partial\n' > "$destB4/task-1-report.md"
 printf 'stale\n' > "$plainB4/.materialize.stale/plans/demo-00000000/progress.md"
 materialize "$PAIR_B" demo-00000000 "$destB4"; rc=$?
-if [ "$rc" -eq 0 ] && [ "$(cat "$destB4/progress.md")" = "# SDD ledger — plan: docs/plan.md" ] && [ "$(cat "$destB4/task-1-report.md")" = report ] && [ ! -e "$plainB4/.materialize.stale" ] && ! ls -d "$plainB4"/.materialize.* >/dev/null 2>&1 && [ "$(cat "$STATE_ROOT/$(state_key "$PAIR_B").backend")" = "plain source=$(git -C "$PAIR_B" rev-parse origin/hyperpowers/state)" ]; then pass "materialization replaces a partial destination whole and leaves no staging"; else fail "materialization replaces a partial destination whole and leaves no staging (rc=$rc)"; fi
+if [ "$rc" -eq 1 ] && [ "$(cat "$destB4/task-1-report.md")" = partial ] && [ ! -e "$destB4/progress.md" ] && [ ! -e "$plainB4/.materialize.stale" ] && ! ls -d "$plainB4"/.materialize.* >/dev/null 2>&1 && [ "$(cat "$STATE_ROOT/$(state_key "$PAIR_B").backend")" = plain ]; then pass "materialization refuses a partial destination it did not write, sweeps stale staging, and records nothing"; else fail "materialization refuses a partial destination it did not write, sweeps stale staging, and records nothing (rc=$rc)"; fi
+rm -rf "$destB4"
+materialize "$PAIR_B" demo-00000000 "$destB4"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$(cat "$destB4/progress.md")" = "# SDD ledger — plan: docs/plan.md" ] && [ "$(cat "$destB4/task-1-report.md")" = report ] && ! ls -d "$plainB4"/.materialize.* >/dev/null 2>&1 && [ "$(cat "$STATE_ROOT/$(state_key "$PAIR_B").backend")" = "plain source=$(git -C "$PAIR_B" rev-parse origin/hyperpowers/state)" ]; then pass "with the destination removed the whole workspace is published by one rename"; else fail "with the destination removed the whole workspace is published by one rename (rc=$rc)"; fi
 
 echo ""
 echo "=== snapshot ==="
@@ -460,6 +660,11 @@ out=$(run_state "$i1" import docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i1" ] && [ -f "$wsi/task-1-report.md" ] && [ -f "$wsi/task-1-brief.md" ]; then pass "import moves a legacy workspace into the checkout"; else fail "import moves a legacy workspace into the checkout (rc=$rc: $out)"; fi
 if [ "$(head -n 1 "$wsi/progress.md")" = "# SDD ledger — plan: docs/plan.md" ] && [ "$(sed -n 2p "$wsi/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "an absolute identity line is rewritten to the repo-relative form"; else fail "an absolute identity line is rewritten to the repo-relative form ($(head -n 1 "$wsi/progress.md"))"; fi
 if [ -L "$legacy_i1" ] && [ "$(cd "$legacy_i1" && pwd -P)" = "$(cd "$wsi" && pwd -P)" ]; then pass "the legacy location becomes a symlink to the new workspace"; else fail "the legacy location becomes a symlink to the new workspace"; fi
+kept_i1=$(ls -d "$legacy_i1".imported-* 2>/dev/null | head -n 1)
+if [ -n "$kept_i1" ] && [ -d "$kept_i1" ] && [ ! -L "$kept_i1" ] && [ "$(head -n 1 "$kept_i1/progress.md")" = "# SDD ledger — plan: $i1/docs/plan.md" ] && cmp -s <(tail -n +2 "$kept_i1/progress.md") <(tail -n +2 "$wsi/progress.md") && [ -f "$kept_i1/task-1-report.md" ] && [ -f "$kept_i1/task-1-brief.md" ] && [ -L "$legacy_i1" ]; then pass "a verified import keeps the legacy workspace as <path>.imported-<UTC>-<pid> beside the pointer, identity line unrewritten"; else fail "a verified import keeps the legacy workspace beside the pointer (kept='$kept_i1')"; fi
+if ! ls -d "$legacy_i1".importing-* >/dev/null 2>&1; then pass "no .importing-* copy is left after a complete import"; else fail "no .importing-* copy is left after a complete import"; fi
+out=$(run_state "$i1" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none" ] && [ -d "$kept_i1" ]; then pass "the kept copy is not an import candidate: the next import prints status=none and leaves it"; else fail "the kept copy is not an import candidate (rc=$rc: $out)"; fi
 if [ "$(run_state "$i1" import docs/plan.md)" = "status=none" ]; then pass "a second import finds nothing"; else fail "a second import finds nothing"; fi
 other="$XDG_CACHE_HOME/hyperpowers/sdd/otherkey00000000/plans/$(basename "$wsi")"
 mkdir -p "$other"; printf '# SDD ledger — plan: docs/plan.md\n' > "$other/progress.md"
@@ -666,11 +871,156 @@ touch -t 202601010000 "$root_i17"
 out=$(run_state "$i17" import docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i17" ] && [ -z "$(find "$root_i17" -maxdepth 0 -mtime +14 2>/dev/null)" ]; then pass "import refreshes the legacy root before the cutover"; else fail "import refreshes the legacy root before the cutover (rc=$rc: $out)"; fi
 
+# An import killed between the set-aside and the relink leaves the kept copy
+# and no pointer; the next import completes the relink.
+i22="$TEST_ROOT/i22"; make_repo "$i22"
+mkdir -p "$i22/docs"; : > "$i22/docs/plan.md"; git -C "$i22" add docs; git -C "$i22" commit -qm plan
+wsi22=$(ws_path "$i22" "$i22/docs/plan.md")
+legacy_i22="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i22")/plans/$(basename "$wsi22")"
+mkdir -p "$legacy_i22"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$legacy_i22/progress.md"
+( cd "$i22" && HYPERPOWERS_TEST_CRASH_AT=import-after-set-aside bash "$SDD_STATE" import docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ ! -e "$legacy_i22" ] && [ ! -L "$legacy_i22" ] && ls -d "$legacy_i22".imported-* >/dev/null 2>&1 && ! ls -d "$legacy_i22".importing-* >/dev/null 2>&1 && [ -f "$wsi22/progress.md" ]; then pass "the crash seam stops after the set-aside with the kept copy present and no pointer yet"; else fail "the crash seam stops after the set-aside (rc=$rc)"; fi
+out=$(run_state "$i22" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i22" ] && [ -L "$legacy_i22" ] && [ "$(cd "$legacy_i22" && pwd -P)" = "$(cd "$wsi22" && pwd -P)" ] && ls -d "$legacy_i22".imported-* >/dev/null 2>&1; then pass "the next import completes the relink and prints status=moved"; else fail "the next import completes the relink (rc=$rc: $out)"; fi
+out=$(run_state "$i22" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none" ]; then pass "a completed relink is idempotent: status=none after it"; else fail "a completed relink is idempotent (rc=$rc: $out)"; fi
+# The same crash when the candidate is a pointer: the copy sits beside the
+# pointer's former referent under another root, not beside the pointer.
+i23="$TEST_ROOT/i23"; make_repo "$i23"
+mkdir -p "$i23/docs"; : > "$i23/docs/plan.md"; git -C "$i23" add docs; git -C "$i23" commit -qm plan
+wsi23=$(ws_path "$i23" "$i23/docs/plan.md")
+real_i23="$XDG_CACHE_HOME/hyperpowers/sdd/otherroot00000000000000000000000000000000/plans/$(basename "$wsi23")"
+mkdir -p "$real_i23"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$real_i23/progress.md"
+ptr_i23="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i23")/plans/$(basename "$wsi23")+$(state_key "$i23" | cut -c1-8)"
+mkdir -p "$(dirname "$ptr_i23")"; ln -s "$real_i23" "$ptr_i23"
+( cd "$i23" && HYPERPOWERS_TEST_CRASH_AT=import-after-set-aside bash "$SDD_STATE" import docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -L "$ptr_i23" ] && [ ! -e "$ptr_i23" ] && ls -d "$real_i23".imported-* >/dev/null 2>&1 && [ -f "$wsi23/progress.md" ]; then pass "a pointer candidate's crash leaves the kept copy beside its former referent and the pointer dangling"; else fail "a pointer candidate's crash leaves the kept copy beside its former referent (rc=$rc)"; fi
+out=$(run_state "$i23" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$ptr_i23" ] && [ "$(cd "$ptr_i23" && pwd -P)" = "$(cd "$wsi23" && pwd -P)" ]; then pass "the next import relinks the dangling pointer to the destination"; else fail "the next import relinks the dangling pointer (rc=$rc: $out)"; fi
+
+# A dangling pointer whose referent carries a kept copy is the interrupted
+# import's only handle: another plan's cross-repository call must not prune
+# it (sdd-dir's prune loop walks every pointer under the cwd's key).
+i24="$TEST_ROOT/i24"; make_repo "$i24"; i24b="$TEST_ROOT/i24b"; make_repo "$i24b"
+mkdir -p "$i24/docs"; : > "$i24/docs/plan.md"; : > "$i24/docs/plan2.md"; git -C "$i24" add docs; git -C "$i24" commit -qm plan
+wsi24=$(ws_path "$i24" "$i24/docs/plan.md")
+real_i24="$XDG_CACHE_HOME/hyperpowers/sdd/otherroot00000000000000000000000000000024/plans/$(basename "$wsi24")"
+mkdir -p "$real_i24"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$real_i24/progress.md"
+ptr_i24="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i24b")/plans/$(basename "$wsi24")+$(state_key "$i24" | cut -c1-8)"
+mkdir -p "$(dirname "$ptr_i24")"; ln -s "$real_i24" "$ptr_i24"
+( cd "$i24" && HYPERPOWERS_TEST_CRASH_AT=import-after-set-aside bash "$SDD_STATE" import docs/plan.md >/dev/null 2>&1 ); rc=$?
+run_sdd_dir "$i24b" "$i24/docs/plan2.md" >/dev/null 2>&1
+if [ "$rc" -eq 99 ] && [ -L "$ptr_i24" ] && [ ! -e "$ptr_i24" ]; then pass "a cross-repository call for another plan keeps the dangling pointer whose referent carries a kept copy"; else fail "a cross-repository call for another plan keeps the dangling pointer (rc=$rc, pointer: $([ -L "$ptr_i24" ] && echo kept || echo gone))"; fi
+out=$(run_state "$i24" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$ptr_i24" ] && [ "$(cd "$ptr_i24" && pwd -P)" = "$(cd "$wsi24" && pwd -P)" ]; then pass "the import relinks the pointer the prune kept"; else fail "the import relinks the pointer the prune kept (rc=$rc: $out)"; fi
+
+# The same pointer once the plain-cache reclaim has claimed the referent's
+# root: the kept copy moves under <root>.reclaiming-*/plans/, and both the
+# prune and the import must still recognize it there.
+i25="$TEST_ROOT/i25"; make_repo "$i25"; i25b="$TEST_ROOT/i25b"; make_repo "$i25b"
+mkdir -p "$i25/docs"; : > "$i25/docs/plan.md"; : > "$i25/docs/plan2.md"; git -C "$i25" add docs; git -C "$i25" commit -qm plan
+wsi25=$(ws_path "$i25" "$i25/docs/plan.md")
+root_i25="$XDG_CACHE_HOME/hyperpowers/sdd/otherroot00000000000000000000000000000025"
+real_i25="$root_i25/plans/$(basename "$wsi25")"
+mkdir -p "$real_i25"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$real_i25/progress.md"
+ptr_i25="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i25b")/plans/$(basename "$wsi25")+$(state_key "$i25" | cut -c1-8)"
+mkdir -p "$(dirname "$ptr_i25")"; ln -s "$real_i25" "$ptr_i25"
+( cd "$i25" && HYPERPOWERS_TEST_CRASH_AT=import-after-set-aside bash "$SDD_STATE" import docs/plan.md >/dev/null 2>&1 ); rc=$?
+find "$root_i25" -depth -exec touch -t 202601010000 {} +
+# The first call claims the idle root; the second runs its pointer prune
+# against the claimed tree.
+run_sdd_dir "$i25b" "$i25/docs/plan2.md" >/dev/null 2>&1
+run_sdd_dir "$i25b" "$i25/docs/plan2.md" >/dev/null 2>&1
+if [ "$rc" -eq 99 ] && [ -L "$ptr_i25" ] && [ ! -e "$ptr_i25" ] && ls -d "$root_i25".reclaiming-*/plans/"$(basename "$wsi25")".imported-* >/dev/null 2>&1; then pass "a quarantined root's kept copy keeps the pointer the prune walks"; else fail "a quarantined root's kept copy keeps the pointer the prune walks (rc=$rc, pointer: $([ -L "$ptr_i25" ] && echo kept || echo gone))"; fi
+out=$(run_state "$i25" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$ptr_i25" ] && [ "$(cd "$ptr_i25" && pwd -P)" = "$(cd "$wsi25" && pwd -P)" ]; then pass "the import completes the relink with the kept copy inside a quarantined root"; else fail "the import completes the relink with the kept copy inside a quarantined root (rc=$rc: $out)"; fi
+
+# The same for a direct candidate: the relink has to recreate the legacy
+# root's plans directory, which went with the root the reclaim claimed.
+i26="$TEST_ROOT/i26"; make_repo "$i26"; i26b="$TEST_ROOT/i26b"; make_repo "$i26b"
+mkdir -p "$i26/docs"; : > "$i26/docs/plan.md"; git -C "$i26" add docs; git -C "$i26" commit -qm plan
+wsi26=$(ws_path "$i26" "$i26/docs/plan.md")
+root_i26="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i26")"
+legacy_i26="$root_i26/plans/$(basename "$wsi26")"
+mkdir -p "$legacy_i26"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$legacy_i26/progress.md"
+( cd "$i26" && HYPERPOWERS_TEST_CRASH_AT=import-after-set-aside bash "$SDD_STATE" import docs/plan.md >/dev/null 2>&1 ); rc=$?
+find "$root_i26" -depth -exec touch -t 202601010000 {} +
+# Another repository's call claims the idle root; it never touches this one.
+run_sdd_dir "$i26b" >/dev/null 2>&1
+if [ "$rc" -eq 99 ] && [ ! -e "$root_i26" ] && ls -d "$root_i26".reclaiming-*/plans/"$(basename "$wsi26")".imported-* >/dev/null 2>&1; then pass "the legacy root of a crashed direct import is claimed with its kept copy"; else fail "the legacy root of a crashed direct import is claimed with its kept copy (rc=$rc)"; fi
+out=$(run_state "$i26" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i26" ] && [ -L "$legacy_i26" ] && [ "$(cd "$legacy_i26" && pwd -P)" = "$(cd "$wsi26" && pwd -P)" ]; then pass "the import recreates the legacy root's plans directory and completes the relink"; else fail "the import recreates the legacy root's plans directory and completes the relink (rc=$rc: $out)"; fi
+# A legacy workspace the plain-cache reclaim has already set aside is not
+# an absent candidate: the dossier waits under the root's quarantine name,
+# and an import that passed it by would let sdd-dir start an empty
+# workspace beside it.
+i27="$TEST_ROOT/i27"; make_repo "$i27"
+mkdir -p "$i27/docs"; : > "$i27/docs/plan.md"; git -C "$i27" add docs; git -C "$i27" commit -qm plan
+wsi27=$(ws_path "$i27" "$i27/docs/plan.md"); name_i27=$(basename "$wsi27")
+root_i27="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i27")"
+legacy_i27="$root_i27/plans/$name_i27"
+mkdir -p "$legacy_i27"; printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$legacy_i27/progress.md"
+mv "$root_i27" "$root_i27.reclaiming-424242"
+out=$(run_state "$i27" import docs/plan.md 2>"$TEST_ROOT/i27.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "set aside at $root_i27.reclaiming-424242;" "$TEST_ROOT/i27.err" && grep -q "mv $root_i27.reclaiming-424242 $root_i27" "$TEST_ROOT/i27.err"; then pass "an import whose legacy root the reclaim set aside ends in error and names the quarantine and the move that repairs it"; else fail "an import whose legacy root the reclaim set aside ends in error and names the repair (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/i27.err"))"; fi
+rc=0; out=$(run_sdd_dir "$i27" docs/plan.md 2>"$TEST_ROOT/i27-dir.err") || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q "set aside at $root_i27.reclaiming-424242;" "$TEST_ROOT/i27-dir.err" && grep -q "^sdd-dir: importing a legacy workspace failed" "$TEST_ROOT/i27-dir.err"; then pass "sdd-dir stops on it, printing the import's line and its own"; else fail "sdd-dir stops on it, printing the import's line and its own (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/i27-dir.err"))"; fi
+# A put-back meets its destination first: BSD mv would nest the quarantine
+# inside a root that was recreated meanwhile.
+[ ! -e "$root_i27" ] || rmdir "$root_i27"
+mv "$root_i27.reclaiming-424242" "$root_i27"
+out=$(run_state "$i27" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$legacy_i27" ] && [ "$(sed -n 2p "$wsi27/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "moved back, the next import completes with the ledger in place"; else fail "moved back, the next import completes with the ledger in place (rc=$rc: $out)"; fi
+# The same under the name a claim in progress carries.
+i28="$TEST_ROOT/i28"; make_repo "$i28"
+mkdir -p "$i28/docs"; : > "$i28/docs/plan.md"; git -C "$i28" add docs; git -C "$i28" commit -qm plan
+wsi28=$(ws_path "$i28" "$i28/docs/plan.md")
+root_i28="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i28")"
+mkdir -p "$root_i28/plans/$(basename "$wsi28")"; printf '# SDD ledger — plan: docs/plan.md\n' > "$root_i28/plans/$(basename "$wsi28")/progress.md"
+mv "$root_i28" "$root_i28.claiming-424242"
+out=$(run_state "$i28" import docs/plan.md 2>"$TEST_ROOT/i28.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "set aside at $root_i28.claiming-424242;" "$TEST_ROOT/i28.err"; then pass "a legacy root under a claim in progress is named the same way"; else fail "a legacy root under a claim in progress is named the same way (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/i28.err"))"; fi
+# The same once the root is back: on the plain backend sdd-dir recreates it,
+# and the empty workspace directory with it, before it calls import, so the
+# candidate exists and holds no ledger. The repair then moves the workspace
+# and not the root, which a recreated root would nest inside itself.
+i29="$TEST_ROOT/i29"; make_repo "$i29"
+mkdir -p "$i29/docs"; : > "$i29/docs/plan.md"; git -C "$i29" add docs; git -C "$i29" commit -qm plan
+wsi29=$(ws_path "$i29" "$i29/docs/plan.md"); name_i29=$(basename "$wsi29")
+root_i29="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i29")"
+mkdir -p "$root_i29.reclaiming-424242/plans/$name_i29"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$root_i29.reclaiming-424242/plans/$name_i29/progress.md"
+mkdir -p "$root_i29/plans/$name_i29"
+repair_i29="rmdir $root_i29/plans/$name_i29 && mv $root_i29.reclaiming-424242/plans/$name_i29 $root_i29/plans/$name_i29"
+out=$(run_state "$i29" import docs/plan.md 2>"$TEST_ROOT/i29.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "set aside at $root_i29.reclaiming-424242;" "$TEST_ROOT/i29.err" && grep -qF "$repair_i29" "$TEST_ROOT/i29.err"; then pass "a recreated root with an empty workspace beside a quarantine is refused, with the repair that moves the workspace"; else fail "a recreated root with an empty workspace beside a quarantine is refused (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/i29.err"))"; fi
+rmdir "$root_i29/plans/$name_i29" && mv "$root_i29.reclaiming-424242/plans/$name_i29" "$root_i29/plans/$name_i29"
+out=$(run_state "$i29" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$root_i29/plans/$name_i29" ] && [ "$(sed -n 2p "$wsi29/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "after that repair the import completes with the ledger in place"; else fail "after that repair the import completes with the ledger in place (rc=$rc: $out)"; fi
+# The third state: the root is there but the workspace directory is not.
+# The no-argument form of sdd-dir creates the root without plans/, so does
+# the plan form's pointer bookkeeping, and a human who removed the empty
+# directory after an earlier refusal lands here too. The rmdir form would
+# fail at its first command and the && would stop the move.
+i30="$TEST_ROOT/i30"; make_repo "$i30"
+mkdir -p "$i30/docs"; : > "$i30/docs/plan.md"; git -C "$i30" add docs; git -C "$i30" commit -qm plan
+wsi30=$(ws_path "$i30" "$i30/docs/plan.md"); name_i30=$(basename "$wsi30")
+root_i30="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$i30")"
+mkdir -p "$root_i30.reclaiming-424242/plans/$name_i30"
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$root_i30.reclaiming-424242/plans/$name_i30/progress.md"
+mkdir -p "$root_i30"
+repair_i30="mkdir -p $root_i30/plans && mv $root_i30.reclaiming-424242/plans/$name_i30 $root_i30/plans/$name_i30"
+out=$(run_state "$i30" import docs/plan.md 2>"$TEST_ROOT/i30.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "$repair_i30" "$TEST_ROOT/i30.err" && grep -qF "rm -rf \"$root_i30.reclaiming-424242\"" "$TEST_ROOT/i30.err"; then pass "a root without its workspace directory is refused with the repair that creates plans/ first, and the line offers the stale-copy route"; else fail "a root without its workspace directory is refused with the repair that creates plans/ first (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/i30.err"))"; fi
+mkdir -p "$root_i30/plans" && mv "$root_i30.reclaiming-424242/plans/$name_i30" "$root_i30/plans/$name_i30"
+out=$(run_state "$i30" import docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=moved from=$root_i30/plans/$name_i30" ] && [ "$(sed -n 2p "$wsi30/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "after that repair the import completes with the ledger in place"; else fail "after that repair the import completes with the ledger in place (rc=$rc: $out)"; fi
+
 echo ""
 echo "=== sdd-dir and the plain fallback over branch state ==="
 make_pair p5
 mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
-: > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
+printf 'origin hyperpowers/state %s\n' "$(fp "$PAIR_A")" > "$STATE_ROOT/$(state_key "$PAIR_A").fetched"
 wsa=$(run_sdd_dir "$PAIR_A" docs/plan.md)
 printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa/progress.md"
 run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
@@ -790,19 +1140,94 @@ mkdir -p "$STATE_ROOT/deadkey0000000000000000000000000000000000"; printf 'gitdir
 mkdir -p "$STATE_ROOT/badkey0000000000000000000000000000000000"; printf 'not a gitdir line\n' > "$STATE_ROOT/badkey0000000000000000000000000000000000/.git"
 mkdir -p "$STATE_ROOT/relkey0000000000000000000000000000000000/.gitdir-here"; printf 'gitdir: .gitdir-here\n' > "$STATE_ROOT/relkey0000000000000000000000000000000000/.git"
 out=$(run_state "$pr" prune --repo "$pr"); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "status=listed plans=$wso_enc checkouts=deadkey0000000000000000000000000000000000" ] && [ -d "$wso" ]; then pass "prune lists the idle plan (space percent-encoded) and the dead checkout without removing them"; else fail "prune lists the idle plan and the dead checkout without removing them (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "$out" = "status=listed plans=$wso_enc checkouts=deadkey0000000000000000000000000000000000 tombs= quarantined=" ] && [ -d "$wso" ]; then pass "prune lists the idle plan (space percent-encoded) and the dead checkout without removing them"; else fail "prune lists the idle plan and the dead checkout without removing them (rc=$rc: $out)"; fi
+# A workspace whose freshness cannot be read is not idle: a find that
+# fails prints nothing, and reading that as silence would list, and then
+# delete, a dossier nobody could walk. The shim leaves a traversal that
+# only stats the directory (-maxdepth 0) alone, which is the shape a
+# permission error on one subdirectory has.
+fakefind_pr="$TEST_ROOT/fakefind-pr"; mkdir -p "$fakefind_pr"
+# FINDFAIL holds space-separated patterns, matched one at a time: a case
+# pattern built from a single variable is one literal pattern, so two
+# patterns in one variable would never match (an empty one merely falls
+# through).
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = -maxdepth ] && exec %s "$@"; done\nfor p in $FINDFAIL; do case "$1" in $p) exit 1 ;; esac; done\nexec %s "$@"\n' "$(command -v find)" "$(command -v find)" > "$fakefind_pr/find"
+chmod 755 "$fakefind_pr/find"
+# The shim splits FINDFAIL on whitespace and this workspace's name holds a
+# space, so the pattern stands in for the path with ? where the space is.
+findfail_wso="*/plans/$(basename "$wso" | tr ' ' '?')"
+out=$(cd "$pr" && FINDFAIL="$findfail_wso" PATH="$fakefind_pr:$PATH" bash "$SDD_STATE" prune --repo "$pr" 2>"$TEST_ROOT/prunefind.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=listed plans= checkouts=deadkey0000000000000000000000000000000000 tombs= quarantined=" ] && [ -d "$wso" ] && grep -qF "the freshness of the workspace at $wso could not be read" "$TEST_ROOT/prunefind.err"; then pass "a plan whose freshness cannot be read is not listed for removal, and prune says so"; else fail "a plan whose freshness cannot be read is not listed for removal, and prune says so (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/prunefind.err"))"; fi
 out=$(cd "$pr" && HYPERPOWERS_TEST_WRITER_AT="prune-before-remove:plans/$(basename "$wso")/progress.md" bash "$SDD_STATE" prune --repo "$pr" --apply); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "status=pruned plans= kept=$wso_enc checkouts=deadkey0000000000000000000000000000000000" ] && [ -d "$wso" ] && grep -q '^concurrent write$' "$wso/progress.md"; then pass "a workspace written to after selection is kept, line intact"; else fail "a workspace written to after selection is kept (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "$out" = "status=pruned plans= kept=$wso_enc checkouts=deadkey0000000000000000000000000000000000 tombs= quarantined=" ] && [ -d "$wso" ] && grep -q '^concurrent write$' "$wso/progress.md"; then pass "a workspace written to after selection is kept, line intact"; else fail "a workspace written to after selection is kept (rc=$rc: $out)"; fi
 GIT_COMMITTER_DATE="2026-01-01T00:00:00Z" GIT_AUTHOR_DATE="2026-01-01T00:00:00Z" run_state "$pr" snapshot "docs/old plan.md" >/dev/null
 touch -t 202601010000 "$wso/progress.md" "$wso"
 mkdir -p "$STATE_ROOT/deadkey0000000000000000000000000000000000"; printf 'gitdir: %s/gone/.git/worktrees/x\n' "$TEST_ROOT" > "$STATE_ROOT/deadkey0000000000000000000000000000000000/.git"
 mkdir -p "$STATE_ROOT/deadkey0000000000000000000000000000000000.lock"; printf 'session=s-dead\npid=999999\nhost=h\ntime=2026-01-01T00:00:00Z\n' > "$STATE_ROOT/deadkey0000000000000000000000000000000000.lock/owner"; touch -t 202601010000 "$STATE_ROOT/deadkey0000000000000000000000000000000000.lock"
 : > "$STATE_ROOT/deadkey0000000000000000000000000000000000.lock-history"; : > "$STATE_ROOT/deadkey0000000000000000000000000000000000.fetched"
 out=$(run_state "$pr" prune --repo "$pr" --apply); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "status=pruned plans=$wso_enc kept= checkouts=deadkey0000000000000000000000000000000000" ] && [ ! -d "$wso" ] && [ -d "$wsn" ] && [ ! -d "$STATE_ROOT/deadkey0000000000000000000000000000000000" ] && [ ! -e "$STATE_ROOT/deadkey0000000000000000000000000000000000.backend" ] && [ "$(git -C "$co_pr" log -1 --format=%s hyperpowers/state)" = "sdd: prune $(basename "$wso")" ] && ! git -C "$co_pr" ls-tree -r --name-only hyperpowers/state | grep -q "^plans/$(basename "$wso")/"; then pass "prune --apply removes the whole idle plan, space and all, in one commit and the dead checkout"; else fail "prune --apply removes the idle plan in one commit and the dead checkout (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "$out" = "status=pruned plans=$wso_enc kept= checkouts=deadkey0000000000000000000000000000000000 tombs= quarantined=" ] && [ ! -d "$wso" ] && [ -d "$wsn" ] && [ ! -d "$STATE_ROOT/deadkey0000000000000000000000000000000000" ] && [ ! -e "$STATE_ROOT/deadkey0000000000000000000000000000000000.backend" ] && [ "$(git -C "$co_pr" log -1 --format=%s hyperpowers/state)" = "sdd: prune $(basename "$wso")" ] && ! git -C "$co_pr" ls-tree -r --name-only hyperpowers/state | grep -q "^plans/$(basename "$wso")/"; then pass "prune --apply removes the whole idle plan, space and all, in one commit and the dead checkout"; else fail "prune --apply removes the idle plan in one commit and the dead checkout (rc=$rc: $out)"; fi
 if [ ! -d "$STATE_ROOT/deadkey0000000000000000000000000000000000.lock" ] && [ ! -e "$STATE_ROOT/deadkey0000000000000000000000000000000000.lock-history" ] && [ ! -e "$STATE_ROOT/deadkey0000000000000000000000000000000000.fetched" ]; then pass "a dead checkout's stale lock is taken over and released last, its sidecars gone"; else fail "a dead checkout's stale lock is taken over and released last, its sidecars gone"; fi
 if [ -d "$STATE_ROOT/badkey0000000000000000000000000000000000" ]; then pass "a checkout whose .git file cannot be parsed is neither listed nor removed"; else fail "a checkout whose .git file cannot be parsed is neither listed nor removed"; fi
 if [ -d "$STATE_ROOT/relkey0000000000000000000000000000000000/.gitdir-here" ]; then pass "a relative gitdir resolves against its checkout and a live one is kept"; else fail "a relative gitdir resolves against its checkout and a live one is kept"; fi
+# Copies killed removals left at plans/.removing-<ws>-<pid>: a gone pid,
+# older than N days, and a workspace the branch does not track, is listed,
+# quarantined by the first --apply, and deleted by a later one once nothing
+# in it is newer than N days; a live pid, a young copy, a tracked workspace,
+# or a copy written to after its rename is left alone.
+sleep 0.01 & tp=$!; wait "$tp" 2>/dev/null
+tomb_old="$co_pr/plans/.removing-gone-0badc0de-$tp"; mkdir -p "$tomb_old"; printf 'orphaned copy\n' > "$tomb_old/progress.md"; touch -t 202401010000 "$tomb_old/progress.md" "$tomb_old"
+tomb_live="$co_pr/plans/.removing-live-0badc0de-$$"; mkdir -p "$tomb_live"; printf 'held by a live process\n' > "$tomb_live/progress.md"; touch -t 202401010000 "$tomb_live/progress.md" "$tomb_live"
+tomb_young="$co_pr/plans/.removing-young-0badc0de-$tp"; mkdir -p "$tomb_young"; printf 'fresh copy\n' > "$tomb_young/progress.md"
+tomb_tracked="$co_pr/plans/.removing-$(basename "$wsn")-$tp"; mkdir -p "$tomb_tracked"; printf 'tracked copy\n' > "$tomb_tracked/progress.md"; touch -t 202401010000 "$tomb_tracked/progress.md" "$tomb_tracked"
+quar_old="$co_pr/plans/.pruned-gone-0badc0de-$tp"
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs=$(basename "$tomb_old") quarantined=\$"; then pass "prune lists a gone, idle, untracked tomb and nothing else"; else fail "prune lists a gone, idle, untracked tomb and nothing else (rc=$rc: $out)"; fi
+out=$(cd "$pr" && HYPERPOWERS_TEST_WRITER_AT="prune-after-tomb-rename:$(basename "$tomb_old")" bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -d "$tomb_old" ] && [ ! -e "$quar_old" ]; then pass "a tomb written to after its rename is put back by the re-check"; else fail "a tomb written to after its rename is put back by the re-check (rc=$rc: $out)"; fi
+touch -t 202401010000 "$tomb_old/progress.md" "$tomb_old"
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs=$(basename "$tomb_old") quarantined=\$" && [ ! -e "$tomb_old" ] && [ -d "$quar_old" ] && [ "$(cat "$quar_old/progress.md")" = "orphaned copy" ] && [ -d "$tomb_live" ] && [ -d "$tomb_young" ] && [ -d "$tomb_tracked" ]; then pass "the first --apply quarantines only the listed tomb, keeping its bytes"; else fail "the first --apply quarantines only the listed tomb (rc=$rc: $out)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -d "$quar_old" ]; then pass "a fresh quarantine is not deleted by the next --apply"; else fail "a fresh quarantine is not deleted by the next --apply (rc=$rc: $out)"; fi
+touch -t 202401010000 "$quar_old/progress.md" "$quar_old"
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=$(basename "$quar_old")\$"; then pass "an idle quarantine is listed for deletion"; else fail "an idle quarantine is listed for deletion (rc=$rc: $out)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=$(basename "$quar_old")\$" && [ ! -e "$quar_old" ] && ! ls -d "$quar_old".pruning-* >/dev/null 2>&1; then pass "the later --apply deletes the idle quarantine and verifies it is gone"; else fail "the later --apply deletes the idle quarantine (rc=$rc: $out)"; fi
+rm -rf "$tomb_live" "$tomb_young" "$tomb_tracked"
+# A crash after the staging rename: the copy sits under a name neither
+# phase lists, the next --apply puts it back and quarantines it with a
+# fresh clock, and the --apply after that does not delete it.
+tomb_cr="$co_pr/plans/.removing-crash-0badc0de-$tp"; mkdir -p "$tomb_cr"; printf 'orphaned copy\n' > "$tomb_cr/progress.md"; touch -t 202401010000 "$tomb_cr/progress.md" "$tomb_cr"
+( cd "$pr" && HYPERPOWERS_TEST_CRASH_AT=prune-after-stage bash "$SDD_STATE" prune --repo "$pr" --apply >/dev/null 2>&1 ); rc=$?
+stage_cr="$co_pr/plans/.quarantining-crash-0badc0de-$tp"; quar_cr="$co_pr/plans/.pruned-crash-0badc0de-$tp"
+if [ "$rc" -eq 99 ] && [ -d "$stage_cr" ] && [ ! -e "$tomb_cr" ] && [ ! -e "$quar_cr" ]; then pass "the crash seam after the staging rename leaves the copy under the staging name only"; else fail "the crash seam after the staging rename leaves the copy under the staging name only (rc=$rc)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -d "$stage_cr" ]; then pass "a staged copy is listed by neither phase"; else fail "a staged copy is listed by neither phase (rc=$rc: $out)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs=$(basename "$tomb_cr") quarantined=\$" && [ ! -e "$stage_cr" ] && [ ! -e "$tomb_cr" ] && [ -d "$quar_cr" ] && [ "$(cat "$quar_cr/progress.md")" = "orphaned copy" ]; then pass "the next --apply puts the staged copy back and quarantines it"; else fail "the next --apply puts the staged copy back and quarantines it (rc=$rc: $out)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -d "$quar_cr" ]; then pass "a quarantine made after a crash keeps its full grace period"; else fail "a quarantine made after a crash keeps its full grace period (rc=$rc: $out)"; fi
+rm -rf "$quar_cr"
+# A put-back whose destination is occupied again: the copy stays staged and
+# is named, never nested into the new occupant.
+tomb_oc="$co_pr/plans/.removing-occupied-0badc0de-$tp"; mkdir -p "$tomb_oc"; printf 'orphaned copy\n' > "$tomb_oc/progress.md"; touch -t 202401010000 "$tomb_oc/progress.md" "$tomb_oc"
+out=$(cd "$pr" && HYPERPOWERS_TEST_WRITER_AT="prune-reoccupy-tomb:$(basename "$tomb_oc")" bash "$SDD_STATE" prune --repo "$pr" --apply 2>"$TEST_ROOT/pr-oc.err"); rc=$?
+stage_oc="$co_pr/plans/.quarantining-occupied-0badc0de-$tp"
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -d "$stage_oc" ] && [ "$(cat "$stage_oc/progress.md")" = "orphaned copy" ] && [ -d "$tomb_oc" ] && [ ! -e "$tomb_oc/$(basename "$stage_oc")" ] && grep -q 'occupied again' "$TEST_ROOT/pr-oc.err"; then pass "a put-back whose destination is occupied again leaves the staged copy named, not nested"; else fail "a put-back whose destination is occupied again leaves the staged copy named, not nested (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/pr-oc.err"))"; fi
+rm -rf "$tomb_oc" "$stage_oc"
+# A quarantine whose deletion fails keeps the copy under the aside name and
+# says so; nothing is reported as quarantined.
+if [ "$(id -u)" -ne 0 ]; then
+  quar_ro="$co_pr/plans/.pruned-ro-0badc0de-$tp"; mkdir -p "$quar_ro/sub"; printf 'orphaned copy\n' > "$quar_ro/sub/held"; touch -t 202401010000 "$quar_ro/sub/held" "$quar_ro/sub" "$quar_ro"; chmod 0555 "$quar_ro/sub"
+  out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>"$TEST_ROOT/pr-ro.err"); rc=$?
+  aside_ro=$(ls -d "$quar_ro".pruning-* 2>/dev/null | head -n 1)
+  if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " quarantined=\$" && [ -n "$aside_ro" ] && [ -f "$aside_ro/sub/held" ] && grep -q 'could not be removed; remove it by hand' "$TEST_ROOT/pr-ro.err"; then pass "a quarantine whose deletion fails is kept under the aside name and named"; else fail "a quarantine whose deletion fails is kept under the aside name and named (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/pr-ro.err"))"; fi
+  chmod 0755 "$aside_ro/sub" 2>/dev/null; rm -rf "$quar_ro" "$aside_ro"
+else
+  pass "a quarantine whose deletion fails is kept under the aside name and named (skipped: root ignores directory modes)"
+fi
 out=$(run_state "$pr" prune --repo "$pr" --days 08); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=listed" ]; then pass "--days 08 is read as decimal eight"; else fail "--days 08 is read as decimal eight (rc=$rc: $out)"; fi
 : > "$pr/docs/third.md"; git -C "$pr" add docs; git -C "$pr" commit -qm third
@@ -815,6 +1240,31 @@ rm -rf "$wst"
 out=$(run_state "$pr" prune --repo "$pr" --days abc 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "--days rejects a non-numeric value with usage"; else fail "--days rejects a non-numeric value with usage (rc=$rc: $out)"; fi
 if [ "$(run_state "$rp" prune --repo "$rp" 2>/dev/null)" = "status=plain" ]; then pass "prune under the plain backend reports plain"; else fail "prune under the plain backend reports plain"; fi
+# A plan file named like a leftover: its workspace name never starts with
+# a dot, so neither prune's loops nor the apply's scan can take it for one.
+: > "$pr/docs/.pruned-demo.md"; git -C "$pr" add docs/.pruned-demo.md; git -C "$pr" commit -qm dotplan
+wsd=$(run_sdd_dir "$pr" docs/.pruned-demo.md); printf 'dot plan\n' > "$wsd/progress.md"; run_state "$pr" snapshot docs/.pruned-demo.md >/dev/null
+case "$(basename "$wsd")" in pruned-demo-*) pass "a plan file named like a quarantine gets a workspace name without the leading dot" ;; *) fail "a plan file named like a quarantine gets a workspace name without the leading dot (got $(basename "$wsd"))" ;; esac
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$" && [ -f "$wsd/progress.md" ]; then pass "such a workspace is never listed as a tomb or a quarantine"; else fail "such a workspace is never listed as a tomb or a quarantine (rc=$rc: $out)"; fi
+# A checkout from before this release may track a workspace named like a
+# leftover (a dot-led plan name with an all-decimal hash): a tracked path
+# is never a tomb, a quarantine or a staged copy, whatever its name.
+for legacy in .removing-legacy-12345678 .pruned-legacy-12345678 .quarantining-legacy-12345678; do mkdir -p "$co_pr/plans/$legacy"; printf 'legacy dossier\n' > "$co_pr/plans/$legacy/progress.md"; done
+git -C "$co_pr" add -A plans/ && git -C "$co_pr" commit -qm legacy
+for legacy in .removing-legacy-12345678 .pruned-legacy-12345678 .quarantining-legacy-12345678; do touch -t 202401010000 "$co_pr/plans/$legacy/progress.md" "$co_pr/plans/$legacy"; done
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q " tombs= quarantined=\$"; then pass "tracked paths named like leftovers are listed as neither tomb nor quarantine"; else fail "tracked paths named like leftovers are listed as neither tomb nor quarantine (rc=$rc: $out)"; fi
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$co_pr/plans/.removing-legacy-12345678/progress.md" ] && [ -f "$co_pr/plans/.pruned-legacy-12345678/progress.md" ] && [ -f "$co_pr/plans/.quarantining-legacy-12345678/progress.md" ] && [ -z "$(git -C "$co_pr" status --porcelain -- plans/)" ]; then pass "an --apply leaves tracked paths named like leftovers untouched"; else fail "an --apply leaves tracked paths named like leftovers untouched (rc=$rc: $out: $(git -C "$co_pr" status --porcelain -- plans/ | tr '\n' '|'))"; fi
+# The same guard alone, with no tomb name beside the staged one: the
+# put-back is refused because the branch tracks the path, not because its
+# destination is occupied.
+quar2="$co_pr/plans/.quarantining-legacy2-12345678"; mkdir -p "$quar2"; printf 'legacy dossier\n' > "$quar2/progress.md"
+git -C "$co_pr" add -A plans/ && git -C "$co_pr" commit -qm legacy2
+touch -t 202401010000 "$quar2/progress.md" "$quar2"
+out=$(cd "$pr" && bash "$SDD_STATE" prune --repo "$pr" --apply 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$quar2/progress.md" ] && [ ! -e "$co_pr/plans/.removing-legacy2-12345678" ] && [ -z "$(git -C "$co_pr" status --porcelain -- plans/)" ]; then pass "a tracked staged-copy name with no tomb name beside it is never put back"; else fail "a tracked staged-copy name with no tomb name beside it is never put back (rc=$rc: $out: $(git -C "$co_pr" status --porcelain -- plans/ | tr '\n' '|'))"; fi
 echo ""
 echo "=== sync ==="
 make_pair p7
@@ -831,6 +1281,7 @@ run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
 git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
 case "$out" in "status=created local="???????" remote="???????" age="*) pass "the second host creates its checkout from the remote" ;; *) fail "the second host creates its checkout from the remote (rc=$rc: $out)" ;; esac
+if [ "$(head -n 1 "$STATE_ROOT/$(state_key "$PAIR_B").fetched")" = "origin hyperpowers/state $(fp "$PAIR_B")" ]; then pass "a fetch that found the branch writes the remote, branch and URL fingerprint into the stamp"; else fail "a fetch that found the branch writes the remote, branch and URL fingerprint into the stamp (got: $(cat "$STATE_ROOT/$(state_key "$PAIR_B").fetched" 2>/dev/null))"; fi
 wsb="$co_b/plans/$(basename "$wsa")"
 if [ "$(sed -n 2p "$wsb/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "the ledger arrived on the second host"; else fail "the ledger arrived on the second host"; fi
 if [ "$(run_state "$PAIR_B" sync docs/plan.md | cut -d' ' -f1)" = "status=up-to-date" ]; then pass "a second sync is up-to-date"; else fail "a second sync is up-to-date"; fi
@@ -939,6 +1390,188 @@ run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q o
 if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ "$(grep -c '^Task 5c: complete' "$wsb/progress.md")" -eq 1 ]; then pass "the crash seam after the ledger apply leaves the line applied and the marker in place"; else fail "the crash seam after the ledger apply leaves the line applied and the marker in place (rc=$rc)"; fi
 out=$(run_state "$PAIR_B" sync docs/plan.md)
 if [ "${out%% *}" = "status=up-to-date" ] && [ "$(grep -c '^Task 5c: complete' "$wsb/progress.md")" -eq 1 ] && [ ! -f "$co_b/.sync-applying" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "recovery after the ledger apply appends nothing twice"; else fail "recovery after the ledger apply appends nothing twice ($out)"; fi
+# A link planted where the recovery must write a regular file: the marker
+# stays, the human is told which repair clears it, and the plain sync that
+# follows the repair completes the apply.
+printf 'Task 7c: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+victim7c="$TEST_ROOT/victim-7c"; printf 'untouched\n' > "$victim7c"
+rm -f "$wsb/progress.md"; ln -s "$victim7c" "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7c.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7c.err" && [ "$(cat "$victim7c")" = "untouched" ]; then pass "a post-ref containment failure keeps the marker, leaves the target untouched and names the repair"; else fail "a post-ref containment failure names the repair (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7c.err"))"; fi
+rm -f "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7c: complete' "$wsb/progress.md"; then pass "after the repair the next sync completes the apply and the ledger comes back from the branch"; else fail "after the repair the next sync completes the apply (rc=$rc: $out)"; fi
+# The same link on the normal post-ref apply (no crash): the seam plants it
+# after the ref moved, so recover_apply is not the one that meets it.
+printf 'Task 7d: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-after-ref-link:plans/$(basename "$wsb")/progress.md" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p7d.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && [ -L "$wsb/progress.md" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7d.err"; then pass "a link met by the normal post-ref apply keeps the marker and names the repair"; else fail "a link met by the normal post-ref apply names the repair (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7d.err"))"; fi
+rm -f "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7d: complete' "$wsb/progress.md"; then pass "after that repair too the next sync completes the apply"; else fail "after that repair too the next sync completes the apply (rc=$rc: $out)"; fi
+# A link at the workspace directory itself, with a report the target leaves
+# unchanged: the apply has to recreate the directory, and the workspace must
+# come back whole, or the next snapshot would record the report as deleted.
+printf 'report\n' > "$wsa/task-1-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+printf 'Task 7e: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+moved7e="$TEST_ROOT/ws-7e-moved"; mv "$wsb" "$moved7e"; ln -s "$moved7e" "$wsb"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7e.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7e.err" && [ "$(cat "$moved7e/task-1-report.md")" = report ]; then pass "a link at the workspace directory keeps the marker and names the repair"; else fail "a link at the workspace directory names the repair (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7e.err"))"; fi
+rm "$wsb"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7e: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ -z "$(git -C "$co_b" status --porcelain -- "plans/$(basename "$wsb")")" ] && [ -n "$(git -C "$co_b" ls-tree --name-only refs/heads/hyperpowers/state -- "plans/$(basename "$wsb")/task-1-report.md")" ]; then pass "with the directory link removed the workspace comes back whole and no deletion is snapshotted"; else fail "with the directory link removed the workspace comes back whole (rc=$rc: $out: $(git -C "$co_b" status --porcelain -- plans/ | tr '\n' '|'))"; fi
+# A link where the apply removes a file: the delete walk names the repair.
+rm -f "$wsa/task-1-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+victim7f="$TEST_ROOT/victim-7f"; printf 'untouched\n' > "$victim7f"
+rm -f "$wsb/task-1-report.md"; ln -s "$victim7f" "$wsb/task-1-report.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7f.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7f.err" && [ "$(cat "$victim7f")" = untouched ]; then pass "a link where the apply removes a file keeps the marker, leaves the target untouched and names the repair"; else fail "a link where the apply removes a file names the repair (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7f.err"))"; fi
+rm "$wsb/task-1-report.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -e "$wsb/task-1-report.md" ] && [ -z "$(git -C "$co_b" status --porcelain -- "plans/$(basename "$wsb")")" ]; then pass "after that repair the delete walk completes and the tree is clean"; else fail "after that repair the delete walk completes (rc=$rc: $out)"; fi
+# A link planted after the apply succeeded and before the re-walk: the
+# re-walk names the repair, and the recovery that follows completes.
+printf 'Task 7g: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-after-apply-link:plans/$(basename "$wsb")/progress.md" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p7g.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && [ -L "$wsb/progress.md" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7g.err"; then pass "a link met by the post-apply re-walk keeps the marker and names the repair"; else fail "a link met by the post-apply re-walk names the repair (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7g.err"))"; fi
+rm -f "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7g: complete' "$wsb/progress.md"; then pass "after that repair too the recovery completes"; else fail "after that repair too the recovery completes (rc=$rc: $out)"; fi
+# Two links met by one recovery, a workspace apart: the first apply creates
+# the first workspace, publishes its ledger, and fails on the second
+# workspace's link, leaving the first partial; the apply that finishes the
+# recovery no longer creates that directory and must still complete it.
+ws2b="$co_b/plans/$(basename "$ws2a")"
+printf 'report\n' > "$wsa/task-1-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+printf 'Task 7h: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; printf 'Task 7h-second: complete (commits 1111111..2222222, review clean)\n' >> "$ws2a/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+moved7h="$TEST_ROOT/ws-7h-moved"; mv "$wsb" "$moved7h"; ln -s "$moved7h" "$wsb"
+victim7h="$TEST_ROOT/victim-7h"; printf 'untouched\n' > "$victim7h"; rm -f "$ws2b/progress.md"; ln -s "$victim7h" "$ws2b/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7h.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7h.err"; then pass "the first of two links is refused with the marker kept"; else fail "the first of two links is refused with the marker kept (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7h.err"))"; fi
+rm "$wsb"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7h2.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7h2.err" && [ -f "$wsb/progress.md" ] && [ ! -e "$wsb/task-1-report.md" ] && [ "$(cat "$victim7h")" = untouched ]; then pass "the apply that created the first workspace is stopped by the second link, leaving it partial with the marker kept"; else fail "the apply that created the first workspace is stopped by the second link (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7h2.err"))"; fi
+rm "$ws2b/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7h: complete' "$wsb/progress.md" && grep -q '^Task 7h-second: complete' "$ws2b/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ] && [ -n "$(git -C "$co_b" ls-tree --name-only refs/heads/hyperpowers/state -- "plans/$(basename "$wsb")/task-1-report.md")" ]; then pass "the apply that finishes the recovery completes the partial workspace and no deletion is snapshotted"; else fail "the apply that finishes the recovery completes the partial workspace (rc=$rc: $out: $(git -C "$co_b" status --porcelain -- plans/ | tr '\n' '|'))"; fi
+# A deletion-only apply met by a link at the workspace directory: the
+# delete walk records the workspace too, so the recovery that follows the
+# repair brings back the ledger and every other tracked file.
+printf 'second report\n' > "$wsa/task-2-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+rm -f "$wsa/task-2-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+moved7i="$TEST_ROOT/ws-7i-moved"; mv "$wsb" "$moved7i"; ln -s "$moved7i" "$wsb"; printf 'x\n' > "$moved7i/keep.restore.123"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7i.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'remove the link, leave' "$TEST_ROOT/p7i.err" && [ "$(cat "$moved7i/task-2-report.md")" = "second report" ] && [ -f "$moved7i/keep.restore.123" ]; then pass "a deletion-only apply met by a link at the workspace directory keeps the marker, names the repair, and sweeps nothing through the link"; else fail "a deletion-only apply met by a link at the workspace directory names the repair and sweeps nothing through the link (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7i.err"))"; fi
+rm "$wsb"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7h: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ ! -e "$wsb/task-2-report.md" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "after the repair a deletion-only recovery brings the workspace back whole"; else fail "after the repair a deletion-only recovery brings the workspace back whole (rc=$rc: $out: $(git -C "$co_b" status --porcelain -- plans/ | tr '\n' '|'))"; fi
+# A tracked file removed while the marker was down is put back by the
+# recovery (the module's stance for a missing tracked file), and a file a
+# writer creates right before the restore publishes it keeps the writer's
+# bytes: the publish is one link(2), never a clobber.
+printf 'Task 7j: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/task-1-report.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7j: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "a tracked file removed while the marker was down is put back by the recovery"; else fail "a tracked file removed while the marker was down is put back by the recovery (rc=$rc: $out)"; fi
+printf 'Task 7k: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/task-1-report.md"
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-before-restore:plans/$(basename "$wsb")/task-1-report.md" bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7k: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = "concurrent write" ] && ! ls "$wsb"/*.restore.* >/dev/null 2>&1; then pass "a file a writer creates right before the restore publishes it keeps the writer's bytes"; else fail "a file a writer creates right before the restore publishes it keeps the writer's bytes (rc=$rc: $out: $(cat "$wsb/task-1-report.md" 2>/dev/null))"; fi
+printf 'report\n' > "$wsb/task-1-report.md"; run_state "$PAIR_B" snapshot docs/plan.md >/dev/null; git -C "$PAIR_B" push -q origin hyperpowers/state 2>/dev/null
+# B pushed last, so A is behind: without this its snapshot below would be
+# rejected silently and the remote finish would never reach B.
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+# A ledger a writer creates right before the restore publishes it is
+# reconciled, never adopted: the branch's ledger stays intact and the sync
+# stops with the marker, as for any ledger rewritten locally.
+printf 'third report\n' > "$wsa/task-3-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+rm -f "$wsa/task-3-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/progress.md"
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-before-restore:plans/$(basename "$wsb")/progress.md" bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && [ "$(cat "$wsb/progress.md")" = "concurrent write" ] && git -C "$co_b" show "refs/heads/hyperpowers/state:plans/$(basename "$wsb")/progress.md" | grep -q '^Task 7k: complete'; then pass "a writer's ledger met by the restore is reconciled, never adopted: the branch's ledger is intact and the sync stops"; else fail "a writer's ledger met by the restore is reconciled, never adopted (rc=$rc: $out: $(cat "$wsb/progress.md" 2>/dev/null | head -n 2 | tr '\n' '|'))"; fi
+rm -f "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7k: complete' "$wsb/progress.md" && [ ! -e "$wsb/task-3-report.md" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "with the writer's ledger removed the restore publishes the branch's"; else fail "with the writer's ledger removed the restore publishes the branch's (rc=$rc: $out)"; fi
+# A restored file keeps its tracked mode.
+printf '#!/bin/sh\nexit 0\n' > "$wsa/run.sh"; chmod 755 "$wsa/run.sh"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+printf 'Task 7m: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/run.sh"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && [ -x "$wsb/run.sh" ] && [ -z "$(git -C "$co_b" status --porcelain -- plans/)" ]; then pass "a restored file keeps its tracked mode"; else fail "a restored file keeps its tracked mode (rc=$rc: $out: $(ls -l "$wsb/run.sh" 2>&1))"; fi
+# A crash between the restore's copy and its publish leaves the copy in
+# the .restore sidecar, never inside a workspace: the next sync sweeps it,
+# completes the restore, and nothing of it reaches the branch.
+printf 'Task 7n: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/task-1-report.md"
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=restore-after-copy bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ -n "$(ls -A "$co_b/.restore" 2>/dev/null)" ] && [ ! -e "$wsb/task-1-report.md" ] && ! ls "$wsb"/*.restore* >/dev/null 2>&1; then pass "the crash seam after the restore's copy leaves the copy in the sidecar and nothing in the workspace"; else fail "the crash seam after the restore's copy leaves the copy in the sidecar (rc=$rc: $(ls -A "$co_b/.restore" 2>&1 | tr '\n' '|'))"; fi
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -e "$co_b/.restore" ] && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ -z "$(git -C "$co_b" status --porcelain)" ] && [ -z "$(git -C "$co_b" ls-tree -r --name-only refs/heads/hyperpowers/state | grep -F '.restore')" ]; then pass "the next sync sweeps the sidecar, completes the restore, and nothing of it reaches the branch"; else fail "the next sync sweeps the sidecar and completes the restore (rc=$rc: $out: $(git -C "$co_b" status --porcelain | tr '\n' '|'))"; fi
+# A link at plans/ itself: the recovery refuses before any sweep or walk,
+# and a matching file behind the link is untouched.
+printf 'Task 7o: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+plansroot7o="$TEST_ROOT/plans-7o-moved"; mv "$co_b/plans" "$plansroot7o"; ln -s "$plansroot7o" "$co_b/plans"
+printf 'x\n' > "$plansroot7o/$(basename "$wsb")/progress.md.new.123"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7o.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'plans is a symbolic link' "$TEST_ROOT/p7o.err" && [ -f "$plansroot7o/$(basename "$wsb")/progress.md.new.123" ]; then pass "a link at plans/ itself stops the recovery before any sweep, and the file behind it is untouched"; else fail "a link at plans/ itself stops the recovery before any sweep (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7o.err"))"; fi
+rm "$co_b/plans"; mv "$plansroot7o" "$co_b/plans"; rm -f "$wsb/progress.md.new.123"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7o: complete' "$wsb/progress.md" && [ -z "$(git -C "$co_b" status --porcelain)" ]; then pass "with plans/ a real directory again the recovery completes"; else fail "with plans/ a real directory again the recovery completes (rc=$rc: $out)"; fi
+# A ledger a writer recreated from scratch while the marker was down, in a
+# deletion-only apply: the restore meets a live file it did not write, so
+# it reconciles instead of leaving it for the next snapshot to publish over
+# the branch's ledger.
+printf 'fourth report\n' > "$wsa/task-4-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+rm -f "$wsa/task-4-report.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/progress.md"; printf 'concurrent write\n' > "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && [ "$(cat "$wsb/progress.md")" = "concurrent write" ] && git -C "$co_b" show "refs/heads/hyperpowers/state:plans/$(basename "$wsb")/progress.md" | grep -q '^Task 7o: complete'; then pass "a ledger recreated under a deletion-only apply is reconciled, and the branch's is intact"; else fail "a ledger recreated under a deletion-only apply is reconciled, and the branch's is intact (rc=$rc: $out: $(head -n 2 "$wsb/progress.md" 2>/dev/null | tr '\n' '|'))"; fi
+rm -f "$wsb/progress.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7o: complete' "$wsb/progress.md" && [ ! -e "$wsb/task-4-report.md" ] && [ -z "$(git -C "$co_b" status --porcelain)" ]; then pass "with that ledger removed the deletion-only recovery publishes the branch's"; else fail "with that ledger removed the deletion-only recovery publishes the branch's (rc=$rc: $out)"; fi
+# A link at the .restore sidecar: nothing is swept or staged through it,
+# and the directory behind it stays empty.
+printf 'Task 7q: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/task-1-report.md"
+mkdir -p "$TEST_ROOT/victim-restore"; ln -s "$TEST_ROOT/victim-restore" "$co_b/.restore"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>"$TEST_ROOT/p7q.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q '\.restore is a symbolic link' "$TEST_ROOT/p7q.err" && [ -z "$(ls -A "$TEST_ROOT/victim-restore")" ]; then pass "a link at the .restore sidecar stops the sync and nothing is written through it"; else fail "a link at the .restore sidecar stops the sync and nothing is written through it (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7q.err"): $(ls -A "$TEST_ROOT/victim-restore" | tr '\n' '|'))"; fi
+rm "$co_b/.restore"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7q: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ -z "$(git -C "$co_b" status --porcelain)" ]; then pass "with the link removed the restore completes"; else fail "with the link removed the restore completes (rc=$rc: $out)"; fi
+# The same link planted in the window recover_apply cannot cover: the whole
+# apply runs between its check at the top of the locked section and the
+# staging mkdir, and mkdir -p through a link to a directory keeps the link,
+# so the copy would land outside the checkout.
+printf 'Task 7r: complete (commits 1111111..2222222, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+rm -f "$wsb/task-1-report.md"
+mkdir -p "$TEST_ROOT/victim-restore-write"
+out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-link-restore:$TEST_ROOT/victim-restore-write" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p7r.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$co_b/.sync-applying" ] && grep -q 'refusing to stage a restore copy' "$TEST_ROOT/p7r.err" && [ -z "$(ls -A "$TEST_ROOT/victim-restore-write")" ]; then pass "a link planted at the .restore sidecar during the apply stops it before the copy, and nothing is staged through it"; else fail "a link planted at the .restore sidecar during the apply stops it before the copy (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p7r.err"): $(ls -A "$TEST_ROOT/victim-restore-write" | tr '\n' '|'))"; fi
+rm "$co_b/.restore"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7r: complete' "$wsb/progress.md" && [ "$(cat "$wsb/task-1-report.md")" = report ] && [ -z "$(git -C "$co_b" status --porcelain)" ]; then pass "with that link removed the restore completes too"; else fail "with that link removed the restore completes too (rc=$rc: $out)"; fi
 
 # A remote finish racing a local writer: refused, nothing changed. The seam
 # writes after the pending check and right before the rename.
@@ -967,11 +1600,35 @@ out=$(run_state "$off2" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 1 ] && [ "${out%% *}" = "status=offline" ] && [ -e "$STATE_ROOT/$(state_key "$off2")/.git" ] && [ -n "$(git -C "$off2" rev-parse -q --verify refs/heads/hyperpowers/state 2>/dev/null)" ]; then pass "a default clone that cannot fetch still has the branch as a remote-tracking ref: offline, checkout built from it"; else fail "a default clone that cannot fetch still has the branch as a remote-tracking ref (rc=$rc: $out)"; fi
 out=$(run_state "$off" sync docs/plan.md --assume-absent); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=assumed-absent" ] && [ -f "$STATE_ROOT/$(state_key "$off").fetched" ] && [ -e "$STATE_ROOT/$(state_key "$off")/.git" ]; then pass "--assume-absent writes the stamp and creates the orphan"; else fail "--assume-absent writes the stamp and creates the orphan (rc=$rc: $out)"; fi
+if [ "$(head -n 1 "$STATE_ROOT/$(state_key "$off").fetched")" = "origin hyperpowers/state $(fp "$off")" ]; then pass "--assume-absent stamps the remote, branch and URL fingerprint"; else fail "--assume-absent stamps the remote, branch and URL fingerprint (got: $(cat "$STATE_ROOT/$(state_key "$off").fetched" 2>/dev/null))"; fi
 out=$(run_state "$off" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 1 ] && [ "${out%% *}" = "status=offline" ]; then pass "a later failed fetch with a local branch reports offline"; else fail "a later failed fetch with a local branch reports offline (rc=$rc: $out)"; fi
 norem="$TEST_ROOT/norem"; make_repo "$norem"; mkdir -p "$norem/docs"; : > "$norem/docs/plan.md"; git -C "$norem" add docs; git -C "$norem" commit -qm plan
 out=$(run_state "$norem" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=no-remote" ]; then pass "no remote reports no-remote"; else fail "no remote reports no-remote (rc=$rc: $out)"; fi
+nr="$TEST_ROOT/nr"; make_repo "$nr"; mkdir -p "$nr/docs"; : > "$nr/docs/plan.md"
+out=$(run_state "$nr" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=no-remote" ] && [ ! -e "$STATE_ROOT/$(state_key "$nr").fetched" ]; then pass "a no-remote sync leaves no stamp"; else fail "a no-remote sync leaves no stamp (rc=$rc: $out)"; fi
+# The stamp governs creation only: a no-remote sync created a local branch
+# here, which is continued, and a remote added later is reconciled by the
+# next sync. The creation path is reached only when neither the checkout
+# nor the local branch exists, so the fixture removes both before asking.
+git -C "$nr" worktree remove --force "$STATE_ROOT/$(state_key "$nr")" >/dev/null 2>&1 || rm -rf "${STATE_ROOT:?}/$(state_key "$nr")"; git -C "$nr" worktree prune; git -C "$nr" branch -D hyperpowers/state >/dev/null 2>&1
+git -C "$nr" remote add origin "$TEST_ROOT/nowhere.git"
+err=$(ensure "$nr" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync' && [ ! -d "$STATE_ROOT/$(state_key "$nr")" ]; then pass "with its branch and checkout gone, a repository that gained a remote after a no-remote sync asks for a sync before any branch is created"; else fail "a repository that gained a remote after a no-remote sync asks for a sync (rc=$rc: $err)"; fi
+# The realistic transition keeps the local branch: a remote that already
+# holds another dossier is reconciled, never silently replaced or invented.
+nr2="$TEST_ROOT/nr2"; make_repo "$nr2"; mkdir -p "$nr2/docs"; : > "$nr2/docs/plan.md"
+run_state "$nr2" sync docs/plan.md >/dev/null; wsnr2=$(run_sdd_dir "$nr2" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsnr2/progress.md"; run_state "$nr2" snapshot docs/plan.md >/dev/null
+git -C "$nr2" remote add origin "$PAIR_REMOTE"
+out=$(run_state "$nr2" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "${out%% *}" = "status=diverged" ] && [ -f "$wsnr2/progress.md" ] && grep -q '^Task 1: complete' "$wsnr2/progress.md"; then pass "a remote gained after a no-remote sync is reconciled by the next sync (diverged, nothing invented, the local ledger kept)"; else fail "a remote gained after a no-remote sync is reconciled by the next sync (rc=$rc: $out)"; fi
+ons="$TEST_ROOT/ons"; make_repo "$ons"; mkdir -p "$ons/docs"; : > "$ons/docs/plan.md"; git -C "$ons" remote add origin "$TEST_ROOT/nowhere.git"
+out=$(run_state "$ons" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "${out%% *}" = "status=offline-no-state" ] && [ ! -e "$STATE_ROOT/$(state_key "$ons").fetched" ]; then pass "an offline sync with no state branch leaves no stamp"; else fail "an offline sync with no state branch leaves no stamp (rc=$rc: $out)"; fi
+err=$(ensure "$ons" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'needs-sync'; then pass "after an offline sync creation still asks for a sync"; else fail "after an offline sync creation still asks for a sync (rc=$rc: $err)"; fi
 if [ "$(run_state "$rp" sync docs/plan.md 2>/dev/null)" = "status=plain" ]; then pass "sync under the plain backend reports plain"; else fail "sync under the plain backend reports plain"; fi
 
 # Cross-repository: sync resolves the plan's repository, not the cwd's.
@@ -1318,10 +1975,15 @@ advance() { printf '%s\n' "$1" >> "$wsa/progress.md"; run_state "$PAIR_A" snapsh
 # A tomb a killed finish or prune left for a plan no later call revisits.
 tomb_p11="$co_b/plans/.removing-gone-1234abcd-999"
 mkdir -p "$tomb_p11"; printf 'orphaned copy\n' > "$tomb_p11/progress.md"
+quar_p11="$co_b/plans/.pruned-gone-1234abcd-999"; mkdir -p "$quar_p11"; printf 'quarantined copy\n' > "$quar_p11/progress.md"
+# Names with a space: git status quotes such paths, and the scan must still
+# see the leftovers for what they are.
+tomb_p11s="$co_b/plans/.removing-old plan-1234abcd-999"; mkdir -p "$tomb_p11s"; printf 'orphaned copy\n' > "$tomb_p11s/progress.md"
+quar_p11s="$co_b/plans/.pruned-old plan-1234abcd-999"; mkdir -p "$quar_p11s"; printf 'quarantined copy\n' > "$quar_p11s/progress.md"
 advance 'line one'
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && grep -q '^line one$' "$wsb/progress.md" && [ -d "$tomb_p11" ]; then pass "a tomb left under plans/ by a killed removal does not stop the apply"; else fail "a tomb left under plans/ by a killed removal does not stop the apply (rc=$rc: $out)"; fi
-rm -rf "$tomb_p11"
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && grep -q '^line one$' "$wsb/progress.md" && [ -d "$tomb_p11" ] && [ -d "$quar_p11" ] && [ -d "$tomb_p11s" ] && [ -d "$quar_p11s" ]; then pass "a tomb or a quarantine left under plans/ by a removal, with or without a space in its name, does not stop the apply"; else fail "a tomb or a quarantine left under plans/ by a removal, with or without a space in its name, does not stop the apply (rc=$rc: $out)"; fi
+rm -rf "$tomb_p11" "$quar_p11" "$tomb_p11s" "$quar_p11s"
 # Any other leftover entry still stops the apply, and names itself.
 printf 'stray\n' > "$co_b/plans/stray.txt"
 advance 'line two'
@@ -1344,6 +2006,99 @@ if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && ! ls -d "$co_b/plans/.re
 advance 'line three'
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -d "$co_b/plans/$(basename "$wsf")" ] && grep -q '^line three$' "$wsb/progress.md"; then pass "the next sync after that crash finishes the apply and keeps going"; else fail "the next sync after that crash finishes the apply and keeps going (rc=$rc: $out)"; fi
+# A workspace the branch tracks under a leftover's name (a plan file from
+# before this release whose name began with a dot): its dirty report holds
+# the apply like any other workspace's, and a remote change to the same
+# path never overwrites it.
+co_a11="$STATE_ROOT/$(state_key "$PAIR_A")"; legacy11=".pruned-legacy-12345678"
+mkdir -p "$co_a11/plans/$legacy11"; printf '# SDD ledger — plan: docs/legacy.md\n' > "$co_a11/plans/$legacy11/progress.md"; printf 'report v1\n' > "$co_a11/plans/$legacy11/task-1-report.md"
+git -C "$co_a11" add -A plans/ && git -C "$co_a11" commit -qm legacy && git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+printf 'local edit\n' > "$co_b/plans/$legacy11/task-1-report.md"
+printf 'report v2\n' > "$co_a11/plans/$legacy11/task-1-report.md"; git -C "$co_a11" add -A plans/ && git -C "$co_a11" commit -qm legacy2 && git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p11c.out" 2> "$TEST_ROOT/p11c.err"; rc=$?
+out=$(cat "$TEST_ROOT/p11c.out")
+if [ "$rc" -eq 3 ] && [ "${out%% *}" = "status=busy" ] && grep -q "plans/$legacy11/task-1-report.md" "$TEST_ROOT/p11c.err" && [ "$(cat "$co_b/plans/$legacy11/task-1-report.md")" = "local edit" ]; then pass "a dirty report in a tracked workspace named like a leftover holds the apply and is not overwritten"; else fail "a dirty report in a tracked workspace named like a leftover holds the apply and is not overwritten (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p11c.err"))"; fi
+printf 'report v1\n' > "$co_b/plans/$legacy11/task-1-report.md"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(cat "$co_b/plans/$legacy11/task-1-report.md")" = "report v2" ]; then pass "with the local edit put back the apply proceeds and the remote change lands"; else fail "with the local edit put back the apply proceeds and the remote change lands (rc=$rc: $out)"; fi
+# The same for a tracked file directly under plans/ whose name reads like a
+# leftover: a file is not a workspace directory, so the tracked lookup must
+# not ask for a tree, or the exemption would swallow the file's dirty row
+# and the apply would write over the local bytes.
+file11="plans/.removing-trackedfile-12345678"
+printf 'tracked v1\n' > "$co_a11/$file11"
+git -C "$co_a11" add -A plans/ && git -C "$co_a11" commit -qm trackedfile && git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+printf 'local edit\n' > "$co_b/$file11"
+printf 'tracked v2\n' > "$co_a11/$file11"; git -C "$co_a11" add -A plans/ && git -C "$co_a11" commit -qm trackedfile2 && git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p11d.out" 2> "$TEST_ROOT/p11d.err"; rc=$?
+out=$(cat "$TEST_ROOT/p11d.out")
+if [ "$rc" -eq 3 ] && [ "${out%% *}" = "status=busy" ] && grep -q "$file11" "$TEST_ROOT/p11d.err" && [ "$(cat "$co_b/$file11")" = "local edit" ]; then pass "a dirty tracked file under plans/ named like a leftover holds the apply and is not overwritten"; else fail "a dirty tracked file under plans/ named like a leftover holds the apply and is not overwritten (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p11d.err"))"; fi
+printf 'tracked v1\n' > "$co_b/$file11"
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(cat "$co_b/$file11")" = "tracked v2" ]; then pass "with that edit reverted the apply fast-forwards and the remote change lands"; else fail "with that edit reverted the apply fast-forwards and the remote change lands (rc=$rc: $out)"; fi
+# A leftover as the only entry under plans/: with no tracked entry there,
+# git collapses the directory to one `?? plans/` row, which no exemption
+# names and whose advice (move or delete the dossier root) is wrong; the
+# scan lists untracked files one by one, so the row is the leftover's own.
+make_pair p11b
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+co_b11="$STATE_ROOT/$(state_key "$PAIR_B")"
+sole11="$co_b11/plans/.removing-gone-1234abcd-999"; mkdir -p "$sole11"; printf 'orphaned copy\n' > "$sole11/progress.md"
+wsa=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p11b.out" 2> "$TEST_ROOT/p11b.err"; rc=$?
+out=$(cat "$TEST_ROOT/p11b.out")
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ -f "$co_b11/plans/$(basename "$wsa")/progress.md" ] && [ -d "$sole11" ] && ! grep -q 'plans/ is not part of a plan workspace' "$TEST_ROOT/p11b.err"; then pass "a leftover that is the only entry under plans/ does not stop the apply"; else fail "a leftover that is the only entry under plans/ does not stop the apply (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p11b.err"))"; fi
+rm -rf "$sole11"
+# An incoming commit whose first version adds a tracked entry of a dotted
+# name a local removal or prune copy already holds. The exemption reads S
+# alone, so without the target's side of it the apply would write the
+# incoming files into that copy, which may be the only one of its dossier.
+# The helper never makes such a name (hp_plan_ws_name strips leading dots),
+# so the commit is built with plumbing.
+make_pair p11c
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa11c=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsa11c/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null
+co_b11c="$STATE_ROOT/$(state_key "$PAIR_B")"
+dotted11c=".pruned-collide-1234abcd-999"
+copy11c="$co_b11c/plans/$dotted11c"
+mkdir -p "$copy11c"; printf '# SDD ledger — plan: docs/gone.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$copy11c/progress.md"; printf 'the only report\n' > "$copy11c/task-1-report.md"
+cp -a "$copy11c" "$TEST_ROOT/p11c-before"
+before11c=$(git -C "$PAIR_B" rev-parse hyperpowers/state)
+# The first version of that path on the branch, added by hand on A.
+idx11c="$TEST_ROOT/p11c.index"; tip11c=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+lb11c=$(printf 'incoming ledger\n' | git -C "$PAIR_A" hash-object -w --stdin)
+rm -f "$idx11c"; GIT_INDEX_FILE=$idx11c git -C "$PAIR_A" read-tree "$tip11c"
+GIT_INDEX_FILE=$idx11c git -C "$PAIR_A" update-index --add --cacheinfo "100644,$lb11c,plans/$dotted11c/progress.md"
+add11c=$(printf 'a dotted workspace added by hand\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$(GIT_INDEX_FILE=$idx11c git -C "$PAIR_A" write-tree)" -p "$tip11c")
+git -C "$PAIR_A" push -q origin "$add11c:refs/heads/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p11c.out" 2> "$TEST_ROOT/p11c.err"; rc=$?
+out=$(cat "$TEST_ROOT/p11c.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "plans/$dotted11c" "$TEST_ROOT/p11c.err" && grep -qF "mv '$copy11c' '$co_b11c/.aside-$dotted11c-" "$TEST_ROOT/p11c.err" && diff -r "$TEST_ROOT/p11c-before" "$copy11c" >/dev/null 2>&1 && [ "$(git -C "$PAIR_B" rev-parse hyperpowers/state)" = "$before11c" ] && [ ! -f "$co_b11c/.sync-applying" ]; then pass "an incoming first-add of a dotted name a local removal copy holds is refused, the copy intact and the branch unmoved"; else fail "an incoming first-add of a dotted name a local removal copy holds is refused (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p11c.err"))"; fi
+# Why the line names a path outside plans/: a copy left under plans/ whose
+# name still ends in a pid parses as a quarantine, and a later prune
+# --apply would delete the copy the refusal exists to protect.
+mv "$copy11c" "$copy11c.aside-4242"
+find "$copy11c.aside-4242" -depth -exec touch -t 202401010000 {} +
+out=$(run_state "$PAIR_B" prune --repo "$PAIR_B" 2>/dev/null)
+if printf '%s' "$out" | grep -q "$dotted11c\.aside-4242"; then pass "a copy moved aside under plans/ is listed by prune, which is why the refusal does not name one"; else fail "a copy moved aside under plans/ is listed by prune ($out)"; fi
+# The repair the line does name: a root-level path nothing sweeps, scans,
+# lists or commits.
+mv "$copy11c.aside-4242" "$co_b11c/.aside-$dotted11c-4242"
+out=$(run_state "$PAIR_B" prune --repo "$PAIR_B" 2>/dev/null)
+if ! printf '%s' "$out" | grep -q aside; then pass "the root-level path the refusal names is listed by nothing"; else fail "the root-level path the refusal names is listed by nothing ($out)"; fi
+out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(cat "$co_b11c/plans/$dotted11c/progress.md")" = "incoming ledger" ] && [ -f "$co_b11c/.aside-$dotted11c-4242/task-1-report.md" ] && [ -z "$(git -C "$co_b11c" status --porcelain -- plans/)" ]; then pass "with the local copy moved out of plans/ the incoming workspace of that name is applied"; else fail "with the local copy moved out of plans/ the incoming workspace of that name is applied (rc=$rc: $out)"; fi
+rm -rf "$co_b11c/.aside-$dotted11c-4242"
 
 echo ""
 echo "=== containment on the apply path ==="
@@ -1907,6 +2662,7 @@ out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=plain" ]; then pass "sync on the plain host reports the backend"; else fail "sync on the plain host reports the backend (rc=$rc: $out)"; fi
 rc=0; out=$(run_sdd_dir "$PAIR_B" docs/plan.md 2> "$TEST_ROOT/p27.err") || rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q 'symbolic link' "$TEST_ROOT/p27.err" && grep -q "plans/$ws27/progress.md" "$TEST_ROOT/p27.err" && grep -q 'hyperpowers/state' "$TEST_ROOT/p27.err"; then pass "the plain fallback refuses a tip whose ledger is a symbolic link, naming the branch to repair"; else fail "the plain fallback refuses a tip whose ledger is a symbolic link, naming the branch to repair (rc=$rc: $out: $(cat "$TEST_ROOT/p27.err"))"; fi
+if [ "$(grep -c '^sdd-dir:' "$TEST_ROOT/p27.err")" -eq 1 ]; then pass "a specific refusal is the only sdd-dir line on stderr"; else fail "a specific refusal is the only sdd-dir line on stderr ($(grep -c '^sdd-dir:' "$TEST_ROOT/p27.err") lines)"; fi
 if [ -z "$(find "$plainb27" -type l 2>/dev/null)" ] && ! ls -d "$plainb27"/.materialize.* >/dev/null 2>&1 && [ "$(cat "$outside27/victim")" = "untouched" ]; then pass "no link and no staging directory reach the plain cache, and the link's target is untouched"; else fail "no link and no staging directory reach the plain cache, and the link's target is untouched ($(find "$plainb27" -type l 2>/dev/null | tr '\n' ' '))"; fi
 # The remedy it prints is reachable: the branch gets the regular file back.
 rm -f "$idx27"; GIT_INDEX_FILE=$idx27 git -C "$PAIR_A" read-tree "$evil27"
@@ -1918,5 +2674,80 @@ git -C "$PAIR_B" fetch -q origin "+refs/heads/hyperpowers/state:refs/remotes/ori
 run_state "$PAIR_B" sync docs/plan.md >/dev/null
 rc=0; out=$(run_sdd_dir "$PAIR_B" docs/plan.md 2>/dev/null) || rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "$plainb27/plans/$ws27" ] && [ ! -L "$out/progress.md" ] && [ "$(sed -n 2p "$out/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "with the link replaced on the branch the same call materializes the workspace"; else fail "with the link replaced on the branch the same call materializes the workspace (rc=$rc: $out)"; fi
+# A second plan, to exercise the publish itself. This host's state branch is
+# behind origin (the forged tips above were pushed straight to it), so A
+# syncs before it snapshots: an unsynced push is rejected and the tip B reads
+# would never carry the plan.
+: > "$PAIR_A/docs/plan2.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan2; git -C "$PAIR_A" push -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan2.md >/dev/null
+wsa27b=$(run_sdd_dir "$PAIR_A" docs/plan2.md); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsa27b/progress.md"
+run_state "$PAIR_A" snapshot docs/plan2.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null; git -C "$PAIR_B" fetch -q origin hyperpowers/state 2>/dev/null
+plain27="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$PAIR_B")"; ws27b=$(basename "$wsa27b")
+# The materialization above recorded its source in the backend file, which
+# the checks below read for a source no failed call may write.
+printf 'plain\n' > "$STATE_ROOT/$(state_key "$PAIR_B").backend"
+# The destination reappears after it was cleared: the publish refuses rather
+# than nesting the staged copy inside it, and nothing is recorded.
+rc=0; out=$(HYPERPOWERS_TEST_WRITER_AT="materialize-before-publish:$ws27b" run_sdd_dir "$PAIR_B" docs/plan2.md 2> "$TEST_ROOT/p27c.err") || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(grep -c '^sdd-dir:' "$TEST_ROOT/p27c.err")" -eq 1 ] && grep -q 'could not materialize' "$TEST_ROOT/p27c.err" && [ ! -e "$plain27/plans/$ws27b/$ws27b" ] && [ ! -f "$plain27/plans/$ws27b/progress.md" ] && [ -f "$plain27/plans/$ws27b/stray" ] && ! grep -q "source=" "$STATE_ROOT/$(state_key "$PAIR_B").backend"; then pass "a destination that reappears right before the rename is refused, not nested, its contents kept, and nothing recorded"; else fail "a destination that reappears right before the rename is refused (rc=$rc; $(tr '\n' '|' < "$TEST_ROOT/p27c.err"))"; fi
+# The occupied destination is never cleared by the helper: a human removes
+# it, and the next call materializes.
+rm -rf "$plain27/plans/$ws27b"
+out=$(run_sdd_dir "$PAIR_B" docs/plan2.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$out/progress.md" ]; then pass "once the occupied destination is cleared the next call materializes the same plan"; else fail "once the occupied destination is cleared the next call materializes (rc=$rc: $out)"; fi
+rm -rf "$plain27/plans/$ws27b"; printf 'plain\n' > "$STATE_ROOT/$(state_key "$PAIR_B").backend"
+# A destination that already holds something (no ledger) before the call is
+# refused with its contents intact; an empty one is replaced.
+mkdir -p "$plain27/plans/$ws27b"; printf 'theirs\n' > "$plain27/plans/$ws27b/notes.txt"
+rc=0; out=$(run_sdd_dir "$PAIR_B" docs/plan2.md 2> "$TEST_ROOT/p27d.err") || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(cat "$plain27/plans/$ws27b/notes.txt")" = "theirs" ] && [ ! -f "$plain27/plans/$ws27b/progress.md" ] && [ "$(grep -c '^sdd-dir:' "$TEST_ROOT/p27d.err")" -eq 1 ] && ! grep -q "source=" "$STATE_ROOT/$(state_key "$PAIR_B").backend"; then pass "a destination that already holds files is refused with every byte intact"; else fail "a destination that already holds files is refused with every byte intact (rc=$rc: $out)"; fi
+rm -f "$plain27/plans/$ws27b/notes.txt"
+out=$(run_sdd_dir "$PAIR_B" docs/plan2.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ -f "$out/progress.md" ]; then pass "an empty pre-existing destination is replaced by the publish"; else fail "an empty pre-existing destination is replaced by the publish (rc=$rc: $out)"; fi
+rm -rf "$plain27/plans/$ws27b"; printf 'plain\n' > "$STATE_ROOT/$(state_key "$PAIR_B").backend"
+if [ "$(id -u)" -ne 0 ]; then
+  mkdir -p "$plain27/plans"; chmod 0555 "$plain27"
+  rc=0; out=$(run_sdd_dir "$PAIR_B" docs/plan2.md 2> "$TEST_ROOT/p27b.err") || rc=$?
+  chmod 0755 "$plain27"
+  if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(grep -c '^sdd-dir:' "$TEST_ROOT/p27b.err")" -eq 1 ] && grep -q 'could not materialize' "$TEST_ROOT/p27b.err"; then pass "an unreported materialization failure gets exactly one generic sdd-dir line"; else fail "an unreported materialization failure gets exactly one generic sdd-dir line (rc=$rc; $(tr '\n' '|' < "$TEST_ROOT/p27b.err"))"; fi
+else
+  pass "an unreported materialization failure gets exactly one generic sdd-dir line (skipped: root ignores directory modes)"
+fi
+# g. A root blob at a sidecar's own name. A tree at .restore/ was already
+# refused; a blob at exactly .restore passed, reached disk, and had the
+# next recover_apply refuse every publishing subcommand on the sidecar the
+# branch tracks. All three routes a tree takes to disk refuse it.
+make_pair p28
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan; git -C "$PAIR_A" push -q origin main 2>/dev/null
+git -C "$PAIR_B" pull -q origin main 2>/dev/null
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+wsa28=$(run_sdd_dir "$PAIR_A" docs/plan.md); ws28=$(basename "$wsa28")
+printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsa28/progress.md"
+run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
+clean28=$(git -C "$PAIR_A" rev-parse hyperpowers/state)
+idx28="$TEST_ROOT/p28.index"
+bb28=$(printf 'a restore copy the branch carries\n' | git -C "$PAIR_A" hash-object -w --stdin)
+rm -f "$idx28"; GIT_INDEX_FILE=$idx28 git -C "$PAIR_A" read-tree "$clean28"
+GIT_INDEX_FILE=$idx28 git -C "$PAIR_A" update-index --add --cacheinfo "100644,$bb28,.restore"
+evil28=$(printf 'the restore sidecar as a root blob\n' | git -C "$PAIR_A" -c user.name=t -c user.email=t@example.com commit-tree "$(GIT_INDEX_FILE=$idx28 git -C "$PAIR_A" write-tree)" -p "$clean28")
+git -C "$PAIR_A" push -q origin "$evil28:refs/heads/hyperpowers/state" 2>/dev/null
+co_b28="$STATE_ROOT/$(state_key "$PAIR_B")"
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p28.out" 2> "$TEST_ROOT/p28.err"; rc=$?
+out=$(cat "$TEST_ROOT/p28.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recovery sidecar at \.restore' "$TEST_ROOT/p28.err" && [ ! -e "$co_b28/.git" ] && [ ! -e "$co_b28/.restore" ]; then pass "a root blob at .restore is refused when the checkout would be created"; else fail "a root blob at .restore is refused when the checkout would be created (rc=$rc: $out: $(cat "$TEST_ROOT/p28.err"))"; fi
+# The same blob arriving by fast-forward at a host that already has a checkout.
+git -C "$PAIR_A" push -q -f origin "$clean28:refs/heads/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md >/dev/null 2>&1
+wsb28="$co_b28/plans/$ws28"; before28=$(git -C "$co_b28" hash-object "$wsb28/progress.md")
+git -C "$PAIR_A" push -q origin "$evil28:refs/heads/hyperpowers/state" 2>/dev/null
+run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p28b.out" 2> "$TEST_ROOT/p28b.err"; rc=$?
+out=$(cat "$TEST_ROOT/p28b.out")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recovery sidecar at \.restore' "$TEST_ROOT/p28b.err" && [ ! -e "$co_b28/.restore" ] && [ ! -f "$co_b28/.sync-applying" ] && [ "$(git -C "$co_b28" hash-object "$wsb28/progress.md")" = "$before28" ]; then pass "a root blob at .restore arriving by fast-forward is refused on apply, with nothing written"; else fail "a root blob at .restore arriving by fast-forward is refused on apply (rc=$rc: $out: $(cat "$TEST_ROOT/p28b.err"))"; fi
+# And on the plain backend, where git archive would write it straight into
+# the cache. The remote tip B just fetched carries the blob.
+plain28="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$PAIR_B")"
+err=$(materialize "$PAIR_B" "$ws28" "$plain28/plans/$ws28" 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'recovery sidecar at .restore' && [ ! -e "$plain28/plans/$ws28" ] && [ ! -e "$plain28/.restore" ]; then pass "a root blob at .restore is refused before the plain fallback extracts the tip"; else fail "a root blob at .restore is refused before the plain fallback extracts the tip (rc=$rc: $err)"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

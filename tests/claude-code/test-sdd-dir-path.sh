@@ -269,13 +269,14 @@ stale_dir="$sdd_base/stale-run"
 fresh_dir="$sdd_base/fresh-run"
 mkdir -p "$stale_dir" "$fresh_dir"
 touch "$stale_dir/task-1-brief.md"
-# Backdate after populating: adding the file bumps the dir mtime.
-touch -t 202601010000 "$stale_dir"
+# Backdate after populating: adding the file bumps the dir mtime, and a root
+# is idle only when nothing under it is newer than the threshold either.
+touch -t 202601010000 "$stale_dir/task-1-brief.md" "$stale_dir"
 run_sdd_dir "$repo_a" >/dev/null
-if [ ! -d "$stale_dir" ]; then
-    pass "stale sibling scratch dir is pruned"
+if [ ! -d "$stale_dir" ] && ls -d "$stale_dir".reclaiming-* >/dev/null 2>&1; then
+    pass "stale sibling scratch dir is claimed for reclaim"
 else
-    fail "stale sibling scratch dir is pruned (still present: $stale_dir)"
+    fail "stale sibling scratch dir is claimed for reclaim (still present: $stale_dir)"
 fi
 if [ -d "$fresh_dir" ]; then
     pass "fresh sibling scratch dir survives pruning"
@@ -328,14 +329,177 @@ idle_backup="$XDG_CACHE_HOME/hyperpowers/sdd/idlebackup0000000001"
 idle_plain="$XDG_CACHE_HOME/hyperpowers/sdd/idleplain00000000002"
 mkdir -p "$idle_backup/plans/some-plan-deadbeef.importing-4242" "$idle_plain/plans/some-plan-deadbeef"
 : > "$idle_backup/plans/some-plan-deadbeef.importing-4242/progress.md"
-touch -mt "$OLDSTAMP" "$idle_backup" "$idle_plain"
+find "$idle_backup" "$idle_plain" -depth -exec touch -mt "$OLDSTAMP" {} +
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
-if [ -d "$idle_backup" ] && [ ! -d "$idle_plain" ]; then pass "an idle root holding an import backup survives the reclaim; an idle root without one is removed"; else fail "an idle root holding an import backup survives the reclaim; an idle root without one is removed (backup root: $([ -d "$idle_backup" ] && echo kept || echo gone), plain root: $([ -d "$idle_plain" ] && echo kept || echo gone))"; fi
+if [ -d "$idle_backup" ] && [ ! -d "$idle_plain" ] && ls -d "$idle_plain".reclaiming-* >/dev/null 2>&1; then pass "an idle root holding an import backup survives the reclaim; an idle root without one is claimed"; else fail "an idle root holding an import backup survives the reclaim; an idle root without one is claimed (backup root: $([ -d "$idle_backup" ] && echo kept || echo gone), plain root: $([ -d "$idle_plain" ] && echo kept || echo gone))"; fi
+idle_kept="$XDG_CACHE_HOME/hyperpowers/sdd/idlekept0000000000005"
+mkdir -p "$idle_kept/plans/some-plan-deadbeef.imported-20240101T000000Z-1"
+: > "$idle_kept/plans/some-plan-deadbeef.imported-20240101T000000Z-1/progress.md"
+find "$idle_kept" -depth -exec touch -mt "$OLDSTAMP" {} +
+# A slower session on the previous plugin still appends to the kept copy.
+touch "$idle_kept/plans/some-plan-deadbeef.imported-20240101T000000Z-1/progress.md"
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -f "$idle_kept/plans/some-plan-deadbeef.imported-20240101T000000Z-1/progress.md" ]; then pass "an idle root whose kept import copy was written to recently survives"; else fail "an idle root whose kept import copy was written to recently survives (root: $([ -d "$idle_kept" ] && echo kept || echo gone))"; fi
+idle_kept_old="$XDG_CACHE_HOME/hyperpowers/sdd/idlekeptold00000000006"
+mkdir -p "$idle_kept_old/plans/some-plan-deadbeef.imported-20240101T000000Z-1"
+: > "$idle_kept_old/plans/some-plan-deadbeef.imported-20240101T000000Z-1/progress.md"
+find "$idle_kept_old" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ ! -d "$idle_kept_old" ] && ls -d "$idle_kept_old".reclaiming-* >/dev/null 2>&1; then pass "an idle root whose kept import copy is old is reclaimed"; else fail "an idle root whose kept import copy is old is reclaimed (root: $([ -d "$idle_kept_old" ] && echo kept || echo gone))"; fi
+# Nothing is deleted on the pass that finds a root idle: it is claimed under
+# a .reclaiming-<pid> name, and a later call takes it once it has been quiet
+# for another 14 days.
+idle_two="$XDG_CACHE_HOME/hyperpowers/sdd/idletwophase000000007"
+mkdir -p "$idle_two/plans/some-plan-deadbeef"; : > "$idle_two/plans/some-plan-deadbeef/progress.md"
+find "$idle_two" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+claimed_two=$(ls -d "$idle_two".reclaiming-* 2>/dev/null | head -n 1) || claimed_two=""
+if [ ! -d "$idle_two" ] && [ -n "$claimed_two" ] && [ -f "$claimed_two/plans/some-plan-deadbeef/progress.md" ]; then pass "an idle root is claimed under a .reclaiming-<pid> name and nothing is deleted on that pass"; else fail "an idle root is claimed under a .reclaiming-<pid> name and nothing is deleted on that pass (claimed: '$claimed_two')"; fi
+# The claim stamps the tree before the rename, so no call that sees the
+# claimed name can read the tree as idle and take it.
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -n "$claimed_two" ] && [ -d "$claimed_two" ] && [ -f "$claimed_two/plans/some-plan-deadbeef/progress.md" ]; then pass "a root claimed by one invocation is not taken by the next"; else fail "a root claimed by one invocation is not taken by the next (claimed: '$claimed_two')"; fi
+# A writer on the previous plugin appends to the claimed copy before the
+# second phase could take it.
+if [ -n "$claimed_two" ]; then
+    find "$claimed_two" -depth -exec touch -mt "$OLDSTAMP" {} +
+    touch "$claimed_two/plans/some-plan-deadbeef/progress.md"
+fi
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -n "$claimed_two" ] && [ -f "$claimed_two/plans/some-plan-deadbeef/progress.md" ]; then pass "a claimed root written to since the claim survives the next invocation"; else fail "a claimed root written to since the claim survives the next invocation (claimed: $([ -n "$claimed_two" ] && [ -d "$claimed_two" ] && echo kept || echo gone))"; fi
+[ -z "$claimed_two" ] || find "$claimed_two" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -n "$claimed_two" ] && [ ! -d "$claimed_two" ] && ! ls -d "$claimed_two".gone-* >/dev/null 2>&1; then pass "a claimed root quiet for another 14 days is deleted, leaving no .gone-* copy"; else fail "a claimed root quiet for another 14 days is deleted, leaving no .gone-* copy (claimed: $([ -n "$claimed_two" ] && [ -d "$claimed_two" ] && echo kept || echo gone))"; fi
 idle_raced="$XDG_CACHE_HOME/hyperpowers/sdd/idleraced000000000003"
 mkdir -p "$idle_raced/plans/some-plan-deadbeef"; : > "$idle_raced/plans/some-plan-deadbeef/progress.md"
-touch -mt "$OLDSTAMP" "$idle_raced"
+find "$idle_raced" -depth -exec touch -mt "$OLDSTAMP" {} +
 _=$(cd "$TEST_ROOT/repo-plan" && HYPERPOWERS_TEST_RECLAIM_RACE="$idle_raced" "$SDD_DIR_SCRIPT" docs/a/plan.md)
 if [ -d "$idle_raced" ] && [ -f "$idle_raced/plans/some-plan-deadbeef/progress.md" ] && [ -d "$idle_raced/plans/x.importing-1" ] && ! ls -d "$idle_raced.reclaiming-"* >/dev/null 2>&1; then pass "an import that wins the race by an instant gets its root back, backup and all"; else fail "an import that wins the race by an instant gets its root back, backup and all (root: $([ -d "$idle_raced" ] && echo kept || echo gone))"; fi
+# An importer between its two steps: it has touched the root and has not yet
+# renamed its source aside, so the only signal is the root's own mtime.
+idle_touched="$XDG_CACHE_HOME/hyperpowers/sdd/idletouched000000008"
+mkdir -p "$idle_touched/plans/some-plan-deadbeef"; : > "$idle_touched/plans/some-plan-deadbeef/progress.md"
+find "$idle_touched" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && HYPERPOWERS_TEST_RECLAIM_RACE="touch:$idle_touched" "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -d "$idle_touched" ] && [ -f "$idle_touched/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_touched".claiming-* >/dev/null 2>&1 && ! ls -d "$idle_touched".reclaiming-* >/dev/null 2>&1; then pass "an importer that has only touched the root keeps it under its own name"; else fail "an importer that has only touched the root keeps it under its own name (root: $([ -d "$idle_touched" ] && echo kept || echo gone))"; fi
+# The same importer, with a session in the other repository recreating the
+# live root while this pass walked the staged tree: BSD mv would nest the
+# staged root inside the new one, where no lookup finds it again.
+idle_occupied="$XDG_CACHE_HOME/hyperpowers/sdd/idleoccupied00000009"
+mkdir -p "$idle_occupied/plans/some-plan-deadbeef"; : > "$idle_occupied/plans/some-plan-deadbeef/progress.md"
+find "$idle_occupied" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && HYPERPOWERS_TEST_RECLAIM_RACE="occupy:$idle_occupied" "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/occupy.err")
+staged_oc=$(ls -d "$idle_occupied".claiming-* 2>/dev/null | head -n 1) || staged_oc=""
+if [ -n "$staged_oc" ] && [ -f "$staged_oc/plans/some-plan-deadbeef/progress.md" ] && [ "$(ls -A "$idle_occupied" | tr '\n' ' ')" = "writer " ] && [ ! -e "$idle_occupied/$(basename "$staged_oc")" ] && grep -q 'occupied again' "$TEST_ROOT/occupy.err"; then pass "a put-back whose root is occupied again leaves the staged copy named, not nested"; else fail "a put-back whose root is occupied again leaves the staged copy named, not nested (staged: '$staged_oc', root: $(ls -A "$idle_occupied" | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/occupy.err"))"; fi
+rm -rf "$staged_oc" "$idle_occupied"
+# The same put-back one phase later: a quarantine quiet for its second 14
+# days is staged under .gone-<pid> before it is deleted, and in that window
+# a writer touches the staged tree while a session in the other repository
+# recreates the live root.
+idle_gone="$XDG_CACHE_HOME/hyperpowers/sdd/idlegone00000000000b.reclaiming-424242"
+mkdir -p "$idle_gone/plans/some-plan-deadbeef"; : > "$idle_gone/plans/some-plan-deadbeef/progress.md"
+find "$idle_gone" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && HYPERPOWERS_TEST_RECLAIM_RACE="gone:$idle_gone" "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/gone.err")
+staged_gn=$(ls -d "$idle_gone".gone-* 2>/dev/null | head -n 1) || staged_gn=""
+if [ -n "$staged_gn" ] && [ -f "$staged_gn/plans/some-plan-deadbeef/progress.md" ] && [ "$(ls -A "$idle_gone" | tr '\n' ' ')" = "writer " ] && [ ! -e "$idle_gone/$(basename "$staged_gn")" ] && grep -q 'occupied again' "$TEST_ROOT/gone.err"; then pass "a second-phase put-back whose quarantine is occupied again leaves the staged copy named, not nested"; else fail "a second-phase put-back whose quarantine is occupied again leaves the staged copy named, not nested (staged: '$staged_gn', quarantine: $(ls -A "$idle_gone" | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/gone.err"))"; fi
+rm -rf "$staged_gn" "$idle_gone"
+# node is on the creation path (hp_materialize_plain publishes through it,
+# hp_stamp_ok fingerprints the remote URL with it), so its absence is a
+# preflight refusal, not a failure partway through.
+nonode="$TEST_ROOT/nonode"; mkdir -p "$nonode"
+for c in bash git dirname basename mkdir touch find ls rm cat sed date head tr wc; do ln -sf "$(command -v "$c")" "$nonode/$c"; done
+rc=0
+err=$(cd "$TEST_ROOT/repo-plan" && PATH="$nonode" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>&1 >/dev/null) || rc=$?
+if [ "$rc" -eq 2 ] && [ "$err" = "sdd-dir: node not found" ]; then pass "sdd-dir refuses with exit 2 when node is not on PATH"; else fail "sdd-dir refuses with exit 2 when node is not on PATH (rc=$rc: $err)"; fi
+# The no-argument form reaches none of that: it derives and touches the
+# plain root and runs the reclaim, whose only node use reads a missing node
+# as a live process, so it adopts no crashed claim and keeps working.
+rc=0
+out=$(cd "$TEST_ROOT/repo-plan" && PATH="$nonode" bash "$SDD_DIR_SCRIPT" 2>"$TEST_ROOT/nonode-root.err") || rc=$?
+if [ "$rc" -eq 0 ] && [ -d "$out" ] && [ "$out" = "$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$TEST_ROOT/repo-plan")" ]; then pass "the no-argument form prints the plain root and exits 0 without node"; else fail "the no-argument form prints the plain root and exits 0 without node (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/nonode-root.err"))"; fi
+# A claim whose owner is still running is that call's to finish or put back.
+idle_live="$XDG_CACHE_HOME/hyperpowers/sdd/idlelive00000000000a"
+mkdir -p "$idle_live.claiming-$$/plans/some-plan-deadbeef"; : > "$idle_live.claiming-$$/plans/some-plan-deadbeef/progress.md"
+find "$idle_live.claiming-$$" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+if [ -d "$idle_live.claiming-$$" ] && ! ls -d "$idle_live".reclaiming-* >/dev/null 2>&1; then pass "a .claiming-* whose owner is alive is left to its owner"; else fail "a .claiming-* whose owner is alive is left to its owner (staged: $([ -d "$idle_live.claiming-$$" ] && echo kept || echo gone))"; fi
+# A claim that crashed between its staging rename and its final one.
+sleep 0.01 & crashed_pid=$!; wait "$crashed_pid" 2>/dev/null
+idle_crashed="$XDG_CACHE_HOME/hyperpowers/sdd/idlecrashed000000009"
+mkdir -p "$idle_crashed.claiming-$crashed_pid/plans/some-plan-deadbeef"; : > "$idle_crashed.claiming-$crashed_pid/plans/some-plan-deadbeef/progress.md"
+find "$idle_crashed.claiming-$crashed_pid" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+adopted=$(ls -d "$idle_crashed".reclaiming-* 2>/dev/null | head -n 1) || adopted=""
+if [ ! -d "$idle_crashed.claiming-$crashed_pid" ] && [ -n "$adopted" ] && [ -f "$adopted/plans/some-plan-deadbeef/progress.md" ] && [ -z "$(find "$adopted" -maxdepth 0 -mtime +14 2>/dev/null)" ]; then pass "a .claiming-* leftover is adopted as a quarantine with a fresh stamp"; else fail "a .claiming-* leftover is adopted as a quarantine with a fresh stamp (adopted: '$adopted')"; fi
+# The touch that stamps a staged tree is what starts its second 14 days.
+# A quarantine published without it carries its old timestamps and the next
+# call takes it at once, so the name must not be published unless the stamp
+# landed. A touch can fail while a rename in the same parent succeeds: the
+# timestamp needs ownership or write permission on the tree itself, the
+# rename only on the directory above it.
+# Only touch is shimmed, and only for a staged name: the directory goes in
+# front of the real PATH so everything else resolves as it always does.
+faketouch="$TEST_ROOT/faketouch"; mkdir -p "$faketouch"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in *.claiming-*) exit 1 ;; esac; done\nexec %s "$@"\n' "$(command -v touch)" > "$faketouch/touch"
+chmod 755 "$faketouch/touch"
+idle_stamp="$XDG_CACHE_HOME/hyperpowers/sdd/idlestamp00000000000c"
+mkdir -p "$idle_stamp/plans/some-plan-deadbeef"; : > "$idle_stamp/plans/some-plan-deadbeef/progress.md"
+find "$idle_stamp" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && PATH="$faketouch:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/stamp.err")
+if ! ls -d "$idle_stamp".reclaiming-* >/dev/null 2>&1 && [ -f "$idle_stamp/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_stamp".claiming-* >/dev/null 2>&1 && grep -q 'grace' "$TEST_ROOT/stamp.err"; then pass "a staged tree whose grace stamp cannot be written goes back under its own name, unpublished and named on stderr"; else fail "a staged tree whose grace stamp cannot be written goes back under its own name (staged: $(ls -d "$idle_stamp".claiming-* "$idle_stamp".reclaiming-* 2>/dev/null | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/stamp.err"))"; fi
+# With touch working again the root is claimed as usual, and nothing the
+# failed pass left behind was deleted on the way.
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+claimed_st=$(ls -d "$idle_stamp".reclaiming-* 2>/dev/null | head -n 1) || claimed_st=""
+if [ -n "$claimed_st" ] && [ -f "$claimed_st/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_stamp".gone-* >/dev/null 2>&1; then pass "the next call with a working touch claims the same root, deleting nothing"; else fail "the next call with a working touch claims the same root, deleting nothing (claimed: '$claimed_st')"; fi
+rm -rf "$claimed_st"
+# The adoption arm is the same rule: a crashed claim whose stamp cannot be
+# written stays a claim rather than becoming a quarantine with old times.
+sleep 0.01 & stamp_pid=$!; wait "$stamp_pid" 2>/dev/null
+idle_adopt="$XDG_CACHE_HOME/hyperpowers/sdd/idleadopt00000000000d"
+mkdir -p "$idle_adopt.claiming-$stamp_pid/plans/some-plan-deadbeef"; : > "$idle_adopt.claiming-$stamp_pid/plans/some-plan-deadbeef/progress.md"
+find "$idle_adopt.claiming-$stamp_pid" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && PATH="$faketouch:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/adopt.err")
+if [ -d "$idle_adopt.claiming-$stamp_pid" ] && [ -f "$idle_adopt.claiming-$stamp_pid/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_adopt".reclaiming-* >/dev/null 2>&1 && grep -q 'grace' "$TEST_ROOT/adopt.err"; then pass "a crashed claim whose grace stamp cannot be written stays a claim, and is named on stderr"; else fail "a crashed claim whose grace stamp cannot be written stays a claim (err: $(tr '\n' '|' < "$TEST_ROOT/adopt.err"))"; fi
+rm -rf "$idle_adopt.claiming-$stamp_pid"
+# A freshness check reads find's exit status, not just its output. A
+# traversal that fails prints nothing and exits non-zero (a permission
+# error on one subdirectory, a transient I/O error), and reading that as
+# silence would delete a tree that may hold recent writes.
+fakefind="$TEST_ROOT/fakefind"; mkdir -p "$fakefind"
+# FINDFAIL names the tree the shim fails for, and only for a traversal
+# that descends: a permission error on one subdirectory leaves the stat of
+# the root itself (-maxdepth 0) working, which is the shape these checks
+# have to survive.
+# FINDFAIL holds space-separated patterns, each matched on its own: a
+# case pattern built from one variable holding a|b is one literal pattern,
+# not an alternation.
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = -maxdepth ] && exec %s "$@"; done\nfor p in $FINDFAIL; do case "$1" in $p) exit 1 ;; esac; done\nexec %s "$@"\n' "$(command -v find)" "$(command -v find)" > "$fakefind/find"
+chmod 755 "$fakefind/find"
+idle_qr="$XDG_CACHE_HOME/hyperpowers/sdd/idlefind00000000000e.reclaiming-424242"
+mkdir -p "$idle_qr/plans/some-plan-deadbeef"; : > "$idle_qr/plans/some-plan-deadbeef/progress.md"
+find "$idle_qr" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && FINDFAIL='*.reclaiming-* *.gone-*' PATH="$fakefind:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/find1.err")
+if [ -f "$idle_qr/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_qr".gone-* >/dev/null 2>&1 && grep -q 'could not be read' "$TEST_ROOT/find1.err"; then pass "a quarantine whose freshness cannot be read is left alone, not deleted"; else fail "a quarantine whose freshness cannot be read is left alone (left: $(ls -d "$idle_qr"* 2>/dev/null | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/find1.err"))"; fi
+# The same failure only after the rename-aside: the copy comes back under
+# its quarantine name instead of being deleted on an unread tree.
+_=$(cd "$TEST_ROOT/repo-plan" && FINDFAIL='*.gone-*' PATH="$fakefind:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/find2.err")
+if [ -f "$idle_qr/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_qr".gone-* >/dev/null 2>&1 && grep -q 'could not be read' "$TEST_ROOT/find2.err"; then pass "a staged copy whose freshness cannot be read after the rename is put back under its quarantine name"; else fail "a staged copy whose freshness cannot be read after the rename is put back (left: $(ls -d "$idle_qr"* 2>/dev/null | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/find2.err"))"; fi
+rm -rf "$idle_qr"
+# Phase one asks the same question of a live root, and claims nothing when
+# it cannot be answered.
+idle_p1="$XDG_CACHE_HOME/hyperpowers/sdd/idlefindone0000000f"
+mkdir -p "$idle_p1/plans/some-plan-deadbeef"; : > "$idle_p1/plans/some-plan-deadbeef/progress.md"
+find "$idle_p1" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && FINDFAIL="$idle_p1" PATH="$fakefind:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/find3.err")
+if [ -f "$idle_p1/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_p1".claiming-* >/dev/null 2>&1 && ! ls -d "$idle_p1".reclaiming-* >/dev/null 2>&1 && grep -q 'could not be read' "$TEST_ROOT/find3.err"; then pass "a live root whose age or freshness cannot be read is not claimed"; else fail "a live root whose age or freshness cannot be read is not claimed (left: $(ls -d "$idle_p1"* 2>/dev/null | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/find3.err"))"; fi
+rm -rf "$idle_p1"
+# The workspace's own link scan follows the same rule: a traversal that
+# fails is not an absence of links, and resolving a workspace nobody could
+# scan would let one inside it take the ledger's writes out of the cache.
+rc=0
+err=$(cd "$TEST_ROOT/repo-plan" && FINDFAIL="$da" PATH="$fakefind:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>&1 >/dev/null) || rc=$?
+if [ "$rc" -eq 2 ] && printf '%s\n' "$err" | grep -q 'could not be scanned for symbolic links'; then pass "a workspace whose link scan cannot be read is refused, not resolved"; else fail "a workspace whose link scan cannot be read is refused, not resolved (rc=$rc: $err)"; fi
 ln -s "$TEST_ROOT/repo-plan" "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004"
 touch -h -t 202601010000 "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004" 2>/dev/null || true
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
@@ -475,6 +639,30 @@ case "$out" in
 esac
 out2=$(cd "$TEST_ROOT/repo-plain" && bash "$SDD_DIR_SCRIPT" plan.md 2>/dev/null)
 if [ "$out2" = "$out" ] && [ "$(head -n1 "$STATE_ROOT/$plain_key.backend")" = plain ]; then pass "the plain backend persists for later calls"; else fail "the plain backend persists for later calls"; fi
+echo ""
+echo "Test: a quarantined dossier stops the plain backend instead of starting a fresh ledger"
+# On the plain backend sdd-dir recreates the cache root and the empty
+# workspace directory before it calls import, so after another repository's
+# reclaim has taken the root the live candidate is an empty directory, not a
+# missing one; the dossier waits in the quarantine until phase two deletes it.
+make_repo "$TEST_ROOT/repo-quar"
+git -C "$TEST_ROOT/repo-quar" commit -q --allow-empty -m "initial"
+mkdir -p "$TEST_ROOT/repo-quar/docs/a"; echo plan > "$TEST_ROOT/repo-quar/docs/a/plan.md"
+quar_root="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$TEST_ROOT/repo-quar")"
+qws=$(cd "$TEST_ROOT/repo-quar" && HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>/dev/null)
+qname=$(basename "$qws")
+printf '# SDD ledger — plan: docs/a/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$qws/progress.md"
+mv "$quar_root" "$quar_root.reclaiming-424242"
+qrepair="rmdir $quar_root/plans/$qname && mv $quar_root.reclaiming-424242/plans/$qname $quar_root/plans/$qname"
+rc=0
+out=$(cd "$TEST_ROOT/repo-quar" && bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/quar.err") || rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -qF "set aside at $quar_root.reclaiming-424242" "$TEST_ROOT/quar.err" && grep -qF "$qrepair" "$TEST_ROOT/quar.err" && grep -q '^sdd-dir: importing a legacy workspace failed' "$TEST_ROOT/quar.err" && [ -f "$quar_root.reclaiming-424242/plans/$qname/progress.md" ]; then pass "a quarantined dossier stops sdd-dir on the plain backend, naming the quarantine and the repair"; else fail "a quarantined dossier stops sdd-dir on the plain backend (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/quar.err"))"; fi
+# The repair exactly as the message gives it: the root is there again, so
+# only the workspace moves (a whole-root mv would nest it inside).
+rmdir "$quar_root/plans/$qname" && mv "$quar_root.reclaiming-424242/plans/$qname" "$quar_root/plans/$qname"
+rc=0
+out=$(cd "$TEST_ROOT/repo-quar" && bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/quar2.err") || rc=$?
+if [ "$rc" -eq 0 ] && [ -n "$out" ] && [ "$(sed -n 2p "$out/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "after the repair the same call prints the workspace with its ledger"; else fail "after the repair the same call prints the workspace with its ledger (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/quar2.err"))"; fi
 
 echo ""
 echo "Test: a legacy workspace is imported on the first call"
@@ -540,6 +728,7 @@ ln -s "$outside_link" "$co_b_link/plans/$ws_name"
 rc=0
 out=$(cd "$link_b" && bash "$SDD_DIR_SCRIPT" docs/plan.md 2>"$TEST_ROOT/link-ws.err") || rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q "plans/$ws_name" "$TEST_ROOT/link-ws.err"; then pass "a workspace that is a symbolic link is refused, naming the link"; else fail "a workspace that is a symbolic link is refused, naming the link (rc=$rc, out='$out', err=$(cat "$TEST_ROOT/link-ws.err"))"; fi
+if grep -q '^sdd-dir: .* is a symbolic link' "$TEST_ROOT/link-ws.err"; then pass "the containment refusal under sdd-dir is prefixed sdd-dir"; else fail "the containment refusal under sdd-dir is prefixed sdd-dir ($(head -n 2 "$TEST_ROOT/link-ws.err" | tr '\n' '|'))"; fi
 if [ -L "$co_b_link/plans/$ws_name" ] && [ "$(ls -A "$outside_link" | tr '\n' ' ')" = "sentinel " ]; then pass "nothing is created through the link: its target still holds only the sentinel"; else fail "nothing is created through the link ($(ls -A "$outside_link" | tr '\n' ' '))"; fi
 # The human removes the link: the workspace resolves again.
 rm -f "$co_b_link/plans/$ws_name"

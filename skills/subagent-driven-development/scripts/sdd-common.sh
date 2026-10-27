@@ -10,6 +10,11 @@
 # checkout and one live ledger per plan; the pre-6.17 key hashed the
 # per-worktree git directory and split a plan across worktrees.
 
+# The prefix of every message this library prints: the tool that called it.
+# sdd-dir and sdd-state set it before sourcing; any other sourcer prints
+# under its own name.
+HP_PROG=${HP_PROG:-${0##*/}}
+
 hp_cache_root() { printf '%s\n' "${XDG_CACHE_HOME:-$HOME/.cache}/hyperpowers"; }
 
 # Physical absolute path of a directory (symlinks resolved).
@@ -56,6 +61,40 @@ hp_checkout_path() { local k; k=$(hp_key "$1") || return 1; printf '%s/state/%s\
 hp_plain_root() { local k; k=$(hp_key "$1") || return 1; printf '%s/sdd/%s\n' "$(hp_cache_root)" "$k"; }
 hp_stamp_path() { local c; c=$(hp_checkout_path "$1") || return 1; printf '%s.fetched\n' "$c"; }
 
+# <repo-dir> -> the first 12 hex digits of the SHA-256 of the configured
+# remote's fetch URL, or none when the remote has no URL. The stamp carries
+# it so a remote repointed with set-url, which keeps its alias, cannot reuse
+# a stamp earned against another endpoint.
+# <url> -> the first 12 hex digits of its SHA-256. The URL may carry
+# credentials: it reaches node on stdin, never in argv or the environment.
+# A digest that cannot be computed is a failure, not an empty identity:
+# callers fail closed on return 1.
+hp_url_fingerprint() {
+  local fp
+  fp=$(printf '%s' "$1" | node -e 'const b=[];process.stdin.on("data",c=>{b.push(c)}).on("end",()=>{process.stdout.write(require("crypto").createHash("sha256").update(Buffer.concat(b)).digest("hex").slice(0,12))})' 2>/dev/null) || return 1
+  case "$fp" in ????????????) ;; *) return 1 ;; esac
+  case "$fp" in *[!0-9a-f]*) return 1 ;; esac
+  printf '%s\n' "$fp"
+}
+
+hp_remote_fingerprint() {
+  local url
+  url=$(git -C "$1" remote get-url "$(hp_state_remote "$1")" 2>/dev/null) || { printf 'none\n'; return 0; }
+  [ -n "$url" ] || { printf 'none\n'; return 0; }
+  hp_url_fingerprint "$url"
+}
+
+# <repo-dir> -> 0 when the fetch stamp names the configured remote, branch
+# and the remote's current URL fingerprint. A stamp from before 6.17 is an
+# empty file; it, or a stamp written for another remote, branch or URL,
+# means a sync is owed before any branch is created here.
+hp_stamp_ok() {
+  local have fp
+  have=$(head -n 1 "$(hp_stamp_path "$1")" 2>/dev/null) || return 1
+  fp=$(hp_remote_fingerprint "$1") || return 1
+  [ "$have" = "$(hp_state_remote "$1") $(hp_state_branch "$1") $fp" ]
+}
+
 # The backend file: first word branch|plain, the rest free-form key=value.
 hp_backend() {
   local c f
@@ -74,6 +113,38 @@ hp_write_backend() { # <repo-dir> <line>
 
 hp_session_id() { printf '%s\n' "${HYPERPOWERS_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"; }
 hp_utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# <pid> -> 0 when the process is gone. kill(2) answers ESRCH for a pid that
+# is gone and EPERM for one that exists but may not be signalled (another
+# user's process, or any process from a sandboxed shell); only the first is
+# death. bash's kill builtin folds both into exit 1, so node asks.
+hp_pid_gone() {
+  local answer
+  answer=$(node -e 'try { process.kill(Number(process.argv[1]), 0); process.stdout.write("alive"); } catch (e) { process.stdout.write(e && e.code === "ESRCH" ? "gone" : "alive"); }' "$1" 2>/dev/null) || answer=alive
+  [ "$answer" = gone ]
+}
+
+# <referent path> -> 0 when an import left a copy of that workspace beside
+# it: the backup of one still running (`<ref>.importing-*`) or the dated
+# copy a verified one keeps (`<ref>.imported-*`). The plain-cache reclaim
+# can have moved the whole root since, so the copy is looked for under both
+# names a moved root carries: `<root>.claiming-*` while a claim is staging
+# it (an importer's backup can still be in there) and `<root>.reclaiming-*`
+# once it is a quarantine. A dangling pointer to such a referent is the
+# interrupted import's only handle: sdd-dir keeps it and sdd-state's import
+# completes the relink.
+hp_kept_copy_exists() {
+  local root ws
+  ls -d "$1".importing-* >/dev/null 2>&1 && return 0
+  ls -d "$1".imported-* >/dev/null 2>&1 && return 0
+  case "$1" in */plans/*) ;; *) return 1 ;; esac
+  root=${1%/plans/*}
+  ws=${1##*/}
+  ls -d "$root".claiming-*/plans/"$ws".importing-* >/dev/null 2>&1 && return 0
+  ls -d "$root".claiming-*/plans/"$ws".imported-* >/dev/null 2>&1 && return 0
+  ls -d "$root".reclaiming-*/plans/"$ws".imported-* >/dev/null 2>&1 && return 0
+  return 1
+}
 
 # <plan-file> -> physical directory of the plan. The plan must be an existing
 # regular file inside a repository: a mistyped path never earns a workspace.
@@ -100,6 +171,14 @@ hp_plan_ws_name() {
   d=$(hp_plan_dir "$1") || return 1
   rel=$(hp_plan_rel "$1")
   slug=$(basename "$1"); slug=${slug%.*}
+  # A workspace name never starts with a dot: dotted entries under plans/
+  # are the leftovers of removals (.removing-, .quarantining-, .pruned-),
+  # and a plan file named like one must not be taken for them. A plan file
+  # from an earlier build whose name began with a dot continues in a new
+  # workspace from here; its old directory, if the branch tracks one, stays
+  # tracked and untouched (every walk skips dotted names, and a tracked
+  # path is never taken for a leftover).
+  slug=${slug#"${slug%%[!.]*}"}; [ -n "$slug" ] || slug=plan
   hash8=$(printf '%s' "$rel" | git -C "$d" hash-object --stdin | cut -c1-8)
   printf '%s-%s\n' "$slug" "$hash8"
 }
@@ -205,7 +284,7 @@ hp_lock_at() { # <lock-dir>
       continue
     fi
     if [ "$waited" -ge 150 ]; then
-      echo "sdd-state: lock held: $(hp_lock_owner_text "$lock" | tr '\n' ' ')" >&2
+      echo "$HP_PROG: lock held: $(hp_lock_owner_text "$lock" | tr '\n' ' ')" >&2
       return 2
     fi
     sleep 0.2
@@ -246,7 +325,7 @@ hp_contained() { # <root> <relative path>
     case "$part" in ''|.|..) return 2 ;; esac
     cur="$cur/$part"
     if [ -L "$cur" ]; then
-      echo "sdd-state: $cur is a symbolic link; refusing to write through it" >&2
+      echo "$HP_PROG: $cur is a symbolic link; refusing to write through it" >&2
       return 1
     fi
   done
@@ -334,7 +413,7 @@ hp_has_sentinel() {
 # used and never written to.
 hp_check_sentinel() {
   hp_has_sentinel "$1" "$2" && return 0
-  echo "sdd-dir: branch $(hp_state_branch "$1") exists but is not a hyperpowers state branch; set git config hyperpowers.stateBranch to another name" >&2
+  echo "$HP_PROG: branch $(hp_state_branch "$1") exists but is not a hyperpowers state branch; set git config hyperpowers.stateBranch to another name" >&2
   return 2
 }
 
@@ -343,9 +422,12 @@ hp_check_sentinel() {
 # and returns 1; silent and 0 for a clean tree, 2 when the tree cannot be
 # read. A dossier holds plain files, and so do the branch's root files: a
 # symbolic link or a submodule entry anywhere would take a later write out
-# of the cache, and a recovery sidecar (.sync-applying, .rewrite/) is this
-# host's own interrupted state, which the next recovery executes, so no
-# commit may carry one whatever its mode.
+# of the cache, and a recovery sidecar (.sync-applying, .rewrite, .restore)
+# is this host's own interrupted state, which the next recovery executes,
+# so no commit may carry one whatever its mode. Each name is refused as an
+# entry of its own as well as a directory: a blob at .restore reaches disk
+# as readily as .restore/<copy>, and recover_apply then refuses every
+# publishing subcommand on the sidecar the branch tracks.
 hp_tree_refusal() {
   local out line mode path
   # --full-tree: ls-tree is otherwise limited to the directory git runs in,
@@ -362,7 +444,7 @@ hp_tree_refusal() {
     # A path git had to quote keeps its opening quote here; both forms are
     # matched rather than unquoted, since only the refusal depends on it.
     case "$path" in
-      .sync-applying|.rewrite/*|'".sync-applying'*|'".rewrite/'*) printf 'recovery sidecar %s\n' "$path"; return 1 ;;
+      .sync-applying|.rewrite|.restore|.sync-applying/*|.rewrite/*|.restore/*|'".sync-applying'*|'".rewrite'*|'".restore'*) printf 'recovery sidecar %s\n' "$path"; return 1 ;;
     esac
   done < <(printf '%s\n' "$out")
   return 0
@@ -379,11 +461,11 @@ hp_refuse_tip() {
   # gets its own sentence: the refusal below is parsed as two kind words
   # and a path, and its remedy would be wrong advice here.
   if [ "$rc" -ne 1 ]; then
-    echo "sdd-state: $2 could not be read as a tree; refusing to create the state checkout from it. Fetch the state branch again and retry; if it persists, the repository needs repair" >&2
+    echo "$HP_PROG: $2 could not be read as a tree; refusing to create the state checkout from it. Fetch the state branch again and retry; if it persists, the repository needs repair" >&2
     return 2
   fi
   rest=${refusal#* }
-  echo "sdd-state: ${2:0:7} carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to create the state checkout from it. Remove it on the host that committed it and commit the removal on the state branch, push, then sync again" >&2
+  echo "$HP_PROG: ${2:0:7} carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to create the state checkout from it. Remove it on the host that committed it and commit the removal on the state branch, push, then sync again" >&2
   return 2
 }
 
@@ -442,17 +524,17 @@ hp_recover_tmp_checkouts() {
 hp_verify_checkout() {
   local repo=$1 co=$2 br=$3 sym head
   if [ "$(hp_common_dir "$co" 2>/dev/null)" != "$(hp_common_dir "$repo" 2>/dev/null)" ]; then
-    echo "sdd-dir: state checkout $co does not belong to this repository; remove it and run again" >&2
+    echo "$HP_PROG: state checkout $co does not belong to this repository; remove it and run again" >&2
     return 2
   fi
   sym=$(git -C "$co" symbolic-ref -q HEAD 2>/dev/null) || sym=""
   if [ "$sym" != "refs/heads/$br" ]; then
-    echo "sdd-dir: state checkout $co is on ${sym:-a detached HEAD} but git config hyperpowers.stateBranch names $br; restore the config, or remove the checkout (git -C $repo worktree remove --force $co) and run again" >&2
+    echo "$HP_PROG: state checkout $co is on ${sym:-a detached HEAD} but git config hyperpowers.stateBranch names $br; restore the config, or remove the checkout (git -C $repo worktree remove --force $co) and run again" >&2
     return 2
   fi
   head=$(git -C "$co" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null) || head=""
   if [ -z "$head" ]; then
-    echo "sdd-dir: state checkout $co has no commit; remove it (git -C $repo worktree remove --force $co) and run again" >&2
+    echo "$HP_PROG: state checkout $co has no commit; remove it (git -C $repo worktree remove --force $co) and run again" >&2
     return 2
   fi
   hp_check_sentinel "$repo" "$head"
@@ -463,7 +545,7 @@ hp_verify_checkout() {
 # state name belongs to a foreign branch. The one creation operation: it
 # owns the lock, the temporary path, recovery, and the backend file.
 hp_ensure_checkout() {
-  local repo=$1 co br remote backend tmp mode tip rc=0 refusal rest
+  local repo=$1 co br remote backend tmp mode tip rc=0 refusal rest have fp
   co=$(hp_checkout_path "$repo") || return 2
   br=$(hp_state_branch "$repo"); remote=$(hp_state_remote "$repo")
   backend=$(hp_backend "$repo")
@@ -500,8 +582,14 @@ hp_ensure_checkout() {
     hp_refuse_tip "$repo" "$tip" || { hp_unlock; return 2; }
     mode=remote
   else
-    if hp_has_remote "$repo" && [ ! -f "$(hp_stamp_path "$repo")" ]; then
-      echo "sdd-dir: status=needs-sync: this repository has a remote and no state branch here; run sdd-state sync <plan> first (or sdd-state sync --assume-absent <plan>)" >&2
+    if hp_has_remote "$repo" && ! hp_stamp_ok "$repo"; then
+      have=$(head -n 1 "$(hp_stamp_path "$repo")" 2>/dev/null)
+      fp=$(hp_remote_fingerprint "$repo") || fp=unavailable
+      if [ -n "$have" ]; then
+        echo "$HP_PROG: status=needs-sync: the fetch stamp names '$have' but the configured remote, branch and URL fingerprint are '$remote $br $fp'; run sdd-state sync <plan> first" >&2
+      else
+        echo "$HP_PROG: status=needs-sync: this repository has a remote and no state branch here; run sdd-state sync <plan> first (or sdd-state sync --assume-absent <plan>)" >&2
+      fi
       hp_unlock; return 2
     fi
     mode=orphan
@@ -529,7 +617,7 @@ hp_ensure_checkout() {
     esac
   fi
   if [ "$rc" -ne 0 ]; then
-    echo "sdd-dir: git worktree add (or its tracking setup) failed (rc=$rc); this repository uses the plain cache (backend=plain)" >&2
+    echo "$HP_PROG: git worktree add (or its tracking setup) failed (rc=$rc); this repository uses the plain cache (backend=plain)" >&2
     git -C "$repo" worktree remove --force "$tmp" >/dev/null 2>&1 || rm -rf "$tmp"
     hp_write_backend "$repo" plain || { hp_unlock; return 2; }
     hp_unlock; printf 'plain %s\n' "$(hp_plain_root "$repo")"; return 0
@@ -547,7 +635,7 @@ hp_ensure_checkout() {
   # root files pass, so the call is the same in all three modes.
   hp_verify_checkout "$repo" "$tmp" "$br" || { git -C "$repo" worktree remove --force "$tmp" >/dev/null 2>&1 || rm -rf "$tmp"; hp_unlock; return 2; }
   hp_refuse_tip "$tmp" "$(git -C "$tmp" rev-parse HEAD)" || { git -C "$repo" worktree remove --force "$tmp" >/dev/null 2>&1 || rm -rf "$tmp"; hp_unlock; return 2; }
-  git -C "$repo" worktree move "$tmp" "$co" >/dev/null 2>&1 || { echo "sdd-dir: git worktree move of $tmp to $co failed; remove whatever occupies $co and run again" >&2; hp_unlock; return 2; }
+  git -C "$repo" worktree move "$tmp" "$co" >/dev/null 2>&1 || { echo "$HP_PROG: git worktree move of $tmp to $co failed; remove whatever occupies $co and run again" >&2; hp_unlock; return 2; }
   hp_write_backend "$repo" branch || { hp_unlock; return 2; }
   hp_unlock
   printf 'branch %s\n' "$co"
@@ -562,9 +650,10 @@ hp_ensure_checkout() {
 # and either holds the plan, exit 2 naming both, because choosing one would
 # hide the other's ledger lines or revive a finished dossier. Records the source tip in the backend file. Callers hold the
 # repository lock. A plain fallback never starts an empty ledger over
-# branch state: a failed archive is exit 2 and leaves no destination,
-# because the workspace is published by one rename from a staging
-# directory.
+# branch state: a failed archive leaves no destination, because the
+# workspace is published by one rename from a staging directory. Returns 1
+# for a failure it did not report, 2 after printing its own refusal; the
+# backend is recorded only after the ledger is verified at the destination.
 hp_materialize_plain() {
   local repo=$1 ws=$2 dest=$3 br remote local_tip remote_tip tip root staging archive_rc tar_rc local_has remote_has rc refusal rest
   [ -f "$dest/progress.md" ] && return 0
@@ -583,7 +672,7 @@ hp_materialize_plain() {
       git -C "$repo" cat-file -e "$local_tip:plans/$ws/progress.md" 2>/dev/null && local_has=1
       git -C "$repo" cat-file -e "$remote_tip:plans/$ws/progress.md" 2>/dev/null && remote_has=1
       if [ "$local_has" -eq 0 ] && [ "$remote_has" -eq 0 ]; then return 0; fi
-      echo "sdd-dir: $br ($local_tip) and $remote/$br ($remote_tip) have diverged and at least one of them holds plans/$ws; reconcile them (sdd-state sync under the branch backend, or merge the state branch) before the plain fallback can materialize this plan" >&2
+      echo "$HP_PROG: $br ($local_tip) and $remote/$br ($remote_tip) have diverged and at least one of them holds plans/$ws; reconcile them (sdd-state sync under the branch backend, or merge the state branch) before the plain fallback can materialize this plan" >&2
       return 2
     fi
   else
@@ -598,12 +687,12 @@ hp_materialize_plain() {
   # because the next call extracts it again from the same tip.
   rc=0; refusal=$(hp_tree_refusal "$repo" "$tip") || rc=$?
   if [ "$rc" -eq 2 ]; then
-    echo "sdd-dir: $tip could not be read as a tree; refusing to materialize the plain workspace from it. Fetch the state branch again and retry; if it persists, the repository needs repair" >&2
+    echo "$HP_PROG: $tip could not be read as a tree; refusing to materialize the plain workspace from it. Fetch the state branch again and retry; if it persists, the repository needs repair" >&2
     return 2
   fi
   if [ "$rc" -ne 0 ]; then
     rest=${refusal#* }
-    echo "sdd-dir: ${tip:0:7} on $br carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to materialize the plain workspace from it. Remove it on the host that committed it and commit the removal on the state branch, push, then fetch that branch here (git fetch $remote $br; under the plain backend sdd-state sync does not fetch) and run sdd-dir again" >&2
+    echo "$HP_PROG: ${tip:0:7} on $br carries a ${refusal%% *} ${rest%% *} at ${rest#* }; refusing to materialize the plain workspace from it. Remove it on the host that committed it and commit the removal on the state branch, push, then fetch that branch here (git fetch $remote $br; under the plain backend sdd-state sync does not fetch) and run sdd-dir again" >&2
     return 2
   fi
   root=$(dirname "$(dirname "$dest")")
@@ -617,15 +706,26 @@ hp_materialize_plain() {
   # staging directories are leftovers of interrupted runs (callers hold the
   # lock, so none is live).
   rm -rf "${root:?}"/.materialize.* 2>/dev/null
-  staging=$(mktemp -d "$root/.materialize.XXXXXX") || return 2
+  staging=$(mktemp -d "$root/.materialize.XXXXXX") || return 1
   # Archive from the top level: a pathspec is relative to the current
   # directory, and the plan may sit in a subdirectory of the work tree.
   git -C "$(git -C "$repo" rev-parse --show-toplevel)" archive "$tip" "plans/$ws" | tar -x -C "$staging"
   archive_rc=${PIPESTATUS[0]} tar_rc=${PIPESTATUS[1]}
-  if [ "$archive_rc" -ne 0 ] || [ "$tar_rc" -ne 0 ] || [ ! -f "$staging/plans/$ws/progress.md" ]; then rm -rf "$staging"; return 2; fi
+  if [ "$archive_rc" -ne 0 ] || [ "$tar_rc" -ne 0 ] || [ ! -f "$staging/plans/$ws/progress.md" ]; then rm -rf "$staging"; return 1; fi
   hp_contained "$staging" "plans/$ws" || { rm -rf "$staging"; return 2; }
-  rm -rf "$dest"
-  if ! mv "$staging/plans/$ws" "$dest"; then rm -rf "$staging"; return 2; fi
+  # The destination must be clear ground when the staged copy is renamed
+  # onto it: BSD mv nests into a directory that reappeared and reports
+  # success with the ledger one level too deep, and the backend record
+  # would then vouch for a workspace that is not there.
+  # Test hook: the destination appears, with content, right before the rename.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in materialize-before-publish:*) mkdir -p "$root/plans/${HYPERPOWERS_TEST_WRITER_AT#materialize-before-publish:}" && : > "$root/plans/${HYPERPOWERS_TEST_WRITER_AT#materialize-before-publish:}/stray" ;; esac
+  # Nothing at the destination is ever cleared by the helper. rename(2)
+  # replaces an empty directory atomically and refuses one that holds
+  # anything (ENOTEMPTY) or that is not a directory; BSD mv would nest the
+  # staged copy inside it. What a human or another tool left there stays
+  # for them to remove.
+  if ! node -e 'require("fs").renameSync(process.argv[1], process.argv[2])' "$staging/plans/$ws" "$dest" 2>/dev/null; then rm -rf "$staging"; return 1; fi
+  if [ ! -f "$dest/progress.md" ] || [ -e "$dest/$ws" ]; then rm -rf "$staging"; return 1; fi
   rm -rf "$staging"
   hp_write_backend "$repo" "plain source=$tip"
 }

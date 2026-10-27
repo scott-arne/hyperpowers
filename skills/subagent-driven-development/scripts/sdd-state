@@ -24,6 +24,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+HP_PROG=sdd-state
 # shellcheck source=sdd-common.sh
 . "$SCRIPT_DIR/sdd-common.sh"
 
@@ -69,7 +70,9 @@ resolve_plan_basic() {
 resolve_plan() {
   local ensure
   resolve_plan_basic "$1"
-  ensure=$(hp_ensure_checkout "$PLAN_DIR") || exit 2
+  # The grammar is one status line on stdout for every outcome; the library
+  # has already said on stderr why the checkout could not be created.
+  ensure=$(hp_ensure_checkout "$PLAN_DIR") || { echo "status=error"; exit 2; }
   BACKEND=${ensure%% *}
   ROOT=${ensure#* }
   WSDIR="$ROOT/plans/$WS"
@@ -238,20 +241,43 @@ recover_import_backup() {
   done
   return 1
 }
+# <legacy path>: set every <path>.importing-* copy aside as
+# <path>.imported-<UTC>-<pid>, the name a complete import leaves. The copy
+# stays beside the pointer for a session on the previous plugin that still
+# holds the legacy ledger open, and the plain-cache reclaim takes it with its
+# root after 14 idle days. `.imported-` is not `.importing-`:
+# recover_import_backup and reclaim_plain match the latter only. A name that
+# is already taken gets a counter, so BSD mv never nests one copy in another.
+# Returns 0 when no .importing-* copy is left, 1 otherwise.
+set_aside_imported() {
+  local b kept n=0 left=0
+  for b in "$1".importing-*; do
+    [ -d "$b" ] || continue
+    kept="$1.imported-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    while [ -e "$kept" ] || [ -L "$kept" ]; do n=$((n + 1)); kept="$1.imported-$(date -u +%Y%m%dT%H%M%SZ)-$$-$n"; done
+    mv "$b" "$kept" 2>/dev/null || { echo "sdd-state: the imported source could not be set aside at $kept; it is still at $b and the next import will try again" >&2; left=1; }
+  done
+  return "$left"
+}
 # <candidate> <backup> <ref> <stage> <installed>: undo an import that failed
 # after the source was renamed aside. <installed> is "" (nothing published),
 # "whole" (the destination was published by one rename) or "ledger" (entries
 # were installed into an existing destination). Leaves no ledger in the
 # destination, puts the source back, releases the lock and prints the
-# failure line; the caller returns 2.
+# failure line; the caller returns 2. A failure after the set-aside finds no
+# backup at <backup>: the source is then the newest kept copy, and it goes
+# back from there, so a failed relink still leaves the source where it was.
 import_abort() {
+  local src
   [ -z "$4" ] || rm -rf "$4"
   case "$5" in
     whole) rm -rf "$dest" ;;
     ledger) rm -f "$dest/progress.md" ;;
   esac
   [ ! -L "$3" ] || rm -f "$3"
-  if [ ! -e "$3" ]; then mv "$2" "$3" 2>/dev/null || echo "sdd-state: could not restore the legacy workspace; it is at $2" >&2; fi
+  src=$2
+  [ -d "$src" ] || src=$(ls -d "$3".imported-* 2>/dev/null | tail -n 1)
+  if [ ! -e "$3" ]; then mv "${src:-$2}" "$3" 2>/dev/null || echo "sdd-state: could not restore the legacy workspace; it is at ${src:-$2}" >&2; fi
   if [ "$1" != "$3" ] && [ ! -e "$1" ] && [ ! -L "$1" ]; then ln -s "$3" "$1" 2>/dev/null || true; fi
   hp_unlock
   echo "status=import-failed from=$(enc "$1")"
@@ -287,10 +313,12 @@ import_published() {
 # <candidate> <backup> <ref>: reconcile a ledger append that landed in the
 # source after it was copied (the ledger is append-only, so the new bytes
 # are added to the destination), verify that the two ledger bodies then
-# agree from their second line on and that nothing else changed, relink the
-# legacy path (or the pointer) to the destination and check it resolves
-# there, and remove the backup. Reconciliation runs before the relink so a
-# crash leaves the legacy path absent and the backup recoverable; any
+# agree from their second line on and that nothing else changed, set the
+# backup aside as the kept copy (set_aside_imported), and relink the legacy
+# path (or the pointer) to the destination and check it resolves there.
+# Reconciliation runs before the set-aside so a crash leaves the legacy path
+# absent and the backup recoverable; a crash after it leaves the kept copy
+# and no pointer, which the next import's candidate loop completes. Any
 # failure or non-append change aborts with the source restored, and the next
 # import starts over from the current source. Reads src_ledger_size and
 # src_manifest_rest from the caller (both taken from the frozen copy).
@@ -305,17 +333,26 @@ import_finish() {
     echo "sdd-state: the legacy workspace changed while it was imported; nothing was moved, run import again" >&2
     import_abort "$1" "$2" "$3" "" "$installed"; return 2
   fi
+  # The kept copy is made before the pointer: a crash between the two leaves
+  # the destination complete, the copy beside the source's location and no
+  # pointer, and the next import completes the relink (cmd_import). A copy
+  # that cannot be set aside keeps the import unfinished rather than leaving
+  # .importing-* beside a published pointer.
+  set_aside_imported "$3" || { import_abort "$1" "$2" "$3" "" "$installed"; return 2; }
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = import-after-set-aside ]; then hp_unlock; exit 99; fi
   if [ -L "$1" ]; then link=$1; else link=$3; fi
   if [ -n "${HYPERPOWERS_TEST_FAIL_RELINK:-}" ] || ! ln -sfn "$dest" "$link" 2>/dev/null || [ "$(hp_physical_dir "$link" 2>/dev/null)" != "$(hp_physical_dir "$dest")" ]; then
     import_abort "$1" "$2" "$3" "" "$installed"; return 2
   fi
-  rm -rf "$2" || echo "sdd-state: the imported source's backup could not be removed: $2" >&2
   hp_unlock
   if [ "${conflicts:-0}" -gt 0 ]; then echo "status=moved from=$(enc "$1") conflicts=$conflicts"; else echo "status=moved from=$(enc "$1")"; fi
   return 0
 }
 cmd_import() {
-  local plan cache candidates c ref dest dest_phys seen="" stage e name rel stage_manifest backup link rc restored installed conflicts=0 dbody src_ledger_size src_manifest_rest published_prefix_size
+  # installed="" is "nothing this attempt published": the finish of a cutover
+  # interrupted after publication reaches import_finish without setting it,
+  # and an abort there must not remove the destination it found.
+  local plan cache candidates c t ref dest dest_phys seen="" stage e name rel stage_manifest backup link rc restored installed="" conflicts=0 dbody src_ledger_size src_manifest_rest published_prefix_size legacy_root quarantine q repair
   [ $# -eq 1 ] || usage
   plan=$1
   command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 2; }
@@ -357,6 +394,71 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
   while IFS= read -r c; do
     [ -n "$c" ] || continue
     if recover_import_backup "$c"; then restored=1; else restored=0; fi
+    # A kept copy beside an absent candidate (or beside a dangling pointer's
+    # referent, or inside the root the plain-cache reclaim has claimed since)
+    # while the destination already holds a ledger is an import interrupted
+    # between its set-aside and its relink: finish the relink. The copy stays
+    # where it is; only the pointer moves.
+    if [ ! -e "$c" ] && [ -f "$dest/progress.md" ]; then
+      if [ -L "$c" ]; then t=$(readlink "$c"); else t=$c; fi
+      if hp_kept_copy_exists "$t"; then
+        if [ -L "$c" ]; then link=$c; else link=$t; fi
+        # The reclaim can have taken the legacy root with the kept copy
+        # inside it, and the pointer still belongs where the workspace was:
+        # the plans directory comes back empty, holding nothing but the link.
+        mkdir -p "$(dirname "$link")" 2>/dev/null || true
+        if ln -sfn "$dest" "$link" 2>/dev/null && [ "$(hp_physical_dir "$link" 2>/dev/null)" = "$dest_phys" ]; then
+          hp_unlock; echo "status=moved from=$(enc "$c")"; return 0
+        fi
+        hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2
+      fi
+    fi
+    # A candidate with no ledger of its own, while the plain-cache reclaim
+    # holds one for this workspace under the root's staging, quarantine or
+    # deletion name: the dossier is still there, and passing it by would
+    # start a fresh ledger beside a tree phase two deletes in 14 days. The
+    # candidate need not be absent for that. On the plain backend sdd-dir
+    # recreates the root and the empty workspace directory before it calls
+    # import, and its no-argument form recreates the cwd key's root, so
+    # after a reclaim the live candidate is usually an empty directory
+    # rather than a missing one. What a quarantine holds under plans/<ws>
+    # is always a workspace no import ever reached, because an import
+    # renames its source aside to .importing-* or .imported-* first. A
+    # candidate that does hold a ledger keeps the handling below: a
+    # quarantined duplicate beside an established ledger is a split that
+    # predates this check and stays manual.
+    if [ -L "$c" ]; then t=$(readlink "$c"); else t=$c; fi
+    case "$t" in
+      */plans/*)
+        legacy_root=${t%/plans/*}
+        if [ ! -f "$t/progress.md" ]; then
+          for q in "$legacy_root".claiming-*/plans/"${t##*/}"/progress.md "$legacy_root".reclaiming-*/plans/"${t##*/}"/progress.md "$legacy_root".gone-*/plans/"${t##*/}"/progress.md; do
+            [ -f "$q" ] || continue
+            quarantine=${q%/plans/*}
+            # The repair is a move a human makes, and which move depends on
+            # the workspace directory rather than on the root. A root that
+            # is back cannot take the whole quarantine, because BSD mv
+            # would nest it inside, so only the workspace moves; whether
+            # that move needs the empty directory sdd-dir left removed
+            # first, or plans/ created first, is what the root alone does
+            # not say. The root can be there without plans/<ws>: the
+            # no-argument form of sdd-dir creates it that way, so does the
+            # plan form's pointer bookkeeping, and so does a human who
+            # cleared the empty directory after an earlier refusal.
+            if [ ! -e "$legacy_root" ]; then
+              repair="mv $quarantine $legacy_root"
+            elif [ -e "$t" ]; then
+              repair="rmdir $t && mv $quarantine/plans/${t##*/} $t"
+            else
+              repair="mkdir -p ${t%/*} && mv $quarantine/plans/${t##*/} $t"
+            fi
+            hp_unlock
+            echo "sdd-state: the legacy workspace for this plan sits in a cache root the plain-cache reclaim set aside at $quarantine; move it back ($repair) and run sdd-state import $plan again, or remove it (rm -rf \"$quarantine\") if you know that copy is stale" >&2
+            echo "status=error"; return 2
+          done
+        fi
+        ;;
+    esac
     [ -e "$c" ] || continue
     ref=$(hp_physical_dir "$c") || continue
     [ "$ref" != "$dest_phys" ] || continue
@@ -378,6 +480,8 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
           backup="$ref.importing-$$"
           # The source's root is touched before anything is renamed aside, so the
           # 14-day reclaim of plain-cache roots does not take the backup with it.
+          # A finished import leaves <ref>.imported-<UTC>-<pid>, which the
+          # reclaim does take.
           touch "$(dirname "$(dirname "$ref")")" 2>/dev/null || true
           mv "$ref" "$backup" 2>/dev/null || { hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
           import_finish "$c" "$backup" "$ref"; return $?
@@ -396,13 +500,15 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
     fi
     # The cutover is a transaction: the source is renamed aside first, so
     # no new opener can write to it; the staged copy is verified against
-    # that quiesced tree; the legacy path is relinked only after the
-    # installed tree is verified; the backup goes last, after a late ledger
-    # append is reconciled. Any failure removes the installed ledger and
-    # puts the source back.
+    # that quiesced tree; the installed tree is verified; then a late
+    # ledger append is reconciled, the backup is set aside as the kept
+    # copy, and the relink of the legacy path goes last. Any failure
+    # removes the installed ledger and puts the source back.
     backup="$ref.importing-$$"
     # The source's root is touched before anything is renamed aside, so the
     # 14-day reclaim of plain-cache roots does not take the backup with it.
+    # A finished import leaves <ref>.imported-<UTC>-<pid>, which the reclaim
+    # does take.
     touch "$(dirname "$(dirname "$ref")")" 2>/dev/null || true
     mv "$ref" "$backup" 2>/dev/null || { hp_unlock; echo "status=import-failed from=$(enc "$c")"; return 2; }
     stage="$dest.import-$$"
@@ -658,7 +764,8 @@ cmd_finish() {
 # runs implicitly.
 cmd_prune() {
   local repo="" days=30 apply=0 repo_dir co br d name now cutoff c key list="" dead_list="" i tip gd ck
-  local plans=() dead=() tombs=()
+  local tomb_list="" quar_list="" tomb_name tomb_pid tomb_ws tracked t q quar stage s q_pid
+  local plans=() dead=() tombs=() tomb_dead=() quar_idle=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --days) [ $# -ge 2 ] || usage; days=$2; shift 2 ;;
@@ -675,17 +782,63 @@ cmd_prune() {
   if [ "$(hp_backend "$repo_dir")" = plain ]; then echo "status=plain"; return 0; fi
   co=$(hp_checkout_path "$repo_dir"); br=$(hp_state_branch "$repo_dir")
   now=$(date +%s); cutoff=$((now - days * 86400))
-  # <name> -> 0 when the plan directory is idle: last commit and newest file both older than N days.
+  # <name> -> 0 when the plan directory is idle: last commit and newest
+  # file both older than N days. A traversal that fails (not an empty
+  # answer) keeps the workspace, as it keeps a tomb and a quarantine: a
+  # find that cannot walk a subdirectory prints nothing and exits
+  # non-zero, and reading that as silence would list a dossier nobody
+  # could read, and then delete it.
   idle() {
-    local lc
+    local lc newer
     lc=$(git -C "$co" log -1 --format=%ct -- "plans/$1" 2>/dev/null)
-    [ -n "$lc" ] && [ "$lc" -lt "$cutoff" ] && [ -z "$(find "$co/plans/$1" -type f -mtime -"$days" 2>/dev/null | head -n 1)" ]
+    [ -n "$lc" ] && [ "$lc" -lt "$cutoff" ] || return 1
+    # Said out loud, in the reclaim's words: a workspace kept because
+    # nobody could walk it looks the same in the output as one that is
+    # simply active.
+    newer=$(find "$co/plans/$1" -type f -mtime -"$days" 2>/dev/null) || {
+      echo "sdd-state: the freshness of the workspace at $co/plans/$1 could not be read; it was left alone" >&2
+      return 1
+    }
+    [ -z "$newer" ]
+  }
+  # <tomb dir> <pid> <ws> -> 0 when the copy may be quarantined: its
+  # process is gone, nothing in it is newer than N days, and the branch does
+  # not track its workspace. A traversal or a tracking lookup that fails
+  # (not an empty answer) keeps it.
+  tomb_qualifies() {
+    local newer
+    hp_pid_gone "$2" || return 1
+    newer=$(find "$1" -mtime -"$days" 2>/dev/null) || return 1
+    [ -z "$newer" ] || return 1
+    tracked=$(git -C "$co" ls-tree -d "refs/heads/$br" -- "plans/$3" 2>/dev/null) || return 1
+    [ -z "$tracked" ]
+  }
+  # <quarantined dir> -> 0 when nothing in it is newer than N days: the
+  # quarantine touched it when it was made, and a late writer refreshes it,
+  # so the clock measures silence since the last of those.
+  quarantine_idle() {
+    local newer
+    newer=$(find "$1" -mtime -"$days" 2>/dev/null) || return 1
+    [ -z "$newer" ]
   }
   # With --apply the selection itself runs under the lock, and each candidate
   # is revalidated right before its removal; a workspace that became active
   # in between is kept and reported.
   if [ "$apply" -eq 1 ]; then hp_lock "$repo_dir" || return 2; fi
   if [ "$apply" -eq 1 ]; then CO=$co; BRANCH=$br; recover_apply || { hp_unlock; echo "status=error"; return 2; }; fi
+  # A copy a killed --apply left staged at plans/.quarantining-<ws>-<pid>
+  # goes back to its tomb name before anything is listed: the lock is held,
+  # so no other prune owns it, and neither phase lists the staging name.
+  if [ "$apply" -eq 1 ] && [ -e "$co/.git" ]; then
+    for s in "$co"/plans/.quarantining-*; do
+      [ -d "$s" ] && [ ! -L "$s" ] || continue
+      tracked=$(git -C "$co" ls-tree -d "refs/heads/$br" -- "plans/${s##*/}" 2>/dev/null) || continue
+      [ -z "$tracked" ] || continue
+      t="$co/plans/.removing-${s##*/.quarantining-}"
+      if [ -e "$t" ] || [ -L "$t" ]; then echo "sdd-state: a staged copy from an interrupted prune is at $s and its tomb name $t is taken; move it back or delete it by hand" >&2; continue; fi
+      mv "$s" "$t" 2>/dev/null || echo "sdd-state: the staged copy at $s could not be put back at $t; move it back by hand" >&2
+    done
+  fi
   if [ -e "$co/.git" ]; then
     for d in "$co"/plans/*/; do
       [ -d "$d" ] || continue
@@ -695,6 +848,33 @@ cmd_prune() {
       list="$list,$(enc "$name")"
     done
   fi
+  # Copies killed removals left at plans/.removing-<ws>-<pid>, and the ones
+  # an earlier --apply quarantined at plans/.pruned-<ws>-<pid>. A tracked
+  # workspace's copy comes back through sync's restore and is never listed.
+  if [ -e "$co/.git" ]; then
+    for t in "$co"/plans/.removing-*; do
+      [ -d "$t" ] && [ ! -L "$t" ] || continue
+      tomb_name=${t##*/}; tomb_pid=${tomb_name##*-}; tomb_ws=${tomb_name#.removing-}; tomb_ws=${tomb_ws%-*}
+      case "$tomb_pid" in ''|*[!0-9]*) continue ;; esac
+      # A tracked path under plans/ is a workspace whatever its name: a
+      # checkout from before this release may hold one named like a tomb.
+      tracked=$(git -C "$co" ls-tree -d "refs/heads/$br" -- "plans/$tomb_name" 2>/dev/null) || continue
+      [ -z "$tracked" ] || continue
+      tomb_qualifies "$t" "$tomb_pid" "$tomb_ws" || continue
+      tomb_dead[${#tomb_dead[@]}]=$t; tomb_list="$tomb_list,$(enc "$tomb_name")"
+    done
+    for q in "$co"/plans/.pruned-*; do
+      [ -d "$q" ] && [ ! -L "$q" ] || continue
+      # The name must parse as a quarantine (a numeric pid last), and a
+      # path the branch tracks is a workspace, never a quarantine.
+      q_pid=${q##*-}; case "$q_pid" in ''|*[!0-9]*) continue ;; esac
+      tracked=$(git -C "$co" ls-tree -d "refs/heads/$br" -- "plans/${q##*/}" 2>/dev/null) || continue
+      [ -z "$tracked" ] || continue
+      quarantine_idle "$q" || continue
+      quar_idle[${#quar_idle[@]}]=$q; quar_list="$quar_list,$(enc "${q##*/}")"
+    done
+  fi
+  tomb_list=${tomb_list#,}; quar_list=${quar_list#,}
   # A checkout is dead when the directory its .git file names is gone. A
   # relative gitdir (worktree.useRelativePaths) resolves against the
   # checkout; an unparsable .git file is not evidence that the clone is gone.
@@ -706,7 +886,7 @@ cmd_prune() {
     if [ ! -d "$gd" ]; then dead[${#dead[@]}]=$(basename "$c"); dead_list="$dead_list,$(basename "$c")"; fi
   done
   list=${list#,}; dead_list=${dead_list#,}
-  if [ "$apply" -eq 0 ]; then echo "status=listed plans=$list checkouts=$dead_list"; return 0; fi
+  if [ "$apply" -eq 0 ]; then echo "status=listed plans=$list checkouts=$dead_list tombs=$tomb_list quarantined=$quar_list"; return 0; fi
   local removed=() removed_paths=() kept_list="" removed_list=""
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in prune-before-remove:*) printf 'concurrent write\n' >> "$co/${HYPERPOWERS_TEST_WRITER_AT#prune-before-remove:}" ;; esac
   CO=$co
@@ -732,6 +912,61 @@ cmd_prune() {
     i=0
     while [ "$i" -lt "${#tombs[@]}" ]; do discard_tomb "${tombs[$i]}" || true; i=$((i + 1)); done
   fi
+  # Phase one: a listed copy is staged under a name neither phase lists,
+  # re-checked there (a writer with the directory open appends into it,
+  # which the mtime check sees), touched so the clock starts again, and
+  # only then renamed to its quarantine name; any doubt puts it back, and a
+  # crash anywhere in between leaves a staged copy the next --apply puts
+  # back. Nothing is deleted here, so a writer that still holds the copy
+  # open loses no byte.
+  tomb_list=""
+  i=0
+  while [ "$i" -lt "${#tomb_dead[@]}" ]; do
+    t=${tomb_dead[$i]}; i=$((i + 1))
+    tomb_name=${t##*/}; tomb_pid=${tomb_name##*-}; tomb_ws=${tomb_name#.removing-}; tomb_ws=${tomb_ws%-*}
+    [ -d "$t" ] && [ ! -L "$t" ] || continue
+    stage="$co/plans/.quarantining-${tomb_name#.removing-}"; quar="$co/plans/.pruned-${tomb_name#.removing-}"
+    [ ! -e "$stage" ] && [ ! -L "$stage" ] && [ ! -e "$quar" ] && [ ! -L "$quar" ] || continue
+    mv "$t" "$stage" 2>/dev/null || continue
+    if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = prune-after-stage ]; then hp_unlock; exit 99; fi
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+      prune-after-tomb-rename:*) [ "${HYPERPOWERS_TEST_WRITER_AT#prune-after-tomb-rename:}" != "$tomb_name" ] || touch "$stage/progress.md" ;;
+      prune-reoccupy-tomb:*) [ "${HYPERPOWERS_TEST_WRITER_AT#prune-reoccupy-tomb:}" != "$tomb_name" ] || { touch "$stage/progress.md"; mkdir -p "$t"; } ;;
+    esac
+    # A re-check that fails, or a clock that cannot be restarted, is doubt:
+    # the copy goes back under its old name, after the same destination
+    # check every rename here makes (BSD mv nests into an occupied one).
+    if ! tomb_qualifies "$stage" "$tomb_pid" "$tomb_ws" || ! touch "$stage"; then
+      if [ -e "$t" ] || [ -L "$t" ]; then echo "sdd-state: the copy renamed to $stage could not be put back at $t, which is occupied again; move it back by hand" >&2; continue; fi
+      mv "$stage" "$t" 2>/dev/null || echo "sdd-state: the copy renamed to $stage could not be put back at $t; move it back by hand" >&2
+      continue
+    fi
+    # The clock started on the staged copy, and rename keeps it. The
+    # destination is checked here, at the rename, like every other.
+    [ ! -e "$quar" ] && [ ! -L "$quar" ] || { echo "sdd-state: $quar appeared while $stage was staged; the next prune puts it back" >&2; continue; }
+    mv "$stage" "$quar" 2>/dev/null || { echo "sdd-state: the staged copy at $stage could not be published at $quar; the next prune puts it back" >&2; continue; }
+    tomb_list="$tomb_list,$(enc "$tomb_name")"
+  done
+  tomb_list=${tomb_list#,}
+  # Phase two: a quarantined copy that has been silent for N days is
+  # renamed aside once more, re-checked, deleted, and verified gone.
+  quar_list=""
+  i=0
+  while [ "$i" -lt "${#quar_idle[@]}" ]; do
+    q=${quar_idle[$i]}; i=$((i + 1))
+    [ -d "$q" ] && [ ! -L "$q" ] || continue
+    [ ! -e "$q.pruning-$$" ] && [ ! -L "$q.pruning-$$" ] || continue
+    mv "$q" "$q.pruning-$$" 2>/dev/null || continue
+    if ! quarantine_idle "$q.pruning-$$"; then
+      if [ -e "$q" ] || [ -L "$q" ]; then echo "sdd-state: the copy renamed aside at $q.pruning-$$ could not be put back at $q, which is occupied again; move it back by hand" >&2; continue; fi
+      mv "$q.pruning-$$" "$q" 2>/dev/null || echo "sdd-state: the copy renamed aside at $q.pruning-$$ could not be put back at $q; move it back by hand" >&2
+      continue
+    fi
+    rm -rf "$q.pruning-$$" 2>/dev/null
+    if [ -e "$q.pruning-$$" ] || [ -L "$q.pruning-$$" ]; then echo "sdd-state: the copy at $q.pruning-$$ could not be removed; remove it by hand" >&2; continue; fi
+    quar_list="$quar_list,$(enc "${q##*/}")"
+  done
+  quar_list=${quar_list#,}
   hp_unlock
   list=${removed_list#,}; kept_list=${kept_list#,}
   # Each dead checkout goes under its own key's lock: the gitdir is re-read
@@ -752,7 +987,7 @@ cmd_prune() {
     dead_list="$dead_list,$key"
   done
   dead_list=${dead_list#,}
-  echo "status=pruned plans=$list kept=$kept_list checkouts=$dead_list"
+  echo "status=pruned plans=$list kept=$kept_list checkouts=$dead_list tombs=$tomb_list quarantined=$quar_list"
 }
 
 # --- sync --------------------------------------------------------------------
@@ -890,12 +1125,22 @@ ledger_apply() {
 # files are checked out; files the target deletes are removed, a ledger among
 # them through remove_verified. Any failure returns 2; a ledger rewritten
 # locally returns 5 (from ledger_apply); a changed ledger the target deletes
-# returns 6.
+# returns 6. Returns 4 when a path it must write or remove sits under a
+# symbolic link; the callers turn that into a repair the human can act on.
+# Every workspace the apply writes into or removes from comes back whole:
+# every path the target tracks under it that is still missing afterwards
+# is published from the target.
 apply_files() {
-  local S=$1 target=$2 path dir tmp half
+  local S=$1 target=$2 path dir tmp half ws i meta n=0 last_ws="" touched_ws=()
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    hp_contained "$CO" "$path" || return 2
+    hp_contained "$CO" "$path" || return 4
+    # Every workspace this walk writes into is remembered: the diff names
+    # only what changed between S and the target, and a directory an
+    # interrupted apply left holding those files alone would have the next
+    # snapshot record its unchanged siblings as deletions. git lists paths
+    # sorted, so one workspace's paths are contiguous.
+    case "$path" in plans/*/*) ws=${path#plans/}; ws=${ws%%/*}; [ "$ws" = "$last_ws" ] || touched_ws[${#touched_ws[@]}]=$ws; last_ws=$ws ;; esac
     mkdir -p "$(dirname "$CO/$path")" || return 2
     case "$path" in
       plans/*/progress.md)
@@ -932,7 +1177,12 @@ apply_files() {
   done < <(git -C "$CO" diff --name-only --diff-filter=AM "$S" "$target")
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    hp_contained "$CO" "$path" || return 2
+    hp_contained "$CO" "$path" || return 4
+    # The delete walk records the workspace too: a deletion-only apply met
+    # by a link at the directory must bring the rest back after the repair.
+    # A workspace the target empties (a remote finish) tracks nothing
+    # afterwards, so the pass below restores nothing there.
+    case "$path" in plans/*/*) ws=${path#plans/}; ws=${ws%%/*}; [ "$ws" = "$last_ws" ] || touched_ws[${#touched_ws[@]}]=$ws; last_ws=$ws ;; esac
     case "$path" in
       plans/*/progress.md)
         dir=$(dirname "$CO/$path")
@@ -940,7 +1190,65 @@ apply_files() {
       *) rm -f "$CO/$path" 2>/dev/null; [ ! -e "$CO/$path" ] || return 2 ;;
     esac
   done < <(git -C "$CO" diff --name-only --diff-filter=D "$S" "$target")
+  # Each workspace this apply wrote into or removed from comes back whole:
+  # every path the target tracks under it that is still missing is
+  # published from the target, with its tracked mode. A link at such a
+  # path is refused and named, never skipped: skipped, the next snapshot
+  # would commit it onto the branch. The publish is one link(2) from a
+  # temporary copy in the .restore sidecar at the checkout root (never
+  # inside a workspace, where a crash would leave it for a snapshot to
+  # commit), so a file a writer creates between the check and the publish
+  # is theirs; a ledger a writer creates there, before the check or after
+  # it, is reconciled, never adopted.
+  i=0
+  while [ "$i" -lt "${#touched_ws[@]}" ]; do
+    ws=${touched_ws[$i]}; i=$((i + 1))
+    while IFS=$'\t' read -r meta path; do
+      [ -n "$path" ] || continue
+      hp_contained "$CO" "$path" || return 4
+      if [ -e "$CO/$path" ]; then
+        # A ledger that is already there is one a writer recreated while
+        # the marker was down: reconciled against the branch's, never left
+        # for the next snapshot to publish over it.
+        case "$path" in plans/*/progress.md) [ -f "$CO/$path" ] || return 2; ledger_apply "$path" "$S" "$target" || return $? ;; esac
+        continue
+      fi
+      # recover_apply checked the sidecar at the top of the locked section,
+      # with the whole apply between that check and this write; mkdir -p on
+      # a link to a directory keeps the link, so the copy would land
+      # outside the checkout.
+      # Test hook: a writer replaces the sidecar with a link in that window.
+      case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-link-restore:*) rm -rf "$CO/.restore"; ln -s "${HYPERPOWERS_TEST_WRITER_AT#sync-link-restore:}" "$CO/.restore" ;; esac
+      if [ -L "$CO/.restore" ]; then
+        echo "sdd-state: $CO/.restore is a symbolic link; refusing to stage a restore copy through it" >&2
+        return 2
+      fi
+      mkdir -p "$(dirname "$CO/$path")" "$CO/.restore" || return 2
+      n=$((n + 1)); tmp="$CO/.restore/$$.$n"; rm -f "$tmp"
+      git -C "$CO" show "$target:$path" > "$tmp" || { rm -f "$tmp"; return 2; }
+      case "$meta" in 100755*) chmod 755 "$tmp" || { rm -f "$tmp"; return 2; } ;; esac
+      if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = restore-after-copy ]; then hp_unlock; exit 99; fi
+      # Test hook: a writer creates the file right before the publish.
+      case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-restore:*) [ "${HYPERPOWERS_TEST_WRITER_AT#sync-before-restore:}" != "$path" ] || printf 'concurrent write\n' > "$CO/$path" ;; esac
+      if ! ln "$tmp" "$CO/$path" 2>/dev/null; then
+        rm -f "$tmp"
+        [ -e "$CO/$path" ] || return 2
+        case "$path" in plans/*/progress.md) [ -f "$CO/$path" ] || return 2; ledger_apply "$path" "$S" "$target" || return $? ;; esac
+        continue
+      fi
+      rm -f "$tmp"
+    done < <(git -C "$CO" ls-tree -r "$target" -- "plans/$ws")
+  done
+  # Emptied, the sidecar goes with the apply that emptied it; a copy a
+  # crash left behind keeps it until the next recovery sweeps it.
+  rmdir "$CO/.restore" 2>/dev/null
   return 0
+}
+# One sentence for the one failure a human clears by hand without reading
+# code: a link where the apply writes or removes a regular file.
+# hp_contained has just named the path.
+say_link_repair() {
+  echo "sdd-state: a symbolic link sits where sync writes or removes a regular file (named above); remove the link, leave $CO/.sync-applying in place, and run sdd-state sync again: the apply finishes from the branch" >&2
 }
 # recover_apply: finish a sync that was interrupted after its marker went
 # down. A journaled ledger rewrite is finished first (it is self-contained).
@@ -954,9 +1262,11 @@ apply_files() {
 # leave it in place and say so, and every publishing subcommand refuses
 # until the tree is repaired.
 recover_apply() {
-  local S="" target="" rc head j path tracked
-  # Both paths this helper writes at the checkout root are read below, the
-  # journals before anything else: a link at either one would have the
+  local S="" target="" rc head j path dir tracked
+  # Four paths at the checkout root are checked for a link before anything
+  # uses them: .rewrite, .sync-applying and .restore, which this helper or
+  # its callers write, and plans, which it only reads. The journals come
+  # before anything else, and a link at any of the four would have the
   # recovery walk, and finish, whatever it points at.
   if [ -L "$CO/.rewrite" ]; then
     echo "sdd-state: $CO/.rewrite is a symbolic link; refusing to journal a ledger rewrite through it" >&2
@@ -966,17 +1276,33 @@ recover_apply() {
     echo "sdd-state: $CO/.sync-applying is a symbolic link; refusing to write the sync marker through it" >&2
     return 2
   fi
+  if [ -L "$CO/.restore" ]; then
+    echo "sdd-state: $CO/.restore is a symbolic link; refusing to sweep restore copies through it" >&2
+    return 2
+  fi
+  # The sweep below and every apply walk under plans/: a link there would
+  # take both out of the checkout.
+  if [ -L "$CO/plans" ]; then
+    echo "sdd-state: $CO/plans is a symbolic link; refusing to run recovery through it" >&2
+    return 2
+  fi
   # Defence in depth for a checkout created before the tree validation: the
   # sidecars are this host's own interrupted state, so a branch that tracks
   # one is carrying somebody else's, and the loop below would run it.
-  tracked=$(git -C "$CO" ls-tree --full-tree HEAD -- .sync-applying .rewrite 2>/dev/null) || tracked=""
+  tracked=$(git -C "$CO" ls-tree --full-tree HEAD -- .sync-applying .rewrite .restore 2>/dev/null) || tracked=""
   if [ -n "$tracked" ]; then
     echo "sdd-state: the state branch tracks a recovery sidecar at ${tracked#*$'\t'}; refusing to run recovery from committed files. Remove it from the branch on the host that committed it, push, then sync again" >&2
     return 2
   fi
   # A new ledger interrupted between its temporary copy and its publish
-  # leaves that copy inside a workspace, where a snapshot would commit it.
-  rm -f "$CO"/plans/*/progress.md.new.* 2>/dev/null
+  # leaves that copy inside a workspace, where a snapshot would commit it;
+  # only real workspace directories are swept, never a link at plans/<ws>.
+  # A restored file's copy lives in the .restore sidecar, swept whole.
+  for dir in "$CO"/plans/*/; do
+    [ -d "$dir" ] && [ ! -L "${dir%/}" ] || continue
+    rm -f "$dir"progress.md.new.* 2>/dev/null
+  done
+  rm -rf "$CO/.restore" 2>/dev/null
   for j in "$CO"/.rewrite/*.journal; do
     [ -f "$j" ] || continue
     rewrite_finish "${j%.journal}" || { echo "sdd-state: an interrupted ledger rewrite left $j and finishing it failed; check the ledger it names, then remove it and its .staged file" >&2; return 2; }
@@ -1008,6 +1334,7 @@ recover_apply() {
   fi
   git -C "$CO" reset -q 2>/dev/null
   apply_files "$S" "$target"; rc=$?
+  if [ "$rc" -eq 4 ]; then say_link_repair; return 2; fi
   if [ "$rc" -ne 0 ]; then
     echo "sdd-state: an interrupted sync left $CO/.sync-applying and finishing it failed (rc=$rc); repair the working tree under $CO and run sdd-state sync again" >&2
     return 2
@@ -1050,7 +1377,7 @@ restore_tombs() {
 # after the ref moved (the marker stays; the next call finishes it), 2 error.
 # Controllers write without the lock, so the working tree is live.
 apply_target() {
-  local S=$1 target=$2 pending line status path left refusal rest res dir rc i refused tombs=() dirs=()
+  local S=$1 target=$2 line status path top tracked incoming left refusal rest res dir rc i refused tombs=() dirs=()
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-before-apply:*) printf 'concurrent write\n' >> "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-before-apply:}" ;; esac
   if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = sync-before-apply ]; then
     : > "$CO/.sync-paused"
@@ -1058,36 +1385,88 @@ apply_target() {
     rm -f "$CO/.sync-paused"
   fi
   restore_tombs
-  pending=$(git -C "$CO" status --porcelain -- plans/ 2>/dev/null)
-  if [ -n "$pending" ]; then
-    refused=0
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      status=${line:0:2}; path=${line:3}
-      case "$status|$path" in
-        " M|plans/"*"/progress.md") continue ;;
-      esac
-      # A copy a killed removal left aside is not a concurrent write: it is
-      # cleared by finish, by sdd-dir and by the restore above, and
-      # treating it as one would wedge every later sync on this repository.
-      case "$path" in "plans/.removing-"*) continue ;; esac
-      # A tracked file missing from a workspace: the restore above left the
-      # copy that holds it only when the workspace is occupied again, and
-      # named it there, so nothing more is said about this row; telling a
-      # human to move or delete a file that is gone would be wrong.
-      case "$status|$path" in
-        " D|plans/"*)
-          left=${path#plans/}; left=${left%%/*}
-          if ! ls -d "$CO/plans/.removing-$left-"* >/dev/null 2>&1; then
-            [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is committed on the state branch but missing from the checkout and holds the apply; put it back or finish its plan, then run sdd-state sync again" >&2
-          fi
-          refused=1; continue ;;
-      esac
-      [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is not part of a plan workspace and holds the apply; inspect it, move or delete it, then run sdd-state sync again" >&2
-      refused=1
-    done < <(printf '%s\n' "$pending")
-    if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
-  fi
+  # Rows are read NUL-delimited: the porcelain format C-quotes a path with
+  # a space or an unusual byte, and a quoted row would match none of the
+  # exemptions below. A rename row carries a second field, consumed here.
+  # -uall lists untracked files one by one: with no tracked entry under
+  # plans/, git would otherwise collapse the directory to a single
+  # "?? plans/" row, which no exemption names, so one leftover there would
+  # hold every sync and the advice would name the dossier root.
+  # snapshot_pending runs before this scan in cmd_sync, so a workspace not
+  # yet snapshotted is tracked by the time the scan runs and -uall cannot
+  # refuse it.
+  refused=0
+  while IFS= read -r -d '' line; do
+    [ -n "$line" ] || continue
+    status=${line:0:2}; path=${line:3}
+    case "$status" in R*|C*) IFS= read -r -d '' _ ;; esac
+    case "$status|$path" in
+      " M|plans/"*"/progress.md") continue ;;
+    esac
+    # A copy a killed removal left aside is not a concurrent write: it is
+    # cleared by finish, by sdd-dir and by the restore above, and
+    # treating it as one would wedge every later sync on this repository.
+    # A copy prune quarantined at plans/.pruned-*, or one staged on its way
+    # there at plans/.quarantining-*, is as much a removal's leftover as a
+    # tomb, and waits there for a later prune; holding the apply on it
+    # would wedge every sync for as long as it sits.
+    case "$path" in
+      "plans/.removing-"*|"plans/.pruned-"*|"plans/.quarantining-"*)
+        # Only an entry neither side of the apply tracks is a leftover: a
+        # workspace from before this release may carry such a name, and
+        # its dirty rows hold the apply like any other's (snapshot_pending
+        # skips dotted directories, so nothing else would publish them).
+        # The lookup asks for any entry, not -d: a tracked file directly
+        # under plans/ is no more a leftover than a tracked directory, and
+        # -d would answer nothing for it and exempt its dirty row.
+        # A lookup that fails counts as tracked.
+        top=${path#plans/}; top=${top%%/*}
+        tracked=$(git -C "$CO" ls-tree "$S" -- "plans/$top" 2>/dev/null) || tracked=x
+        incoming=$(git -C "$CO" ls-tree "$target" -- "plans/$top" 2>/dev/null) || incoming=unreadable
+        if [ -z "$tracked" ] && [ "$incoming" = unreadable ]; then
+          # Fail closed, but say what actually happened: a human told a
+          # copy collides would go looking for an incoming workspace that
+          # may not be there.
+          echo "sdd-state: the incoming commit could not be read at plans/$top, where an untracked copy sits; nothing was applied. Run sdd-state sync again, and if it persists the repository needs repair" >&2
+          return 2
+        fi
+        if [ -z "$tracked" ] && [ -z "$incoming" ]; then continue; fi
+        if [ -z "$tracked" ]; then
+          # The target adds this name for the first time while a local
+          # removal or prune copy holds it. Exempting the row here would
+          # have the apply write the incoming files into that copy, which
+          # may be the only one of its dossier. The helper never makes a
+          # dotted workspace name (hp_plan_ws_name strips leading dots),
+          # so the incoming entry was committed by hand on some host; the
+          # human decides which of the two survives.
+          #
+          # The destination the line names is at the checkout root, not
+          # under plans/: a copy left there whose name still ends in a pid
+          # parses as a tomb or a quarantine, and a later prune --apply
+          # would delete the very copy this refusal protects. Nothing
+          # reaches a root .aside-*: snapshot_pending and recover_apply
+          # walk plans/*/, prune lists plans/.removing-*, .pruned-* and
+          # .quarantining-*, and this scan is pathspec-limited to plans/.
+          echo "sdd-state: the state branch adds plans/$top, and an untracked copy of that name is already at $CO/plans/$top; nothing was applied, because a removal or prune copy is never written into. Move the local copy out of plans/ (mv '$CO/plans/$top' '$CO/.aside-$top-$$') and run sdd-state sync again" >&2
+          return 2
+        fi ;;
+    esac
+    # A tracked file missing from a workspace: the restore above left the
+    # copy that holds it only when the workspace is occupied again, and
+    # named it there, so nothing more is said about this row; telling a
+    # human to move or delete a file that is gone would be wrong.
+    case "$status|$path" in
+      " D|plans/"*)
+        left=${path#plans/}; left=${left%%/*}
+        if ! ls -d "$CO/plans/.removing-$left-"* >/dev/null 2>&1; then
+          [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is committed on the state branch but missing from the checkout and holds the apply; put it back or finish its plan, then run sdd-state sync again" >&2
+        fi
+        refused=1; continue ;;
+    esac
+    [ "$NAMED_LEFTOVER" -eq 1 ] || echo "sdd-state: $CO/$path is not part of a plan workspace and holds the apply; inspect it, move or delete it, then run sdd-state sync again" >&2
+    refused=1
+  done < <(git -C "$CO" status --porcelain -z -uall -- plans/ 2>/dev/null)
+  if [ "$refused" -eq 1 ]; then NAMED_LEFTOVER=1; return 5; fi
   # The incoming tree is inspected whole before the checkout materializes
   # any of it: the same validation the creation of a checkout runs, so a
   # commit carrying a symbolic link, a submodule entry or a recovery sidecar
@@ -1150,6 +1529,7 @@ apply_target() {
   git -C "$CO" update-ref -m "sdd sync" "refs/heads/$BRANCH" "$target" "$S" 2>/dev/null || { rm -f "$CO/.sync-applying"; return 5; }
   if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = sync-after-update-ref ]; then hp_unlock; exit 99; fi
   git -C "$CO" reset -q 2>/dev/null
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-ref-link:*) rm -f "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-after-ref-link:}"; ln -s /dev/null "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-after-ref-link:}" ;; esac
   # The ref has moved: an attempt a live writer defeats is retried here,
   # never by the caller's loop, whose snapshot would publish the
   # half-applied tree over the target. Three defeats, or a ledger the
@@ -1161,20 +1541,23 @@ apply_target() {
   done
   case "$res" in
     0)
+      # Test hook: a link planted after the apply and before the re-walk.
+      case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-apply-link:*) rm -f "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-after-apply-link:}"; ln -s /dev/null "$CO/${HYPERPOWERS_TEST_WRITER_AT#sync-after-apply-link:}" ;; esac
       # A link that appeared under a path this apply touched (a writer
       # between the checks above and the writes) fails it closed: the marker
       # stays, and every later call refuses until the link is gone.
       while IFS= read -r path; do
         [ -n "$path" ] || continue
-        hp_contained "$CO" "$path" || return 2
+        hp_contained "$CO" "$path" || { say_link_repair; return 2; }
       done < <(git -C "$CO" diff --name-only "$S" "$target")
       rm -f "$CO/.sync-applying"; return 0 ;;
+    4) say_link_repair; return 2 ;;
     5|6) return 7 ;;
     *) return "$res" ;;
   esac
 }
 cmd_sync() {
-  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure
+  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure url_before url_pin fp_before fp_after n nonce pin_count fetch_ref stale_ref old_remote
   REMOTE_FINISHED=""
   # remove_verified (Task 6) and recover_apply live in this file; sync, finish, handoff and snapshot share them.
   while [ $# -gt 0 ]; do
@@ -1208,12 +1591,161 @@ cmd_sync() {
     echo "status=$1 local=$(short "$S") remote=none age=$(age_of "$CO" "$S")"
     return "$2"
   }
-  if [ "$assume" -eq 1 ]; then : > "$stamp"; settle assumed-absent 0; return $?; fi
-  if ! hp_has_remote "$PLAN_DIR"; then : > "$stamp"; settle no-remote 0; return $?; fi
-  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 git -C "$PLAN_DIR" fetch -q "$REMOTE" "+refs/heads/$BRANCH:refs/remotes/$REMOTE/$BRANCH" 2>&1); rc=$?
+  # Removes this process's private fetch ref, on every exit from the fetch.
+  drop_fetch_ref() { git -C "$PLAN_DIR" update-ref -d "$fetch_ref" 2>/dev/null || true; }
+  # Writes the stamp for the endpoint the fetch contacted, or refuses.
+  stamp_fetched() {
+    # The alias check runs again here: a remote named like the alias and
+    # configured during the fetch could have shadowed the pin.
+    if git -C "$PLAN_DIR" config --get-regexp "^remote\.hp-fetch-$$\." >/dev/null 2>&1; then
+      rm -f "$stamp"
+      echo "sdd-state: the repository configured a remote named hp-fetch-$$ during the sync; nothing was stamped. Remove that section from its git config and run sdd-state sync again" >&2
+      return 1
+    fi
+    fp_after=$(hp_remote_fingerprint "$PLAN_DIR") || fp_after=unavailable
+    if [ "$fp_after" != "$fp_before" ] || [ "$(hp_state_remote "$PLAN_DIR") $(hp_state_branch "$PLAN_DIR")" != "$REMOTE $BRANCH" ]; then
+      rm -f "$stamp"
+      echo "sdd-state: the remote changed during the sync (remote, branch or URL); nothing was stamped. Run sdd-state sync again" >&2
+      return 1
+    fi
+    printf '%s %s %s\n' "$REMOTE" "$BRANCH" "$fp_before" > "$stamp"
+  }
+  if [ "$assume" -eq 1 ]; then
+    fp_before=$(hp_remote_fingerprint "$PLAN_DIR") || { echo "sdd-state: the remote's URL could not be fingerprinted (node is required); nothing was stamped. Run sdd-state sync again" >&2; echo "status=error"; return 2; }
+    printf '%s %s %s\n' "$REMOTE" "$BRANCH" "$fp_before" > "$stamp"; settle assumed-absent 0; return $?
+  fi
+  # No remote to earn a stamp against: one written here would vouch for a
+  # remote named later, so none is left and creation rests on hp_has_remote.
+  if ! hp_has_remote "$PLAN_DIR"; then rm -f "$stamp"; settle no-remote 0; return $?; fi
+  # The stamp names the endpoint that was fetched. The remote alias is
+  # mutable, so its URL is read exactly once, here, and both the pin and
+  # the fingerprint come from that one captured string: a repoint anywhere
+  # after this line reaches neither, and the remote, branch and URL are
+  # read again after the fetch, so one that is not undone is caught there
+  # and nothing is stamped.
+  #
+  # The read takes the URL as written. git applies url.<base>.insteadOf
+  # once to whatever a remote carries, so a pin on the already-rewritten
+  # form would be rewritten a second time, to an endpoint the fingerprint
+  # never named. A remote with no url entry has nothing written, so the
+  # rewritten form, which is all get-url can give, stands in; that read is
+  # then the single one.
+  #
+  # remote.<name>.url is multi-valued, and the value wanted is the first:
+  # git fetches from a remote's first URL and get-url reports that one, so
+  # a stamp taken from any other would name an endpoint the fetch never
+  # contacts. config --get returns the last value, hence --get-all and the
+  # first record of it; -z, because a value may hold a newline and a
+  # line-oriented read would truncate it.
+  url_pin=""
+  IFS= read -r -d '' url_pin < <(git -C "$PLAN_DIR" config -z --get-all "remote.$REMOTE.url" 2>/dev/null) || url_pin=""
+  if [ -z "$url_pin" ]; then
+    url_pin=$(git -C "$PLAN_DIR" remote get-url "$REMOTE" 2>/dev/null) || url_pin=""
+  fi
+  # Test hook: a repoint in the interval a second read would have been
+  # exposed to, undone right after the fetch so the stamp check passes.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-url-read:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-url-read:}" ;; esac
+  # Environment configuration needs git 2.31; an older git ignores it and
+  # would fetch nothing, diagnosed as offline, so it is refused by name.
+  # The probe below reads the alias from that configuration too.
+  hp_git_version_at_least 2 31 || { echo "sdd-state: git 2.31 or newer is required to pin the fetch to the fingerprinted URL (found $(git --version)); nothing was stamped" >&2; echo "status=error"; return 2; }
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+    sync-shadow-alias:*) git -C "$PLAN_DIR" config "remote.hp-fetch-$$.url" "${HYPERPOWERS_TEST_WRITER_AT#sync-shadow-alias:}" ;;
+  esac
+  # remote.<name>.url is multi-valued and git takes the first value, so a
+  # repository that configures the alias's name would shadow the pin, and
+  # the probe below with it.
+  if git -C "$PLAN_DIR" config --get-regexp "^remote\.hp-fetch-$$\." >/dev/null 2>&1; then
+    echo "sdd-state: the repository configures a remote named hp-fetch-$$, which the pinned fetch needs for itself; remove that section from its git config and run sdd-state sync again" >&2
+    echo "status=error"; return 2
+  fi
+  # The pin is appended to whatever GIT_CONFIG_* the caller supplied, never
+  # substituted for it, and the URL travels in the environment, not argv.
+  n=${GIT_CONFIG_COUNT:-0}; case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  printf -v "GIT_CONFIG_KEY_$n" '%s' "remote.hp-fetch-$$.url"; printf -v "GIT_CONFIG_VALUE_$n" '%s' "$url_pin"
+  export "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
+  # The endpoint the fetch will contact, derived from the captured string
+  # and nothing else: the alias the fetch will use is asked to expand it,
+  # which applies insteadOf exactly once, as the fetch does. ls-remote
+  # --get-url, not remote get-url, which refuses a remote that only
+  # environment configuration defines; neither contacts the endpoint, and
+  # the URL stays out of argv either way.
+  if [ -n "$url_pin" ]; then
+    url_before=$(GIT_CONFIG_COUNT=$((n + 1)) git -C "$PLAN_DIR" ls-remote --get-url "hp-fetch-$$" 2>/dev/null) || url_before=""
+    if [ -z "$url_before" ]; then
+      unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
+      echo "sdd-state: the remote's URL could not be expanded to the endpoint the fetch would contact; nothing was stamped. Run sdd-state sync again" >&2
+      echo "status=error"; return 2
+    fi
+    fp_before=$(hp_url_fingerprint "$url_before") || { unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"; echo "sdd-state: the remote's URL could not be fingerprinted (node is required); nothing was stamped. Run sdd-state sync again" >&2; echo "status=error"; return 2; }
+  else
+    url_before=""; fp_before=none
+  fi
+  # Test hook: a rewrite rule for the probed endpoint, added in the window
+  # between the probe and the fetch and removed right after it.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-aba-rewrite:*) git -C "$PLAN_DIR" config "url.${HYPERPOWERS_TEST_WRITER_AT#sync-aba-rewrite:}.insteadOf" "$url_before" ;; esac
+  # The probe and the fetch are separate git invocations, each applying the
+  # rewrite rules it finds, so a rule added between them would send the
+  # fetch somewhere the fingerprint never named. The fetch therefore does
+  # not carry the captured URL at all: the alias is repinned to a one-time
+  # name, and a second environment entry maps that name to the endpoint the
+  # probe returned. git rewrites a URL once and prefers the strictly
+  # longest matching insteadOf, so the only rule that could compete is one
+  # whose insteadOf is this exact name, and the name is 128 bits this sync
+  # invented a moment ago: no config file can hold a rule for it, and a
+  # repository rule for the endpoint itself never applies, because what is
+  # matched is the one-time name and not the endpoint. That is why the
+  # uniqueness check above covers the alias and not url.<endpoint>. Should
+  # the mapping somehow fail to apply, the fetch is handed the hp-pin://
+  # URL itself, which no git transport serves, so it fails and reads as
+  # offline instead of contacting anything.
+  pin_count=$((n + 1))
+  if [ -n "$url_before" ]; then
+    nonce=$(node -e 'process.stdout.write(require("crypto").randomBytes(16).toString("hex"))' 2>/dev/null) || nonce=""
+    case "$nonce" in ????????????????????????????????) ;; *) nonce="" ;; esac
+    case "$nonce" in *[!0-9a-f]*) nonce="" ;; esac
+    if [ -z "$nonce" ]; then
+      unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n"
+      echo "sdd-state: the one-time name the pinned fetch is addressed by could not be generated (node is required); nothing was stamped. Run sdd-state sync again" >&2
+      echo "status=error"; return 2
+    fi
+    printf -v "GIT_CONFIG_VALUE_$n" '%s' "hp-pin://$nonce/"
+    printf -v "GIT_CONFIG_KEY_$((n + 1))" '%s' "url.$url_before.insteadOf"
+    printf -v "GIT_CONFIG_VALUE_$((n + 1))" '%s' "hp-pin://$nonce/"
+    export "GIT_CONFIG_KEY_$((n + 1))" "GIT_CONFIG_VALUE_$((n + 1))"
+    pin_count=$((n + 2))
+  fi
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+    sync-aba-fetch:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-aba-fetch:}" ;;
+  esac
+  # The fetch lands in a ref of this process's own, never straight in the
+  # shared remote-tracking ref: the tip is read from the private ref, so a
+  # fetch another process finishes in between cannot hand this sync a
+  # commit the pinned endpoint never served. A ref whose owner is gone is
+  # a crashed sync's leftover and is swept first; one whose owner is alive
+  # belongs to a sync still running.
+  fetch_ref="refs/hp-fetch/$$"
+  for stale_ref in $(git -C "$PLAN_DIR" for-each-ref --format='%(refname)' refs/hp-fetch 2>/dev/null); do
+    case "${stale_ref##*/}" in ''|*[!0-9]*) continue ;; esac
+    hp_pid_gone "${stale_ref##*/}" && git -C "$PLAN_DIR" update-ref -d "$stale_ref" 2>/dev/null
+  done
+  old_remote=$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")
+  err=$(GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=30 GIT_CONFIG_COUNT=$pin_count git -C "$PLAN_DIR" fetch -q "hp-fetch-$$" "+refs/heads/$BRANCH:$fetch_ref" 2>&1); rc=$?
+  unset "GIT_CONFIG_KEY_$n" "GIT_CONFIG_VALUE_$n" "GIT_CONFIG_KEY_$((n + 1))" "GIT_CONFIG_VALUE_$((n + 1))"
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+    # Both repoint seams put the captured URL back, so stamp_fetched's
+    # re-read sees the remote the fingerprint named.
+    sync-aba-fetch:*|sync-after-url-read:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "$url_pin" ;;
+    sync-after-fetch-set-url:*) git -C "$PLAN_DIR" remote set-url "$REMOTE" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch-set-url:}" ;;
+    sync-aba-rewrite:*) git -C "$PLAN_DIR" config --remove-section "url.${HYPERPOWERS_TEST_WRITER_AT#sync-aba-rewrite:}" ;;
+    # Test hook: another process's fetch finishes between this one and the
+    # read of its tip, leaving its own commit in the shared ref.
+    sync-after-fetch:*) git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-fetch:}" 2>/dev/null ;;
+  esac
   if [ "$rc" -ne 0 ]; then
+    drop_fetch_ref
     case "$err" in
-      *"couldn't find remote ref"*) : > "$stamp"; settle absent 0; return $? ;;
+      *"couldn't find remote ref"*) stamp_fetched || { echo "status=error"; return 2; }; settle absent 0; return $? ;;
     esac
     S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")
     # A default clone has the branch as a remote-tracking ref only; the
@@ -1230,23 +1762,54 @@ cmd_sync() {
     echo "status=offline-no-state local=none remote=none age=0"
     return 1
   fi
-  : > "$stamp"
-  # The remote tip is read once, here, and that sha alone is reconciled: a
-  # fetch by another process cannot swap in a different commit later.
-  R=$(tip_of "$PLAN_DIR" "refs/remotes/$REMOTE/$BRANCH")
-  [ -n "$R" ] || { echo "status=error"; return 2; }
+  stamp_fetched || { drop_fetch_ref; echo "status=error"; return 2; }
+  # The remote tip is read once, here, from this process's own ref, and
+  # that sha alone is reconciled.
+  R=$(tip_of "$PLAN_DIR" "$fetch_ref")
+  [ -n "$R" ] || { drop_fetch_ref; echo "status=error"; return 2; }
+  # The shared remote-tracking ref is then published by compare-and-swap
+  # against the value it held before the fetch (an empty one means it must
+  # not exist yet). A swap this sync loses was won by another fetch of the
+  # same branch, whose tip is as current as this one's, so it is left alone.
+  if [ -n "$old_remote" ]; then
+    git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "$R" "$old_remote" 2>/dev/null || true
+  else
+    git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "$R" "$(hp_zero_oid "$PLAN_DIR")" 2>/dev/null || true
+  fi
   case "${HYPERPOWERS_TEST_WRITER_AT:-}" in sync-after-pin:*) git -C "$PLAN_DIR" update-ref "refs/remotes/$REMOTE/$BRANCH" "${HYPERPOWERS_TEST_WRITER_AT#sync-after-pin:}" 2>/dev/null ;; esac
   # A branch at the state name whose root lacks the exact sentinel belongs
   # to someone else: it is never reconciled or written, and refs and files
   # stay as they are.
   if ! hp_has_sentinel "$PLAN_DIR" "$R"; then
     S=$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")
+    drop_fetch_ref
     echo "sdd-state: $REMOTE/$BRANCH exists but is not a hyperpowers state branch; set git config hyperpowers.stateBranch to another name" >&2
     echo "status=foreign local=$(short "$S") remote=$(short "$R") age=$(age_of "$PLAN_DIR" "$R")"
     return 2
   fi
+  # The first local branch is created here, from R, and never left to
+  # hp_ensure_checkout: with no local branch it builds one from the shared
+  # remote-tracking ref, which a lost compare-and-swap above leaves at
+  # another fetch's tip, and the branch would then hold a commit this sync
+  # neither fingerprinted nor reconciled while the stamp named its own
+  # endpoint. The tree is refused first, exactly as the checkout creation
+  # would refuse it, so a hostile tip never becomes a branch. The swap must
+  # find no branch; losing it means another process created one first, and
+  # hp_ensure_checkout continues from that as it always has.
+  if [ -z "$(tip_of "$PLAN_DIR" "refs/heads/$BRANCH")" ]; then
+    hp_refuse_tip "$PLAN_DIR" "$R" || { drop_fetch_ref; echo "status=error"; return 2; }
+    if git -C "$PLAN_DIR" update-ref "refs/heads/$BRANCH" "$R" "$(hp_zero_oid "$PLAN_DIR")" 2>/dev/null; then
+      # The tracking hp_ensure_checkout's remote mode would have recorded:
+      # it adds from the branch name now, so nothing else would.
+      git -C "$PLAN_DIR" config "branch.$BRANCH.remote" "$REMOTE" >/dev/null 2>&1 || true
+      git -C "$PLAN_DIR" config "branch.$BRANCH.merge" "refs/heads/$BRANCH" >/dev/null 2>&1 || true
+    fi
+  fi
   had_co=0; [ -e "$CO/.git" ] && had_co=1
-  ensure=$(hp_ensure_checkout "$PLAN_DIR") || { echo "status=error"; return 2; }
+  ensure=$(hp_ensure_checkout "$PLAN_DIR") || { drop_fetch_ref; echo "status=error"; return 2; }
+  # R is reachable from the branch or the checkout by now, so the private
+  # ref that kept it alive can go.
+  drop_fetch_ref
   if [ "${ensure%% *}" != branch ]; then echo "status=plain"; return 0; fi
   [ "$had_co" -eq 1 ] || created=created
   hp_lock "$PLAN_DIR" || return 2

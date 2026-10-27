@@ -24,6 +24,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+HP_PROG=sdd-dir
 # shellcheck source=sdd-common.sh
 . "$SCRIPT_DIR/sdd-common.sh"
 
@@ -53,33 +54,189 @@ base="$(hp_cache_root)/sdd"
 
 # Reclaim plain-cache roots idle for 14+ days, never the given key's. Left
 # alone the cache grows one root per repository instance forever, and editors
-# that follow agent-touched files hold a watcher per scratch file. An idle
-# root is claimed by renaming it aside (atomic), then re-checked on the
-# claimed tree: an import that got in first left a fresh mtime (it touches
-# the root before anything else) or its backup (`plans/*.importing-*`),
-# and such a root is put back; an import that arrives after the rename
-# finds no root and fails cleanly with nothing lost. Best effort: pruning
-# must never break the contract that stdout is the path.
+# that follow agent-touched files hold a watcher per scratch file. Reclaim is
+# two-phase, because a writer on the previous plugin that still holds a kept
+# import copy's ledger open cannot be excluded: nothing is deleted on the
+# pass that finds a root idle. A root passes under three names. `<key>` is
+# live. `<key>.claiming-<pid>` is a claim in progress: the pass renames the
+# root there (atomic) and re-checks the staged tree, which still carries the
+# mtimes it had — an import that got in first touches the root before it
+# renames its source aside, so a fresh root, a descendant written during the
+# window, or its backup (`plans/*.importing-*`) puts the tree back under
+# `<key>`. Only then is the tree touched, which restarts the clock, and
+# renamed to `<key>.reclaiming-<pid>`: the stamp precedes that name, so no
+# concurrent call ever reads a quarantine as having been quiet for its 14
+# days. A `.claiming-*` left by a crash between the two renames is adopted
+# on a later pass — touched and renamed to the `.reclaiming-` form — so the
+# crashed claim still gets its quiet days. A later call deletes a
+# `.reclaiming-*` root once nothing under it, the directory itself included,
+# is newer than 14 days, after one more rename-aside and re-check. So a late
+# append refreshes the tree and buys 14 more days, and a root another
+# repository's call reclaimed by mistake is recoverable for 14 days under its
+# `.reclaiming-*` name. A root is idle only when nothing under it is newer
+# than 14 days either, so a kept import copy (`plans/*.imported-<UTC>-<pid>`)
+# a slower session still appends to is never claimed. An import that arrives
+# after a rename finds no root and fails cleanly with nothing lost. Best
+# effort: pruning must never break the contract that stdout is the path.
 reclaim_plain() {
-  local r claimed
+  local r pid staged claimed gone quiet
+  # <dir> [extra find predicates] -> 0 nothing under it is newer than 14
+  # days, 1 something is, 2 the traversal could not be read. A failed find
+  # prints nothing and exits non-zero (a permission error on one
+  # subdirectory, a transient I/O error), and the pipe these checks used
+  # to run through hid that status: silence and failure looked alike, so a
+  # tree nobody could read was deleted as idle. Not readable is not idle.
+  # Every call reads the status with "|| quiet=$?": set -e would abort the
+  # script on a bare call that answered 1 or 2.
+  nothing_newer() { local out; out=$(find "$@" -mtime -14 2>/dev/null) || return 2; [ -z "$out" ]; }
+  # <dir> -> 0 the directory's own mtime is older than 14 days, 1 it is
+  # not, 2 it could not be stat'd. A failed stat is not old, for the same
+  # reason.
+  root_is_old() { local out; out=$(find "$1" -maxdepth 0 -mtime +14 2>/dev/null) || return 2; [ -n "$out" ]; }
   for r in "$base"/*/; do
     r=${r%/}
     [ -d "$r" ] && [ ! -L "$r" ] || continue
     [ "${r##*/}" != "$1" ] || continue
-    [ -n "$(find "$r" -maxdepth 0 -mtime +14 2>/dev/null)" ] || continue
-    ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
-    claimed="$r.reclaiming-$$"
-    mv "$r" "$claimed" 2>/dev/null || continue
-    if [ -n "${HYPERPOWERS_TEST_RECLAIM_RACE:-}" ] && [ "$HYPERPOWERS_TEST_RECLAIM_RACE" = "$r" ]; then
-      # Test hook: an importer that touched the root and renamed its source
-      # aside just before the claim.
-      mkdir -p "$claimed/plans/x.importing-1"; touch "$claimed"
-    fi
-    if [ -z "$(find "$claimed" -maxdepth 0 -mtime +14 2>/dev/null)" ] || ls -d "$claimed"/plans/*.importing-* >/dev/null 2>&1; then
-      mv "$claimed" "$r" 2>/dev/null || true
-      continue
-    fi
-    rm -rf "$claimed" 2>/dev/null || true
+    case "${r##*/}" in
+      *.reclaiming-*)
+        # Phase two: the copy a previous pass claimed, quiet ever since.
+        ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
+        # Another repository's pass can rename this root between the glob
+        # that listed it and the read below. Concurrent reclaim is the
+        # design, not a fault, so a root that is gone by now is skipped in
+        # silence; without this the read would answer "could not be read"
+        # and the line would name an ordinary race.
+        [ -d "$r" ] || continue
+        quiet=0; nothing_newer "$r" || quiet=$?
+        if [ "$quiet" -ne 0 ]; then
+          [ "$quiet" -ne 2 ] || echo "sdd-dir: the freshness of the quarantined cache root at $r could not be read; it was left alone" >&2
+          continue
+        fi
+        gone="$r.gone-$$"
+        if [ -e "$gone" ] || [ -L "$gone" ]; then continue; fi
+        mv "$r" "$gone" 2>/dev/null || continue
+        if [ "${HYPERPOWERS_TEST_RECLAIM_RACE:-}" = "gone:$r" ]; then
+          # Test hook: a writer appends to the staged tree, and a session in
+          # the other repository recreates the quarantine, so the put-back
+          # below meets an occupied destination.
+          touch "$gone"
+          mkdir -p "$r"; : > "$r/writer"
+        fi
+        quiet=0; nothing_newer "$gone" || quiet=$?
+        if [ "$quiet" -ne 0 ] || ls -d "$gone"/plans/*.importing-* >/dev/null 2>&1; then
+          [ "$quiet" -ne 2 ] || echo "sdd-dir: the freshness of the cache root staged at $gone could not be read; nothing was deleted" >&2
+          # A session in the other repository can recreate <key> while this
+          # pass walks the staged tree; BSD mv would nest the staged root
+          # inside the new one, where no lookup finds it again.
+          if [ -e "$r" ] || [ -L "$r" ]; then
+            echo "sdd-dir: the cache root staged at $gone could not be put back at $r, which is occupied again; move it back by hand" >&2
+          else
+            mv "$gone" "$r" 2>/dev/null || echo "sdd-dir: the cache root staged at $gone could not be put back at $r; move it back by hand" >&2
+          fi
+          continue
+        fi
+        rm -rf "$gone" 2>/dev/null || true
+        [ ! -e "$gone" ] || echo "sdd-dir: could not delete the reclaimed cache root at $gone" >&2
+        ;;
+      *.claiming-*)
+        # A claim that crashed between its two renames: the tree was already
+        # found idle and re-checked, so it is adopted as a quarantine with a
+        # fresh stamp rather than re-examined. Only a claim whose owner is
+        # gone is adopted: while that call runs, the tree is its to promote
+        # or to put back for an importer that got in, and moving it would
+        # take that choice away.
+        pid=${r##*.claiming-}
+        case "$pid" in ''|*[!0-9]*) continue ;; esac
+        hp_pid_gone "$pid" || continue
+        # A claim another pass adopted between the glob and here is gone,
+        # not unstampable; the other two arms skip a vanished root the same
+        # way, so a normal race never reads as a fault.
+        [ -d "$r" ] || continue
+        claimed="${r%.claiming-*}.reclaiming-$$"
+        if [ -e "$claimed" ] || [ -L "$claimed" ]; then continue; fi
+        # The stamp before the name here too: adopting a claim as a
+        # quarantine that still carries its old timestamps would have the
+        # next call delete it instead of starting its 14 days. A claim
+        # whose stamp cannot be written stays a claim, which a later pass
+        # can adopt once the permission is there.
+        if ! touch "$r" 2>/dev/null; then
+          echo "sdd-dir: the crashed claim at $r could not be given the stamp that starts its grace period, so it stays a claim" >&2
+          continue
+        fi
+        mv "$r" "$claimed" 2>/dev/null || true
+        ;;
+      *)
+        # Phase one: claim an idle root, delete nothing.
+        ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
+        # Gone since the glob listed it, as in phase two above: a race, not
+        # an unreadable tree, so nothing is said about it.
+        [ -d "$r" ] || continue
+        quiet=0; root_is_old "$r" || quiet=$?
+        if [ "$quiet" -ne 0 ]; then
+          [ "$quiet" -ne 2 ] || echo "sdd-dir: the age of the cache root at $r could not be read; it was left alone" >&2
+          continue
+        fi
+        quiet=0; nothing_newer "$r" || quiet=$?
+        if [ "$quiet" -ne 0 ]; then
+          [ "$quiet" -ne 2 ] || echo "sdd-dir: the freshness of the cache root at $r could not be read; it was left alone" >&2
+          continue
+        fi
+        staged="$r.claiming-$$"
+        if [ -e "$staged" ] || [ -L "$staged" ]; then continue; fi
+        mv "$r" "$staged" 2>/dev/null || continue
+        if [ "${HYPERPOWERS_TEST_RECLAIM_RACE:-}" = "$r" ]; then
+          # Test hook: an importer that touched the root and renamed its source
+          # aside just before the claim.
+          mkdir -p "$staged/plans/x.importing-1"; touch "$staged"
+        elif [ "${HYPERPOWERS_TEST_RECLAIM_RACE:-}" = "touch:$r" ]; then
+          # Test hook: the same importer one step earlier, the root touched
+          # and its source not yet renamed aside.
+          touch "$staged"
+        elif [ "${HYPERPOWERS_TEST_RECLAIM_RACE:-}" = "occupy:$r" ]; then
+          # Test hook: the same importer, and a session in the other
+          # repository that recreated the live root while this pass walked
+          # the staged tree.
+          mkdir -p "$staged/plans/x.importing-1"; touch "$staged"
+          mkdir -p "$r"; : > "$r/writer"
+        fi
+        # The staged tree still carries its own mtimes, so the re-check reads
+        # the signals an importer leaves: a fresh root, a descendant written
+        # during the window, or its backup.
+        quiet=0; root_is_old "$staged" || quiet=$?
+        [ "$quiet" -ne 0 ] || { nothing_newer "$staged" -mindepth 1 || quiet=$?; }
+        if [ "$quiet" -ne 0 ] || ls -d "$staged"/plans/*.importing-* >/dev/null 2>&1; then
+          [ "$quiet" -ne 2 ] || echo "sdd-dir: the freshness of the cache root staged at $staged could not be read; it was not claimed" >&2
+          if [ -e "$r" ] || [ -L "$r" ]; then
+            echo "sdd-dir: the cache root staged at $staged could not be put back at $r, which is occupied again; move it back by hand" >&2
+          else
+            mv "$staged" "$r" 2>/dev/null || echo "sdd-dir: the cache root staged at $staged could not be put back at $r; move it back by hand" >&2
+          fi
+          continue
+        fi
+        claimed="$r.reclaiming-$$"
+        if [ -e "$claimed" ] || [ -L "$claimed" ]; then continue; fi
+        # The stamp goes on before the name phase two acts on, and the name
+        # is published only if the stamp landed: a quarantine still carrying
+        # its old timestamps is already idle by phase two's rule, so the
+        # next call would delete it rather than give it its 14 days. The
+        # touch can fail where the rename above succeeded, because a
+        # timestamp needs ownership or write permission on the tree itself
+        # while a rename needs only the parent directory (a root another
+        # user owns in a shared cache). The tree then goes back under its
+        # own name, through the same occupied-destination check a failed
+        # re-check uses.
+        if ! touch "$staged" 2>/dev/null; then
+          echo "sdd-dir: the cache root staged at $staged could not be given the stamp that starts its grace period, so it was not reclaimed" >&2
+          if [ -e "$r" ] || [ -L "$r" ]; then
+            echo "sdd-dir: the cache root staged at $staged could not be put back at $r, which is occupied again; move it back by hand" >&2
+          else
+            mv "$staged" "$r" 2>/dev/null || echo "sdd-dir: the cache root staged at $staged could not be put back at $r; move it back by hand" >&2
+          fi
+          continue
+        fi
+        mv "$staged" "$claimed" 2>/dev/null || true
+        ;;
+    esac
   done
 }
 
@@ -92,6 +249,14 @@ if [ -z "$plan_dir" ]; then
   printf '%s\n' "$dir"
   exit 0
 fi
+
+# hp_materialize_plain publishes through node and hp_stamp_ok fingerprints
+# the remote's URL with it, both on the plan form's path below, so a
+# missing node is a refusal here rather than a creation that stops halfway.
+# The no-argument form above reaches neither: its only node use, the
+# reclaim's hp_pid_gone, reads a missing node as a live process, so it
+# adopts no crashed claim and otherwise works as it always did.
+command -v node >/dev/null 2>&1 || { echo "sdd-dir: node not found" >&2; exit 2; }
 
 key=$(hp_key "$plan_dir") || { echo "sdd-dir: could not derive the repository key for: $plan" >&2; exit 2; }
 ws=$(hp_plan_ws_name "$plan") || { echo "sdd-dir: plan file must be a regular file inside the repository, not a symlink: $plan" >&2; exit 2; }
@@ -109,9 +274,17 @@ fi
 # and the claims by path, so one link in the workspace would take those
 # writes out of the cache.
 refuse_ws_links() {
-  local found
+  local found rc=0
   [ -d "$dir" ] || return 0
-  found=$(find "$dir" -type l 2>/dev/null) || found=""
+  # A traversal that fails is not an absence of links, the same rule the
+  # reclaim's freshness checks follow: resolving a workspace nobody could
+  # scan would let a link inside it take the ledger's writes out of the
+  # cache, which is the one thing this check exists to stop.
+  found=$(find "$dir" -type l 2>/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "sdd-dir: refusing to resolve a workspace that could not be scanned for symbolic links at $dir; check what it holds and the permissions on it, then run sdd-dir again" >&2
+    return 2
+  fi
   [ -n "$found" ] || return 0
   echo "sdd-dir: refusing to resolve a workspace that holds a symbolic link at ${found%%$'\n'*}; remove the link and run sdd-state sync" >&2
   return 2
@@ -134,9 +307,11 @@ if [ "$backend" = plain ] || [ ! -d "$dir" ]; then
     # The plain root may not exist yet; touch alone would create a file.
     mkdir -p "$root" || { hp_unlock; exit 2; }
     touch "$root"
-    if ! hp_materialize_plain "$plan_dir" "$ws" "$dir"; then
+    rc=0; hp_materialize_plain "$plan_dir" "$ws" "$dir" || rc=$?
+    if [ "$rc" -ne 0 ]; then
       hp_unlock
-      echo "sdd-dir: could not materialize the branch workspace into the plain cache" >&2
+      # A refusal has already named itself; only a silent failure needs a line.
+      [ "$rc" -ne 1 ] || echo "sdd-dir: could not materialize the branch workspace into the plain cache" >&2
       exit 2
     fi
   fi
@@ -192,11 +367,14 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
       ln -sfn "$dir" "$pointer" 2>/dev/null || true
     fi
     # Dangling pointers left by finished workspaces are pruned; one whose
-    # target is an interrupted import's backup is kept for import to recover.
+    # target an interrupted import renamed aside is kept for import to
+    # recover, wherever hp_kept_copy_exists finds the copy. The pointer is
+    # that import's only handle: pruning it here would leave the next import
+    # nothing to find.
     for p in "$cwd_plans"/*; do
       [ -L "$p" ] && [ ! -e "$p" ] || continue
       t=$(readlink "$p")
-      ls -d "$t".importing-* >/dev/null 2>&1 && continue
+      hp_kept_copy_exists "$t" && continue
       rm -f "$p" 2>/dev/null || true
     done
   fi

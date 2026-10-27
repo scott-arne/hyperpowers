@@ -48,6 +48,14 @@ ln -s "$repo_a" "$TEST_ROOT/a-link"
 if [ "$(hp_key "$TEST_ROOT/a-link")" = "$key_a" ]; then pass "a symlinked path yields the physical key"; else fail "a symlinked path yields the physical key"; fi
 case "$(hp_zero_oid "$repo_a")" in 0000000000000000000000000000000000000000) pass "the zero oid matches the repository's hash length" ;; *) fail "the zero oid matches the repository's hash length ($(hp_zero_oid "$repo_a"))" ;; esac
 
+# --- message prefix ----------------------------------------------------------
+# Every message the library prints names the tool that called it.
+root_px="$TEST_ROOT/px"; mkdir -p "$root_px/plans"; ln -s "$TEST_ROOT" "$root_px/plans/link"
+msg=$(HP_PROG=probe-tool bash -c '. "$1"; hp_contained "$2" plans/link' probe-default "$LIB" "$root_px" 2>&1 >/dev/null)
+case "$msg" in "probe-tool: "*) pass "a library message carries HP_PROG as its prefix" ;; *) fail "a library message carries HP_PROG as its prefix (got: $msg)" ;; esac
+msg=$(bash -c '. "$1"; hp_contained "$2" plans/link' probe-default "$LIB" "$root_px" 2>&1 >/dev/null)
+case "$msg" in "probe-default: "*) pass "without HP_PROG the prefix is the calling script's basename (\$0)" ;; *) fail "without HP_PROG the prefix is the calling script's basename (got: $msg)" ;; esac
+
 # --- config ----------------------------------------------------------------
 if [ "$(hp_state_branch "$repo_a")" = "hyperpowers/state" ]; then pass "default state branch"; else fail "default state branch"; fi
 if [ "$(hp_state_remote "$repo_a")" = "origin" ]; then pass "default state remote"; else fail "default state remote"; fi
@@ -289,6 +297,17 @@ tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.rewrite/plan-
 if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .rewrite/plan-deadbeef.journal" ]; then pass "hp_tree_refusal names a committed rewrite journal, regular as it is"; else fail "hp_tree_refusal names a committed rewrite journal, regular as it is (rc=$tr_rc: $tr_out)"; fi
 tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.sync-applying")"); tr_rc=$?
 if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .sync-applying" ]; then pass "hp_tree_refusal names a committed sync marker"; else fail "hp_tree_refusal names a committed sync marker (rc=$tr_rc: $tr_out)"; fi
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.restore/12345.1")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .restore/12345.1" ]; then pass "hp_tree_refusal names a committed restore copy"; else fail "hp_tree_refusal names a committed restore copy (rc=$tr_rc: $tr_out)"; fi
+# The sidecar names as exact entries: a blob at .restore or .rewrite would
+# otherwise pass the whole-tree check, reach disk, and have the next
+# recover_apply refuse every publishing subcommand on the tracked sidecar.
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.restore")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .restore" ]; then pass "hp_tree_refusal names a root blob at the restore sidecar's own name"; else fail "hp_tree_refusal names a root blob at the restore sidecar's own name (rc=$tr_rc: $tr_out)"; fi
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.rewrite")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .rewrite" ]; then pass "hp_tree_refusal names a root blob at the rewrite sidecar's own name"; else fail "hp_tree_refusal names a root blob at the rewrite sidecar's own name (rc=$tr_rc: $tr_out)"; fi
+tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "100644,$tr_blob,.sync-applying/held")"); tr_rc=$?
+if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "recovery sidecar .sync-applying/held" ]; then pass "hp_tree_refusal names a tree at the sync marker's name"; else fail "hp_tree_refusal names a tree at the sync marker's name (rc=$tr_rc: $tr_out)"; fi
 tr_out=$(hp_tree_refusal "$tr_repo" "$(tr_commit "120000,$tr_link,escape")"); tr_rc=$?
 if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "symbolic link escape" ]; then pass "hp_tree_refusal reaches a link at the tree's root"; else fail "hp_tree_refusal reaches a link at the tree's root (rc=$tr_rc: $tr_out)"; fi
 # A tree this host cannot read is its own sentence. The refusal above is
@@ -296,6 +315,59 @@ if [ "$tr_rc" -eq 1 ] && [ "$tr_out" = "symbolic link escape" ]; then pass "hp_t
 # parser came out garbled, with a remedy that does not apply here.
 tr_err=$(hp_refuse_tip "$tr_repo" 0000000000000000000000000000000000000001 2>&1 >/dev/null); tr_rc=$?
 if [ "$tr_rc" -eq 2 ] && printf '%s' "$tr_err" | grep -q 'could not be read as a tree' && ! printf '%s' "$tr_err" | grep -q 'tree this'; then pass "hp_refuse_tip reports an unreadable tree in its own words"; else fail "hp_refuse_tip reports an unreadable tree in its own words (rc=$tr_rc: $tr_err)"; fi
+
+# --- pid liveness ----------------------------------------------------------
+sleep 0.01 & gone_pid=$!; wait "$gone_pid" 2>/dev/null
+if hp_pid_gone "$gone_pid"; then pass "hp_pid_gone: a reaped pid is gone"; else fail "hp_pid_gone: a reaped pid is gone"; fi
+if ! hp_pid_gone $$; then pass "hp_pid_gone: our own pid is alive"; else fail "hp_pid_gone: our own pid is alive"; fi
+if ! hp_pid_gone 1; then pass "hp_pid_gone: a pid we may not signal (EPERM) is alive"; else fail "hp_pid_gone: a pid we may not signal (EPERM) is alive"; fi
+
+# --- fetch stamp --------------------------------------------------------------
+repo_st="$TEST_ROOT/st"; make_repo "$repo_st"
+stamp_st=$(hp_stamp_path "$repo_st"); mkdir -p "$(dirname "$stamp_st")"
+if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: no stamp is not ok"; else fail "hp_stamp_ok: no stamp is not ok"; fi
+: > "$stamp_st"
+if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: an empty stamp (a pre-6.17 file) is not ok"; else fail "hp_stamp_ok: an empty stamp is not ok"; fi
+if [ "$(hp_remote_fingerprint "$repo_st")" = none ]; then pass "hp_remote_fingerprint: a remote without a URL is none"; else fail "hp_remote_fingerprint: a remote without a URL is none (got: $(hp_remote_fingerprint "$repo_st"))"; fi
+printf 'origin hyperpowers/state none\n' > "$stamp_st"
+if hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: the configured remote, branch and fingerprint are ok"; else fail "hp_stamp_ok: the configured remote, branch and fingerprint are ok"; fi
+printf 'origin hyperpowers/state\n' > "$stamp_st"
+if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: a stamp without the fingerprint is not ok"; else fail "hp_stamp_ok: a stamp without the fingerprint is not ok"; fi
+git -C "$repo_st" remote add origin "$TEST_ROOT/one.git"
+fp_one=$(hp_remote_fingerprint "$repo_st")
+if [ "${#fp_one}" -eq 12 ] && [ "$fp_one" != none ]; then pass "hp_remote_fingerprint: a URL gives twelve hex digits"; else fail "hp_remote_fingerprint: a URL gives twelve hex digits (got: $fp_one)"; fi
+printf 'origin hyperpowers/state %s\n' "$fp_one" > "$stamp_st"
+if hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: the stamp matches the current URL"; else fail "hp_stamp_ok: the stamp matches the current URL"; fi
+git -C "$repo_st" remote set-url origin "$TEST_ROOT/two.git"
+if ! hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: a repointed remote invalidates the stamp"; else fail "hp_stamp_ok: a repointed remote invalidates the stamp"; fi
+git -C "$repo_st" config hyperpowers.stateBranch other/state
+printf 'origin other/state %s\n' "$(hp_remote_fingerprint "$repo_st")" > "$stamp_st"
+if hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: the stamp follows the configured branch"; else fail "hp_stamp_ok: the stamp follows the configured branch"; fi
+# A digest that cannot be computed is a failure, never an empty identity.
+mkdir -p "$TEST_ROOT/fakebin"; printf '#!/bin/sh\nexit 9\n' > "$TEST_ROOT/fakebin/node"; chmod 755 "$TEST_ROOT/fakebin/node"
+fp_fail=$(PATH="$TEST_ROOT/fakebin:$PATH" hp_remote_fingerprint "$repo_st"); rc=$?
+if [ "$rc" -eq 1 ] && [ -z "$fp_fail" ]; then pass "hp_remote_fingerprint: a failing node is return 1 with no output"; else fail "hp_remote_fingerprint: a failing node is return 1 with no output (rc=$rc: '$fp_fail')"; fi
+if [ "$(hp_url_fingerprint "$TEST_ROOT/one.git")" = "$fp_one" ]; then pass "hp_url_fingerprint: the URL's own digest is the remote's"; else fail "hp_url_fingerprint: the URL's own digest is the remote's"; fi
+if ! PATH="$TEST_ROOT/fakebin:$PATH" hp_stamp_ok "$repo_st"; then pass "hp_stamp_ok: a stamp is not ok when the fingerprint cannot be computed"; else fail "hp_stamp_ok: a stamp is not ok when the fingerprint cannot be computed"; fi
+
+# --- kept copies beside a referent -----------------------------------------
+# The plain-cache reclaim can move the whole root while a pointer still names
+# the workspace inside it: the copy is then under the staging name a claim in
+# progress carries, or under the quarantine it becomes.
+kc_root="$TEST_ROOT/cache/hyperpowers/sdd/keptkey0000000000001"
+kc_ref="$kc_root/plans/some-plan-deadbeef"
+if hp_kept_copy_exists "$kc_ref"; then fail "hp_kept_copy_exists: no copy anywhere is 1"; else pass "hp_kept_copy_exists: no copy anywhere is 1"; fi
+mkdir -p "$kc_root/plans/some-plan-deadbeef.imported-20240101T000000Z-1"
+if hp_kept_copy_exists "$kc_ref"; then pass "hp_kept_copy_exists: a kept copy beside the live referent"; else fail "hp_kept_copy_exists: a kept copy beside the live referent"; fi
+mv "$kc_root" "$kc_root.claiming-1"
+if hp_kept_copy_exists "$kc_ref"; then pass "hp_kept_copy_exists: a kept copy under a root a claim is staging"; else fail "hp_kept_copy_exists: a kept copy under a root a claim is staging"; fi
+mv "$kc_root.claiming-1/plans/some-plan-deadbeef.imported-20240101T000000Z-1" "$kc_root.claiming-1/plans/some-plan-deadbeef.importing-4242"
+if hp_kept_copy_exists "$kc_ref"; then pass "hp_kept_copy_exists: an import's backup under a staged root counts too"; else fail "hp_kept_copy_exists: an import's backup under a staged root counts too"; fi
+mv "$kc_root.claiming-1/plans/some-plan-deadbeef.importing-4242" "$kc_root.claiming-1/plans/some-plan-deadbeef.imported-20240101T000000Z-1"
+mv "$kc_root.claiming-1" "$kc_root.reclaiming-1"
+if hp_kept_copy_exists "$kc_ref"; then pass "hp_kept_copy_exists: a kept copy under a quarantined root"; else fail "hp_kept_copy_exists: a kept copy under a quarantined root"; fi
+rm -rf "$kc_root.reclaiming-1"
+if hp_kept_copy_exists "$kc_ref"; then fail "hp_kept_copy_exists: the quarantine deleted is 1 again"; else pass "hp_kept_copy_exists: the quarantine deleted is 1 again"; fi
 echo ""
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

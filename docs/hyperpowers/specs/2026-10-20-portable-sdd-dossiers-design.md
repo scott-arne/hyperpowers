@@ -1,5 +1,7 @@
 # Portable SDD dossiers: a state branch per repository
 
+**Outcome:** implemented 2026-10-27; 11 decisions under docs/hyperpowers/decisions/.
+
 **Date:** 2026-10-20
 **Status:** design approved in chat on 2026-10-20 (transport, parallel
 model, the approach, and the four design sections); spec self-reviewed;
@@ -89,6 +91,56 @@ Three requirements shape the replacement:
   spec review then found the shared checkout, the cross-repository case,
   the fallback, and the arrival checks underspecified; the sections below
   carry those corrections.
+- The fetch stamp records the remote and the branch it fetched. Creation of
+  an orphan branch requires an exact match of remote, branch and a
+  fingerprint of the remote's fetch URL, so a changed
+  `hyperpowers.stateRemote` or `hyperpowers.stateBranch`, or a repointed
+  remote, means a fresh `sync` before any branch is invented; the per-key
+  boolean the spec first described would have let a stale stamp vouch for a
+  remote it never checked. Decided 2026-10-23 at the hand-back.
+- A verified import keeps the legacy workspace as a dated copy. The source
+  is renamed to `<source>.imported-<UTC>-<pid>` beside its physical
+  location (the pointer's referent when the candidate was a pointer) rather
+  than deleted: a session on the previous plugin that still holds the legacy
+  ledger open appends into that copy, where a human can find the line, and
+  the plain-cache reclaim sets that root aside under a `.reclaiming-` name
+  once nothing under it is newer than 14 days and deletes it on a later call
+  after 14 more quiet days, so an append that lands during the first 14 days
+  buys the copy another 14. Decided 2026-10-23 at the hand-back.
+- A tip or incoming commit carrying a symbolic link, a submodule entry or a
+  recovery sidecar anywhere is refused whole. The check is absolute and
+  runs at checkout creation, at apply and at plain materialization; the
+  helper itself never produces those kinds, so only a hand-made commit
+  trips it, and such a host wedges every other host's `sync` until the
+  branch is repaired, with the path named. Scoping the check to the paths
+  an apply writes was rejected: it reopens the fresh-checkout and
+  materialization routes. Decided 2026-10-23 at the hand-back.
+- The pre-opened-writer race at finish is a documented limit, not a
+  protocol change yet. A controller that opened the ledger before
+  `finish`'s rename and writes after the verification loses that line;
+  `finish` runs when the plan is complete, by the controller that owns it,
+  so the writer in question is a second session on the same plan, which
+  claims already discourage. The lock-sharing write helper that would close
+  it goes with the sidecar relocation below. Decided 2026-10-23 at the
+  hand-back.
+- Recovery sidecars move out of the tracked checkout in a later design.
+  `.rewrite/` and `.sync-applying` live inside the state checkout today,
+  which is why three guards refuse them when they arrive from the branch;
+  relocating them to a sibling directory under the cache key removes the
+  class and is the natural home for the write protocol. It is scheduled
+  after 6.17.0, not before. Decided 2026-10-23 at the hand-back.
+- Restore copies live in a `.restore` sidecar at the checkout root. The
+  sync apply stages them there, never inside a workspace directory, and
+  removes the sidecar once the apply has emptied it; the whole-tree
+  refusal, the link checks and the recovery sweep treat it as the third
+  recovery sidecar, to move with the other two in the later design.
+  Decided 2026-10-27 at the finish, from the implementation.
+- `prune` quarantines a killed removal's copy before it deletes it. The
+  copies such removals leave under `plans/` are listed in a `tombs=`
+  field on its stdout lines, moved to a quarantine on one pass and
+  removed on a later one after quiet days, so a copy that may be the only
+  one of a dossier is never deleted on the pass that finds it. Decided
+  2026-10-27 at the finish, from the implementation.
 
 ## Design
 
@@ -148,7 +200,38 @@ the next attempt starts clean. The test override `HYPERPOWERS_TEST_CRASH_AT`
 
 An orphan branch is created only when the repository has no remote
 configured, or when `sync` has recorded a fetch outcome for this key (the
-stamp file `<key>.fetched`, written on every outcome except `offline`).
+stamp file `<key>.fetched`, holding the remote, the branch and a
+fingerprint of the remote's fetch URL,
+written on `assumed-absent` and on every outcome in which the fetch ran,
+never on `offline`, `offline-no-state` or `no-remote` (a `no-remote` sync
+removes any stamp); creation requires the stamp to name the configured
+`hyperpowers.stateRemote` and `hyperpowers.stateBranch` exactly and to
+carry the fingerprint of that remote's current fetch URL, so a changed
+remote, branch or URL, an empty stamp from before 6.17.0, or a remote
+added after a `no-remote` sync means a fresh `sync`). A `sync` whose
+remote, branch or URL changed while its fetch ran, or whose fingerprint
+cannot be computed (node is required), ends `status=error` and stamps
+nothing, so the stamp always names the endpoint that was fetched (the
+fetch itself is pinned to that remote's URL through git's environment
+configuration, which needs git 2.31 or newer; that fetch consults no
+other `remote.<name>.*` setting of the alias, so a per-remote `proxy`
+or `uploadpack` does not apply to it, while `http.*`,
+`url.*.insteadOf` and credential helpers do; the URL is read exactly
+once per `sync`, as written in `remote.<name>.url`, because git
+rewrites a remote's URL once and a pin on the already-rewritten form
+would be rewritten a second time, to an endpoint the fingerprint never
+named; the fingerprint is of that captured string after one rewriting,
+obtained by expanding the pinned alias itself rather than by reading
+the remote again, so no repoint between the read and the stamp can
+part the two. The fetch is then pinned not to the captured URL but to
+a one-time name the environment maps to the endpoint that expansion
+returned, so a rewrite rule that changes after it cannot move the
+fetch either: the endpoint probed, the endpoint fingerprinted and the
+endpoint contacted are one string. The stamp names the effective
+endpoint, and a changed rewrite asks for a `sync` like a changed
+URL). The stamp governs creation only: a state branch that already
+exists here is continued, and the next `sync` reconciles it with
+whatever the remote holds.
 Without either, `sdd-dir` exits 2 with `status=needs-sync`: a fresh host
 that is offline must not invent an empty dossier while a remote one may
 exist. `sync --assume-absent PLAN` writes the stamp without fetching, for
@@ -203,8 +286,9 @@ prints. It no longer touches or reclaims anything inside the checkout.
 
 `sdd-dir` with no argument prints `${cache}/hyperpowers/sdd/<key>` with the
 common-directory key: the repository-level root that optimizing-performance
-uses for baselines stays in the plain cache, shared across worktrees from now
-on, and keeps its 14-day idle reclaim of sibling roots.
+uses for baselines stays in the plain cache, shared across worktrees from
+now on, and keeps its two-phase idle reclaim of sibling roots: a root is
+claimed after 14 idle days and deleted after 14 more quiet ones.
 
 **Cross-repository pointers.** When the cwd's repository differs from the
 plan's, `sdd-dir` leaves a symlink
@@ -284,13 +368,35 @@ that `sync` on divergence prints a second line `merge=<command>`. Exit 2 is
 usage or internal error throughout; other exits are listed per subcommand.
 
 **`sync PLAN_FILE [--assume-absent]`** (or `sync --repo REPO_DIR` for
-callers without a plan). Fetches
-`<remote> +refs/heads/<branch>:refs/remotes/<remote>/<branch>`, writes the
-`<key>.fetched` stamp on every outcome except `offline` and
-`offline-no-state`, runs `ensure_checkout`, and reconciles under the lock.
+callers without a plan). Fetches `+refs/heads/<branch>` from the pinned
+endpoint into a private ref, `refs/hp-fetch/<pid>`, and reads the tip it
+reconciles there, so a fetch another process finishes meanwhile cannot
+substitute a commit this endpoint never served;
+`refs/remotes/<remote>/<branch>` is then published from that tip by
+compare-and-swap against the value it held before the fetch, and a swap
+this sync loses belongs to the fetch that won it. The private ref is
+removed on every exit from the fetch, and one whose owner is gone is
+removed before it. The fetch itself is addressed by a one-time name the
+environment maps to the endpoint the pin was resolved to, so no rewrite
+rule that appears afterwards can redirect it. `sync` writes the
+`<key>.fetched` stamp (`<remote> <branch> <fingerprint>`, the fingerprint
+being the first 12 hex digits of the SHA-256 of the remote's fetch URL, or
+`none` when the remote has no URL) on every outcome except
+`offline`, `offline-no-state` and `no-remote` (which removes any stamp),
+runs `ensure_checkout`, and reconciles under the lock. A repository with
+no state branch of its own yet gets one here, created from the tip this
+sync fetched rather than from the remote-tracking ref, which a lost swap
+may leave at another fetch's tip. A remote, branch or
+URL that changed while the fetch ran, or a fingerprint that cannot be
+computed, ends the sync with `status=error` and nothing stamped.
 Reconciliation starts by snapshotting every plan directory with pending
 tracked changes, so the working tree equals the local tip S and no local
-edit can be lost, then compares S with the fetched tip R:
+edit can be lost, then compares S with the fetched tip R. The scan that
+guards the apply exempts a removal or prune copy under `plans/` only
+while neither S nor the incoming commit tracks an entry of that name; an
+incoming commit that first-adds one while a local copy holds it ends the
+apply with `status=error`, naming the path, because that copy may be the
+only one of its dossier and nothing may be written into it:
 
 | Outcome | `status=` | Exit |
 |---|---|---|
@@ -326,10 +432,10 @@ fresh host whose human partner knows no remote dossier exists.
 The branch is content from other hosts, so a tree is inspected whole before
 any of it reaches disk: a tip or an incoming commit that carries a symbolic
 link, a submodule entry, or a recovery sidecar (`.sync-applying`, anything
-under `.rewrite/`) anywhere in its tree is refused entire, both when the
-checkout is created from it and when a commit is applied to an existing
-one, and `sdd-dir` refuses a workspace that holds a symbolic link rather
-than printing a path the writers would follow out of the cache.
+under `.rewrite/` or `.restore/`) anywhere in its tree is refused entire,
+both when the checkout is created from it and when a commit is applied to
+an existing one, and `sdd-dir` refuses a workspace that holds a symbolic
+link rather than printing a path the writers would follow out of the cache.
 
 Controllers and subagents write ledger and report files without the lock,
 so reconciliation treats the working tree as live. After computing the
@@ -467,13 +573,20 @@ a symlink), and duplicates are dropped. For the first referent that is a real
 directory holding a `progress.md`: if the checkout workspace has no
 `progress.md`, copy the referent's contents with `cp -a <src>/. <dst>/`,
 verify by comparing the recursive file list and byte sizes of source and
-destination, and only after a clean verification remove the source directory
-and put a symlink to the new workspace in its place (a pointer candidate is
-relinked to the new workspace instead); a failed verification leaves the
-source untouched and exits 2 with `status=import-failed`. The copied
-ledger's first line is rewritten to the repo-relative form when it holds an
-absolute path inside the plan repository. If the checkout already has a
-ledger, the candidate is left alone: `status=skipped reason=ledger-exists
+destination, and only after a clean verification set the source aside as
+`<source>.imported-<UTC>-<pid>` beside its own location and then put a
+symlink to the new workspace in the source's place (the copy is kept for a
+writer of the previous plugin that still holds the old ledger open; the
+plain-cache reclaim sets that root aside under a `.reclaiming-` name once
+nothing under it is newer than 14 days and deletes it on a later call after
+14 more quiet days; an import interrupted between those two steps leaves the
+kept copy and no pointer, and the next import completes the relink and
+prints `status=moved`; a pointer candidate is relinked to the new workspace
+instead); a failed verification leaves the source untouched and exits 2
+with `status=import-failed`. The copied ledger's first line is rewritten to
+the repo-relative form when it holds an absolute path inside the plan
+repository. If the checkout already has a ledger, the candidate is left
+alone: `status=skipped reason=ledger-exists
 path=<candidate>`. Otherwise `status=moved from=<path>`, with `conflicts=<n>` appended when `n` destination entries differed from their legacy copies and were kept (the legacy copy of a report or review sits beside it as `<name>.from-import`, ignored by the branch, for a human to merge; a conflicting brief or review package regenerates and is not copied), or `status=none`.
 Idempotent: a second call prints `status=none`. Under `plain` the
 destination is the plain-cache workspace, the state branch is the first
@@ -484,12 +597,28 @@ the same rules apply.
 plan directories whose last commit (`git log -1 --format=%ct -- plans/<ws>`)
 and newest file are both older than N days, and checkouts under
 `${cache}/hyperpowers/state/` whose `.git` file points at a directory that no
-longer exists. Without `--apply` it only lists (`status=listed ...`). With
-`--apply` it removes the listed plan directories in one private-index commit
-`sdd: prune <slugs>` and `rm -rf`s the dead checkouts together with their
-backend and lock files. Nothing calls `prune` implicitly. Under `plain`:
-`status=plain`; plain workspaces are left to the plain cache's own 14-day
-reclaim.
+longer exists. Without `--apply` it only lists (`status=listed ...`).
+The listing also names, as `tombs=<comma-separated names>`, every copy a
+killed removal left at `plans/.removing-<ws>-<pid>` whose process is gone,
+whose newest file is older than N days, and whose workspace the branch does
+not track (a tracked one comes back through `sync`'s restore and is never
+listed; a copy whose tracking cannot be read is kept), and as
+`quarantined=<names>` every copy an earlier `--apply` set aside at
+`plans/.pruned-<ws>-<pid>` whose newest entry is older than N days. Removal
+is two-phase, because a writer that still holds the copy open cannot be
+excluded: the first `--apply` renames a listed tomb to `plans/.pruned-<ws>-<pid>`
+under the lock after re-checking it, and touches it so the clock restarts
+(a late append moves into the renamed copy and refreshes its time); a later
+`--apply`, once nothing in the quarantined copy is newer than N days,
+deletes it and verifies it is gone. The `status=pruned` line prints the
+names renamed this run as `tombs=` and the names deleted this run as
+`quarantined=`; a copy that fails any re-check is kept where it is.
+With `--apply` it removes the listed plan directories in one private-index
+commit `sdd: prune <slugs>` and `rm -rf`s the dead checkouts together with
+their backend and lock files. Nothing calls `prune` implicitly. Under
+`plain`: `status=plain`; plain workspaces are left to the plain cache's own
+two-phase reclaim, which claims a root after 14 idle days and deletes it
+after 14 more quiet ones.
 
 **`claim PLAN_FILE N --session SID [--takeover]`.** Prepares
 `plans/<ws>/claims/.tmp-<random>/owner` with the complete record below, then
@@ -666,12 +795,13 @@ pushes only if the human partner asks. "A clean finish that leaves the
 workspace behind is an INCOMPLETE finish" stays true of the working tree; the
 branch history keeping the dossier is the point.
 
-**Pruning.** No automatic reclaim runs inside a checkout: a plan idle on this
-host may be active on another. `sdd-state prune` is the only remover. The
-plain cache keeps today's 14-day reclaim for legacy workspaces, the
-no-argument roots, pointers, and gate directories. Because `import` leaves a
-symlink where a legacy workspace was, a legacy `<key>` directory that holds
-only symlinks ages out as a whole.
+**Pruning.** No automatic reclaim runs inside a checkout: a plan idle on
+this host may be active on another. `sdd-state prune` is the only remover.
+The plain cache keeps today's two-phase reclaim for legacy workspaces, the
+no-argument roots, pointers, and gate directories: a root is claimed after
+14 idle days and deleted after 14 more quiet ones. Because `import` leaves
+a symlink where a legacy workspace was, a legacy `<key>` directory that
+holds only symlinks ages out as a whole.
 
 **Migration.** The first `sdd-dir PLAN` after the upgrade imports the plan's
 legacy workspace (section 2, `import`). No manual step. Two caveats go in the
@@ -869,7 +999,8 @@ Docs: `README.md`, `CHANGELOG.md`, `docs/testing.md`.
   Changes Require Evaluation"). The "your human partner" voice, the Red
   Flags tables, and the rationalization lists stay as they are apart from
   the one added row in using-git-worktrees.
-- Core skills depend on bash, git, and node only. No network access from
+- Core skills depend on bash, git (2.31 or newer, for the pinned
+  state-branch fetch) and node only. No network access from
   hooks, from `sdd-dir`, or from `verify`.
 - No skill pushes to a remote except `sdd-state handoff --push`, and that
   flag is passed only on the human partner's explicit hand-off request.
@@ -922,6 +1053,11 @@ Docs: `README.md`, `CHANGELOG.md`, `docs/testing.md`.
 - `sync` merges only what git merges without conflict. The union driver
   covers the ledger; two hosts editing the same report file is a conflict
   the human partner resolves.
+- A controller that opened `progress.md` before `finish`'s rename-aside and
+  writes after the verification loses that line. `finish` runs when the
+  plan is complete, by the controller that owns it, so this needs a second
+  session writing to a finished plan; the lock-sharing write helper that
+  would close it is scheduled with the sidecar relocation (Follow-ups).
 
 ## Assumptions
 
@@ -957,13 +1093,16 @@ far below 4 KB). Validate via the concurrency cases in Verification item 2.
 - The parallel development spec (BACKLOG "Parallel development on the same
   machine"), built on the shared checkout, claims, session lines, and the
   task-list assignment.
-- BACKLOG "Stale brokers": the Codex preflight run under the Bash sandbox
-  reported `stale-broker` for this repository and offered the rename; the
-  same preflight outside the sandbox reported `ok`, and the broker sweep
-  under the sandbox could not reach any broker socket. The sandbox blocks the
-  socket probe, so some of those rename requests are false alarms. A
-  preflight that reports `unverifiable` when the connect is refused by the
-  sandbox, rather than `stale-broker`, is the likely fix.
+- BACKLOG "Stale brokers": resolved on 2026-10-23 (hyperpowers `main`
+  d7d6883). The sandboxed preflight's `stale-broker` was `broker-health`
+  reading an EPERM from `kill -0` as a dead pid; only ESRCH is death now,
+  and the gate's index says the preflight and every companion command run
+  outside the sandbox, because a companion that cannot connect tears down
+  the live broker's socket and record.
+- Recovery sidecars out of the tracked checkout, with the lock-sharing
+  write helper for ledger appends and a recovery-only result for the
+  journaled rewrite's composition case: one design, after 6.17.0
+  (Decisions).
 - Evals: analyzers and scenario checks for the new layout.
 - The ungated ledger onto the state branch, so unswept entries follow the
   work between hosts.

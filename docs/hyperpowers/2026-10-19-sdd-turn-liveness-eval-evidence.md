@@ -75,7 +75,7 @@ numbers.
 | Censored stops, censored resumes | 1423, 144 | 1424, 144 |
 | Excluded turn ends | error 373, interrupt 17, killed 2, reload 69 | error 383, interrupt 20, killed 2, reload 71 |
 
-The second column is what the instrument read before Correction 8, which
+The `Before Correction 8` column (the third) is what the instrument read before Correction 8, which
 bounds each qualifying session at its first in-window SDD invocation instead
 of at the window's start; the entry is under `## Corrections` in
 `evals/evidence/2026-10-19-sdd-turn-liveness/README.md`.

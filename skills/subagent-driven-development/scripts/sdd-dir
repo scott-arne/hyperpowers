@@ -79,7 +79,20 @@ base="$(hp_cache_root)/sdd"
 # after a rename finds no root and fails cleanly with nothing lost. Best
 # effort: pruning must never break the contract that stdout is the path.
 reclaim_plain() {
-  local r pid staged claimed gone
+  local r pid staged claimed gone quiet
+  # <dir> [extra find predicates] -> 0 nothing under it is newer than 14
+  # days, 1 something is, 2 the traversal could not be read. A failed find
+  # prints nothing and exits non-zero (a permission error on one
+  # subdirectory, a transient I/O error), and the pipe these checks used
+  # to run through hid that status: silence and failure looked alike, so a
+  # tree nobody could read was deleted as idle. Not readable is not idle.
+  # Every call reads the status with "|| quiet=$?": set -e would abort the
+  # script on a bare call that answered 1 or 2.
+  nothing_newer() { local out; out=$(find "$@" -mtime -14 2>/dev/null) || return 2; [ -z "$out" ]; }
+  # <dir> -> 0 the directory's own mtime is older than 14 days, 1 it is
+  # not, 2 it could not be stat'd. A failed stat is not old, for the same
+  # reason.
+  root_is_old() { local out; out=$(find "$1" -maxdepth 0 -mtime +14 2>/dev/null) || return 2; [ -n "$out" ]; }
   for r in "$base"/*/; do
     r=${r%/}
     [ -d "$r" ] && [ ! -L "$r" ] || continue
@@ -88,7 +101,11 @@ reclaim_plain() {
       *.reclaiming-*)
         # Phase two: the copy a previous pass claimed, quiet ever since.
         ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
-        [ -z "$(find "$r" -mtime -14 2>/dev/null | head -n 1)" ] || continue
+        quiet=0; nothing_newer "$r" || quiet=$?
+        if [ "$quiet" -ne 0 ]; then
+          [ "$quiet" -ne 2 ] || echo "sdd-dir: the freshness of the quarantined cache root at $r could not be read; it was left alone" >&2
+          continue
+        fi
         gone="$r.gone-$$"
         if [ -e "$gone" ] || [ -L "$gone" ]; then continue; fi
         mv "$r" "$gone" 2>/dev/null || continue
@@ -99,7 +116,9 @@ reclaim_plain() {
           touch "$gone"
           mkdir -p "$r"; : > "$r/writer"
         fi
-        if [ -n "$(find "$gone" -mtime -14 2>/dev/null | head -n 1)" ] || ls -d "$gone"/plans/*.importing-* >/dev/null 2>&1; then
+        quiet=0; nothing_newer "$gone" || quiet=$?
+        if [ "$quiet" -ne 0 ] || ls -d "$gone"/plans/*.importing-* >/dev/null 2>&1; then
+          [ "$quiet" -ne 2 ] || echo "sdd-dir: the freshness of the cache root staged at $gone could not be read; nothing was deleted" >&2
           # A session in the other repository can recreate <key> while this
           # pass walks the staged tree; BSD mv would nest the staged root
           # inside the new one, where no lookup finds it again.
@@ -139,8 +158,16 @@ reclaim_plain() {
       *)
         # Phase one: claim an idle root, delete nothing.
         ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
-        [ -n "$(find "$r" -maxdepth 0 -mtime +14 2>/dev/null)" ] || continue
-        [ -z "$(find "$r" -mtime -14 2>/dev/null | head -n 1)" ] || continue
+        quiet=0; root_is_old "$r" || quiet=$?
+        if [ "$quiet" -ne 0 ]; then
+          [ "$quiet" -ne 2 ] || echo "sdd-dir: the age of the cache root at $r could not be read; it was left alone" >&2
+          continue
+        fi
+        quiet=0; nothing_newer "$r" || quiet=$?
+        if [ "$quiet" -ne 0 ]; then
+          [ "$quiet" -ne 2 ] || echo "sdd-dir: the freshness of the cache root at $r could not be read; it was left alone" >&2
+          continue
+        fi
         staged="$r.claiming-$$"
         if [ -e "$staged" ] || [ -L "$staged" ]; then continue; fi
         mv "$r" "$staged" 2>/dev/null || continue
@@ -162,7 +189,10 @@ reclaim_plain() {
         # The staged tree still carries its own mtimes, so the re-check reads
         # the signals an importer leaves: a fresh root, a descendant written
         # during the window, or its backup.
-        if [ -z "$(find "$staged" -maxdepth 0 -mtime +14 2>/dev/null)" ] || [ -n "$(find "$staged" -mindepth 1 -mtime -14 2>/dev/null | head -n 1)" ] || ls -d "$staged"/plans/*.importing-* >/dev/null 2>&1; then
+        quiet=0; root_is_old "$staged" || quiet=$?
+        [ "$quiet" -ne 0 ] || { nothing_newer "$staged" -mindepth 1 || quiet=$?; }
+        if [ "$quiet" -ne 0 ] || ls -d "$staged"/plans/*.importing-* >/dev/null 2>&1; then
+          [ "$quiet" -ne 2 ] || echo "sdd-dir: the freshness of the cache root staged at $staged could not be read; it was not claimed" >&2
           if [ -e "$r" ] || [ -L "$r" ]; then
             echo "sdd-dir: the cache root staged at $staged could not be put back at $r, which is occupied again; move it back by hand" >&2
           else

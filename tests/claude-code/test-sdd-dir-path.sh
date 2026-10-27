@@ -462,6 +462,38 @@ find "$idle_adopt.claiming-$stamp_pid" -depth -exec touch -mt "$OLDSTAMP" {} +
 _=$(cd "$TEST_ROOT/repo-plan" && PATH="$faketouch:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/adopt.err")
 if [ -d "$idle_adopt.claiming-$stamp_pid" ] && [ -f "$idle_adopt.claiming-$stamp_pid/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_adopt".reclaiming-* >/dev/null 2>&1 && grep -q 'grace' "$TEST_ROOT/adopt.err"; then pass "a crashed claim whose grace stamp cannot be written stays a claim, and is named on stderr"; else fail "a crashed claim whose grace stamp cannot be written stays a claim (err: $(tr '\n' '|' < "$TEST_ROOT/adopt.err"))"; fi
 rm -rf "$idle_adopt.claiming-$stamp_pid"
+# A freshness check reads find's exit status, not just its output. A
+# traversal that fails prints nothing and exits non-zero (a permission
+# error on one subdirectory, a transient I/O error), and reading that as
+# silence would delete a tree that may hold recent writes.
+fakefind="$TEST_ROOT/fakefind"; mkdir -p "$fakefind"
+# FINDFAIL names the tree the shim fails for, and only for a traversal
+# that descends: a permission error on one subdirectory leaves the stat of
+# the root itself (-maxdepth 0) working, which is the shape these checks
+# have to survive.
+# FINDFAIL holds space-separated patterns, each matched on its own: a
+# case pattern built from one variable holding a|b is one literal pattern,
+# not an alternation.
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = -maxdepth ] && exec %s "$@"; done\nfor p in $FINDFAIL; do case "$1" in $p) exit 1 ;; esac; done\nexec %s "$@"\n' "$(command -v find)" "$(command -v find)" > "$fakefind/find"
+chmod 755 "$fakefind/find"
+idle_qr="$XDG_CACHE_HOME/hyperpowers/sdd/idlefind00000000000e.reclaiming-424242"
+mkdir -p "$idle_qr/plans/some-plan-deadbeef"; : > "$idle_qr/plans/some-plan-deadbeef/progress.md"
+find "$idle_qr" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && FINDFAIL='*.reclaiming-* *.gone-*' PATH="$fakefind:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/find1.err")
+if [ -f "$idle_qr/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_qr".gone-* >/dev/null 2>&1 && grep -q 'could not be read' "$TEST_ROOT/find1.err"; then pass "a quarantine whose freshness cannot be read is left alone, not deleted"; else fail "a quarantine whose freshness cannot be read is left alone (left: $(ls -d "$idle_qr"* 2>/dev/null | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/find1.err"))"; fi
+# The same failure only after the rename-aside: the copy comes back under
+# its quarantine name instead of being deleted on an unread tree.
+_=$(cd "$TEST_ROOT/repo-plan" && FINDFAIL='*.gone-*' PATH="$fakefind:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/find2.err")
+if [ -f "$idle_qr/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_qr".gone-* >/dev/null 2>&1 && grep -q 'could not be read' "$TEST_ROOT/find2.err"; then pass "a staged copy whose freshness cannot be read after the rename is put back under its quarantine name"; else fail "a staged copy whose freshness cannot be read after the rename is put back (left: $(ls -d "$idle_qr"* 2>/dev/null | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/find2.err"))"; fi
+rm -rf "$idle_qr"
+# Phase one asks the same question of a live root, and claims nothing when
+# it cannot be answered.
+idle_p1="$XDG_CACHE_HOME/hyperpowers/sdd/idlefindone0000000f"
+mkdir -p "$idle_p1/plans/some-plan-deadbeef"; : > "$idle_p1/plans/some-plan-deadbeef/progress.md"
+find "$idle_p1" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && FINDFAIL="$idle_p1" PATH="$fakefind:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/find3.err")
+if [ -f "$idle_p1/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_p1".claiming-* >/dev/null 2>&1 && ! ls -d "$idle_p1".reclaiming-* >/dev/null 2>&1 && grep -q 'could not be read' "$TEST_ROOT/find3.err"; then pass "a live root whose age or freshness cannot be read is not claimed"; else fail "a live root whose age or freshness cannot be read is not claimed (left: $(ls -d "$idle_p1"* 2>/dev/null | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/find3.err"))"; fi
+rm -rf "$idle_p1"
 ln -s "$TEST_ROOT/repo-plan" "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004"
 touch -h -t 202601010000 "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004" 2>/dev/null || true
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)

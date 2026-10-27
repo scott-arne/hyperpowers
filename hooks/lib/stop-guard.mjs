@@ -392,3 +392,112 @@ export function recordDecision({ workspaceLog, mirrorLog, marker, line }) {
   if (!toMirror(out) && marker) markerSet(marker);
   return { line: out, loggedAs: 'authoritative' };
 }
+
+// liveness.asks_or_blocks, ported verbatim (liveness.py:376-391, with APPROVAL
+// and SENTENCE_END from liveness.py:50-58). The hand-labelled sample it was
+// tuned against is the node test's table.
+const APPROVAL = /\b(?:say (?:the word|["']?(?:continue|proceed|go|resume)["']?)|let me know|your call|which (?:option|one|do you)|do you want|would you like|shall i|should i|want me to|approve|for your review|for you to review|when(?:ever)? you(?:'re| are) ready|your go-ahead|decision is yours|is yours to make)\b/i;
+const SENTENCE_END = /(?<=[.!?])\s+/;
+export function asksOrBlocks(text) {
+  if (text.includes('BLOCKED')) return true;
+  const stripped = text.trim();
+  if (!stripped) return false;
+  const sentences = stripped.split(SENTENCE_END);
+  if (sentences[sentences.length - 1].replace(/[ *_`)"']+$/, '').endsWith('?')) return true;
+  return APPROVAL.test(sentences.slice(-3).join(' '));
+}
+
+const handbackHint = (sid) => `If you are handing back to your human partner (a question only they can answer, a BLOCKED report, or they asked you to stop), run scripts/sdd-state handback PLAN_FILE --session ${sid} --reason "<why>" and end the turn with that message.`;
+export function openTasksMessage(plan, state, sid) {
+  return `SDD stop guard: plan ${plan} is not finished (${state}; nothing tracked is live). Take the next step now, in this turn. ${handbackHint(sid)}`;
+}
+export function liveShellMessage(plan, state, names, sid) {
+  const list = names.join(', ');
+  return `SDD stop guard: plan ${plan} is not finished (${state}; job(s) ${list} are live). Job(s) ${list} are still running: watch them in the foreground with tracked-job wait, and report a lost-unswept job to your human partner with its pgid. ${handbackHint(sid)}`;
+}
+
+// Step D, in the spec's order. log-failed is decided at write time by
+// recordDecision, which is why it is absent here.
+export function decideStop({ discovery, plan, turn, jobs, jobsUnreadable = [], refusals, refusalsUnreadable = null, sessionId, ledgerText = null }) {
+  if (discovery.kind !== 'ledger') {
+    if (discovery.kind !== 'ambiguous') return { decision: 'allow', reason: 'no-ledger' };
+    // What discovery could not read, by path and nothing more: the entries
+    // are of mixed kinds (a candidate's progress.md, a staging directory, a
+    // directory it could not list), so the line names them and does not say
+    // what they are.
+    const paths = discovery.unreadable || [];
+    return { decision: 'allow', reason: 'ambiguous', ...(paths.length ? { detail: `unreadable: ${paths.join(', ')}` } : {}) };
+  }
+  if (!plan || plan.unreadable) return { decision: 'allow', reason: 'no-plan' };
+  const state = plan.open > 0 ? `${plan.open} of ${plan.total} tasks open` : `all ${plan.total} tasks complete; the final review and Finish remain`;
+  // A job record that cannot be read is not evidence that nothing is live: allow, and say which.
+  if (jobsUnreadable.length) return { decision: 'allow', reason: 'hook-error', state, detail: `job meta unreadable: ${jobsUnreadable.join(', ')}` };
+  // Nor is a decision log that cannot be read evidence of no refusal: the cap
+  // is the only thing standing between a wrong block and a session that can
+  // never end, so a count that could not be taken refuses nothing.
+  if (refusalsUnreadable) return { decision: 'allow', reason: 'hook-error', state, detail: `decision log unreadable: ${refusalsUnreadable}` };
+  if (!turn.ok || turn.tooLong) return { decision: 'allow', reason: 'turn-too-long', state, ...(turn.detail ? { detail: turn.detail } : {}) };
+  if ((turn.liveAgents || []).length) return { decision: 'allow', reason: 'live-agent', state };
+  const text = ledgerText ?? (() => { try { return readFileSync(discovery.ledger, 'utf8'); } catch { return ''; } })();
+  if (handbackThisTurn(text, sessionId, turn.promptTs)) return { decision: 'allow', reason: 'handback-line', state };
+  if (asksOrBlocks(turn.lastAssistantText || '')) return { decision: 'allow', reason: 'handback-text', state };
+  if (refusals >= REFUSAL_CAP) return { decision: 'allow', reason: 'cap', state };
+  const live = [...(turn.liveShells || []), ...jobs];
+  if (live.length) return { decision: 'block', reason: 'live-shell', state, message: liveShellMessage(plan.plan, state, live, sessionId) };
+  return { decision: 'block', reason: 'open-tasks', state, message: openTasksMessage(plan.plan, state, sessionId) };
+}
+
+// Minimal turn reader for this task's tests; Task 8 replaces it.
+export function readTurn(transcriptPath) {
+  const none = { ok: false, tooLong: false, promptTs: null, lastAssistantText: '', liveAgents: [], liveShells: [], detail: 'unreadable' };
+  try {
+    const recs = readFileSync(transcriptPath, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    let promptTs = null; let lastAssistantText = '';
+    for (const r of recs) {
+      if (r.type === 'user' && typeof r.message?.content === 'string' && !r.isMeta) { promptTs = r.timestamp; lastAssistantText = ''; }
+      if (r.type === 'assistant' && Array.isArray(r.message?.content)) { const t = r.message.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'); if (t) lastAssistantText = t; }
+    }
+    return promptTs ? { ok: true, tooLong: false, promptTs, lastAssistantText, liveAgents: [], liveShells: [] } : { ...none, detail: 'no-prompt' };
+  } catch { return none; }
+}
+
+export function main(stdinText, env = process.env) {
+  const started = Date.now();
+  let input;
+  try { input = JSON.parse(stdinText || '{}'); } catch { return { stdout: '', exitCode: 0 }; }
+  if (!input || typeof input !== 'object') return { stdout: '', exitCode: 0 };
+  // One token, checked before anything else and in particular before the
+  // mirror path is composed from it: appendLine creates the directories it is
+  // handed, so a session id carrying a slash or a `..` would put this
+  // session's decisions outside the mirror. Anything else is not ours.
+  const sessionId = String(input.session_id || '');
+  if (!sessionId || /[^A-Za-z0-9._-]/.test(sessionId)) return { stdout: '', exitCode: 0 };
+  const cwd = String(input.cwd || process.cwd());
+  const cacheRoot = env.XDG_CACHE_HOME || join(env.HOME || '', '.cache');
+  const mirrorLog = join(cacheRoot, 'hyperpowers', 'stop-guard', `${sessionId}.jsonl`);
+  const discovery = discover({ sessionId, cwd, cacheRoot });
+  if (discovery.kind === 'none') return { stdout: '', exitCode: 0 };
+  const workspace = discovery.kind === 'ledger' ? discovery.workspace : null;
+  const workspaceLog = workspace ? join(workspace, 'stop-guard.jsonl') : null;
+  const marker = workspace ? join(workspace, '.mirror-failed') : null;
+  const plan = workspace ? planState({ workspace, cwd, sessionId }) : null;
+  const turn = env.STOP_GUARD_TURN ? JSON.parse(env.STOP_GUARD_TURN) : readTurn(String(input.transcript_path || ''));
+  const jobsRead = workspace ? liveJobs(workspace) : { live: [], unreadable: [] };
+  const jobs = jobsRead.live;
+  const refusalsRead = workspace ? refusalsBefore({ workspaceLog, mirrorLog, sessionId }) : { refusals: 0, unreadable: null };
+  const d = decideStop({ discovery, plan, turn, jobs, jobsUnreadable: jobsRead.unreadable, refusals: refusalsRead.refusals, refusalsUnreadable: refusalsRead.unreadable, sessionId });
+  if (env.STOP_GUARD_FAULT === 'throw') throw new Error('injected fault');
+  const line = {
+    ts: new Date().toISOString(), session: sessionId, decision: d.decision, reason: d.reason,
+    plan: plan?.plan ?? null, open: plan?.open ?? null, total: plan?.total ?? null,
+    live: [...(turn.liveAgents || []), ...(turn.liveShells || []), ...jobs],
+    refusals: d.decision === 'block' ? refusalsRead.refusals + 1 : 0,
+    stop_hook_active: Boolean(input.stop_hook_active), elapsed_ms: Date.now() - started,
+  };
+  if (discovery.kind === 'ambiguous') { line.candidates = discovery.candidates; line.matches = discovery.matches; }
+  if (discovery.kind === 'receipt') line.receipt = discovery.receipt;
+  if (d.detail) line.detail = d.detail;
+  const recorded = recordDecision({ workspaceLog, mirrorLog, marker, line });
+  if (recorded.line.decision === 'block') return { stdout: JSON.stringify({ decision: 'block', reason: d.message }), exitCode: 0 };
+  return { stdout: '', exitCode: 0 };
+}

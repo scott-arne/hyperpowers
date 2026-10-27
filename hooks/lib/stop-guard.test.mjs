@@ -38,7 +38,7 @@ function receipt(e, name, sid = SID) {
 const mirrorOf = (e, sid = SID) => join(e.cache, 'hyperpowers', 'stop-guard', `${sid}.jsonl`);
 const readLines = (p) => readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
 const line = (ts, decision, reason, extra = {}) => ({ ts, session: SID, decision, reason, plan: 'docs/plan.md', open: 1, total: 3, live: [], refusals: 0, stop_hook_active: false, elapsed_ms: 1, ...extra });
-const writeLog = (p, lines) => { mkdirSync(join(p, '..'), { recursive: true }); writeFileSync(p, lines.map((l) => JSON.stringify(l)).join('\n') + '\n'); };
+const writeLog = (p, lines) => { mkdirSync(join(p, '..'), { recursive: true }); writeFileSync(p, lines.map((l) => JSON.stringify(l) + '\n').join('')); };
 
 test('discover: no ledger and no receipt is none', () => {
   const e = env();
@@ -408,4 +408,190 @@ test('discover: one matching receipt beside one that cannot be read proves nothi
   try { d = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache }); } finally { chmodSync(join(other, 'progress.md'), 0o644); }
   assert.equal(d.kind, 'ambiguous'); assert.deepEqual(d.matches, []);
   assert.deepEqual(d.unreadable, [join(other, 'progress.md')]);
+});
+
+// Transcribed verbatim from the evals evidence
+// evidence/2026-10-19-sdd-turn-liveness/test_liveness.py, class Heuristic,
+// attribute CASES: [text, expected]. Every pair.
+const HEURISTIC_CASES = [
+  ['Does Section 4 look right?', true],
+  ['Say the word and I continue.', true],
+  ["Say 'proceed' when you want it started.", true],
+  ["I'll wait for your go-ahead (or change requests) before invoking writing-plans.", true],
+  ["Let me know if you want changes, otherwise I'll move to the implementation plan.", true],
+  ['Shall I start the next design?', true],
+  ['Task 9 is BLOCKED: the fixture needs credentials.', true],
+  ['Which do you want: merge locally or open a PR?', true],
+  ["Once you approve, I'll write the implementation plan.", true],
+  ['The integration decision is yours.', true],
+  ['Tests green. **Ready to merge?**', true],
+  ['Tasks 1 and 2 are done. Moving to Task 3.', false],
+  ["Next: Task 14's gate, then the final whole-branch review.", false],
+  ['Gate round 3 running, the last in its budget.', false],
+  ['Dispatching the Task 1 implementer.', false],
+  ['Task 7 next: the predicate set, the largest remaining port.', false],
+  ['One more Codex round to confirm the fix, then the branch is ready to merge.', false],
+  ['Waiting on the Python suite re-run before dispatching its reviewer.', false],
+  ['Spec approved, quality Approved. Moving on.', false],
+  ['', false],
+];
+const turn = (o = {}) => ({ ok: true, tooLong: false, promptTs: '2026-10-23T10:00:00.000Z', lastAssistantText: 'Tasks 1 and 2 are done. Moving to Task 3.', liveAgents: [], liveShells: [], ...o });
+function decide(e, ws, t) {
+  const discovery = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache });
+  const plan = discovery.kind === 'ledger' ? guard.planState({ workspace: ws, cwd: e.repo, sessionId: SID }) : null;
+  const read = discovery.kind === 'ledger' ? guard.refusalsBefore({ workspaceLog: join(ws, 'stop-guard.jsonl'), mirrorLog: mirrorOf(e), sessionId: SID }) : { refusals: 0, unreadable: null };
+  const jobsRead = discovery.kind === 'ledger' ? guard.liveJobs(ws) : { live: [], unreadable: [] };
+  return guard.decideStop({ discovery, plan, turn: t, jobs: jobsRead.live, jobsUnreadable: jobsRead.unreadable, refusals: read.refusals, refusalsUnreadable: read.unreadable, sessionId: SID });
+}
+const input = (e, extra = {}) => JSON.stringify({ session_id: SID, transcript_path: join(e.root, 't.jsonl'), cwd: e.repo, hook_event_name: 'Stop', stop_hook_active: false, ...extra });
+const step = (e, t, extra = {}, envExtra = {}) => guard.main(input(e, extra), { XDG_CACHE_HOME: e.cache, STOP_GUARD_TURN: JSON.stringify(t), ...envExtra });
+
+test('the hand-labelled sample', () => {
+  assert.ok(HEURISTIC_CASES.length > 10, 'transcribe the sample first');
+  for (const [text, expected] of HEURISTIC_CASES) assert.equal(guard.asksOrBlocks(text), expected, text);
+});
+test('open tasks with a status message: block, open-tasks, the exact message', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1, 2] });
+  const r = decide(e, ws, turn());
+  assert.equal(r.decision, 'block'); assert.equal(r.reason, 'open-tasks');
+  assert.equal(r.message, guard.openTasksMessage('docs/plan.md', '1 of 3 tasks open', SID));
+  assert.equal(r.message, `SDD stop guard: plan docs/plan.md is not finished (1 of 3 tasks open; nothing tracked is live). Take the next step now, in this turn. If you are handing back to your human partner (a question only they can answer, a BLOCKED report, or they asked you to stop), run scripts/sdd-state handback PLAN_FILE --session ${SID} --reason "<why>" and end the turn with that message.`);
+});
+test('all tasks complete with the ledger present: block, the final-review state', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1, 2, 3] });
+  const r = decide(e, ws, turn({ lastAssistantText: 'All three tasks are complete. Final review next.' }));
+  assert.equal(r.decision, 'block'); assert.match(r.message, /\(all 3 tasks complete; the final review and Finish remain; nothing tracked is live\)/);
+});
+test('a question, BLOCKED, and the approval pattern allow as handback-text', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  for (const text of ['Which option do you want?', 'BLOCKED: the fixture is missing.', 'Two tasks are done. Let me know how you want to proceed.']) {
+    const r = decide(e, ws, turn({ lastAssistantText: text }));
+    assert.equal(r.decision, 'allow', text); assert.equal(r.reason, 'handback-text', text);
+  }
+});
+test('a hand-back line after the prompt allows as handback-line; at or before it does not', () => {
+  const e = env(); const ws = workspaceFor(e);
+  ledger(ws, e, { tasksDone: [1], extra: [`handback ${SID} 2026-10-23T10:00:05.000Z: a question only you can answer`] });
+  assert.equal(decide(e, ws, turn({ promptTs: '2026-10-23T10:00:00.000Z' })).reason, 'handback-line');
+  assert.equal(decide(e, ws, turn({ promptTs: '2026-10-23T10:00:05.000Z' })).reason, 'open-tasks');
+  assert.equal(decide(e, ws, turn({ promptTs: '2026-10-23T10:00:05.500Z' })).reason, 'open-tasks');
+});
+test('a live tracked agent allows; a live shell blocks with the live-shell message; a running job counts as a shell', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  assert.equal(decide(e, ws, turn({ liveAgents: ['toolu_a'] })).reason, 'live-agent');
+  assert.equal(decide(e, ws, turn({ liveAgents: ['toolu_a'], liveShells: ['toolu_b'] })).reason, 'live-agent');
+  let r = decide(e, ws, turn({ liveShells: ['toolu_b'] }));
+  assert.equal(r.decision, 'block'); assert.equal(r.reason, 'live-shell');
+  assert.equal(r.message, guard.liveShellMessage('docs/plan.md', '2 of 3 tasks open', ['toolu_b'], SID));
+  assert.match(r.message, /^SDD stop guard: plan docs\/plan\.md is not finished \(2 of 3 tasks open; job\(s\) toolu_b are live\)\. Job\(s\) toolu_b are still running: watch them in the foreground with tracked-job wait, and report a lost-unswept job to your human partner with its pgid\. If you are handing back/);
+  mkdirSync(join(ws, 'jobs', 'soak-x-0001'), { recursive: true }); writeFileSync(join(ws, 'jobs', 'soak-x-0001', 'meta.json'), JSON.stringify({ name: 'soak', state: 'running' }));
+  r = decide(e, ws, turn());
+  assert.equal(r.reason, 'live-shell'); assert.match(r.message, /job\(s\) soak are live/);
+});
+test('ambiguous, receipt and no-plan allow with their reasons', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e); ledger(workspaceFor(e, 'b-22222222'), e);
+  assert.equal(decide(e, ws, turn()).reason, 'ambiguous');
+  rmSync(join(e.cache, 'hyperpowers', 'state'), { recursive: true }); receipt(e, 'plan-abcdef12-20261023T000000Z');
+  assert.equal(decide(e, null, turn()).reason, 'no-ledger');
+  const ws2 = workspaceFor(e); ledger(ws2, e); rmSync(join(e.repo, 'docs', 'plan.md'));
+  assert.equal(decide(e, ws2, turn()).reason, 'no-plan');
+});
+test('an unreadable job record allows as hook-error with the detail, and is logged to both logs', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  mkdirSync(join(ws, 'jobs', 'bad-x-0001'), { recursive: true }); writeFileSync(join(ws, 'jobs', 'bad-x-0001', 'meta.json'), '{not json');
+  const r = step(e, turn());
+  assert.equal(r.stdout, '');
+  const last = readLines(join(ws, 'stop-guard.jsonl')).at(-1);
+  assert.equal(last.decision, 'allow'); assert.equal(last.reason, 'hook-error'); assert.match(last.detail, /job meta unreadable: bad-x-0001/);
+  assert.deepEqual(readLines(mirrorOf(e)).at(-1), last);
+});
+test('an authoritative log that cannot be read allows as hook-error, never against a zero count', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  const wl = join(ws, 'stop-guard.jsonl');
+  writeLog(wl, [line('2026-10-23T10:00:00.100Z', 'block', 'open-tasks', { refusals: 1 })]);
+  chmodSync(wl, 0o200);
+  let r;
+  try { r = decide(e, ws, turn()); } finally { chmodSync(wl, 0o644); }
+  assert.equal(r.decision, 'allow'); assert.equal(r.reason, 'hook-error'); assert.match(r.detail, /decision log unreadable: .*EACCES/);
+});
+test('an ambiguity names the paths it could not read, without calling them ledgers', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  const other = workspaceFor(e, 'other-00000000'); ledger(other, e, { sid: 'someone-else' });
+  let r;
+  chmodSync(join(other, 'progress.md'), 0o000);
+  try { r = decide(e, ws, turn()); } finally { chmodSync(join(other, 'progress.md'), 0o644); }
+  assert.equal(r.decision, 'allow'); assert.equal(r.reason, 'ambiguous');
+  assert.equal(r.detail, `unreadable: ${join(other, 'progress.md')}`);
+});
+test('a turn that is not ok allows as turn-too-long, with the detail', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  assert.equal(decide(e, ws, turn({ ok: false, tooLong: true })).reason, 'turn-too-long');
+  const r = decide(e, ws, turn({ ok: false, tooLong: false, detail: 'no-prompt' }));
+  assert.equal(r.reason, 'turn-too-long'); assert.equal(r.detail, 'no-prompt');
+});
+test('main: block, block, cap, block, block, cap; a hand-back resets; stop_hook_active is logged and never decides', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  const wl = join(ws, 'stop-guard.jsonl');
+  step(e, turn()); step(e, turn(), { stop_hook_active: true }); step(e, turn(), { stop_hook_active: true });
+  assert.deepEqual(readLines(wl).map((l) => [l.decision, l.reason, l.refusals, l.stop_hook_active]), [['block', 'open-tasks', 1, false], ['block', 'open-tasks', 2, true], ['allow', 'cap', 0, true]]);
+  step(e, turn()); step(e, turn()); const third = step(e, turn());
+  assert.deepEqual(readLines(wl).slice(3).map((l) => l.reason), ['open-tasks', 'open-tasks', 'cap']); assert.equal(third.stdout, '');
+  step(e, turn({ lastAssistantText: 'Which option do you want?' })); step(e, turn()); const r = step(e, turn());
+  assert.deepEqual(readLines(wl).slice(6).map((l) => [l.reason, l.refusals]), [['handback-text', 0], ['open-tasks', 1], ['open-tasks', 2]]);
+  assert.deepEqual(JSON.parse(r.stdout).decision, 'block');
+  assert.deepEqual(readLines(mirrorOf(e)).map((l) => l.ts), readLines(wl).map((l) => l.ts));
+  assert.ok(readLines(wl).every((l) => ['ts', 'session', 'decision', 'reason', 'plan', 'open', 'total', 'live', 'refusals', 'stop_hook_active', 'elapsed_ms'].every((k) => k in l)));
+});
+test('main: a mirror-only allow between refusals resets the count (ambiguous, and log-failed)', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  const wl = join(ws, 'stop-guard.jsonl');
+  step(e, turn()); step(e, turn());
+  const ws2 = workspaceFor(e, 'other-99999999'); ledger(ws2, e);
+  assert.equal(step(e, turn()).stdout, ''); // ambiguous: two ledgers carry the session
+  rmSync(ws2, { recursive: true });
+  step(e, turn());
+  assert.deepEqual(readLines(wl).map((l) => [l.reason, l.refusals]), [['open-tasks', 1], ['open-tasks', 2], ['open-tasks', 1]]);
+  assert.equal(readLines(mirrorOf(e))[2].reason, 'ambiguous');
+  step(e, turn()); // refusals 2
+  chmodSync(wl, 0o444);
+  assert.equal(step(e, turn()).stdout, ''); // log-failed: the mirror alone records it
+  chmodSync(wl, 0o644);
+  step(e, turn());
+  assert.deepEqual(readLines(wl).slice(3).map((l) => [l.reason, l.refusals]), [['open-tasks', 2], ['open-tasks', 1]]);
+  assert.equal(readLines(mirrorOf(e)).at(-2).reason, 'log-failed');
+  assert.equal(readLines(mirrorOf(e)).length, readLines(wl).length + 2);
+});
+test('main: a finished plan\'s refusals do not count for the next plan in the same session', () => {
+  const e = env(); const wsA = workspaceFor(e, 'a-11111111'); ledger(wsA, e, { tasksDone: [1] });
+  step(e, turn()); step(e, turn());
+  rmSync(wsA, { recursive: true }); receipt(e, 'a-11111111-20261023T000000Z');
+  assert.equal(readLines(mirrorOf(e)).length, 2);
+  step(e, turn()); // no-ledger with the receipt: mirror only
+  assert.equal(readLines(mirrorOf(e)).at(-1).reason, 'no-ledger');
+  const wsB = workspaceFor(e, 'b-22222222'); ledger(wsB, e, { tasksDone: [1] });
+  const r = step(e, turn());
+  assert.match(r.stdout, /"decision":"block"/); assert.deepEqual(readLines(join(wsB, 'stop-guard.jsonl')).map((l) => l.refusals), [1]);
+});
+test('main: both logs unwritable records nothing and allows; a failed mirror write marks the next line', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  const wl = join(ws, 'stop-guard.jsonl'); const ml = mirrorOf(e);
+  writeLog(wl, []); writeLog(ml, []); chmodSync(wl, 0o444); chmodSync(ml, 0o444);
+  const r = step(e, turn());
+  assert.equal(r.stdout, ''); assert.equal(r.exitCode, 0); assert.equal(readFileSync(ml, 'utf8'), ''); assert.equal(readFileSync(wl, 'utf8'), '');
+  chmodSync(wl, 0o644);
+  step(e, turn()); chmodSync(ml, 0o644); step(e, turn());
+  assert.deepEqual(readLines(wl).map((l) => l.mirror_failed), [undefined, true]);
+});
+test('main: no session id, malformed input, or no plan writes nothing', () => {
+  const e = env();
+  for (const text of ['', 'not json', JSON.stringify({ transcript_path: '/x' }), JSON.stringify({ session_id: '../x', cwd: e.repo }), input(e)]) {
+    const r = guard.main(text, { XDG_CACHE_HOME: e.cache, STOP_GUARD_TURN: JSON.stringify(turn()) });
+    assert.equal(r.stdout, ''); assert.equal(r.exitCode, 0);
+  }
+  assert.equal(existsSync(join(e.cache, 'hyperpowers', 'stop-guard')), false);
+});
+test('main: the fault variable throws after deciding and before writing', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  assert.throws(() => step(e, turn(), {}, { STOP_GUARD_FAULT: 'throw' }), /injected/);
+  assert.equal(existsSync(join(ws, 'stop-guard.jsonl')), false);
 });

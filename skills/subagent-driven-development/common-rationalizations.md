@@ -17,3 +17,4 @@
 | "I'll keep the workspace for reference" | The repo's commits are the record. Delete it — an undeleted clean-finish workspace becomes a stale-forensics trap for the next plan. |
 | "I've said what's next; I'll pick it up on the next turn" | There is no next turn until your human partner types. A status message that ends the turn stops the plan, and the editor shows the session idle while the message says it is working. Take the step's tool call now. |
 | "A trailing `&` keeps it out of my way" | A detached process is invisible to the harness: no completion notice arrives, and a turn ended to wait for it never resumes. Start it with the tracked background option and watch it in the foreground. |
+| "The hook blocked me, so I'll ask a question to get out" | A question you do not need answered is a premature stop with extra steps; the log records every allow and the field reads it. Take the step the message names. |

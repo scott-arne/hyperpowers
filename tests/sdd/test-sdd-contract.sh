@@ -425,7 +425,7 @@ assert_contains "$SDD" "none of them is a hand-off, so report nothing as ready t
 assert_contains "$SDD" "A workspace in the list that is not this plan's belongs to another plan" "remote-finished routes by the workspace list"
 assert_contains "$SDD" "read its completion line, mark the task done, and never dispatch" "claim done skips the task"
 assert_contains "$SDD" "The scan only reads" "the ledger scan acts only after verify"
-assert_contains "$SDD" "Snapshot the workspace (scripts/sdd-state snapshot)" "the process graph snapshots after completion"
+assert_contains "$SDD" "Complete the task (scripts/sdd-state complete); any status but complete stops" "the process graph completes the task through the helper"
 
 assert_contains "$SDD" "set -o noclobber" "ledger creation is exclusive"
 assert_contains "$SDD" "both stop until the snapshot succeeds" "a failed snapshot stops the loop"
@@ -456,16 +456,34 @@ for template in "$IMPL" "$REVW" "$REREVW" "$FIXP" "$CODEREVW"; do
   assert_contains "$template" 'run_in_background: false # Claude Code: dispatch in the foreground (SKILL.md "Waiting on subagents"); omit on harnesses without the flag' \
     "the $(basename "$template") dispatch block carries the foreground flag"
 done
-assert_contains "$SDD" 'echo "exit=$?" > <out>.exit' \
-  "a long command writes its exit status to its own file whether it succeeds or fails"
 assert_contains "$SDD" "capped at the harness's maximum background lifetime (7200000 ms on Claude Code)" \
   "the watch budget is capped at the background lifetime"
-assert_contains "$SDD" "stop the job through the harness, record the output tail in the ledger, and report BLOCKED" \
-  "an exhausted watch ends in BLOCKED"
 assert_contains "$SDD_RATIONALIZATIONS" "I've said what's next; I'll pick it up on the next turn" \
   "rationalization row for the announced-step stop"
 assert_contains "$SDD_RATIONALIZATIONS" 'A trailing `&` keeps it out of my way' \
   "rationalization row for the detached launch"
+# Stop guard (spec 2026-10-23): helpers write the ledger's machine lines, the
+# guard's refusal is quoted, long commands go through tracked-job.
+assert_contains "$SDD" 'scripts/sdd-state complete PLAN_FILE N --commits <base7>..<head7>' "completion goes through sdd-state complete"
+assert_contains "$SDD" 'repeat it until it prints `status=complete`' "complete is repeated until it succeeds"
+assert_contains "$SDD" '`busy` and `error` are retried' "complete's retryable statuses are named"
+assert_contains "$SDD" 'scripts/sdd-state handback PLAN_FILE --reason "<why>"' "a hand-back is written with sdd-state handback"
+assert_contains "$SDD" 'SDD stop guard: plan' "the refusal message is quoted"
+assert_contains "$SDD" 'two consecutive attempts per plan, the count resetting after any allow' "the cap is stated as consecutive attempts per plan"
+assert_contains "$SDD" 'writing a question you do not need answered to get past it is the stop it exists to prevent' "gaming the heuristic is named"
+assert_contains "$SDD" 'scripts/tracked-job new PLAN_FILE <name> --budget-ms <budget>' "long commands are allocated with tracked-job new"
+assert_contains "$SDD" 'the helper writes the `jobdir=` line in the ledger itself' "the allocation line is the helper's, not the controller's"
+assert_contains "$SDD" 'scripts/tracked-job run <jobdir> -- <command>' "long commands are launched with tracked-job run"
+assert_contains "$SDD" 'scripts/tracked-job wait <jobdir> --max-ms 600000' "long commands are watched with tracked-job wait"
+assert_contains "$SDD" '`exited code=0` is success; any other `exited` code is a failed command' "only code 0 is success"
+assert_contains "$SDD" 'on `lost`, run `tracked-job stop <jobdir>` first' "a lost job is swept before it is handled as failed"
+assert_contains "$SDD" '`lost-unswept pgid=<n>`' "the unswept outcome is reported to the human partner"
+assert_contains "$SDD" 'output never goes in the ledger' "job output stays out of the ledger"
+assert_contains "$SDD" 'the stop guard treats it as live work, and your turn may end while it runs' "SendMessage resumes are named as live work"
+assert_contains "$SDD" 'where it does not (fork mode in an interactive terminal), dispatches run in the background and the stop guard treats them as live work' "the fork-mode sentence"
+assert_contains "$SDD" 'receipt=<path>' "finish records the receipt"
+assert_not_contains "$SDD" '<out>.exit' "the hand-written exit-file protocol is gone"
+assert_contains "$SDD_RATIONALIZATIONS" 'The hook blocked me, so I'"'"'ll ask a question to get out' "rationalization row for gaming the guard"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

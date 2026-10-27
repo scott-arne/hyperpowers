@@ -80,7 +80,7 @@ Final reviewer: All requirements met. Deferred minors triaged: none block merge.
 [Ledger: Decision extractor: task-9f2a -> <dir>/decision-notes.md]
 [Codex final code gate over the branch range, tier-skips.md among the dossier adjudications — approved]
 
-[Read my session line (mode worktree); scripts/sdd-state finish docs/hyperpowers/plans/feature-plan.md → status=finished sha=0a1b2c3 last=… push=origin/hyperpowers/state; test ! -d the workspace — the record lives on hyperpowers/state and in the code history]
+[Read my session line (mode worktree); scripts/sdd-state finish docs/hyperpowers/plans/feature-plan.md → status=finished sha=0a1b2c3 last=… push=origin/hyperpowers/state receipt=…/hyperpowers/receipts/feature-plan-a1b2c3d4-20261023T184500Z; test ! -d the workspace — the record lives on hyperpowers/state and in the code history]
 
 Done! Using hyperpowers:finishing-a-development-branch — plan, spec, and extractor task-9f2a with its notes path handed over.
 ```

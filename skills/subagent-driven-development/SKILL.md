@@ -16,7 +16,7 @@ ledger and the tool results carry the record.
 
 **REQUIRED SUB-SKILL:** Use hyperpowers:communication for anything you write to your human partner in this skill: the pre-flight question, an escalation, a BLOCKED hand-back.
 
-**Continuous execution:** Do not pause to check in with your human partner between tasks. Execute all tasks from the plan without stopping. While the plan has tasks left, a turn ends in exactly three cases: a BLOCKED status you cannot resolve; a question only your human partner can answer, asked in that message (ambiguity that genuinely prevents progress is such a question); or, on a harness that cannot wait in the foreground, tracked work still running, named in that message. A message that names your next step is followed by that step's tool call in the same turn. "Tasks 1 and 2 are done. Moving to Task 3." followed by a turn end is a stop: your human partner reads it as work in progress, and nothing resumes it until they type. All tasks complete ends the plan. "Should I continue?" prompts and progress summaries waste their time — they asked you to execute the plan, so execute it.
+**Continuous execution:** Do not pause to check in with your human partner between tasks. Execute all tasks from the plan without stopping. While the plan has tasks left, a turn ends in exactly three cases: a BLOCKED status you cannot resolve; a question only your human partner can answer, asked in that message (ambiguity that genuinely prevents progress is such a question); or, on a harness that cannot wait in the foreground, tracked work still running, named in that message. A message that names your next step is followed by that step's tool call in the same turn. "Tasks 1 and 2 are done. Moving to Task 3." followed by a turn end is a stop: your human partner reads it as work in progress, and nothing resumes it until they type. All tasks complete ends the plan. Each permitted turn end, and "your human partner asked you to stop", is written to the ledger in the same message that ends the turn: run `scripts/sdd-state handback PLAN_FILE --reason "<why>"` (add `--session <sid>` on a harness without `CLAUDE_CODE_SESSION_ID`; `busy` or `error` is retried, and without the line the guard falls back to reading your last message). On Claude Code the SDD stop guard refuses a turn end it can prove is premature, two consecutive attempts per plan, the count resetting after any allow, with this message: "SDD stop guard: plan <plan path> is not finished (<state>; nothing tracked is live). Take the next step now, in this turn. If you are handing back to your human partner (a question only they can answer, a BLOCKED report, or they asked you to stop), run scripts/sdd-state handback PLAN_FILE --session <sid> --reason "<why>" and end the turn with that message." (with a live job the first sentences name the job and say to watch it with `tracked-job wait`). When you meet it, take the next step; writing a question you do not need answered to get past it is the stop it exists to prevent, and the log records every allow. "Should I continue?" prompts and progress summaries waste their time — they asked you to execute the plan, so execute it.
 
 **Tracked work only:** anything that outlives one tool call starts through your harness's tracked background option (`run_in_background` on Claude Code); never start it with a trailing `&`, `nohup`, `setsid`, `disown`, or a script that detaches a process. The harness never reports on such a process, so nothing wakes you when it ends, and a turn you end to wait for it does not resume.
 
@@ -73,7 +73,7 @@ digraph process {
         "Codex task code gate\n(Claude Code; degrade if absent)" [shape=box];
         "Codex gate blocking findings?" [shape=diamond];
         "Append completion to ledger, mark todo complete (where kept)" [shape=box];
-        "Snapshot the workspace (scripts/sdd-state snapshot); error or none stops" [shape=box];
+        "Complete the task (scripts/sdd-state complete); any status but complete stops" [shape=box];
     }
 
     "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" [shape=box];
@@ -110,8 +110,8 @@ digraph process {
     "Codex task code gate\n(Claude Code; degrade if absent)" -> "Codex gate blocking findings?";
     "Codex gate blocking findings?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="yes - same five-round cap"];
     "Codex gate blocking findings?" -> "Append completion to ledger, mark todo complete (where kept)" [label="no"];
-    "Append completion to ledger, mark todo complete (where kept)" -> "Snapshot the workspace (scripts/sdd-state snapshot); error or none stops";
-    "Snapshot the workspace (scripts/sdd-state snapshot); error or none stops" -> "More tasks remain?";
+    "Append completion to ledger, mark todo complete (where kept)" -> "Complete the task (scripts/sdd-state complete); any status but complete stops";
+    "Complete the task (scripts/sdd-state complete); any status but complete stops" -> "More tasks remain?";
     "More tasks remain?" -> "Claim the task (scripts/sdd-state claim): done means skip it; held by another session means ask" [label="yes"];
     "More tasks remain?" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="no"];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, surface residuals";
@@ -234,13 +234,16 @@ a ledger file, not only in todos.
   inside the checkout is reclaimed automatically; `scripts/sdd-state prune --repo <dir>`
   lists and removes idle plan directories only when asked. Snapshot the
   workspace (`scripts/sdd-state snapshot PLAN_FILE`) after the pre-flight
-  scan table and after every `Task <N>: complete` line, so a hand-off or a
-  crash loses at most the task in flight. The snapshot is the completion's
-  durable record, so its outcome decides whether you go on: `snapshot` (or
-  `plain`, where no state branch exists) continues; `none` means the line
-  you just wrote is not in the workspace the helper sees, and `error` (exit
-  2) means the commit or the ref update failed; both stop until the
-  snapshot succeeds, before the next task and before the final review.
+  scan table and before the final review; `scripts/sdd-state complete`
+  snapshots after every completion line it writes, so a hand-off or a crash
+  loses at most the task in flight. The completion's durable record is the
+  snapshot `complete` takes, so that helper's status line decides whether
+  you go on: `status=complete` continues, `busy` and `error` are retried,
+  and every other status stops. A snapshot you run by hand answers
+  `snapshot` (or `plain`, where no state branch exists), which continues;
+  `none` means what you just wrote is not in the workspace the helper sees,
+  and `error` (exit 2) means the commit or the ref update failed; both stop
+  until the snapshot succeeds.
   When your human partner asks to
   hand the run to another host, run `scripts/sdd-state handoff PLAN_FILE --push`
   (the only time the state branch is pushed, never on your own initiative),
@@ -350,8 +353,8 @@ and is re-read on every later turn. Hand artifacts over as files.
 
 - Dispatch implementer, task-reviewer, fix-round, re-review and final-reviewer subagents with `run_in_background: false`. Your next step always depends on the result, and a foreground call keeps your turn open, which is what an editor such as Zed shows as the session working. A background dispatch ends the turn while the subagent runs, and the editor shows the session idle.
 - Run a covering command expected to finish within 10 minutes in the foreground, with an explicit timeout of at least its expected runtime and at most 600000 ms.
-- Start a command that may run past 10 minutes as a tracked background job, `<command> > <out> 2>&1; echo "exit=$?" > <out>.exit`, with its background timeout set explicitly to the watch budget below. The exit status goes to its own file so nothing the command prints can be mistaken for it. Then watch it in the foreground: calls of at most 600000 ms each, each a bounded loop that waits for `<out>.exit` and aborts on a non-zero status. Codex reviews already follow this shape through the recipe's `status <job-id> --wait --json` loop.
-- **Watch budget.** The total watch on one job is three times the plan's stated runtime for it, or 60 minutes when the plan states none, capped at the harness's maximum background lifetime (7200000 ms on Claude Code). The watch ends when `<out>.exit` appears, or when the harness reports the job ended without one: a killed process writes no exit file, so read its output and treat the job as failed. When the budget is spent with the job still running, stop the job through the harness, record the output tail in the ledger, and report BLOCKED.
+- A command that may run past 10 minutes is a tracked job. Allocate it in the foreground with `scripts/tracked-job new PLAN_FILE <name> --budget-ms <budget>` (the watch budget below; the helper writes the `jobdir=` line in the ledger itself), launch `scripts/tracked-job run <jobdir> -- <command>` through the tracked background option with the budget as its timeout, then watch it in the foreground with repeated `scripts/tracked-job wait <jobdir> --max-ms 600000` calls: `exited code=0` is success; any other `exited` code is a failed command, handled as that command's failure (a failed test is a fix round, a failed covering command a failed task); `running` at the bound means another `wait`; on `lost`, run `tracked-job stop <jobdir>` first, so the job's survivors are swept, then treat the job as failed; `lost-unswept pgid=<n>` means the sweep needs a shell that can read process environments (the sandbox cannot), so the job stays live to the stop guard until `tracked-job stop <jobdir>` runs where it can: report it to your human partner with its pgid beside the failure, and expect a reused pid to read as `running` until that sweep. When you need a job's output, write the tail of its `out.log` to `<workspace>/reports/job-<name>.txt` and cite the path; output never goes in the ledger. A background shell you start in a turn without `tracked-job` is live work no job record names: end the turn while one is still running and the stop guard refuses that turn end as `live-shell`. Codex reviews already follow this shape through the recipe's `status <job-id> --wait --json` loop.
+- **Watch budget.** The total watch on one job is three times the plan's stated runtime for it, or 60 minutes when the plan states none, capped at the harness's maximum background lifetime (7200000 ms on Claude Code). The watch ends when `wait` reports `exited`, `lost` or `lost-unswept`; a supervisor the harness killed writes no exit file, and `wait` reports it as `lost`. When the budget is spent with the job still running, run `tracked-job stop <jobdir>`, write the `out.log` tail to `<workspace>/reports/job-<name>.txt`, and report BLOCKED naming that path.
 
 On a harness whose subagents run asynchronously, never poll a wait interface with short timeouts, and never sit in one silent, open-ended wait either. While you have local work — ledger updates, packaging the next review, reading reports — keep working; child results arrive on their own. When you are genuinely idle, wait in bounded stretches (five to ten minutes, where your platform allows), and between stretches post one line of status and reconcile your live children: list them, and chase any that finished without reporting. A bounded stretch keeps nearly all of a long wait's efficiency while guaranteeing a stuck or lost child is noticed within minutes, not at the end of the session. Codex's `wait_agent` blocks inside the turn; `using-hyperpowers/references/codex-tools.md` maps it.
 
@@ -425,6 +428,7 @@ and fix-round diffs need it.
   Edit tool, whose read-modify-write drops a line another session appended
   in between.
 - Never dispatch multiple implementation subagents in parallel (conflicts).
+- Where the Agent tool offers `run_in_background`, dispatch with it false; where it does not (fork mode in an interactive terminal), dispatches run in the background and the stop guard treats them as live work.
 
 Template: [implementer-prompt.md](implementer-prompt.md)
 
@@ -559,6 +563,9 @@ verbatim. Its context is intact: it knows the task, the code, and its own
 choices. If your harness cannot send another message to a live subagent,
 dispatch a fresh implementer carrying the brief path, the report-file path,
 and the findings — the report file is the persistent memory either way.
+On Claude Code the resumed agent runs in the background, the stop guard
+treats it as live work, and your turn may end while it runs; its completion
+notice resumes you.
 
 **Rounds 4-5 — dispatch a fresh takeover implementer on a more capable
 model** (per Model Selection), with the brief path, the report-file path,
@@ -696,10 +703,12 @@ next.
 
 When the review comes back clean — the task reviewer approved, every
 fix-loop finding is addressed or declined, and the per-task Codex gate
-approved or was skipped by tier — append the completion line to the ledger
-in the same message as your other bookkeeping:
-
-- `Task <N>: complete (commits <base7>..<head7>, review clean)`
+approved or was skipped by tier — run `scripts/sdd-state complete PLAN_FILE N
+--commits <base7>..<head7>` and repeat it until it prints `status=complete`
+(`busy` and `error` are retried; `unknown-task` means the number is not a
+heading in the plan, `no-workspace` that the ledger is gone, and a usage
+error that the arguments are wrong: each of those stops you, not the loop).
+Its `snapshot=` is the completion's durable record.
 
 Then mark the task's todo complete, where you keep todos, and move on.
 Never move to the next task while the review has open Critical/Important
@@ -820,11 +829,17 @@ When the final whole-branch review is clean and its fixes are merged:
    for the other session or ask your human partner about the copy, then run
    `finish` again); otherwise it
    removes the plan's directory, commits the removal to the state branch,
-   and prints `last=<sha>`, the commit that still holds the dossier, and
-   `push=<remote>/<branch>`; on the plain backend it prints `backend=plain`
-   instead, and there is nothing to push. `none` means there was no
-   workspace to remove, and `error` (exit 2) that the removal or its commit
-   failed: any status other than `finished` stops Finish until the command
+   and prints `last=<sha>`, the commit that still holds the dossier,
+   `push=<remote>/<branch>` and `receipt=<path>`, the durable copy of the
+   ledger, the guard's log and the job records; record the receipt path in
+   your closing message. A line reading `receipt=none staging=<path>` means
+   the record exists only under that staging path: name the path to your
+   human partner in the closing message. A space in either path prints as
+   `%20`, so decode it before you name the path. On the plain backend it
+   prints `backend=plain` instead, and there is nothing to push. `none`
+   means there was no workspace to remove, and `error` (exit 2) that the
+   removal or its commit failed: any status other than `finished` stops
+   Finish until the command
    succeeds; show its stderr line.
 3. **Verify deletion** with `test ! -d "<workspace>"` to confirm it is gone.
    The push command is `git -C <checkout> push <remote> <branch>`, the

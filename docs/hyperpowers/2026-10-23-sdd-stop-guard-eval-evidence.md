@@ -136,7 +136,7 @@ are uncapped, every other void is capped at three, and a Claude Code version
 other than the pin restarts the campaign.
 
 The pin that every launch checks is `manifest.tsv` beside that README: the
-evals harness at `9747e5f27`, the treatment at `4a4f354`, its detached
+evals harness at `33523dad5`, the treatment at `4a4f354`, its detached
 worktree root, model `claude-opus-5-5` on Vertex, Claude Code 2.1.302 at a
 fixed path, the allowed subagent model set, Codex absent, and the task tools
 on.

@@ -453,7 +453,7 @@ $cache/$(hp_key "$PLAN_DIR")/plans/$WS"
               repair="mkdir -p ${t%/*} && mv $quarantine/plans/${t##*/} $t"
             fi
             hp_unlock
-            echo "sdd-state: the legacy workspace for this plan sits in a cache root the plain-cache reclaim set aside at $quarantine; move it back ($repair) and run sdd-state import $plan again, or remove it (rm -rf $quarantine) if you know that copy is stale" >&2
+            echo "sdd-state: the legacy workspace for this plan sits in a cache root the plain-cache reclaim set aside at $quarantine; move it back ($repair) and run sdd-state import $plan again, or remove it (rm -rf \"$quarantine\") if you know that copy is stale" >&2
             echo "status=error"; return 2
           done
         fi

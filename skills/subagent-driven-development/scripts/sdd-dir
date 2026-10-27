@@ -148,6 +148,10 @@ reclaim_plain() {
         pid=${r##*.claiming-}
         case "$pid" in ''|*[!0-9]*) continue ;; esac
         hp_pid_gone "$pid" || continue
+        # A claim another pass adopted between the glob and here is gone,
+        # not unstampable; the other two arms skip a vanished root the same
+        # way, so a normal race never reads as a fault.
+        [ -d "$r" ] || continue
         claimed="${r%.claiming-*}.reclaiming-$$"
         if [ -e "$claimed" ] || [ -L "$claimed" ]; then continue; fi
         # The stamp before the name here too: adopting a claim as a

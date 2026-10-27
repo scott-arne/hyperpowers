@@ -1148,8 +1148,9 @@ if [ "$rc" -eq 0 ] && [ "$out" = "status=listed plans=$wso_enc checkouts=deadkey
 # permission error on one subdirectory has.
 fakefind_pr="$TEST_ROOT/fakefind-pr"; mkdir -p "$fakefind_pr"
 # FINDFAIL holds space-separated patterns, matched one at a time: a case
-# pattern built from a single variable is one literal pattern, and an empty
-# variable is a syntax error.
+# pattern built from a single variable is one literal pattern, so two
+# patterns in one variable would never match (an empty one merely falls
+# through).
 printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = -maxdepth ] && exec %s "$@"; done\nfor p in $FINDFAIL; do case "$1" in $p) exit 1 ;; esac; done\nexec %s "$@"\n' "$(command -v find)" "$(command -v find)" > "$fakefind_pr/find"
 chmod 755 "$fakefind_pr/find"
 # The shim splits FINDFAIL on whitespace and this workspace's name holds a

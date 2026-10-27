@@ -194,8 +194,12 @@ hp_plan_ws_name() {
 # A fenced code block is text: an implementation plan embeds fixture plans in
 # its steps, and their headings must not become tasks of the plan itself.
 hp_plan_graph() {
-  local f=$1 awkout rc
-  awkout=$(awk '
+  local f=$1 errf out rc
+  errf=$(mktemp "${TMPDIR:-/tmp}/sdd-graph.XXXXXX") || return 2
+  # One program both validates and emits: its END block prints task lines only
+  # after every check passes, so stdout is empty on error, and a second copy of
+  # the grammar could drift from the validator and emit a graph it never checked.
+  out=$(awk '
     /^(```|~~~)/ { match($0, /^(`+|~+)/); run = substr($0, 1, RLENGTH); if (fence == "") fence = run; else if (substr(run, 1, 1) == substr(fence, 1, 1) && RLENGTH >= length(fence)) fence = ""; next }
     fence != "" { next }
     /^### Task [0-9]+:/ { n = $3; sub(/:$/, "", n); if (n in seen) { printf "duplicate heading: task %s\n", n > "/dev/stderr"; bad = 1; exit 2 } seen[n] = 1; order[++k] = n; cur = n; next }
@@ -223,17 +227,11 @@ hp_plan_graph() {
         path = first; t = first; for (g = 0; g < k; g++) { m = split(dep[t], parts, ","); nxt = ""; for (p = 1; p <= m; p++) if (parts[p] != "" && !(parts[p] in out)) { nxt = parts[p]; break } if (nxt == "") break; path = path " -> " nxt; if (nxt == first) break; t = nxt }
         printf "cycle: %s\n", path > "/dev/stderr"; exit 2 }
       for (i = 1; i <= k; i++) printf "task=%s depends=%s\n", order[i], (dep[order[i]] == "" ? "none" : dep[order[i]])
-    }' "$f" 2>&1 >/dev/null; true)
-  # The awk above sends diagnostics to stderr and data to stdout; run it once
-  # more for the data when it succeeded, so the two streams never interleave.
-  if [ -n "$awkout" ]; then printf '%s\n' "$awkout" >&2; return 2; fi
-  awk '/^(```|~~~)/ { match($0, /^(`+|~+)/); run = substr($0, 1, RLENGTH); if (fence == "") fence = run; else if (substr(run, 1, 1) == substr(fence, 1, 1) && RLENGTH >= length(fence)) fence = ""; next }
-       fence != "" { next }
-       /^### Task [0-9]+:/ { n = $3; sub(/:$/, "", n); order[++k] = n; cur = n; next }
-       cur != "" && /^\*\*Depends on:\*\*/ { line = $0; sub(/^\*\*Depends on:\*\*[ \t]*/, "", line); gsub(/[ \t]+$/, "", line); if (line == "none") { dep[cur] = ""; has[cur] = 1; next } gsub(/Task[ \t]*/, "", line); gsub(/[ \t]/, "", line); dep[cur] = line; has[cur] = 1; next }
-       END { annotated = 0; for (i = 1; i <= k; i++) if (has[order[i]]) annotated++
-             if (annotated == 0) { for (i = 1; i <= k; i++) { d = ""; for (j = 1; j < i; j++) d = d (d == "" ? "" : ",") order[j]; dep[order[i]] = d } }
-             for (i = 1; i <= k; i++) printf "task=%s depends=%s\n", order[i], (dep[order[i]] == "" ? "none" : dep[order[i]]) }' "$f"
+    }' "$f" 2>"$errf")
+  rc=$?
+  if [ "$rc" -ne 0 ] || [ -s "$errf" ]; then cat "$errf" >&2; rm -f "$errf"; return 2; fi
+  rm -f "$errf"
+  printf '%s\n' "$out"
 }
 
 # <plan text file> [<ledger file>] [<amends dir>] -> one "conflict ..." line
@@ -241,6 +239,7 @@ hp_plan_graph() {
 # (a backticked name in one task's Produces and another's Consumes), without
 # one depending on the other directly or through a chain; a consumer must
 # follow its producer, so the reverse edge does not clear an interface pair.
+# Paths are printed with spaces as %20, the form the ledger and amend carry.
 # Paths under "**Merge-expected files:**" in Global Constraints never conflict.
 # Accepted pairs are read from "scan: accepted-overlap" ledger lines and from
 # "accept=" lines in amendment records whose commit is on the plan ref (a
@@ -281,7 +280,7 @@ $(sed -n 's/^accept=//p' "$rec")"
     /^\*\*Files:\*\*/ { mode = "files"; next }
     /^\*\*Interfaces:\*\*/ { mode = "ifaces"; next }
     /^\*\*/ && !/^\*\*Files:\*\*/ && !/^\*\*Interfaces:\*\*/ { mode = "" }
-    mode == "files" && /^- (Create|Modify|Test):/ { s = $0; while (match(s, /`[^`]+`/)) { p = substr(s, RSTART + 1, RLENGTH - 2); sub(/:[0-9-]+$/, "", p); if (!(p in me)) paths[cur, p] = 1; s = substr(s, RSTART + RLENGTH) } next }
+    mode == "files" && /^- (Create|Modify|Test):/ { s = $0; while (match(s, /`[^`]+`/)) { p = substr(s, RSTART + 1, RLENGTH - 2); sub(/:[0-9-]+$/, "", p); if (!(p in me)) { gsub(/ /, "%20", p); paths[cur, p] = 1 }; s = substr(s, RSTART + RLENGTH) } next }
     mode == "ifaces" && /^- Produces:/ { s = $0; while (match(s, /`[^`]+`/)) { prod[cur, substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } next }
     mode == "ifaces" && /^- Consumes:/ { s = $0; while (match(s, /`[^`]+`/)) { cons[cur, substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } next }
     END {

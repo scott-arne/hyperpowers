@@ -2868,6 +2868,27 @@ printf '\n### Task 4: D\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n**
 out=$(run_state "$dp" deps docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f3)" = "tasks=3" ]; then pass "deps reads the committed plan, not the working copy"; else fail "deps reads the ref (rc=$rc: $(printf '%s' "$out" | sed -n 1p))"; fi
 git -C "$dp" checkout -q -- docs/plan.md
+# A path with a space is printed percent-encoded, so a space-splitting reader keeps one field, and the ledger carries the same form.
+cat > "$dp/docs/spaced.md" <<'SPACED'
+### Task 1: A
+
+**Depends on:** none
+
+**Files:**
+- Modify: `docs/design notes.md`
+
+### Task 2: B
+
+**Depends on:** none
+
+**Files:**
+- Modify: `docs/design notes.md`
+SPACED
+out=$(run_state "$dp" deps --from docs/spaced.md docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=docs/design%20notes.md'; then pass "a shared path with a space is printed percent-encoded"; else fail "encoded shares path (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+printf 'scan: accepted-overlap tasks=1,2 path=docs/design%%20notes.md\n' > "$TEST_ROOT/dp-space.ledger"
+out=$(run_state "$dp" deps --from docs/spaced.md docs/plan.md --check --ledger "$TEST_ROOT/dp-space.ledger" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=clean" ]; then pass "an accepted overlap carrying the encoded path is suppressed"; else fail "encoded accepted overlap (rc=$rc: $out)"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

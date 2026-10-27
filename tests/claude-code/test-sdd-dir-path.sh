@@ -431,6 +431,37 @@ find "$idle_crashed.claiming-$crashed_pid" -depth -exec touch -mt "$OLDSTAMP" {}
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
 adopted=$(ls -d "$idle_crashed".reclaiming-* 2>/dev/null | head -n 1) || adopted=""
 if [ ! -d "$idle_crashed.claiming-$crashed_pid" ] && [ -n "$adopted" ] && [ -f "$adopted/plans/some-plan-deadbeef/progress.md" ] && [ -z "$(find "$adopted" -maxdepth 0 -mtime +14 2>/dev/null)" ]; then pass "a .claiming-* leftover is adopted as a quarantine with a fresh stamp"; else fail "a .claiming-* leftover is adopted as a quarantine with a fresh stamp (adopted: '$adopted')"; fi
+# The touch that stamps a staged tree is what starts its second 14 days.
+# A quarantine published without it carries its old timestamps and the next
+# call takes it at once, so the name must not be published unless the stamp
+# landed. A touch can fail while a rename in the same parent succeeds: the
+# timestamp needs ownership or write permission on the tree itself, the
+# rename only on the directory above it.
+# Only touch is shimmed, and only for a staged name: the directory goes in
+# front of the real PATH so everything else resolves as it always does.
+faketouch="$TEST_ROOT/faketouch"; mkdir -p "$faketouch"
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in *.claiming-*) exit 1 ;; esac; done\nexec %s "$@"\n' "$(command -v touch)" > "$faketouch/touch"
+chmod 755 "$faketouch/touch"
+idle_stamp="$XDG_CACHE_HOME/hyperpowers/sdd/idlestamp00000000000c"
+mkdir -p "$idle_stamp/plans/some-plan-deadbeef"; : > "$idle_stamp/plans/some-plan-deadbeef/progress.md"
+find "$idle_stamp" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && PATH="$faketouch:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/stamp.err")
+if ! ls -d "$idle_stamp".reclaiming-* >/dev/null 2>&1 && [ -f "$idle_stamp/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_stamp".claiming-* >/dev/null 2>&1 && grep -q 'grace' "$TEST_ROOT/stamp.err"; then pass "a staged tree whose grace stamp cannot be written goes back under its own name, unpublished and named on stderr"; else fail "a staged tree whose grace stamp cannot be written goes back under its own name (staged: $(ls -d "$idle_stamp".claiming-* "$idle_stamp".reclaiming-* 2>/dev/null | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/stamp.err"))"; fi
+# With touch working again the root is claimed as usual, and nothing the
+# failed pass left behind was deleted on the way.
+_=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)
+claimed_st=$(ls -d "$idle_stamp".reclaiming-* 2>/dev/null | head -n 1) || claimed_st=""
+if [ -n "$claimed_st" ] && [ -f "$claimed_st/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_stamp".gone-* >/dev/null 2>&1; then pass "the next call with a working touch claims the same root, deleting nothing"; else fail "the next call with a working touch claims the same root, deleting nothing (claimed: '$claimed_st')"; fi
+rm -rf "$claimed_st"
+# The adoption arm is the same rule: a crashed claim whose stamp cannot be
+# written stays a claim rather than becoming a quarantine with old times.
+sleep 0.01 & stamp_pid=$!; wait "$stamp_pid" 2>/dev/null
+idle_adopt="$XDG_CACHE_HOME/hyperpowers/sdd/idleadopt00000000000d"
+mkdir -p "$idle_adopt.claiming-$stamp_pid/plans/some-plan-deadbeef"; : > "$idle_adopt.claiming-$stamp_pid/plans/some-plan-deadbeef/progress.md"
+find "$idle_adopt.claiming-$stamp_pid" -depth -exec touch -mt "$OLDSTAMP" {} +
+_=$(cd "$TEST_ROOT/repo-plan" && PATH="$faketouch:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/adopt.err")
+if [ -d "$idle_adopt.claiming-$stamp_pid" ] && [ -f "$idle_adopt.claiming-$stamp_pid/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_adopt".reclaiming-* >/dev/null 2>&1 && grep -q 'grace' "$TEST_ROOT/adopt.err"; then pass "a crashed claim whose grace stamp cannot be written stays a claim, and is named on stderr"; else fail "a crashed claim whose grace stamp cannot be written stays a claim (err: $(tr '\n' '|' < "$TEST_ROOT/adopt.err"))"; fi
+rm -rf "$idle_adopt.claiming-$stamp_pid"
 ln -s "$TEST_ROOT/repo-plan" "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004"
 touch -h -t 202601010000 "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004" 2>/dev/null || true
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)

@@ -125,7 +125,15 @@ reclaim_plain() {
         hp_pid_gone "$pid" || continue
         claimed="${r%.claiming-*}.reclaiming-$$"
         if [ -e "$claimed" ] || [ -L "$claimed" ]; then continue; fi
-        touch "$r" 2>/dev/null || true
+        # The stamp before the name here too: adopting a claim as a
+        # quarantine that still carries its old timestamps would have the
+        # next call delete it instead of starting its 14 days. A claim
+        # whose stamp cannot be written stays a claim, which a later pass
+        # can adopt once the permission is there.
+        if ! touch "$r" 2>/dev/null; then
+          echo "sdd-dir: the crashed claim at $r could not be given the stamp that starts its grace period, so it stays a claim" >&2
+          continue
+        fi
         mv "$r" "$claimed" 2>/dev/null || true
         ;;
       *)
@@ -164,9 +172,25 @@ reclaim_plain() {
         fi
         claimed="$r.reclaiming-$$"
         if [ -e "$claimed" ] || [ -L "$claimed" ]; then continue; fi
-        # The stamp goes on before the name phase two acts on, so a
-        # concurrent call cannot read this quarantine as an aged one.
-        touch "$staged" 2>/dev/null || true
+        # The stamp goes on before the name phase two acts on, and the name
+        # is published only if the stamp landed: a quarantine still carrying
+        # its old timestamps is already idle by phase two's rule, so the
+        # next call would delete it rather than give it its 14 days. The
+        # touch can fail where the rename above succeeded, because a
+        # timestamp needs ownership or write permission on the tree itself
+        # while a rename needs only the parent directory (a root another
+        # user owns in a shared cache). The tree then goes back under its
+        # own name, through the same occupied-destination check a failed
+        # re-check uses.
+        if ! touch "$staged" 2>/dev/null; then
+          echo "sdd-dir: the cache root staged at $staged could not be given the stamp that starts its grace period, so it was not reclaimed" >&2
+          if [ -e "$r" ] || [ -L "$r" ]; then
+            echo "sdd-dir: the cache root staged at $staged could not be put back at $r, which is occupied again; move it back by hand" >&2
+          else
+            mv "$staged" "$r" 2>/dev/null || echo "sdd-dir: the cache root staged at $staged could not be put back at $r; move it back by hand" >&2
+          fi
+          continue
+        fi
         mv "$staged" "$claimed" 2>/dev/null || true
         ;;
     esac

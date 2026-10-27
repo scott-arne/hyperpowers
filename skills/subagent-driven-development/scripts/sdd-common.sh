@@ -183,6 +183,124 @@ hp_plan_ws_name() {
   printf '%s-%s\n' "$slug" "$hash8"
 }
 
+# --- plan graph -------------------------------------------------------------
+# <plan text file> -> one "task=N depends=<list|none>" line per "### Task N:"
+# heading, in heading order. The "**Depends on:**" line under a heading
+# names the tasks whose completion lines must exist before the task may be
+# claimed; a plan with no such line on any task predates the dependency
+# design and is read as serial (each task depends on every earlier one), so
+# existing plans behave as they always did. Everything that can make the
+# graph lie is a parse error here rather than a surprise at claim time.
+# A fenced code block is text: an implementation plan embeds fixture plans in
+# its steps, and their headings must not become tasks of the plan itself.
+hp_plan_graph() {
+  local f=$1 awkout rc
+  awkout=$(awk '
+    /^(```|~~~)/ { match($0, /^(`+|~+)/); run = substr($0, 1, RLENGTH); if (fence == "") fence = run; else if (substr(run, 1, 1) == substr(fence, 1, 1) && RLENGTH >= length(fence)) fence = ""; next }
+    fence != "" { next }
+    /^### Task [0-9]+:/ { n = $3; sub(/:$/, "", n); if (n in seen) { printf "duplicate heading: task %s\n", n > "/dev/stderr"; bad = 1; exit 2 } seen[n] = 1; order[++k] = n; cur = n; next }
+    cur != "" && /^\*\*Depends on:\*\*/ {
+      line = $0; sub(/^\*\*Depends on:\*\*[ \t]*/, "", line); gsub(/[ \t]+$/, "", line)
+      if (line == "none") { dep[cur] = ""; has[cur] = 1; next }
+      gsub(/Task[ \t]*/, "", line); gsub(/[ \t]/, "", line); dep[cur] = line; has[cur] = 1; next }
+    END {
+      if (bad) exit 2
+      annotated = 0; for (i = 1; i <= k; i++) if (has[order[i]]) annotated++
+      if (annotated > 0 && annotated < k) {
+        printf "mixed annotation: tasks without a Depends on line:" > "/dev/stderr"; sep = " "
+        for (i = 1; i <= k; i++) if (!has[order[i]]) { printf "%s%s", sep, order[i] > "/dev/stderr"; sep = ", " }
+        printf "\n" > "/dev/stderr"; exit 2 }
+      if (annotated == 0) { for (i = 1; i <= k; i++) { d = ""; for (j = 1; j < i; j++) d = d (d == "" ? "" : ",") order[j]; dep[order[i]] = d } }
+      for (i = 1; i <= k; i++) { t = order[i]; m = split(dep[t], parts, ",")
+        for (p = 1; p <= m; p++) { if (parts[p] == "") continue
+          if (!(parts[p] in seen)) { printf "unknown task: %s (from task %s)\n", parts[p], t > "/dev/stderr"; exit 2 }
+          if (parts[p] == t) { printf "self-dependency: task %s\n", t > "/dev/stderr"; exit 2 } } }
+      # Kahn: a cycle is whatever never reaches in-degree zero.
+      for (i = 1; i <= k; i++) { t = order[i]; m = split(dep[t], parts, ","); indeg[t] = 0; for (p = 1; p <= m; p++) if (parts[p] != "") { indeg[t]++; succ[parts[p]] = succ[parts[p]] " " t } }
+      done = 0; changed = 1
+      while (changed) { changed = 0; for (i = 1; i <= k; i++) { t = order[i]; if (!(t in out) && indeg[t] == 0) { out[t] = 1; done++; changed = 1; m = split(succ[t], s, " "); for (p = 1; p <= m; p++) if (s[p] != "") indeg[s[p]]-- } } }
+      if (done < k) { first = ""; for (i = 1; i <= k; i++) if (!(order[i] in out)) { first = order[i]; break }
+        path = first; t = first; for (g = 0; g < k; g++) { m = split(dep[t], parts, ","); nxt = ""; for (p = 1; p <= m; p++) if (parts[p] != "" && !(parts[p] in out)) { nxt = parts[p]; break } if (nxt == "") break; path = path " -> " nxt; if (nxt == first) break; t = nxt }
+        printf "cycle: %s\n", path > "/dev/stderr"; exit 2 }
+      for (i = 1; i <= k; i++) printf "task=%s depends=%s\n", order[i], (dep[order[i]] == "" ? "none" : dep[order[i]])
+    }' "$f" 2>&1 >/dev/null; true)
+  # The awk above sends diagnostics to stderr and data to stdout; run it once
+  # more for the data when it succeeded, so the two streams never interleave.
+  if [ -n "$awkout" ]; then printf '%s\n' "$awkout" >&2; return 2; fi
+  awk '/^(```|~~~)/ { match($0, /^(`+|~+)/); run = substr($0, 1, RLENGTH); if (fence == "") fence = run; else if (substr(run, 1, 1) == substr(fence, 1, 1) && RLENGTH >= length(fence)) fence = ""; next }
+       fence != "" { next }
+       /^### Task [0-9]+:/ { n = $3; sub(/:$/, "", n); order[++k] = n; cur = n; next }
+       cur != "" && /^\*\*Depends on:\*\*/ { line = $0; sub(/^\*\*Depends on:\*\*[ \t]*/, "", line); gsub(/[ \t]+$/, "", line); if (line == "none") { dep[cur] = ""; has[cur] = 1; next } gsub(/Task[ \t]*/, "", line); gsub(/[ \t]/, "", line); dep[cur] = line; has[cur] = 1; next }
+       END { annotated = 0; for (i = 1; i <= k; i++) if (has[order[i]]) annotated++
+             if (annotated == 0) { for (i = 1; i <= k; i++) { d = ""; for (j = 1; j < i; j++) d = d (d == "" ? "" : ",") order[j]; dep[order[i]] = d } }
+             for (i = 1; i <= k; i++) printf "task=%s depends=%s\n", order[i], (dep[order[i]] == "" ? "none" : dep[order[i]]) }' "$f"
+}
+
+# <plan text file> [<ledger file>] [<amends dir>] -> one "conflict ..." line
+# per pair of tasks that share a Create, Modify or Test path, or an interface
+# (a backticked name in one task's Produces and another's Consumes), without
+# one depending on the other directly or through a chain; a consumer must
+# follow its producer, so the reverse edge does not clear an interface pair.
+# Paths under "**Merge-expected files:**" in Global Constraints never conflict.
+# Accepted pairs are read from "scan: accepted-overlap" ledger lines and from
+# "accept=" lines in amendment records whose commit is on the plan ref (a
+# record a failed attempt left behind must not hide a conflict). Exit 1 when
+# any line was printed.
+hp_plan_overlaps() { # <plan text> [<ledger>] [<amends dir>] [<plan repo> <plan ref>]
+  local f=$1 ledger=${2:-} amends=${3:-} graph accepted rec c
+  graph=$(hp_plan_graph "$f") || return 2
+  accepted=""
+  [ -n "$ledger" ] && [ -f "$ledger" ] && accepted=$(sed -n 's/^scan: accepted-overlap //p' "$ledger")
+  if [ -n "$amends" ] && [ -d "$amends" ] && [ -n "${4:-}" ] && [ -n "${5:-}" ]; then
+    for rec in "$amends"/*; do
+      [ -f "$rec" ] || continue
+      c=$(sed -n 's/^commit=//p' "$rec"); [ -n "$c" ] || continue
+      git -C "$4" merge-base --is-ancestor "$c" "refs/heads/$5" 2>/dev/null || continue
+      accepted="$accepted
+$(sed -n 's/^accept=//p' "$rec")"
+    done
+  fi
+  # The graph and the accepted pairs are multi-line, which BSD awk refuses in
+  # a -v assignment, so they travel through the environment.
+  HP_GRAPH="$graph" HP_ACCEPTED="$accepted" awk '
+    BEGIN {
+      graph = ENVIRON["HP_GRAPH"]; accepted = ENVIRON["HP_ACCEPTED"]
+      m = split(graph, g, "\n"); for (i = 1; i <= m; i++) { if (g[i] == "") continue; split(g[i], kv, " "); t = substr(kv[1], 6); d = substr(kv[2], 9); order[++k] = t; if (d != "none") { c = split(d, parts, ","); for (p = 1; p <= c; p++) direct[t, parts[p]] = 1 } }
+      # transitive closure: after[a,b] means a depends on b through a chain
+      for (i = 1; i <= k; i++) for (j = 1; j <= k; j++) if (direct[order[i], order[j]]) after[order[i], order[j]] = 1
+      for (x = 1; x <= k; x++) for (i = 1; i <= k; i++) for (j = 1; j <= k; j++) if (after[order[i], order[x]] && after[order[x], order[j]]) after[order[i], order[j]] = 1
+      n = split(accepted, acc, "\n"); for (i = 1; i <= n; i++) if (acc[i] != "") ok[acc[i]] = 1
+    }
+    /^(```|~~~)/ { match($0, /^(`+|~+)/); run = substr($0, 1, RLENGTH); if (fence == "") fence = run; else if (substr(run, 1, 1) == substr(fence, 1, 1) && RLENGTH >= length(fence)) fence = ""; next }
+    fence != "" { next }
+    /^## Global Constraints/ { gc = 1; next }
+    /^## / { gc = 0 }
+    gc && /Merge-expected files:/ { s = $0; while (match(s, /`[^`]+`/)) { me[substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } }
+    /^### Task [0-9]+:/ { cur = $3; sub(/:$/, "", cur); mode = ""; next }
+    cur == "" { next }
+    /^\*\*Files:\*\*/ { mode = "files"; next }
+    /^\*\*Interfaces:\*\*/ { mode = "ifaces"; next }
+    /^\*\*/ && !/^\*\*Files:\*\*/ && !/^\*\*Interfaces:\*\*/ { mode = "" }
+    mode == "files" && /^- (Create|Modify|Test):/ { s = $0; while (match(s, /`[^`]+`/)) { p = substr(s, RSTART + 1, RLENGTH - 2); sub(/:[0-9-]+$/, "", p); if (!(p in me)) paths[cur, p] = 1; s = substr(s, RSTART + RLENGTH) } next }
+    mode == "ifaces" && /^- Produces:/ { s = $0; while (match(s, /`[^`]+`/)) { prod[cur, substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } next }
+    mode == "ifaces" && /^- Consumes:/ { s = $0; while (match(s, /`[^`]+`/)) { cons[cur, substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } next }
+    END {
+      any = 0
+      for (i = 1; i <= k; i++) for (j = i + 1; j <= k; j++) { a = order[i]; b = order[j]
+        if (after[a, b] || after[b, a]) continue
+        for (key in paths) { split(key, kp, SUBSEP); if (kp[1] != a) continue; if ((b, kp[2]) in paths) { line = "tasks=" a "," b " path=" kp[2]; if (!(line in ok)) { printf "conflict tasks=%s,%s shares=%s\n", a, b, kp[2]; any = 1 } } } }
+      for (key in prod) { split(key, kp, SUBSEP); pr = kp[1]; name = kp[2]
+        for (co = 1; co <= k; co++) { c = order[co]; if (c == pr || !((c, name) in cons)) continue
+          if (after[c, pr]) continue
+          lo = (pr + 0 < c + 0) ? pr : c; hi = (pr + 0 < c + 0) ? c : pr
+          line = "tasks=" lo "," hi " interface=" name; if (!(line in ok)) { printf "conflict tasks=%s,%s interface=%s direction=consumer-first\n", lo, hi, name; any = 1 } } }
+      exit any
+    }' "$f"
+}
+
+# <ledger> -> the plan ref recorded by the plan line, or nothing.
+plan_ref_of_ledger() { sed -n 's/^plan: integration .* plan-ref \([^ ]*\) .*/\1/p' "$1" 2>/dev/null | tail -n 1; }
+
 # git with the dedicated identity when either identity field is missing.
 hp_git_id() { # <repo-dir> <git args...>
   local r=$1

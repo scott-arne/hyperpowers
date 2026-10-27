@@ -2749,5 +2749,125 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recovery sidecar a
 plain28="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$PAIR_B")"
 err=$(materialize "$PAIR_B" "$ws28" "$plain28/plans/$ws28" 2>&1 >/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'recovery sidecar at .restore' && [ ! -e "$plain28/plans/$ws28" ] && [ ! -e "$plain28/.restore" ]; then pass "a root blob at .restore is refused before the plain fallback extracts the tip"; else fail "a root blob at .restore is refused before the plain fallback extracts the tip (rc=$rc: $err)"; fi
+echo "deps: the plan graph and the overlap check"
+make_repo "$TEST_ROOT/dp"; dp="$TEST_ROOT/dp"
+mkdir -p "$dp/docs"
+cat > "$dp/docs/plan.md" <<'PLAN'
+# Plan
+
+**Spec:** docs/spec.md
+
+## Global Constraints
+
+- **Merge-expected files:** `CHANGELOG.md`
+
+### Task 1: A
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+**Files:**
+- Create: `src/a.sh`
+- Test: `tests/t.sh`
+
+**Interfaces:**
+- Produces: `a_fn`
+
+### Task 2: B
+
+**Risk tier:** standard
+
+**Depends on:** Task 1
+
+**Files:**
+- Modify: `src/b.sh`
+- Modify: `CHANGELOG.md`
+
+**Interfaces:**
+- Consumes: `a_fn`
+
+### Task 3: C
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+**Files:**
+- Modify: `tests/t.sh`
+- Modify: `CHANGELOG.md`
+
+**Interfaces:**
+- Consumes: `a_fn`
+PLAN
+git -C "$dp" add docs; git -C "$dp" commit -qm plan
+out=$(run_state "$dp" deps docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f1,3)" = "status=deps tasks=3" ] && [ "$(printf '%s\n' "$out" | sed -n 2,4p | tr '\n' '|')" = "task=1 depends=none|task=2 depends=1|task=3 depends=none|" ]; then pass "deps prints the graph in heading order with a plan= blob"; else fail "deps prints the graph (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+out=$(run_state "$dp" deps docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f1,3)" = "status=conflicts count=2" ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,3 shares=tests/t.sh' && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,3 interface=a_fn direction=consumer-first' && ! printf '%s\n' "$out" | grep -q 'CHANGELOG'; then pass "deps --check names a shared Test path and a consumer without an edge, and skips a merge-expected file"; else fail "deps --check conflicts (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+printf 'scan: accepted-overlap tasks=1,3 path=tests/t.sh\nscan: accepted-overlap tasks=1,3 interface=a_fn\n' > "$TEST_ROOT/dp.ledger"
+out=$(run_state "$dp" deps docs/plan.md --check --ledger "$TEST_ROOT/dp.ledger" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=clean" ]; then pass "accepted overlaps from the ledger are suppressed"; else fail "accepted overlaps suppressed (rc=$rc: $out)"; fi
+# A legacy plan: no Depends on lines at all, serial by default.
+sed '/^\*\*Depends on:\*\*/d' "$dp/docs/plan.md" > "$dp/docs/legacy.md"; git -C "$dp" add docs; git -C "$dp" commit -qm legacy
+out=$(run_state "$dp" deps docs/legacy.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 2,4p | tr '\n' '|')" = "task=1 depends=none|task=2 depends=1|task=3 depends=1,2|" ]; then pass "a plan without Depends on lines is serial"; else fail "legacy serial default (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# Mixed annotation, a cycle, an unknown task, a self-dependency, a duplicate heading: each exit 2 with its line.
+# awk, not sed '0,/re/': BSD sed has no 0,/re/ address and would leave the plan unchanged.
+awk '/^\*\*Depends on:\*\* none$/ && !dropped { dropped = 1; next } { print }' "$dp/docs/plan.md" > "$dp/docs/mixed.md"
+err=$(run_state "$dp" deps --from docs/mixed.md docs/plan.md 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'mixed annotation: tasks without a Depends on line: 1'; then pass "mixed annotation is a parse error naming the task"; else fail "mixed annotation (rc=$rc: $err)"; fi
+sed 's/^\*\*Depends on:\*\* none$/**Depends on:** Task 2/' "$dp/docs/plan.md" | awk 'BEGIN{n=0} /^\*\*Depends on:\*\* Task 2$/{n++; if(n==2){print "**Depends on:** none"; next}} {print}' > "$dp/docs/cycle.md"
+err=$(run_state "$dp" deps --from docs/cycle.md docs/plan.md 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'cycle: '; then pass "a cycle is a parse error"; else fail "cycle (rc=$rc: $err)"; fi
+sed 's/^\*\*Depends on:\*\* Task 1$/**Depends on:** Task 9/' "$dp/docs/plan.md" > "$dp/docs/unknown.md"
+err=$(run_state "$dp" deps --from docs/unknown.md docs/plan.md 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'unknown task: 9 (from task 2)'; then pass "an unknown dependency is a parse error"; else fail "unknown task (rc=$rc: $err)"; fi
+sed 's/^\*\*Depends on:\*\* Task 1$/**Depends on:** Task 2/' "$dp/docs/plan.md" > "$dp/docs/self.md"
+err=$(run_state "$dp" deps --from docs/self.md docs/plan.md 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'self-dependency: task 2'; then pass "a self-dependency is a parse error"; else fail "self-dependency (rc=$rc: $err)"; fi
+sed 's/^### Task 3: C$/### Task 2: C/' "$dp/docs/plan.md" > "$dp/docs/dup.md"
+err=$(run_state "$dp" deps --from docs/dup.md docs/plan.md 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'duplicate heading: task 2'; then pass "a duplicated heading is a parse error"; else fail "duplicate heading (rc=$rc: $err)"; fi
+# Fenced blocks are text: an implementation plan embeds fixture plans, and their headings are not tasks.
+cp "$dp/docs/plan.md" "$dp/docs/fenced.md"
+cat >> "$dp/docs/fenced.md" <<'FENCED'
+
+### Task 4: D
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+**Files:**
+- Create: `src/d.sh`
+
+- [ ] **Step 1: A fixture plan inside a fence**
+
+```bash
+cat > plan.md <<'EOF'
+### Task 9: Ghost
+
+**Depends on:** Task 1
+
+**Files:**
+- Modify: `src/a.sh`
+EOF
+```
+
+~~~
+### Task 10: Ghost
+~~~
+FENCED
+out=$(run_state "$dp" deps --from docs/fenced.md docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f3)" = "tasks=4" ] && ! printf '%s\n' "$out" | grep -q 'task=9\|task=10'; then pass "headings and Depends on lines inside fenced blocks are not tasks"; else fail "fenced headings (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+out=$(run_state "$dp" deps --from docs/fenced.md docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f1,3)" = "status=conflicts count=2" ]; then pass "a Files block inside a fence adds no overlap"; else fail "fenced Files block (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# The authoritative plan is the plan ref's head, not the working copy.
+printf '\n### Task 4: D\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n**Files:**\n- Create: `src/d.sh`\n' >> "$dp/docs/plan.md"
+out=$(run_state "$dp" deps docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f3)" = "tasks=3" ]; then pass "deps reads the committed plan, not the working copy"; else fail "deps reads the ref (rc=$rc: $(printf '%s' "$out" | sed -n 1p))"; fi
+git -C "$dp" checkout -q -- docs/plan.md
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

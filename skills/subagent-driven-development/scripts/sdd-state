@@ -12,6 +12,7 @@
 #   sdd-state import PLAN_FILE
 #   sdd-state prune [--days N] [--apply] --repo DIR
 #   sdd-state claim PLAN_FILE N --session SID [--takeover]
+#   sdd-state deps PLAN_FILE [--check] [--ledger FILE] [--from FILE]
 #
 # stdout: one line of space-separated key=value pairs, status= first; sync
 # adds a second line "merge=<command>" on diverged.
@@ -47,7 +48,8 @@ usage() {
     '  finish PLAN_FILE [--force]' \
     '  import PLAN_FILE' \
     '  prune [--days N] [--apply] --repo DIR' \
-    '  claim PLAN_FILE N --session SID [--takeover]' >&2
+    '  claim PLAN_FILE N --session SID [--takeover]' \
+    '  deps PLAN_FILE [--check] [--ledger FILE] [--from FILE]' >&2
   exit 2
 }
 
@@ -88,6 +90,68 @@ owner_record() { # <sid>
   b=$(git branch --show-current 2>/dev/null)
   [ -n "$b" ] || b="detached@$(git rev-parse --short=7 HEAD 2>/dev/null || echo none)"
   printf 'session=%s\nworktree=%s\nbranch=%s\nhost=%s\ntime=%s\n' "$1" "$top" "$b" "$(hostname)" "$(hp_utc_now)"
+}
+
+# --- deps --------------------------------------------------------------------
+# The authoritative plan is the blob at the plan ref's head in the plan
+# repository, never a worktree's copy: two sessions on two task branches
+# would otherwise read two graphs. With a plan line the ref is the line's
+# and must carry the file (an error otherwise, never a fallback); before
+# registration it is the current branch when that carries the file, and the
+# file itself only then.
+# Prints "<blob sha> <path of a temporary copy>"; the caller removes the copy.
+authoritative_plan_blob() {
+  local ledger ref rel blob tmp cur
+  ledger=$(ledger_path); rel=$(hp_plan_rel "$PLAN")
+  ref=$(plan_ref_of_ledger "$ledger")
+  tmp=$(mktemp "${TMPDIR:-/tmp}/sdd-plan.XXXXXX") || return 2
+  if [ -n "$ref" ]; then
+    git -C "$REPO" cat-file -e "refs/heads/$ref:$rel" 2>/dev/null || { rm -f "$tmp"; echo "sdd-state: the plan ref $ref does not carry $rel" >&2; return 2; }
+    git -C "$REPO" show "refs/heads/$ref:$rel" > "$tmp" || { rm -f "$tmp"; return 2; }
+    blob=$(git -C "$REPO" rev-parse "refs/heads/$ref:$rel")
+  elif cur=$(git -C "$REPO" branch --show-current 2>/dev/null) && [ -n "$cur" ] && git -C "$REPO" cat-file -e "refs/heads/$cur:$rel" 2>/dev/null; then
+    git -C "$REPO" show "refs/heads/$cur:$rel" > "$tmp" || { rm -f "$tmp"; return 2; }
+    blob=$(git -C "$REPO" rev-parse "refs/heads/$cur:$rel")
+  else
+    cp "$PLAN" "$tmp" || { rm -f "$tmp"; return 2; }
+    blob=$(git -C "$REPO" hash-object "$tmp")
+  fi
+  printf '%s %s\n' "$blob" "$tmp"
+}
+cmd_deps() {
+  local plan="" check=0 ledger="" from="" pair blob tmp graph rc out n ref
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check) check=1; shift ;;
+      --ledger) [ $# -ge 2 ] || usage; ledger=$2; shift 2 ;;
+      --from) [ $# -ge 2 ] || usage; from=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] || usage
+  resolve_plan "$plan"
+  [ -n "$ledger" ] || ledger=$(ledger_path)
+  ref=$(plan_ref_of_ledger "$ledger"); [ -n "$ref" ] || ref=$(git -C "$REPO" branch --show-current 2>/dev/null)
+  if [ -n "$from" ]; then
+    [ -f "$from" ] || { echo "sdd-state: no such file: $from" >&2; echo "status=error"; return 2; }
+    tmp=$from; blob=$(git -C "$REPO" hash-object "$from")
+  else
+    pair=$(authoritative_plan_blob) || { echo "status=error"; return 2; }
+    blob=${pair%% *}; tmp=${pair#* }
+  fi
+  if ! graph=$(hp_plan_graph "$tmp"); then [ -n "$from" ] || rm -f "$tmp"; echo "status=invalid plan=${blob:0:7}"; return 2; fi
+  if [ "$check" -eq 0 ]; then
+    [ -n "$from" ] || rm -f "$tmp"
+    n=$(printf '%s\n' "$graph" | grep -c .)
+    echo "status=deps plan=${blob:0:7} tasks=$n"; printf '%s\n' "$graph"; return 0
+  fi
+  out=$(hp_plan_overlaps "$tmp" "$ledger" "$(dirname "$ledger")/amends" "$REPO" "$ref"); rc=$?
+  [ -n "$from" ] || rm -f "$tmp"
+  [ "$rc" -ne 2 ] || { echo "status=error"; return 2; }
+  if [ "$rc" -eq 0 ]; then echo "status=clean plan=${blob:0:7}"; return 0; fi
+  n=$(printf '%s\n' "$out" | grep -c .)
+  echo "status=conflicts plan=${blob:0:7} count=$n"; printf '%s\n' "$out"; return 1
 }
 
 # --- snapshot ----------------------------------------------------------------
@@ -2067,6 +2131,7 @@ case "$sub" in
   snapshot) cmd_snapshot "$@" ;;
   import) cmd_import "$@" ;;
   claim) cmd_claim "$@" ;;
+  deps) cmd_deps "$@" ;;
   finish) cmd_finish "$@" ;;
   prune) cmd_prune "$@" ;;
   sync) cmd_sync "$@" ;;

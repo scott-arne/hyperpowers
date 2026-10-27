@@ -3,7 +3,7 @@
 // a row per plan, logging every decision. Fails open on every doubt.
 // Design: docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md (Design §1).
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export const CANDIDATE_CAP = 64;
@@ -38,24 +38,44 @@ export function cloneKey(cwd) {
 // unterminated last line and the next write ends it with a tab-"#fragment"
 // marker. Neither is a record, even when its prefix reads like one, and every
 // reader here — discovery, the completion count, the hand-back check — goes
-// through this.
+// through this. The decision logs this module appends to keep the same
+// convention, so a torn append there is dropped rather than parsed.
 export function ledgerRecords(text) {
   const lines = String(text ?? '').split('\n');
   lines.pop(); // the empty tail of a terminated file, or an unterminated write
   return lines.filter((l) => !l.endsWith(FRAGMENT));
 }
 
+// sdd-state's lifecycle copies live beside the workspaces, each with a full
+// ledger: finish's tomb `.removing-<ws>-<pid>` and import's `<ws>.import-<pid>`
+// staging and `<ws>.importing-<pid>` backup. The spec's candidates are the
+// `plans/*/progress.md` glob, which a dot cannot start; the two import names
+// are excluded by name, because a copy of this session's ledger would read as
+// a second plan and make every Stop ambiguous.
+const LIFECYCLE_COPY = /\.import(ing)?-[0-9]+$/;
 function ledgersUnder(plansDir) {
   const out = [];
   if (!existsSync(plansDir)) return out;
-  for (const ws of readdirSync(plansDir)) { const p = join(plansDir, ws, 'progress.md'); if (existsSync(p)) out.push(p); }
+  for (const ws of readdirSync(plansDir)) {
+    if (ws.startsWith('.') || LIFECYCLE_COPY.test(ws)) continue;
+    const p = join(plansDir, ws, 'progress.md');
+    if (existsSync(p)) out.push(p);
+  }
   return out;
 }
-function newestFirst(paths) {
-  return paths.map((p) => { try { return { p, m: statSync(p).mtimeMs }; } catch { return null; } }).filter(Boolean).sort((a, b) => b.m - a.m).map((x) => x.p);
+// Newest by modification time, ties in discovery order (state before plain).
+// A candidate that vanished is gone; any other stat failure is uncertainty
+// the caller reports.
+function newestFirst(paths, unreadable) {
+  return paths
+    .map((p, i) => { try { return { p, i, m: statSync(p).mtimeMs }; } catch (err) { if (unreadable && err?.code !== 'ENOENT') unreadable.push(p); return null; } })
+    .filter(Boolean).sort((a, b) => b.m - a.m || a.i - b.i).map((x) => x.p);
 }
-function carriesSession(path, sessionId) {
-  try { return ledgerRecords(readFileSync(path, 'utf8')).some((l) => l.startsWith(`session ${sessionId}:`)); } catch { return false; }
+// A candidate that cannot be read is uncertainty, not absence: it is recorded
+// so discovery can say so instead of answering "no ledger" for a plan this
+// session may well own.
+function carriesSession(path, sessionId, unreadable) {
+  try { return ledgerRecords(readFileSync(path, 'utf8')).some((l) => l.startsWith(`session ${sessionId}:`)); } catch (err) { if (unreadable && err?.code !== 'ENOENT') unreadable.push(path); return false; }
 }
 // Step A. Candidates are the ledgers under this clone's key (every key when
 // cwd is outside a repository), newest first; more than the cap is ambiguous
@@ -73,10 +93,23 @@ export function discover({ sessionId, cwd, cacheRoot }) {
     else if (existsSync(root)) for (const k of readdirSync(root)) candidates.push(...ledgersUnder(join(root, k, 'plans')));
   }
   if (candidates.length > CANDIDATE_CAP) return { kind: 'ambiguous', candidates: candidates.length, matches: [] };
-  candidates = newestFirst(candidates);
-  const matches = candidates.filter((p) => carriesSession(p, sessionId));
+  const unreadable = [];
+  candidates = newestFirst(candidates, unreadable);
+  // An imported workspace leaves the plain cache path a symlink to the state
+  // path (sdd-state's import), so one ledger can answer twice; the same file
+  // is one match, under the path discovery reached first.
+  const matches = [];
+  const seen = new Set();
+  for (const p of candidates) {
+    if (!carriesSession(p, sessionId, unreadable)) continue;
+    let real; try { real = realpathSync(p); } catch { real = p; }
+    if (seen.has(real)) continue;
+    seen.add(real);
+    matches.push(p);
+  }
   if (matches.length === 1) return { kind: 'ledger', workspace: dirname(matches[0]), ledger: matches[0] };
   if (matches.length > 1) return { kind: 'ambiguous', candidates: candidates.length, matches };
+  if (unreadable.length) return { kind: 'ambiguous', candidates: candidates.length, matches: [], unreadable };
   const receipts = join(hp, 'receipts');
   if (existsSync(receipts)) {
     // A dot-prefixed staging is a receipt only once finish marked it FINISHED
@@ -149,13 +182,27 @@ export function handbackThisTurn(ledgerText, sessionId, promptTs) {
   return false;
 }
 
-// The last `max` lines of a log that belong to this session, in file order.
+// The last `max` lines of a log that belong to this session, in file order,
+// and what the read could not account for. The window is applied after the
+// session filter: another session's decisions on a shared plan log must not
+// push this session's refusals out of view. A log that is not there yet is
+// the first Stop of a plan and reads as empty; a log that cannot be read, or
+// that holds a whole line which is not JSON, is damage the caller reports
+// (the cap cannot be enforced from a record it cannot see). A torn last line
+// is dropped as the ledger drops its fragments, not counted as damage.
 export function tailLines(path, sessionId, max = 200) {
-  try {
-    return readFileSync(path, 'utf8').split('\n').filter(Boolean).slice(-max)
-      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
-      .filter((l) => l && l.session === sessionId);
-  } catch { return []; }
+  if (!path) return { lines: [], unreadable: null };
+  let text;
+  try { text = readFileSync(path, 'utf8'); } catch (err) { return { lines: [], unreadable: err?.code === 'ENOENT' ? null : `${err?.code || err}` }; }
+  const lines = [];
+  let malformed = 0;
+  for (const l of ledgerRecords(text)) {
+    if (!l) continue;
+    let record;
+    try { record = JSON.parse(l); } catch { malformed++; continue; }
+    if (record && record.session === sessionId) lines.push(record);
+  }
+  return { lines: lines.slice(-max), unreadable: malformed ? `${malformed} malformed line(s)` : null };
 }
 const keyOf = (l) => `${l.ts}|${l.session}`;
 // The cap's view of the record: the mirror in file order (the order decisions
@@ -176,25 +223,61 @@ export function mergedDecisions(planLines, mirrorLines) {
 }
 // Consecutive refusals of this plan since the last allow in either log. A
 // block the mirror alone holds belongs to another plan of the session and
-// neither counts nor resets.
+// neither counts nor resets. `unreadable` is set when the authoritative log
+// itself could not be accounted for, so main allows (hook-error) instead of
+// refusing against a count it cannot trust; an unreadable mirror leaves the
+// authoritative log to answer, as the design says.
 export function refusalsBefore({ workspaceLog, mirrorLog, sessionId }) {
-  const merged = mergedDecisions(tailLines(workspaceLog, sessionId), tailLines(mirrorLog, sessionId));
+  const plan = tailLines(workspaceLog, sessionId);
+  const mirror = tailLines(mirrorLog, sessionId);
+  const merged = mergedDecisions(plan.lines, mirror.lines);
   let n = 0;
   for (let i = merged.length - 1; i >= 0; i--) {
     if (merged[i].decision === 'allow') break;
     if (merged[i].decision === 'block' && merged[i].inPlanLog) n++;
   }
-  return n;
+  return { refusals: n, unreadable: plan.unreadable };
 }
 
-// One JSON line, built whole, appended with one write.
-export function appendLine(path, line) {
-  try { mkdirSync(dirname(path), { recursive: true }); appendFileSync(path, JSON.stringify(line) + '\n'); return true; } catch { return false; }
+// One JSON line, built whole, appended with one write to a file opened
+// without following a symlink: a link planted at a log must not send
+// decisions somewhere else, the reason hp_ledger_append opens O_NOFOLLOW too.
+// `mkdirs` is for the mirror alone — see recordDecision.
+// A write that failed part-way leaves an unterminated line; this ends it with
+// the ledger's own fragment marker rather than gluing the next record to it.
+export function appendLine(path, line, { mkdirs = false } = {}) {
+  let fd = -1;
+  try {
+    if (mkdirs) mkdirSync(dirname(path), { recursive: true });
+    fd = openSync(path, constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o644);
+    let repair = '';
+    const size = fstatSync(fd).size;
+    if (size > 0) {
+      const last = Buffer.alloc(1);
+      if (readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a) repair = FRAGMENT + '\n';
+    }
+    writeSync(fd, repair + JSON.stringify(line) + '\n');
+    return true;
+  } catch { return false; } finally {
+    if (fd >= 0) { try { closeSync(fd); } catch { /* the write is what mattered */ } }
+  }
+}
+// The marker, created without following a symlink either. Its existence is
+// the whole message, so it carries nothing.
+function markerSet(path) {
+  let fd = -1;
+  try { fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW, 0o644); return true; } catch { return false; } finally {
+    if (fd >= 0) { try { closeSync(fd); } catch { /* created is created */ } }
+  }
 }
 // The plan log first, then its copy in the mirror. A failed plan-log write
 // turns the decision into a log-failed allow that goes to the mirror alone;
 // a failed mirror write leaves a marker so the next line carries
 // mirror_failed. Returns the line as recorded and where it went.
+// The mirror's directory is created on demand; the workspace's never is, and
+// the workspace must still hold its ledger when the line is written. A Stop
+// racing another session's finish would otherwise recreate the workspace it
+// just removed, and finish reports that as an error a human has to resolve.
 export function recordDecision({ workspaceLog, mirrorLog, marker, line }) {
   const out = { ...line };
   const pending = Boolean(marker && existsSync(marker));
@@ -202,16 +285,15 @@ export function recordDecision({ workspaceLog, mirrorLog, marker, line }) {
   // The marker is cleared only once a line carrying mirror_failed reached a
   // log; a decision that reaches neither leaves it for the next one.
   const clear = () => { if (pending) { try { rmSync(marker); } catch { /* the next line repeats it */ } } };
-  if (!workspaceLog) { const ok = appendLine(mirrorLog, out); if (ok) clear(); return { line: out, loggedAs: ok ? 'mirror-only' : 'none' }; }
-  if (!appendLine(workspaceLog, out)) {
+  const toMirror = (l) => appendLine(mirrorLog, l, { mkdirs: true });
+  if (!workspaceLog) { const ok = toMirror(out); if (ok) clear(); return { line: out, loggedAs: ok ? 'mirror-only' : 'none' }; }
+  const live = existsSync(join(dirname(workspaceLog), 'progress.md'));
+  if (!live || !appendLine(workspaceLog, out)) {
     const failed = { ...out, decision: 'allow', reason: 'log-failed', refusals: 0 };
-    const ok = appendLine(mirrorLog, failed); if (ok) clear();
+    const ok = toMirror(failed); if (ok) clear();
     return { line: failed, loggedAs: ok ? 'log-failed' : 'none' };
   }
   clear();
-  if (!appendLine(mirrorLog, out) && marker) { try { writeFileSync(marker, ''); } catch { /* best effort */ } }
+  if (!toMirror(out) && marker) markerSet(marker);
   return { line: out, loggedAs: 'authoritative' };
 }
-// Task 7 appends asksOrBlocks, the messages, decideStop and main; Task 8 the
-// transcript reader. closeSync, fstatSync, openSync and readSync are theirs.
-void closeSync; void fstatSync; void openSync; void readSync;

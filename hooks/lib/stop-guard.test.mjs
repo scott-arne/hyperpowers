@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -149,26 +149,119 @@ test('refusalsBefore: consecutive blocks of the plan log since the last allow in
   const e = env(); const ws = workspaceFor(e); ledger(ws, e);
   const wl = join(ws, 'stop-guard.jsonl'); const ml = mirrorOf(e);
   const args = { workspaceLog: wl, mirrorLog: ml, sessionId: SID };
-  assert.equal(guard.refusalsBefore(args), 0);
+  // no log yet is the first Stop of a plan, not a log that cannot be read
+  assert.deepEqual(guard.refusalsBefore(args), { refusals: 0, unreadable: null });
   const b1 = line('2026-10-23T10:00:00.100Z', 'block', 'open-tasks', { refusals: 1 }); const b2 = line('2026-10-23T10:01:00.100Z', 'block', 'open-tasks', { refusals: 2 });
   writeLog(wl, [b1, b2]); writeLog(ml, [b1, b2]);
-  assert.equal(guard.refusalsBefore(args), 2);
+  assert.equal(guard.refusalsBefore(args).refusals, 2);
   // a mirror-only allow (ambiguous) after the blocks resets the count
   writeLog(ml, [b1, b2, line('2026-10-23T10:02:00.000Z', 'allow', 'ambiguous', { plan: null })]);
-  assert.equal(guard.refusalsBefore(args), 0);
+  assert.equal(guard.refusalsBefore(args).refusals, 0);
   // a hook-error line written by the wrapper carries a coarser timestamp that sorts before the block it follows: file order wins
   writeLog(ml, [b1, b2, { ts: '2026-10-23T10:01:00Z', session: SID, decision: 'allow', reason: 'hook-error', detail: 'module exit 1' }]);
-  assert.equal(guard.refusalsBefore(args), 0);
+  assert.equal(guard.refusalsBefore(args).refusals, 0);
   // a line only in the plan log is placed by its timestamp
   writeLog(ml, [b1]); writeLog(wl, [b1, b2]);
-  assert.equal(guard.refusalsBefore(args), 2);
+  assert.equal(guard.refusalsBefore(args).refusals, 2);
   // blocks found only in the mirror belong to another plan: neither counted nor a reset
   writeLog(wl, []); writeLog(ml, [line('2026-10-23T09:00:00.000Z', 'block', 'open-tasks', { plan: 'docs/earlier.md', refusals: 1 }), line('2026-10-23T09:01:00.000Z', 'block', 'open-tasks', { plan: 'docs/earlier.md', refusals: 2 })]);
-  assert.equal(guard.refusalsBefore(args), 0);
+  assert.equal(guard.refusalsBefore(args).refusals, 0);
   // an unreadable mirror leaves the plan log to answer
   writeLog(wl, [b1, b2]); chmodSync(ml, 0o000);
-  assert.equal(guard.refusalsBefore(args), 2);
+  assert.deepEqual(guard.refusalsBefore(args), { refusals: 2, unreadable: null });
   chmodSync(ml, 0o644);
+});
+test('refusalsBefore: an authoritative log that cannot be read or parsed is reported, never counted as no refusals', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e);
+  const wl = join(ws, 'stop-guard.jsonl'); const ml = mirrorOf(e);
+  const args = { workspaceLog: wl, mirrorLog: ml, sessionId: SID };
+  const b1 = line('2026-10-23T10:00:00.100Z', 'block', 'open-tasks', { refusals: 1 }); const b2 = line('2026-10-23T10:01:00.100Z', 'block', 'open-tasks', { refusals: 2 });
+  // write-only: the blocks are there, the cap cannot see them
+  writeLog(wl, [b1, b2]); writeLog(ml, []); chmodSync(wl, 0o200);
+  assert.match(guard.refusalsBefore(args).unreadable, /EACCES/);
+  chmodSync(wl, 0o644);
+  // a whole line that is not JSON is damage, not absence
+  writeLog(wl, [b1]); appendFileSync(wl, 'not json at all\n');
+  assert.match(guard.refusalsBefore(args).unreadable, /malformed/);
+  // the same damage in the mirror alone leaves the plan log to answer
+  writeLog(wl, [b1, b2]); writeLog(ml, [b1]); appendFileSync(ml, 'not json at all\n');
+  assert.deepEqual(guard.refusalsBefore(args), { refusals: 2, unreadable: null });
+  // a half-written last line is a torn write, the same remains the ledger drops
+  writeLog(wl, [b1, b2]); appendFileSync(wl, '{"ts":"2026-10-23T10:02');
+  assert.deepEqual(guard.refusalsBefore(args), { refusals: 2, unreadable: null });
+});
+test('refusalsBefore: another session filling the shared plan log does not evict this session refusals', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e);
+  const wl = join(ws, 'stop-guard.jsonl'); const ml = mirrorOf(e);
+  const b1 = line('2026-10-23T10:00:00.100Z', 'block', 'open-tasks', { refusals: 1 }); const b2 = line('2026-10-23T10:01:00.100Z', 'block', 'open-tasks', { refusals: 2 });
+  const theirs = [];
+  for (let i = 0; i < 200; i++) theirs.push({ ...line(`2026-10-23T11:${String(i % 60).padStart(2, '0')}:00.000Z`, 'block', 'open-tasks'), session: 'other-session' });
+  writeLog(wl, [b1, b2, ...theirs]); writeLog(ml, [b1, b2, ...theirs]);
+  assert.deepEqual(guard.refusalsBefore({ workspaceLog: wl, mirrorLog: ml, sessionId: SID }), { refusals: 2, unreadable: null });
+});
+test('appendLine: a half-written line is fenced off, never glued to the next record', () => {
+  const e = env(); const ws = workspaceFor(e);
+  const wl = join(ws, 'stop-guard.jsonl');
+  const whole = line('2026-10-23T10:00:00.100Z', 'block', 'open-tasks', { refusals: 1 });
+  writeLog(wl, [whole]); appendFileSync(wl, '{"ts":"2026-10-23T10:01:00.100Z","sess');
+  assert.equal(guard.appendLine(wl, line('2026-10-23T10:02:00.100Z', 'allow', 'handback-text')), true);
+  const text = readFileSync(wl, 'utf8');
+  assert.match(text, /","sess\t#fragment\n/);
+  const records = guard.ledgerRecords(text).map((l) => JSON.parse(l));
+  assert.equal(records.length, 2); assert.equal(records[1].reason, 'handback-text');
+  assert.deepEqual(guard.refusalsBefore({ workspaceLog: wl, mirrorLog: join(ws, 'absent.jsonl'), sessionId: SID }), { refusals: 0, unreadable: null });
+});
+test('recordDecision: a workspace removed under the hook is a failed log, not a workspace recreated after finish', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e);
+  const wl = join(ws, 'stop-guard.jsonl'); const ml = mirrorOf(e); const marker = join(ws, '.mirror-failed');
+  rmSync(ws, { recursive: true });
+  const r = guard.recordDecision({ workspaceLog: wl, mirrorLog: ml, marker, line: line('2026-10-23T10:00:00.000Z', 'block', 'open-tasks', { refusals: 1 }) });
+  assert.equal(r.loggedAs, 'log-failed'); assert.equal(r.line.decision, 'allow'); assert.equal(r.line.reason, 'log-failed');
+  assert.equal(existsSync(ws), false); assert.equal(readLines(ml).at(-1).reason, 'log-failed');
+  // the directory back without its ledger is a workspace finish has let go of too
+  mkdirSync(ws, { recursive: true });
+  assert.equal(guard.recordDecision({ workspaceLog: wl, mirrorLog: ml, marker, line: line('2026-10-23T10:01:00.000Z', 'block', 'open-tasks', { refusals: 1 }) }).loggedAs, 'log-failed');
+  assert.equal(existsSync(wl), false);
+});
+test('recordDecision: a symlink planted at either log is not written through', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e);
+  const wl = join(ws, 'stop-guard.jsonl'); const ml = mirrorOf(e); const marker = join(ws, '.mirror-failed');
+  const prey = join(e.root, 'prey.txt'); writeFileSync(prey, 'untouched\n');
+  mkdirSync(join(ml, '..'), { recursive: true }); writeFileSync(ml, '');
+  symlinkSync(prey, wl);
+  let r = guard.recordDecision({ workspaceLog: wl, mirrorLog: ml, marker, line: line('2026-10-23T10:00:00.000Z', 'block', 'open-tasks', { refusals: 1 }) });
+  assert.equal(r.loggedAs, 'log-failed'); assert.equal(readFileSync(prey, 'utf8'), 'untouched\n');
+  assert.equal(readLines(ml).at(-1).reason, 'log-failed');
+  // and the mirror: the plan log keeps the line, the marker records the gap
+  rmSync(wl); rmSync(ml); symlinkSync(prey, ml);
+  r = guard.recordDecision({ workspaceLog: wl, mirrorLog: ml, marker, line: line('2026-10-23T10:01:00.000Z', 'block', 'open-tasks', { refusals: 1 }) });
+  assert.equal(r.loggedAs, 'authoritative'); assert.equal(readFileSync(prey, 'utf8'), 'untouched\n');
+  assert.equal(readLines(wl).length, 1); assert.equal(existsSync(marker), true);
+});
+test('discover: a removal tomb and an import staging are not candidate workspaces', () => {
+  const e = env(); const plans = join(e.cache, 'hyperpowers', 'state', guard.cloneKey(e.repo), 'plans');
+  for (const name of ['.removing-plan-abcdef12-4321', 'plan-abcdef12.import-4321', 'plan-abcdef12.importing-4321']) {
+    mkdirSync(join(plans, name), { recursive: true }); ledger(join(plans, name), e);
+  }
+  assert.equal(guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache }).kind, 'none');
+  const ws = workspaceFor(e); ledger(ws, e);
+  const d = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache });
+  assert.equal(d.kind, 'ledger'); assert.equal(d.workspace, ws);
+});
+test('discover: a plain-cache workspace imported into the state cache is one ledger, not two', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e);
+  const plain = join(e.cache, 'hyperpowers', 'sdd', guard.cloneKey(e.repo), 'plans');
+  mkdirSync(plain, { recursive: true }); symlinkSync(ws, join(plain, 'plan-abcdef12'));
+  const d = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache });
+  assert.equal(d.kind, 'ledger'); assert.equal(d.workspace, ws);
+});
+test('discover: a candidate that cannot be read is an ambiguity, not an absence', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e);
+  chmodSync(join(ws, 'progress.md'), 0o000);
+  const d = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache });
+  chmodSync(join(ws, 'progress.md'), 0o644);
+  assert.equal(d.kind, 'ambiguous'); assert.equal(d.candidates, 1); assert.deepEqual(d.matches, []);
+  assert.deepEqual(d.unreadable, [join(ws, 'progress.md')]);
 });
 test('recordDecision: the plan log first, then the mirror; failures become log-failed, mirror_failed, or nothing', () => {
   const e = env(); const ws = workspaceFor(e); ledger(ws, e);

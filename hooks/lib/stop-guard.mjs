@@ -107,9 +107,13 @@ export function discover({ sessionId, cwd, cacheRoot }) {
     seen.add(real);
     matches.push(p);
   }
+  // A candidate that could not be read may carry this session too, so one
+  // readable match does not make the plan unique: say ambiguous and let main
+  // allow. Uniqueness is a claim about every candidate, not about the ones
+  // that answered.
+  if (unreadable.length) return { kind: 'ambiguous', candidates: candidates.length, matches, unreadable };
   if (matches.length === 1) return { kind: 'ledger', workspace: dirname(matches[0]), ledger: matches[0] };
   if (matches.length > 1) return { kind: 'ambiguous', candidates: candidates.length, matches };
-  if (unreadable.length) return { kind: 'ambiguous', candidates: candidates.length, matches: [], unreadable };
   const receipts = join(hp, 'receipts');
   if (existsSync(receipts)) {
     // A dot-prefixed staging is a receipt only once finish marked it FINISHED
@@ -239,24 +243,44 @@ export function refusalsBefore({ workspaceLog, mirrorLog, sessionId }) {
   return { refusals: n, unreadable: plan.unreadable };
 }
 
+// Test seams, inert unless a test installs one: `beforeWrite(path)` runs
+// between the open and the write (the suite moves the workspace there, the
+// race against finish this module must survive) and `write(fd, buffer)`
+// replaces the write call (the suite makes it land short). Nothing in the
+// hook's own paths reads them.
+export const testHooks = {};
+
 // One JSON line, built whole, appended with one write to a file opened
 // without following a symlink: a link planted at a log must not send
 // decisions somewhere else, the reason hp_ledger_append opens O_NOFOLLOW too.
-// `mkdirs` is for the mirror alone — see recordDecision.
+// `mkdirs` is for the mirror alone and `confirmPath` for the authoritative
+// log — see recordDecision.
 // A write that failed part-way leaves an unterminated line; this ends it with
-// the ledger's own fragment marker rather than gluing the next record to it.
-export function appendLine(path, line, { mkdirs = false } = {}) {
+// the ledger's own fragment marker rather than gluing the next record to it,
+// and a write that lands short is a failure, not a record: the bytes that did
+// land are a fragment the next append fences off.
+export function appendLine(path, line, { mkdirs = false, confirmPath = false } = {}) {
   let fd = -1;
   try {
     if (mkdirs) mkdirSync(dirname(path), { recursive: true });
     fd = openSync(path, constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o644);
     let repair = '';
-    const size = fstatSync(fd).size;
-    if (size > 0) {
+    const before = fstatSync(fd);
+    if (before.size > 0) {
       const last = Buffer.alloc(1);
-      if (readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a) repair = FRAGMENT + '\n';
+      if (readSync(fd, last, 0, 1, before.size - 1) === 1 && last[0] !== 0x0a) repair = FRAGMENT + '\n';
     }
-    writeSync(fd, repair + JSON.stringify(line) + '\n');
+    if (testHooks.beforeWrite) testHooks.beforeWrite(path);
+    const buf = Buffer.from(repair + JSON.stringify(line) + '\n');
+    if ((testHooks.write || writeSync)(fd, buf) !== buf.length) return false;
+    // The open and the write are a window: another session's finish can
+    // rename the workspace aside in it, and the line then lands in the tomb.
+    // The path must still be the file just written for the record to count.
+    if (confirmPath) {
+      const now = statSync(path);
+      const written = fstatSync(fd);
+      if (now.ino !== written.ino || now.dev !== written.dev) return false;
+    }
     return true;
   } catch { return false; } finally {
     if (fd >= 0) { try { closeSync(fd); } catch { /* the write is what mattered */ } }
@@ -275,9 +299,12 @@ function markerSet(path) {
 // a failed mirror write leaves a marker so the next line carries
 // mirror_failed. Returns the line as recorded and where it went.
 // The mirror's directory is created on demand; the workspace's never is, and
-// the workspace must still hold its ledger when the line is written. A Stop
-// racing another session's finish would otherwise recreate the workspace it
-// just removed, and finish reports that as an error a human has to resolve.
+// the workspace must still hold its ledger before and after the line is
+// written. A Stop racing another session's finish would otherwise recreate
+// the workspace it just removed, and finish reports that as an error a human
+// has to resolve. When the line landed but the workspace went away under it,
+// the decision is log-failed: the stray line carries this line's `ts`, so the
+// mirror's log-failed allow is the record the merge keeps.
 export function recordDecision({ workspaceLog, mirrorLog, marker, line }) {
   const out = { ...line };
   const pending = Boolean(marker && existsSync(marker));
@@ -287,8 +314,8 @@ export function recordDecision({ workspaceLog, mirrorLog, marker, line }) {
   const clear = () => { if (pending) { try { rmSync(marker); } catch { /* the next line repeats it */ } } };
   const toMirror = (l) => appendLine(mirrorLog, l, { mkdirs: true });
   if (!workspaceLog) { const ok = toMirror(out); if (ok) clear(); return { line: out, loggedAs: ok ? 'mirror-only' : 'none' }; }
-  const live = existsSync(join(dirname(workspaceLog), 'progress.md'));
-  if (!live || !appendLine(workspaceLog, out)) {
+  const live = () => existsSync(join(dirname(workspaceLog), 'progress.md'));
+  if (!live() || !appendLine(workspaceLog, out, { confirmPath: true }) || !live()) {
     const failed = { ...out, decision: 'allow', reason: 'log-failed', refusals: 0 };
     const ok = toMirror(failed); if (ok) clear();
     return { line: failed, loggedAs: ok ? 'log-failed' : 'none' };

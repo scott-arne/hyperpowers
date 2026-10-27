@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import * as guard from './stop-guard.mjs';
 
@@ -262,6 +262,47 @@ test('discover: a candidate that cannot be read is an ambiguity, not an absence'
   chmodSync(join(ws, 'progress.md'), 0o644);
   assert.equal(d.kind, 'ambiguous'); assert.equal(d.candidates, 1); assert.deepEqual(d.matches, []);
   assert.deepEqual(d.unreadable, [join(ws, 'progress.md')]);
+});
+test('discover: one match beside a candidate that cannot be read proves nothing, so it is ambiguous', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e);
+  const other = workspaceFor(e, 'other-00000000'); ledger(other, e, { sid: 'someone-else' });
+  chmodSync(join(other, 'progress.md'), 0o000);
+  const d = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache });
+  chmodSync(join(other, 'progress.md'), 0o644);
+  assert.equal(d.kind, 'ambiguous'); assert.equal(d.candidates, 2);
+  assert.deepEqual(d.matches, [join(ws, 'progress.md')]);
+  assert.deepEqual(d.unreadable, [join(other, 'progress.md')]);
+});
+test('appendLine: a write that lands short is a failed write, not a record', () => {
+  const e = env(); const ws = workspaceFor(e);
+  const wl = join(ws, 'stop-guard.jsonl'); const ml = mirrorOf(e); const marker = join(ws, '.mirror-failed');
+  ledger(ws, e);
+  guard.testHooks.write = (fd, buf) => writeSync(fd, buf.subarray(0, buf.length - 5));
+  try {
+    const r = guard.recordDecision({ workspaceLog: wl, mirrorLog: ml, marker, line: line('2026-10-23T10:00:00.000Z', 'block', 'open-tasks', { refusals: 1 }) });
+    assert.equal(r.loggedAs, 'none'); // the mirror is written through the same short seam
+    assert.equal(guard.appendLine(wl, line('2026-10-23T10:01:00.000Z', 'allow', 'handback-text')), false);
+  } finally { delete guard.testHooks.write; }
+  // the torn bytes are fenced off, so the cap reads no refusal from them
+  assert.deepEqual(guard.refusalsBefore({ workspaceLog: wl, mirrorLog: ml, sessionId: SID }), { refusals: 0, unreadable: null });
+  const r = guard.recordDecision({ workspaceLog: wl, mirrorLog: ml, marker, line: line('2026-10-23T10:02:00.000Z', 'block', 'open-tasks', { refusals: 1 }) });
+  assert.equal(r.loggedAs, 'authoritative');
+  assert.deepEqual(guard.refusalsBefore({ workspaceLog: wl, mirrorLog: ml, sessionId: SID }), { refusals: 1, unreadable: null });
+});
+test('recordDecision: a finish that moves the workspace between the open and the write gets no authoritative record', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e);
+  const wl = join(ws, 'stop-guard.jsonl'); const ml = mirrorOf(e); const marker = join(ws, '.mirror-failed');
+  const tomb = join(dirname(ws), '.removing-plan-abcdef12-4321');
+  guard.testHooks.beforeWrite = (p) => { if (p === wl) renameSync(ws, tomb); };
+  let r;
+  try {
+    r = guard.recordDecision({ workspaceLog: wl, mirrorLog: ml, marker, line: line('2026-10-23T10:00:00.000Z', 'block', 'open-tasks', { refusals: 1 }) });
+  } finally { delete guard.testHooks.beforeWrite; }
+  assert.equal(r.loggedAs, 'log-failed'); assert.equal(r.line.decision, 'allow');
+  assert.equal(existsSync(ws), false); // the canonical path stays gone, finish keeps its removal
+  assert.equal(readLines(ml).at(-1).reason, 'log-failed');
+  // the line that did land is in the tomb, which finish deletes or restores whole
+  assert.equal(readLines(join(tomb, 'stop-guard.jsonl')).length, 1);
 });
 test('recordDecision: the plan log first, then the mirror; failures become log-failed, mirror_failed, or nothing', () => {
   const e = env(); const ws = workspaceFor(e); ledger(ws, e);

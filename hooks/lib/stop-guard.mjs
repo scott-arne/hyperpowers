@@ -470,18 +470,107 @@ export function decideStop({ discovery, plan, turn, jobs, jobsUnreadable = [], r
   return { decision: 'block', reason: 'open-tasks', state, message: openTasksMessage(plan.plan, state, sessionId) };
 }
 
-// Minimal turn reader for this task's tests; Task 8 replaces it.
-export function readTurn(transcriptPath) {
-  const none = { ok: false, tooLong: false, promptTs: null, lastAssistantText: '', liveAgents: [], liveShells: [], detail: 'unreadable' };
+const TASK_NOTICE = '<task-notification>';
+const INTERRUPTED = '[Request interrupted';
+const NOTIF_ID = /<tool-use-id>([^<]+)<\/tool-use-id>/;
+const LAUNCH_AGENT = 'Async agent launched';
+const LAUNCH_BASH = 'Command running in background with ID';
+const AUTO_MOVED = 'was moved to the background';
+const RESUMED = ['Resuming agent ', 'in the background with your message'];
+const AGENT_TOOLS = new Set(['Agent', 'Task']);
+
+function textOf(rec) {
+  const c = rec?.message?.content;
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c)) return c.filter((b) => b.type === 'text').map((b) => b.text || '').join('\n');
+  return '';
+}
+function isToolResult(rec) { const c = rec?.message?.content; return Array.isArray(c) && c.some((b) => b.type === 'tool_result'); }
+// liveness.idle_marker: 'human' | 'notification' | null
+export function idleMarker(rec) {
+  if (rec.type !== 'user' || rec.isMeta || isToolResult(rec)) return null;
+  if (rec.isCompactSummary || rec.isVisibleInTranscriptOnly) return null;
+  const text = textOf(rec).replace(/^\s+/, '');
+  if (text.startsWith(TASK_NOTICE)) return 'notification';
+  if (!text || text.startsWith(INTERRUPTED)) return null;
+  if (rec.origin && rec.origin.kind === 'human') return 'human';
+  if (text.startsWith('<')) return null;
+  return 'human';
+}
+export function isHumanPrompt(rec) { return idleMarker(rec) === 'human'; }
+function resultText(block) { const c = block.content; if (typeof c === 'string') return c; if (Array.isArray(c)) return c.filter((b) => b.type === 'text').map((b) => b.text || '').join('\n'); return ''; }
+
+// Lines of the file from its end, newest first, decoded only once complete:
+// bytes are split on 0x0a, which no multibyte UTF-8 sequence contains, so a
+// character straddling two chunks is never cut. Yields null when the cap
+// stops the read before the file's start.
+export function* linesFromEnd(path, capBytes, chunkBytes) {
+  const fd = openSync(path, 'r');
   try {
-    const recs = readFileSync(transcriptPath, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-    let promptTs = null; let lastAssistantText = '';
-    for (const r of recs) {
-      if (r.type === 'user' && typeof r.message?.content === 'string' && !r.isMeta) { promptTs = r.timestamp; lastAssistantText = ''; }
-      if (r.type === 'assistant' && Array.isArray(r.message?.content)) { const t = r.message.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n'); if (t) lastAssistantText = t; }
+    const size = fstatSync(fd).size;
+    let pos = size; let carry = Buffer.alloc(0); let read = 0;
+    while (pos > 0 && read < capBytes) {
+      const len = Math.min(chunkBytes, pos); pos -= len;
+      const buf = Buffer.alloc(len); readSync(fd, buf, 0, len, pos); read += len;
+      const data = carry.length ? Buffer.concat([buf, carry]) : buf;
+      let end = data.length;
+      for (let i = data.length - 1; i >= 0; i--) {
+        if (data[i] !== 0x0a) continue;
+        if (i + 1 < end) yield data.subarray(i + 1, end).toString('utf8');
+        end = i;
+      }
+      carry = Buffer.from(data.subarray(0, end));
     }
-    return promptTs ? { ok: true, tooLong: false, promptTs, lastAssistantText, liveAgents: [], liveShells: [] } : { ...none, detail: 'no-prompt' };
+    if (pos === 0) { if (carry.length) yield carry.toString('utf8'); }
+    else yield null;
+  } finally { closeSync(fd); }
+}
+
+// The current turn, read backwards from the transcript's end to the human
+// prompt that opened it: the prompt's own timestamp, the last assistant text,
+// and the background work launched in the turn that no completion notice has
+// cleared.
+export function readTurn(transcriptPath, { capBytes = TAIL_CAP, chunkBytes = TAIL_CHUNK } = {}) {
+  const none = { ok: false, tooLong: false, promptTs: null, lastAssistantText: '', liveAgents: [], liveShells: [], detail: 'unreadable' };
+  if (!transcriptPath || !existsSync(transcriptPath)) return none;
+  const turnRecs = []; let tooLong = false; let found = false;
+  try {
+    for (const l of linesFromEnd(transcriptPath, capBytes, chunkBytes)) {
+      if (l === null) { tooLong = true; break; }
+      let rec; try { rec = JSON.parse(l); } catch { continue; }
+      if (!rec || rec.isSidechain) continue;
+      turnRecs.push(rec);
+      if (isHumanPrompt(rec)) { found = true; break; }
+    }
   } catch { return none; }
+  if (!found) return { ...none, tooLong, detail: tooLong ? 'cap' : 'no-prompt' };
+  turnRecs.reverse(); // chronological, starting at the prompt
+  const promptTs = turnRecs[0].timestamp;
+  let lastAssistantText = '';
+  const uses = new Map(); const launched = new Map(); const completed = new Set();
+  for (const rec of turnRecs) {
+    if (rec.type === 'assistant') {
+      const t = textOf(rec); if (t) lastAssistantText = t;
+      for (const b of rec.message?.content || []) if (b.type === 'tool_use') uses.set(b.id, { name: b.name, input: b.input || {} });
+      continue;
+    }
+    if (rec.type !== 'user') continue;
+    if (isToolResult(rec)) {
+      for (const b of rec.message.content) {
+        if (b.type !== 'tool_result') continue;
+        const use = uses.get(b.tool_use_id); if (!use) continue;
+        const text = resultText(b);
+        if (AGENT_TOOLS.has(use.name) && text.includes(LAUNCH_AGENT)) launched.set(b.tool_use_id, 'agent');
+        else if (use.name === 'SendMessage' && RESUMED.some((s) => text.includes(s))) launched.set(b.tool_use_id, 'agent');
+        else if (use.name === 'Bash' && (use.input.run_in_background === true || text.includes(LAUNCH_BASH) || text.includes(AUTO_MOVED))) launched.set(b.tool_use_id, 'shell');
+      }
+      continue;
+    }
+    if (idleMarker(rec) === 'notification') { const m = textOf(rec).match(NOTIF_ID); if (m) completed.add(m[1]); }
+  }
+  const liveAgents = []; const liveShells = [];
+  for (const [id, kind] of launched) if (!completed.has(id)) (kind === 'agent' ? liveAgents : liveShells).push(id);
+  return { ok: true, tooLong: false, promptTs, lastAssistantText, liveAgents, liveShells };
 }
 
 export function main(stdinText, env = process.env) {

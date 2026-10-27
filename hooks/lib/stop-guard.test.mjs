@@ -677,3 +677,83 @@ test('the approval pattern folds the dotted and dotless i the way the field heur
     assert.equal(guard.asksOrBlocks(`Status update. ${text}.`), false, text);
   }
 });
+
+// Transcript fixtures in the record shapes the field scan reads
+// (evals/evidence/2026-10-19-sdd-turn-liveness/synth.py).
+const T0 = Date.parse('2026-10-23T10:00:00.000Z');
+const at = (s) => new Date(T0 + s * 1000).toISOString();
+const human = (t, text, extra = {}) => ({ type: 'user', timestamp: at(t), isSidechain: false, origin: { kind: 'human' }, message: { role: 'user', content: text }, ...extra });
+const assistant = (t, text = '', tools = []) => ({ type: 'assistant', timestamp: at(t), isSidechain: false, message: { role: 'assistant', model: 'claude-opus-5-5', content: [...(text ? [{ type: 'text', text }] : []), ...tools.map(([id, name, input]) => ({ type: 'tool_use', id, name, input }))] } });
+const result = (t, id, text) => ({ type: 'user', timestamp: at(t), isSidechain: false, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text }] }] } });
+const notice = (t, id) => ({ type: 'user', timestamp: at(t), isSidechain: false, origin: { kind: 'task-notification' }, message: { role: 'user', content: `<task-notification>\n<task-id>x</task-id>\n<tool-use-id>${id}</tool-use-id>\n<status>completed</status>\n</task-notification>` } });
+const compact = (t) => ({ type: 'user', timestamp: at(t), isSidechain: false, isCompactSummary: true, isVisibleInTranscriptOnly: true, message: { role: 'user', content: 'This session is being continued.' } });
+function transcript(root, recs) { const p = join(root, 't.jsonl'); writeFileSync(p, recs.map((r) => JSON.stringify(r)).join('\n') + '\n'); return p; }
+const AGENT_LAUNCHED = 'Async agent launched successfully. agentId: a1';
+const BASH_BG = 'Command running in background with ID: b1. Output is being written to: /x';
+const BASH_MOVED = 'Command did not complete within its 120s timeout and was moved to the background (ID: b2).';
+const RESUMED = '{"success":true,"message":"Resuming agent a1 in the background with your message"}';
+
+test('readTurn finds the last human prompt and the last assistant text', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  const p = transcript(root, [human(0, 'Execute the plan.'), assistant(5, 'Working.'), human(100, 'continue'), assistant(105, 'Tasks 1 and 2 are done. Moving to Task 3.')]);
+  const t = guard.readTurn(p);
+  assert.equal(t.ok, true); assert.equal(t.promptTs, at(100)); assert.equal(t.lastAssistantText, 'Tasks 1 and 2 are done. Moving to Task 3.');
+});
+test('a tool result, a notification and a compaction summary are not the prompt', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  const p = transcript(root, [human(0, 'go'), assistant(1, '', [['k1', 'Bash', { command: 'ls' }]]), result(2, 'k1', 'ok'), compact(3), notice(4, 'zz'), assistant(5, 'Done with that.')]);
+  assert.equal(guard.readTurn(p).promptTs, at(0));
+});
+test('a human prompt that starts with < but carries origin human counts; markup without it does not', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  const p = transcript(root, [human(0, 'go'), assistant(1, 'a'), human(2, '<ide_context>x</ide_context> continue'), assistant(3, 'b'), { type: 'user', timestamp: at(4), isSidechain: false, message: { role: 'user', content: '<local-command-stdout>x</local-command-stdout>' } }, assistant(5, 'c')]);
+  assert.equal(guard.readTurn(p).promptTs, at(2));
+});
+test('launches in the turn without completions are live; completions by tool-use id clear them, for Agent, Bash, moved Bash and SendMessage alike', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  const recs = [human(0, 'go'),
+    assistant(1, '', [['a1', 'Agent', { prompt: 'x', run_in_background: true }]]), result(2, 'a1', AGENT_LAUNCHED),
+    assistant(3, '', [['b1', 'Bash', { command: 'sleep 999', run_in_background: true }]]), result(4, 'b1', BASH_BG),
+    assistant(5, '', [['b2', 'Bash', { command: 'sleep 999' }]]), result(6, 'b2', BASH_MOVED),
+    assistant(7, '', [['s1', 'SendMessage', { to: 'a1', message: 'fix it' }]]), result(8, 's1', RESUMED),
+    assistant(9, 'Waiting on the implementer.')];
+  let t = guard.readTurn(transcript(root, recs));
+  assert.deepEqual(t.liveAgents.sort(), ['a1', 's1']); assert.deepEqual(t.liveShells.sort(), ['b1', 'b2']);
+  t = guard.readTurn(transcript(root, [...recs, notice(10, 'a1'), notice(11, 's1'), notice(12, 'b1'), assistant(13, 'All back but b2.')]));
+  assert.deepEqual(t.liveAgents, []); assert.deepEqual(t.liveShells, ['b2']);
+});
+test('a resumed agent is matched by the SendMessage tool-use id, not the agent id', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  const recs = [human(0, 'go'), assistant(1, '', [['s1', 'SendMessage', { to: 'a1', message: 'fix' }]]), result(2, 's1', RESUMED), notice(3, 'a1'), assistant(4, 'hm')];
+  assert.deepEqual(guard.readTurn(transcript(root, recs)).liveAgents, ['s1']);
+});
+test('launches from an earlier turn are not read as live; sidechain records are skipped', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  const recs = [human(0, 'go'), assistant(1, '', [['b1', 'Bash', { command: 'x', run_in_background: true }]]), result(2, 'b1', BASH_BG), human(50, 'status?'), { ...assistant(51, 'side', [['b9', 'Bash', { command: 'y', run_in_background: true }]]), isSidechain: true }, assistant(52, 'Still running.')];
+  const t = guard.readTurn(transcript(root, recs));
+  assert.equal(t.promptTs, at(50)); assert.deepEqual(t.liveShells, []); assert.equal(t.lastAssistantText, 'Still running.');
+});
+test('lines are split on the newline byte, so a multibyte character straddling a chunk boundary decodes whole', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  const text = 'Tâche 3 terminée: résumé 日本語 écrit.';
+  const p = transcript(root, [human(0, 'allez'), assistant(1, text)]);
+  for (const chunkBytes of [1, 2, 3, 5, 7]) {
+    const t = guard.readTurn(p, { chunkBytes });
+    assert.equal(t.ok, true, `chunk ${chunkBytes}`); assert.equal(t.lastAssistantText, text, `chunk ${chunkBytes}`); assert.equal(t.promptTs, at(0));
+  }
+  assert.deepEqual([...guard.linesFromEnd(p, 1 << 20, 3)].map((l) => l && JSON.parse(l).timestamp), [at(1), at(0)]);
+});
+test('the reader stops at the cap and reports tooLong; a small last turn on a huge file is read quickly; a file without a prompt is no-prompt', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  const filler = assistant(1, 'x'.repeat(1000));
+  const many = []; for (let i = 0; i < 20000; i++) many.push({ ...filler, timestamp: at(1 + i) });
+  const pLong = transcript(root, [human(0, 'go'), ...many, assistant(30000, 'end')]);
+  const long = guard.readTurn(pLong, { capBytes: 4 * 1024 * 1024 });
+  assert.equal(long.ok, false); assert.equal(long.tooLong, true);
+  const pShort = transcript(root, [human(0, 'go'), ...many, human(40000, 'continue'), assistant(40001, 'Moving to Task 3.')]);
+  const t0 = Date.now(); const t = guard.readTurn(pShort, { capBytes: 4 * 1024 * 1024 });
+  assert.equal(t.ok, true); assert.equal(t.promptTs, at(40000)); assert.ok(Date.now() - t0 < 1000);
+  const none = guard.readTurn(transcript(root, [assistant(1, 'orphan')]));
+  assert.equal(none.ok, false); assert.equal(none.tooLong, false); assert.equal(none.detail, 'no-prompt');
+});
+test('a missing transcript is not ok', () => { const t = guard.readTurn('/nonexistent/t.jsonl'); assert.equal(t.ok, false); assert.equal(t.detail, 'unreadable'); });

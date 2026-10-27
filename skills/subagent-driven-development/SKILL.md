@@ -72,8 +72,8 @@ digraph process {
         "Record tier-skip (ungated-ledger), skip Codex task gate" [shape=box];
         "Codex task code gate\n(Claude Code; degrade if absent)" [shape=box];
         "Codex gate blocking findings?" [shape=diamond];
-        "Append completion to ledger, mark todo complete (where kept)" [shape=box];
         "Complete the task (scripts/sdd-state complete); any status but complete stops" [shape=box];
+        "Mark the task's todo complete (where kept)" [shape=box];
     }
 
     "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" [shape=box];
@@ -105,13 +105,13 @@ digraph process {
     "R = 5?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="no - next round"];
     "R = 5?" -> "Surface open findings to your human partner (BLOCKED)" [label="yes - breaker trips"];
     "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Record tier-skip (ungated-ledger), skip Codex task gate" [label="yes"];
-    "Record tier-skip (ungated-ledger), skip Codex task gate" -> "Append completion to ledger, mark todo complete (where kept)";
+    "Record tier-skip (ungated-ledger), skip Codex task gate" -> "Complete the task (scripts/sdd-state complete); any status but complete stops";
     "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Codex task code gate\n(Claude Code; degrade if absent)" [label="no"];
     "Codex task code gate\n(Claude Code; degrade if absent)" -> "Codex gate blocking findings?";
     "Codex gate blocking findings?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="yes - same five-round cap"];
-    "Codex gate blocking findings?" -> "Append completion to ledger, mark todo complete (where kept)" [label="no"];
-    "Append completion to ledger, mark todo complete (where kept)" -> "Complete the task (scripts/sdd-state complete); any status but complete stops";
-    "Complete the task (scripts/sdd-state complete); any status but complete stops" -> "More tasks remain?";
+    "Codex gate blocking findings?" -> "Complete the task (scripts/sdd-state complete); any status but complete stops" [label="no"];
+    "Complete the task (scripts/sdd-state complete); any status but complete stops" -> "Mark the task's todo complete (where kept)";
+    "Mark the task's todo complete (where kept)" -> "More tasks remain?";
     "More tasks remain?" -> "Claim the task (scripts/sdd-state claim): done means skip it; held by another session means ask" [label="yes"];
     "More tasks remain?" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="no"];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, surface residuals";
@@ -353,7 +353,7 @@ and is re-read on every later turn. Hand artifacts over as files.
 
 - Dispatch implementer, task-reviewer, fix-round, re-review and final-reviewer subagents with `run_in_background: false`. Your next step always depends on the result, and a foreground call keeps your turn open, which is what an editor such as Zed shows as the session working. A background dispatch ends the turn while the subagent runs, and the editor shows the session idle.
 - Run a covering command expected to finish within 10 minutes in the foreground, with an explicit timeout of at least its expected runtime and at most 600000 ms.
-- A command that may run past 10 minutes is a tracked job. Allocate it in the foreground with `scripts/tracked-job new PLAN_FILE <name> --budget-ms <budget>` (the watch budget below; the helper writes the `jobdir=` line in the ledger itself), launch `scripts/tracked-job run <jobdir> -- <command>` through the tracked background option with the budget as its timeout, then watch it in the foreground with repeated `scripts/tracked-job wait <jobdir> --max-ms 600000` calls: `exited code=0` is success; any other `exited` code is a failed command, handled as that command's failure (a failed test is a fix round, a failed covering command a failed task); `running` at the bound means another `wait`; on `lost`, run `tracked-job stop <jobdir>` first, so the job's survivors are swept, then treat the job as failed; `lost-unswept pgid=<n>` means the sweep needs a shell that can read process environments (the sandbox cannot), so the job stays live to the stop guard until `tracked-job stop <jobdir>` runs where it can: report it to your human partner with its pgid beside the failure, and expect a reused pid to read as `running` until that sweep. When you need a job's output, write the tail of its `out.log` to `<workspace>/reports/job-<name>.txt` and cite the path; output never goes in the ledger. A background shell you start in a turn without `tracked-job` is live work no job record names: end the turn while one is still running and the stop guard refuses that turn end as `live-shell`. Codex reviews already follow this shape through the recipe's `status <job-id> --wait --json` loop.
+- A command that may run past 10 minutes is a tracked job. Allocate it in the foreground with `scripts/tracked-job new PLAN_FILE <name> --budget-ms <budget>` (the watch budget below; the helper writes the `jobdir=` line in the ledger itself), launch `scripts/tracked-job run <jobdir> -- <command>` through the tracked background option with the budget as its timeout, then watch it in the foreground with repeated `scripts/tracked-job wait <jobdir> --max-ms 600000` calls: `exited code=0` is success; any other `exited` code is a failed command, handled as that command's failure (a failed test is a fix round, a failed covering command a failed task); `running` at the bound means another `wait`; on `lost`, run `tracked-job stop <jobdir>` first, so the job's survivors are swept, then treat the job as failed; `lost-unswept pgid=<n>` means the sweep needs a shell that can list processes and read their identity (the sandbox cannot), so the job stays live to the stop guard until `tracked-job stop <jobdir>` runs where it can: report it to your human partner with its pgid beside the failure, and expect a reused pid to read as `running` until that sweep. When you need a job's output, write the tail of its `out.log` to `<workspace>/reports/job-<name>.txt` and cite the path; output never goes in the ledger. A background shell you start in a turn without `tracked-job` is live work no job record names: end the turn while one is still running and the stop guard refuses that turn end as `live-shell`. Codex reviews already follow this shape through the recipe's `status <job-id> --wait --json` loop.
 - **Watch budget.** The total watch on one job is three times the plan's stated runtime for it, or 60 minutes when the plan states none, capped at the harness's maximum background lifetime (7200000 ms on Claude Code). The watch ends when `wait` reports `exited`, `lost` or `lost-unswept`; a supervisor the harness killed writes no exit file, and `wait` reports it as `lost`. When the budget is spent with the job still running, run `tracked-job stop <jobdir>`, write the `out.log` tail to `<workspace>/reports/job-<name>.txt`, and report BLOCKED naming that path.
 
 On a harness whose subagents run asynchronously, never poll a wait interface with short timeouts, and never sit in one silent, open-ended wait either. While you have local work — ledger updates, packaging the next review, reading reports — keep working; child results arrive on their own. When you are genuinely idle, wait in bounded stretches (five to ten minutes, where your platform allows), and between stretches post one line of status and reconcile your live children: list them, and chase any that finished without reporting. A bounded stretch keeps nearly all of a long wait's efficiency while guaranteeing a stuck or lost child is noticed within minutes, not at the end of the session. Codex's `wait_agent` blocks inside the turn; `using-hyperpowers/references/codex-tools.md` maps it.
@@ -836,10 +836,10 @@ When the final whole-branch review is clean and its fixes are merged:
    the record exists only under that staging path: name the path to your
    human partner in the closing message. A space in either path prints as
    `%20`, so decode it before you name the path. On the plain backend it
-   prints `backend=plain` instead, and there is nothing to push. `none`
-   means there was no workspace to remove, and `error` (exit 2) that the
-   removal or its commit failed: any status other than `finished` stops
-   Finish until the command
+   prints `backend=plain` instead of `last=` and `push=`, and there is
+   nothing to push. `none` means there was no workspace to remove, and
+   `error` (exit 2) that the removal or its commit failed: any status other
+   than `finished` stops Finish until the command
    succeeds; show its stderr line.
 3. **Verify deletion** with `test ! -d "<workspace>"` to confirm it is gone.
    The push command is `git -C <checkout> push <remote> <branch>`, the

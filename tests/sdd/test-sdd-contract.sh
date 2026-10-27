@@ -225,7 +225,7 @@ assert_contains "$SDD" "or one controller-applied de-minimis fix" \
   "fix-round definition counts controller-applied fixes"
 assert_contains "$SDD" "where you keep todos" \
   "completion line keeps todos conditional"
-assert_contains "$SDD" "mark todo complete (where kept)" \
+assert_contains "$SDD" "Mark the task's todo complete (where kept)" \
   "digraph todo node stays conditional"
 assert_contains "$SDD_RATIONALIZATIONS" "Outside the de-minimis exception" "rationalization row scoped to the exception"
 assert_contains "$SDD_RATIONALIZATIONS" "Resume the implementer at rounds 1-3; dispatch the takeover at rounds 4-5." "rationalization row defers to the round's own rule"
@@ -479,6 +479,7 @@ assert_contains "$SDD" '`exited code=0` is success; any other `exited` code is a
 assert_contains "$SDD" 'on `lost`, run `tracked-job stop <jobdir>` first' "a lost job is swept before it is handled as failed"
 assert_contains "$SDD" '`lost-unswept pgid=<n>`' "the unswept outcome is reported to the human partner"
 assert_contains "$SDD" 'output never goes in the ledger' "job output stays out of the ledger"
+assert_contains "$SDD" 'run `tracked-job stop <jobdir>`, write the `out.log` tail to `<workspace>/reports/job-<name>.txt`, and report BLOCKED naming that path' "an exhausted watch stops the job and ends in BLOCKED"
 assert_contains "$SDD" 'the stop guard treats it as live work, and your turn may end while it runs' "SendMessage resumes are named as live work"
 assert_contains "$SDD" 'where it does not (fork mode in an interactive terminal), dispatches run in the background and the stop guard treats them as live work' "the fork-mode sentence"
 assert_contains "$SDD" 'receipt=<path>' "finish records the receipt"

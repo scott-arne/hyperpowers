@@ -34,8 +34,7 @@ Task reviewer: Spec ✅ - all requirements met, nothing extra.
 
 [Effective tier still low, plan gate reviewed the plan, no trigger fired: record the tier-skip event, skip the Codex task gate]
 [Write tier-skips.md in this plan's workspace — Task 1's skip, one line]
-[Ledger: Task 1: complete (commits a1b2c3d..d4e5f6a, review clean)]
-[scripts/sdd-state snapshot docs/hyperpowers/plans/feature-plan.md → status=snapshot sha=9e8d7c6 files=2]
+[scripts/sdd-state complete docs/hyperpowers/plans/feature-plan.md 1 --commits a1b2c3d..d4e5f6a → status=complete task=1 appended=1 snapshot=9e8d7c6]
 
 Task 2: Recovery modes (declared standard)
 
@@ -68,8 +67,7 @@ Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
 
 [Ledger: Task 2: fix round 1/5 (2 addressed, 0 declined, 0 open; commits d4e5f6a..b7c8d9e)]
 [Codex per-task gate over d4e5f6a..b7c8d9e — approved; that would have been round 2 of the same five]
-[Ledger: Task 2: complete (commits d4e5f6a..b7c8d9e, review clean)]
-[scripts/sdd-state snapshot docs/hyperpowers/plans/feature-plan.md → status=snapshot sha=5d4c3b2 files=3]
+[scripts/sdd-state complete docs/hyperpowers/plans/feature-plan.md 2 --commits d4e5f6a..b7c8d9e → status=complete task=2 appended=1 snapshot=5d4c3b2]
 
 ...
 

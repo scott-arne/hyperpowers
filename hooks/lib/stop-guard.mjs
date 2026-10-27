@@ -472,10 +472,12 @@ export function decideStop({ discovery, plan, turn, jobs, jobsUnreadable = [], r
 
 const TASK_NOTICE = '<task-notification>';
 const INTERRUPTED = '[Request interrupted';
-const NOTIF_ID = /<tool-use-id>([^<]+)<\/tool-use-id>/;
+const NOTIF_ID = /<tool-use-id>([^<]+)<\/tool-use-id>/g;
 const LAUNCH_AGENT = 'Async agent launched';
 const LAUNCH_BASH = 'Command running in background with ID';
+const LAUNCH_BASH_AUTO = 'Command did not complete within its';
 const AUTO_MOVED = 'was moved to the background';
+const SEND_OK = '{"success":true,"message":"';
 const RESUMED = ['Resuming agent ', 'in the background with your message'];
 const AGENT_TOOLS = new Set(['Agent', 'Task']);
 
@@ -499,6 +501,27 @@ export function idleMarker(rec) {
 }
 export function isHumanPrompt(rec) { return idleMarker(rec) === 'human'; }
 function resultText(block) { const c = block.content; if (typeof c === 'string') return c; if (Array.isArray(c)) return c.filter((b) => b.type === 'text').map((b) => b.text || '').join('\n'); return ''; }
+const idsIn = (text) => [...text.matchAll(NOTIF_ID)].map((m) => m[1]);
+// liveness._completion_ids: every tool-use id a completion notice names. One
+// notice can name several, and a notice that arrived while the turn was busy
+// is written as a queue-operation record rather than a user message.
+function completionIds(rec) {
+  if (rec.type === 'queue-operation' && rec.operation === 'enqueue') return typeof rec.content === 'string' ? idsIn(rec.content) : [];
+  if (rec.type !== 'user') return [];
+  const text = textOf(rec);
+  return text.replace(/^\s+/, '').startsWith(TASK_NOTICE) ? idsIn(text) : [];
+}
+// liveness._launch_kind. A marker counts only at the start of a result from
+// its own tool, and a shell launch also needs run_in_background on the call:
+// a foreground command that prints or greps the marker text launches nothing.
+function launchKind(name, background, text) {
+  const head = text.replace(/^\s+/, '');
+  if (AGENT_TOOLS.has(name) && head.startsWith(LAUNCH_AGENT)) return 'agent';
+  if (name === 'Bash' && background && head.startsWith(LAUNCH_BASH)) return 'shell';
+  if (name === 'Bash' && head.startsWith(LAUNCH_BASH_AUTO) && head.includes(AUTO_MOVED)) return 'shell';
+  if (name === 'SendMessage' && head.startsWith(SEND_OK) && RESUMED.some((m) => head.includes(m))) return 'agent';
+  return null;
+}
 
 // Lines of the file from its end, newest first, decoded only once complete:
 // bytes are split on 0x0a, which no multibyte UTF-8 sequence contains, so a
@@ -511,7 +534,9 @@ export function* linesFromEnd(path, capBytes, chunkBytes) {
     let pos = size; let carry = Buffer.alloc(0); let read = 0;
     while (pos > 0 && read < capBytes) {
       const len = Math.min(chunkBytes, pos); pos -= len;
-      const buf = Buffer.alloc(len); readSync(fd, buf, 0, len, pos); read += len;
+      // A short read would leave the rest of the chunk zero-filled, which
+      // would silently lose records; the caller answers unreadable instead.
+      const buf = Buffer.alloc(len); if (readSync(fd, buf, 0, len, pos) !== len) throw new Error(`short read at ${pos}`); read += len;
       const data = carry.length ? Buffer.concat([buf, carry]) : buf;
       let end = data.length;
       for (let i = data.length - 1; i >= 0; i--) {
@@ -545,7 +570,11 @@ export function readTurn(transcriptPath, { capBytes = TAIL_CAP, chunkBytes = TAI
   } catch { return none; }
   if (!found) return { ...none, tooLong, detail: tooLong ? 'cap' : 'no-prompt' };
   turnRecs.reverse(); // chronological, starting at the prompt
+  // A prompt whose timestamp cannot be parsed is a prompt the hand-back rule
+  // cannot be applied to, and an unanswerable hand-back question must not
+  // read as "no hand-back": say there was no prompt and let the guard allow.
   const promptTs = turnRecs[0].timestamp;
+  if (typeof promptTs !== 'string' || Number.isNaN(Date.parse(promptTs))) return { ...none, detail: 'no-prompt' };
   let lastAssistantText = '';
   const uses = new Map(); const launched = new Map(); const completed = new Set();
   for (const rec of turnRecs) {
@@ -554,19 +583,14 @@ export function readTurn(transcriptPath, { capBytes = TAIL_CAP, chunkBytes = TAI
       for (const b of rec.message?.content || []) if (b.type === 'tool_use') uses.set(b.id, { name: b.name, input: b.input || {} });
       continue;
     }
-    if (rec.type !== 'user') continue;
-    if (isToolResult(rec)) {
-      for (const b of rec.message.content) {
-        if (b.type !== 'tool_result') continue;
-        const use = uses.get(b.tool_use_id); if (!use) continue;
-        const text = resultText(b);
-        if (AGENT_TOOLS.has(use.name) && text.includes(LAUNCH_AGENT)) launched.set(b.tool_use_id, 'agent');
-        else if (use.name === 'SendMessage' && RESUMED.some((s) => text.includes(s))) launched.set(b.tool_use_id, 'agent');
-        else if (use.name === 'Bash' && (use.input.run_in_background === true || text.includes(LAUNCH_BASH) || text.includes(AUTO_MOVED))) launched.set(b.tool_use_id, 'shell');
-      }
-      continue;
+    for (const id of completionIds(rec)) completed.add(id);
+    if (rec.type !== 'user' || !isToolResult(rec)) continue;
+    for (const b of rec.message.content) {
+      if (b.type !== 'tool_result') continue;
+      const use = uses.get(b.tool_use_id); if (!use) continue;
+      const kind = launchKind(use.name, use.input.run_in_background === true, resultText(b));
+      if (kind) launched.set(b.tool_use_id, kind);
     }
-    if (idleMarker(rec) === 'notification') { const m = textOf(rec).match(NOTIF_ID); if (m) completed.add(m[1]); }
   }
   const liveAgents = []; const liveShells = [];
   for (const [id, kind] of launched) if (!completed.has(id)) (kind === 'agent' ? liveAgents : liveShells).push(id);

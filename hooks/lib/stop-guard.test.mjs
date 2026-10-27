@@ -745,15 +745,51 @@ test('lines are split on the newline byte, so a multibyte character straddling a
 });
 test('the reader stops at the cap and reports tooLong; a small last turn on a huge file is read quickly; a file without a prompt is no-prompt', () => {
   const root = mkdtempSync(join(tmpdir(), 'sg-'));
-  const filler = assistant(1, 'x'.repeat(1000));
-  const many = []; for (let i = 0; i < 20000; i++) many.push({ ...filler, timestamp: at(1 + i) });
-  const pLong = transcript(root, [human(0, 'go'), ...many, assistant(30000, 'end')]);
-  const long = guard.readTurn(pLong, { capBytes: 4 * 1024 * 1024 });
-  assert.equal(long.ok, false); assert.equal(long.tooLong, true);
-  const pShort = transcript(root, [human(0, 'go'), ...many, human(40000, 'continue'), assistant(40001, 'Moving to Task 3.')]);
-  const t0 = Date.now(); const t = guard.readTurn(pShort, { capBytes: 4 * 1024 * 1024 });
-  assert.equal(t.ok, true); assert.equal(t.promptTs, at(40000)); assert.ok(Date.now() - t0 < 1000);
-  const none = guard.readTurn(transcript(root, [assistant(1, 'orphan')]));
-  assert.equal(none.ok, false); assert.equal(none.tooLong, false); assert.equal(none.detail, 'no-prompt');
+  try {
+    const filler = assistant(1, 'x'.repeat(1000));
+    const many = []; for (let i = 0; i < 20000; i++) many.push({ ...filler, timestamp: at(1 + i) });
+    const pLong = transcript(root, [human(0, 'go'), ...many, assistant(30000, 'end')]);
+    const long = guard.readTurn(pLong, { capBytes: 4 * 1024 * 1024 });
+    assert.equal(long.ok, false); assert.equal(long.tooLong, true);
+    const pShort = transcript(root, [human(0, 'go'), ...many, human(40000, 'continue'), assistant(40001, 'Moving to Task 3.')]);
+    const t0 = Date.now(); const t = guard.readTurn(pShort, { capBytes: 4 * 1024 * 1024 });
+    assert.equal(t.ok, true); assert.equal(t.promptTs, at(40000)); assert.ok(Date.now() - t0 < 1000);
+    const none = guard.readTurn(transcript(root, [assistant(1, 'orphan')]));
+    assert.equal(none.ok, false); assert.equal(none.tooLong, false); assert.equal(none.detail, 'no-prompt');
+  } finally { rmSync(root, { recursive: true, force: true }); } // a 22 MB fixture is not left behind
 });
 test('a missing transcript is not ok', () => { const t = guard.readTurn('/nonexistent/t.jsonl'); assert.equal(t.ok, false); assert.equal(t.detail, 'unreadable'); });
+test('a marker quoted inside a foreground result launches nothing, for an agent and for a shell alike', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  const quotedAgent = 'The log said "Async agent launched" but this call ran in the foreground.';
+  const quotedBash = 'grep found: Command running in background with ID: b1\nmatched 1 line';
+  const p = transcript(root, [human(0, 'go'),
+    assistant(1, '', [['a1', 'Agent', { prompt: 'x' }]]), result(2, 'a1', quotedAgent),
+    assistant(3, '', [['b1', 'Bash', { command: 'grep bg log' }]]), result(4, 'b1', quotedBash),
+    assistant(5, 'Both finished.')]);
+  const t = guard.readTurn(p);
+  assert.equal(t.ok, true); assert.deepEqual(t.liveAgents, []); assert.deepEqual(t.liveShells, []);
+});
+test('a prompt whose timestamp will not parse is no-prompt, never a turn with an unusable prompt time', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  for (const ts of [undefined, '', 'not a date', 12345]) {
+    const rec = human(0, 'go'); delete rec.timestamp;
+    if (ts !== undefined) rec.timestamp = ts;
+    const t = guard.readTurn(transcript(root, [rec, assistant(1, 'Working.')]));
+    assert.equal(t.ok, false, String(ts)); assert.equal(t.tooLong, false, String(ts)); assert.equal(t.detail, 'no-prompt', String(ts));
+  }
+});
+test('every tool-use id a notice names is cleared, and a completion queued mid-turn is read too', () => {
+  const root = mkdtempSync(join(tmpdir(), 'sg-'));
+  const launches = [human(0, 'go'),
+    assistant(1, '', [['a1', 'Agent', { prompt: 'x', run_in_background: true }]]), result(2, 'a1', AGENT_LAUNCHED),
+    assistant(3, '', [['a2', 'Agent', { prompt: 'y', run_in_background: true }]]), result(4, 'a2', AGENT_LAUNCHED),
+    assistant(5, '', [['b1', 'Bash', { command: 'sleep 999', run_in_background: true }]]), result(6, 'b1', BASH_BG)];
+  const bothIds = `<task-notification>\n<task-id>x</task-id>\n<tool-use-id>a1</tool-use-id>\n<tool-use-id>a2</tool-use-id>\n<status>completed</status>\n</task-notification>`;
+  const twoInOne = { type: 'user', timestamp: at(7), isSidechain: false, origin: { kind: 'task-notification' }, message: { role: 'user', content: bothIds } };
+  const queued = { type: 'queue-operation', operation: 'enqueue', timestamp: at(8), content: `<task-notification>\n<task-id>x</task-id>\n<tool-use-id>b1</tool-use-id>\n<status>completed</status>\n</task-notification>` };
+  assert.deepEqual(guard.readTurn(transcript(root, [...launches, twoInOne, assistant(9, 'Two back.')])).liveAgents, []);
+  assert.deepEqual(guard.readTurn(transcript(root, [...launches, queued, assistant(9, 'Shell back.')])).liveShells, []);
+  const t = guard.readTurn(transcript(root, [...launches, assistant(9, 'None back.')]));
+  assert.deepEqual(t.liveAgents.sort(), ['a1', 'a2']); assert.deepEqual(t.liveShells, ['b1']);
+});

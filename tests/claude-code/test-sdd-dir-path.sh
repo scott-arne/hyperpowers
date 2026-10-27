@@ -494,6 +494,12 @@ find "$idle_p1" -depth -exec touch -mt "$OLDSTAMP" {} +
 _=$(cd "$TEST_ROOT/repo-plan" && FINDFAIL="$idle_p1" PATH="$fakefind:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>"$TEST_ROOT/find3.err")
 if [ -f "$idle_p1/plans/some-plan-deadbeef/progress.md" ] && ! ls -d "$idle_p1".claiming-* >/dev/null 2>&1 && ! ls -d "$idle_p1".reclaiming-* >/dev/null 2>&1 && grep -q 'could not be read' "$TEST_ROOT/find3.err"; then pass "a live root whose age or freshness cannot be read is not claimed"; else fail "a live root whose age or freshness cannot be read is not claimed (left: $(ls -d "$idle_p1"* 2>/dev/null | tr '\n' ' '), err: $(tr '\n' '|' < "$TEST_ROOT/find3.err"))"; fi
 rm -rf "$idle_p1"
+# The workspace's own link scan follows the same rule: a traversal that
+# fails is not an absence of links, and resolving a workspace nobody could
+# scan would let one inside it take the ledger's writes out of the cache.
+rc=0
+err=$(cd "$TEST_ROOT/repo-plan" && FINDFAIL="$da" PATH="$fakefind:$PATH" bash "$SDD_DIR_SCRIPT" docs/a/plan.md 2>&1 >/dev/null) || rc=$?
+if [ "$rc" -eq 2 ] && printf '%s\n' "$err" | grep -q 'could not be scanned for symbolic links'; then pass "a workspace whose link scan cannot be read is refused, not resolved"; else fail "a workspace whose link scan cannot be read is refused, not resolved (rc=$rc: $err)"; fi
 ln -s "$TEST_ROOT/repo-plan" "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004"
 touch -h -t 202601010000 "$XDG_CACHE_HOME/hyperpowers/sdd/linkedroot0000000004" 2>/dev/null || true
 _=$(cd "$TEST_ROOT/repo-plan" && "$SDD_DIR_SCRIPT" docs/a/plan.md)

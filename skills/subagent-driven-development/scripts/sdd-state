@@ -792,7 +792,13 @@ cmd_prune() {
     local lc newer
     lc=$(git -C "$co" log -1 --format=%ct -- "plans/$1" 2>/dev/null)
     [ -n "$lc" ] && [ "$lc" -lt "$cutoff" ] || return 1
-    newer=$(find "$co/plans/$1" -type f -mtime -"$days" 2>/dev/null) || return 1
+    # Said out loud, in the reclaim's words: a workspace kept because
+    # nobody could walk it looks the same in the output as one that is
+    # simply active.
+    newer=$(find "$co/plans/$1" -type f -mtime -"$days" 2>/dev/null) || {
+      echo "sdd-state: the freshness of the workspace at $co/plans/$1 could not be read; it was left alone" >&2
+      return 1
+    }
     [ -z "$newer" ]
   }
   # <tomb dir> <pid> <ws> -> 0 when the copy may be quarantined: its

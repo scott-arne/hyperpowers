@@ -1147,10 +1147,16 @@ if [ "$rc" -eq 0 ] && [ "$out" = "status=listed plans=$wso_enc checkouts=deadkey
 # only stats the directory (-maxdepth 0) alone, which is the shape a
 # permission error on one subdirectory has.
 fakefind_pr="$TEST_ROOT/fakefind-pr"; mkdir -p "$fakefind_pr"
-printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = -maxdepth ] && exec %s "$@"; done\ncase "$1" in $FINDFAIL) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v find)" "$(command -v find)" > "$fakefind_pr/find"
+# FINDFAIL holds space-separated patterns, matched one at a time: a case
+# pattern built from a single variable is one literal pattern, and an empty
+# variable is a syntax error.
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = -maxdepth ] && exec %s "$@"; done\nfor p in $FINDFAIL; do case "$1" in $p) exit 1 ;; esac; done\nexec %s "$@"\n' "$(command -v find)" "$(command -v find)" > "$fakefind_pr/find"
 chmod 755 "$fakefind_pr/find"
-out=$(cd "$pr" && FINDFAIL="$wso" PATH="$fakefind_pr:$PATH" bash "$SDD_STATE" prune --repo "$pr"); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "status=listed plans= checkouts=deadkey0000000000000000000000000000000000 tombs= quarantined=" ] && [ -d "$wso" ]; then pass "a plan whose freshness cannot be read is not listed for removal"; else fail "a plan whose freshness cannot be read is not listed for removal (rc=$rc: $out)"; fi
+# The shim splits FINDFAIL on whitespace and this workspace's name holds a
+# space, so the pattern stands in for the path with ? where the space is.
+findfail_wso="*/plans/$(basename "$wso" | tr ' ' '?')"
+out=$(cd "$pr" && FINDFAIL="$findfail_wso" PATH="$fakefind_pr:$PATH" bash "$SDD_STATE" prune --repo "$pr" 2>"$TEST_ROOT/prunefind.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=listed plans= checkouts=deadkey0000000000000000000000000000000000 tombs= quarantined=" ] && [ -d "$wso" ] && grep -qF "the freshness of the workspace at $wso could not be read" "$TEST_ROOT/prunefind.err"; then pass "a plan whose freshness cannot be read is not listed for removal, and prune says so"; else fail "a plan whose freshness cannot be read is not listed for removal, and prune says so (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/prunefind.err"))"; fi
 out=$(cd "$pr" && HYPERPOWERS_TEST_WRITER_AT="prune-before-remove:plans/$(basename "$wso")/progress.md" bash "$SDD_STATE" prune --repo "$pr" --apply); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=pruned plans= kept=$wso_enc checkouts=deadkey0000000000000000000000000000000000 tombs= quarantined=" ] && [ -d "$wso" ] && grep -q '^concurrent write$' "$wso/progress.md"; then pass "a workspace written to after selection is kept, line intact"; else fail "a workspace written to after selection is kept (rc=$rc: $out)"; fi
 GIT_COMMITTER_DATE="2026-01-01T00:00:00Z" GIT_AUTHOR_DATE="2026-01-01T00:00:00Z" run_state "$pr" snapshot "docs/old plan.md" >/dev/null

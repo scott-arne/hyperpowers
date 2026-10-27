@@ -101,6 +101,12 @@ reclaim_plain() {
       *.reclaiming-*)
         # Phase two: the copy a previous pass claimed, quiet ever since.
         ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
+        # Another repository's pass can rename this root between the glob
+        # that listed it and the read below. Concurrent reclaim is the
+        # design, not a fault, so a root that is gone by now is skipped in
+        # silence; without this the read would answer "could not be read"
+        # and the line would name an ordinary race.
+        [ -d "$r" ] || continue
         quiet=0; nothing_newer "$r" || quiet=$?
         if [ "$quiet" -ne 0 ]; then
           [ "$quiet" -ne 2 ] || echo "sdd-dir: the freshness of the quarantined cache root at $r could not be read; it was left alone" >&2
@@ -158,6 +164,9 @@ reclaim_plain() {
       *)
         # Phase one: claim an idle root, delete nothing.
         ls -d "$r"/plans/*.importing-* >/dev/null 2>&1 && continue
+        # Gone since the glob listed it, as in phase two above: a race, not
+        # an unreadable tree, so nothing is said about it.
+        [ -d "$r" ] || continue
         quiet=0; root_is_old "$r" || quiet=$?
         if [ "$quiet" -ne 0 ]; then
           [ "$quiet" -ne 2 ] || echo "sdd-dir: the age of the cache root at $r could not be read; it was left alone" >&2
@@ -261,9 +270,17 @@ fi
 # and the claims by path, so one link in the workspace would take those
 # writes out of the cache.
 refuse_ws_links() {
-  local found
+  local found rc=0
   [ -d "$dir" ] || return 0
-  found=$(find "$dir" -type l 2>/dev/null) || found=""
+  # A traversal that fails is not an absence of links, the same rule the
+  # reclaim's freshness checks follow: resolving a workspace nobody could
+  # scan would let a link inside it take the ledger's writes out of the
+  # cache, which is the one thing this check exists to stop.
+  found=$(find "$dir" -type l 2>/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "sdd-dir: refusing to resolve a workspace that could not be scanned for symbolic links at $dir; check what it holds and the permissions on it, then run sdd-dir again" >&2
+    return 2
+  fi
   [ -n "$found" ] || return 0
   echo "sdd-dir: refusing to resolve a workspace that holds a symbolic link at ${found%%$'\n'*}; remove the link and run sdd-state sync" >&2
   return 2

@@ -20,7 +20,8 @@ grep -E '^# bench' "$TEST_ROOT/node.out" || true
 echo "=== stop guard: registration ==="
 if node -e 'const h=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).hooks.Stop;if(!Array.isArray(h)||h.length!==1)process.exit(1);const c=h[0].hooks[0];if(!c.command.includes("run-hook.cmd\" sdd-stop-guard")||c.timeout!==30||c.shell!=="bash")process.exit(1)' "$REPO_ROOT/hooks/hooks.json"; then pass "hooks.json registers Stop -> run-hook.cmd sdd-stop-guard with a 30 s timeout"; else fail "hooks.json registers Stop -> run-hook.cmd sdd-stop-guard with a 30 s timeout"; fi
 if grep -q '"Stop"' "$REPO_ROOT/hooks/hooks-codex.json" 2>/dev/null || grep -q '"Stop"' "$REPO_ROOT/hooks/hooks-cursor.json" 2>/dev/null; then fail "the Codex and Cursor hook files do not register the guard"; else pass "the Codex and Cursor hook files do not register the guard"; fi
-if [ -x "$HOOK" ] && head -n 1 "$HOOK" | grep -q '^#!/usr/bin/env bash$'; then pass "the wrapper is an executable bash script"; else fail "the wrapper is an executable bash script"; fi
+head -n 1 "$HOOK" > "$TEST_ROOT/shebang" 2>/dev/null
+if [ -x "$HOOK" ] && grep -q '^#!/usr/bin/env bash$' "$TEST_ROOT/shebang"; then pass "the wrapper is an executable bash script"; else fail "the wrapper is an executable bash script"; fi
 
 echo "=== stop guard: wrapper ==="
 export XDG_CACHE_HOME="$TEST_ROOT/cache"
@@ -35,19 +36,22 @@ printf '# SDD ledger — plan: docs/plan.md\nsession s-wrap: mode worktree on ma
 printf '%s\n' '{"type":"user","timestamp":"2026-10-23T10:00:00.000Z","isSidechain":false,"origin":{"kind":"human"},"message":{"role":"user","content":"go"}}' '{"type":"assistant","timestamp":"2026-10-23T10:00:05.000Z","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"Moving to Task 1."}]}}' > "$TEST_ROOT/t.jsonl"
 input='{"session_id":"s-wrap","transcript_path":"'"$TEST_ROOT/t.jsonl"'","cwd":"'"$repo"'","hook_event_name":"Stop","stop_hook_active":false}'
 out=$(printf '%s' "$input" | bash "$HOOK"); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '"decision":"block"' && printf '%s' "$out" | grep -q 'SDD stop guard: plan docs/plan.md is not finished (1 of 1 tasks open; nothing tracked is live)'; then pass "a provable premature stop is refused through the wrapper"; else fail "a provable premature stop is refused through the wrapper (rc=$rc: $out)"; fi
+printf '%s' "$out" > "$TEST_ROOT/block.out"
+if [ "$rc" -eq 0 ] && grep -q '"decision":"block"' "$TEST_ROOT/block.out" && grep -q 'SDD stop guard: plan docs/plan.md is not finished (1 of 1 tasks open; nothing tracked is live)' "$TEST_ROOT/block.out"; then pass "a provable premature stop is refused through the wrapper"; else fail "a provable premature stop is refused through the wrapper (rc=$rc: $out)"; fi
 if [ "$(grep -c '"decision":"block"' "$ws/stop-guard.jsonl")" = 1 ] && [ "$(grep -c '"decision":"block"' "$XDG_CACHE_HOME/hyperpowers/stop-guard/s-wrap.jsonl")" = 1 ]; then pass "the decision is in the plan log and the mirror"; else fail "the decision is in the plan log and the mirror"; fi
 # node absent from PATH: hook-error to the mirror, exit 0, nothing in the plan log
 nopath="$TEST_ROOT/bin"; mkdir -p "$nopath"
 for tool in bash git date mkdir dirname sed head; do ln -s "$(command -v "$tool")" "$nopath/$tool"; done
 before=$(wc -l < "$ws/stop-guard.jsonl")
 out=$(printf '%s' "$input" | PATH="$nopath" bash "$HOOK"); rc=$?
-if [ "$rc" -eq 0 ] && [ -z "$out" ] && tail -n 1 "$XDG_CACHE_HOME/hyperpowers/stop-guard/s-wrap.jsonl" | grep -q '"reason":"hook-error","detail":"node not found"' && [ "$(wc -l < "$ws/stop-guard.jsonl")" = "$before" ]; then pass "without node the wrapper allows and writes hook-error to the mirror"; else fail "without node the wrapper allows and writes hook-error to the mirror (rc=$rc: $out)"; fi
+tail -n 1 "$XDG_CACHE_HOME/hyperpowers/stop-guard/s-wrap.jsonl" > "$TEST_ROOT/mirror.last" 2>/dev/null
+if [ "$rc" -eq 0 ] && [ -z "$out" ] && grep -q '"reason":"hook-error","detail":"node not found"' "$TEST_ROOT/mirror.last" && [ "$(wc -l < "$ws/stop-guard.jsonl")" = "$before" ]; then pass "without node the wrapper allows and writes hook-error to the mirror"; else fail "without node the wrapper allows and writes hook-error to the mirror (rc=$rc: $out)"; fi
 # the module throws: hook-error, exit 0
 out=$(printf '%s' "$input" | STOP_GUARD_FAULT=throw bash "$HOOK"); rc=$?
-if [ "$rc" -eq 0 ] && [ -z "$out" ] && tail -n 1 "$XDG_CACHE_HOME/hyperpowers/stop-guard/s-wrap.jsonl" | grep -q '"reason":"hook-error","detail":"module exit 1"'; then pass "a module failure allows and writes hook-error"; else fail "a module failure allows and writes hook-error (rc=$rc: $out)"; fi
+tail -n 1 "$XDG_CACHE_HOME/hyperpowers/stop-guard/s-wrap.jsonl" > "$TEST_ROOT/mirror.last" 2>/dev/null
+if [ "$rc" -eq 0 ] && [ -z "$out" ] && grep -q '"reason":"hook-error","detail":"module exit 1"' "$TEST_ROOT/mirror.last"; then pass "a module failure allows and writes hook-error"; else fail "a module failure allows and writes hook-error (rc=$rc: $out)"; fi
 # the wrapper's line has the documented keys and a parsable timestamp
-if tail -n 1 "$XDG_CACHE_HOME/hyperpowers/stop-guard/s-wrap.jsonl" | node -e 'const l=JSON.parse(require("fs").readFileSync(0,"utf8"));if(l.session!=="s-wrap"||l.decision!=="allow"||isNaN(Date.parse(l.ts)))process.exit(1)'; then pass "the hook-error line is well-formed JSON with ts, session, decision, reason, detail"; else fail "the hook-error line is well-formed JSON"; fi
+if node -e 'const l=JSON.parse(require("fs").readFileSync(0,"utf8"));if(l.session!=="s-wrap"||l.decision!=="allow"||isNaN(Date.parse(l.ts)))process.exit(1)' < "$TEST_ROOT/mirror.last"; then pass "the hook-error line is well-formed JSON with ts, session, decision, reason, detail"; else fail "the hook-error line is well-formed JSON"; fi
 # malformed stdin, and a session id the mirror path must not take
 out=$(printf 'not json' | bash "$HOOK"); rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$out" ]; then pass "malformed input exits 0 silently"; else fail "malformed input exits 0 silently (rc=$rc: $out)"; fi
@@ -55,7 +59,15 @@ out=$(printf '{"session_id":"../../etc/x","cwd":"%s"}' "$repo" | STOP_GUARD_FAUL
 if [ "$rc" -eq 0 ] && [ -z "$out" ] && [ ! -e "$XDG_CACHE_HOME/hyperpowers/stop-guard/../../etc" ]; then pass "a session id with path characters writes nothing"; else fail "a session id with path characters writes nothing (rc=$rc)"; fi
 # a cap refusal sequence through the real wrapper: the hook-error allows above reset the count, so block, block, allow
 out1=$(printf '%s' "$input" | bash "$HOOK"); out2=$(printf '%s' "$input" | bash "$HOOK"); out3=$(printf '%s' "$input" | bash "$HOOK")
-if printf '%s' "$out1" | grep -q '"decision":"block"' && printf '%s' "$out2" | grep -q '"decision":"block"' && [ -z "$out3" ] && tail -n 1 "$ws/stop-guard.jsonl" | grep -q '"reason":"cap"'; then pass "after an allow, the third consecutive attempt is allowed as cap through the wrapper"; else fail "after an allow, the third consecutive attempt is allowed as cap through the wrapper ($out1 / $out2 / $out3)"; fi
+printf '%s' "$out1" > "$TEST_ROOT/cap1.out"; printf '%s' "$out2" > "$TEST_ROOT/cap2.out"; tail -n 1 "$ws/stop-guard.jsonl" > "$TEST_ROOT/plan.last" 2>/dev/null
+if grep -q '"decision":"block"' "$TEST_ROOT/cap1.out" && grep -q '"decision":"block"' "$TEST_ROOT/cap2.out" && [ -z "$out3" ] && grep -q '"reason":"cap"' "$TEST_ROOT/plan.last"; then pass "after an allow, the third consecutive attempt is allowed as cap through the wrapper"; else fail "after an allow, the third consecutive attempt is allowed as cap through the wrapper ($out1 / $out2 / $out3)"; fi
+
+# A plugin root reached through a symlink: node realpaths the main module's URL
+# but leaves argv alone, so a CLI entry that compared the raw path would never
+# run and the guard would allow every stop in silence.
+ln -s "$REPO_ROOT/hooks" "$TEST_ROOT/hooks-link"
+printf '%s' "$input" | bash "$TEST_ROOT/hooks-link/sdd-stop-guard" > "$TEST_ROOT/symlink.out" 2>/dev/null; rc=$?
+if [ "$rc" -eq 0 ] && grep -q '"decision":"block"' "$TEST_ROOT/symlink.out"; then pass "the guard still blocks when the hooks directory is reached through a symlink"; else fail "the guard still blocks when the hooks directory is reached through a symlink (rc=$rc: $(cat "$TEST_ROOT/symlink.out"))"; fi
 
 echo "=== stop guard: key parity ==="
 # The module path travels in the environment: as argv[1] it would look like the

@@ -652,7 +652,13 @@ export function main(stdinText, env = process.env) {
 // CLI entry: the only place that reads stdin and writes stdout, so `main`
 // stays a pure function of its arguments. An uncaught throw exits 1 with the
 // stack on stderr, which the bash wrapper turns into the `hook-error` line.
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+// node resolves symlinks for the main module's URL but leaves argv alone, so
+// the comparison is made on the resolved path: a plugin root reached through
+// a symlink would otherwise leave this entry dead, and the guard would allow
+// every stop in silence. An unresolvable path is compared as it came.
+let mainPath = process.argv[1] || '';
+try { if (mainPath) mainPath = realpathSync(mainPath); } catch { /* compare the raw path */ }
+if (mainPath && import.meta.url === new URL(`file://${mainPath}`).href) {
   const text = readFileSync(0, 'utf8');
   const r = main(text, process.env);
   if (r.stdout) process.stdout.write(r.stdout + '\n');

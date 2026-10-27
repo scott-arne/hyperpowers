@@ -384,7 +384,10 @@ export function recordDecision({ workspaceLog, mirrorLog, marker, line }) {
   if (!workspaceLog) { const ok = toMirror(out); if (ok) clear(); return { line: out, loggedAs: ok ? 'mirror-only' : 'none' }; }
   const live = () => existsSync(join(dirname(workspaceLog), 'progress.md'));
   if (!live() || !appendLine(workspaceLog, out, { confirmPath: true }) || !live()) {
-    const failed = { ...out, decision: 'allow', reason: 'log-failed', refusals: 0 };
+    // log-failed is a statement about the record, not about the turn, so the
+    // decision it displaced goes into `detail`: the plan log never received
+    // that reason, and the mirror is the only place left to read it.
+    const failed = { ...out, decision: 'allow', reason: 'log-failed', refusals: 0, detail: out.detail ? `${out.reason}: ${out.detail}` : out.reason };
     const ok = toMirror(failed); if (ok) clear();
     return { line: failed, loggedAs: ok ? 'log-failed' : 'none' };
   }
@@ -393,10 +396,15 @@ export function recordDecision({ workspaceLog, mirrorLog, marker, line }) {
   return { line: out, loggedAs: 'authoritative' };
 }
 
-// liveness.asks_or_blocks, ported verbatim (liveness.py:376-391, with APPROVAL
-// and SENTENCE_END from liveness.py:50-58). The hand-labelled sample it was
-// tuned against is the node test's table.
-const APPROVAL = /\b(?:say (?:the word|["']?(?:continue|proceed|go|resume)["']?)|let me know|your call|which (?:option|one|do you)|do you want|would you like|shall i|should i|want me to|approve|for your review|for you to review|when(?:ever)? you(?:'re| are) ready|your go-ahead|decision is yours|is yours to make)\b/i;
+// liveness.asks_or_blocks, ported from liveness.py:376-391, with APPROVAL and
+// SENTENCE_END from liveness.py:50-58. The hand-labelled sample it was tuned
+// against is the node test's table.
+// The one deliberate departure from the source's characters: Python's `\b` is
+// Unicode-aware (its `\w` is Unicode letters, numbers and underscore) while
+// JavaScript's is ASCII-only, so the two boundaries are spelled out. Left as
+// `\b`, "éapprove" would read as an approval here and not in the field
+// heuristic this hook's decisions are adjudicated against.
+const APPROVAL = /(?<![\p{L}\p{N}_])(?:say (?:the word|["']?(?:continue|proceed|go|resume)["']?)|let me know|your call|which (?:option|one|do you)|do you want|would you like|shall i|should i|want me to|approve|for your review|for you to review|when(?:ever)? you(?:'re| are) ready|your go-ahead|decision is yours|is yours to make)(?![\p{L}\p{N}_])/iu;
 const SENTENCE_END = /(?<=[.!?])\s+/;
 export function asksOrBlocks(text) {
   if (text.includes('BLOCKED')) return true;
@@ -438,7 +446,14 @@ export function decideStop({ discovery, plan, turn, jobs, jobsUnreadable = [], r
   if (refusalsUnreadable) return { decision: 'allow', reason: 'hook-error', state, detail: `decision log unreadable: ${refusalsUnreadable}` };
   if (!turn.ok || turn.tooLong) return { decision: 'allow', reason: 'turn-too-long', state, ...(turn.detail ? { detail: turn.detail } : {}) };
   if ((turn.liveAgents || []).length) return { decision: 'allow', reason: 'live-agent', state };
-  const text = ledgerText ?? (() => { try { return readFileSync(discovery.ledger, 'utf8'); } catch { return ''; } })();
+  // The ledger is reread here for the hand-back line. A read that fails after
+  // discovery found the file — a permission change, a transient error, a
+  // finish racing this turn — says nothing about whether this turn handed
+  // back, and an empty string would say it did not: allow, and name the file.
+  let text = ledgerText;
+  if (text === null || text === undefined) {
+    try { text = readFileSync(discovery.ledger, 'utf8'); } catch { return { decision: 'allow', reason: 'hook-error', state, detail: `ledger unreadable: ${discovery.ledger}` }; }
+  }
   if (handbackThisTurn(text, sessionId, turn.promptTs)) return { decision: 'allow', reason: 'handback-line', state };
   if (asksOrBlocks(turn.lastAssistantText || '')) return { decision: 'allow', reason: 'handback-text', state };
   if (refusals >= REFUSAL_CAP) return { decision: 'allow', reason: 'cap', state };

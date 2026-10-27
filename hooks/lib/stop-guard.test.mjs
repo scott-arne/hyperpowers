@@ -595,3 +595,68 @@ test('main: the fault variable throws after deciding and before writing', () => 
   assert.throws(() => step(e, turn(), {}, { STOP_GUARD_FAULT: 'throw' }), /injected/);
   assert.equal(existsSync(join(ws, 'stop-guard.jsonl')), false);
 });
+test('a ledger that cannot be reread is hook-error, never a ledger without a hand-back', () => {
+  const e = env(); const ws = workspaceFor(e);
+  ledger(ws, e, { tasksDone: [1], extra: [`handback ${SID} 2026-10-23T10:00:05.000Z: a question only you can answer`] });
+  const discovery = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache });
+  const plan = guard.planState({ workspace: ws, cwd: e.repo, sessionId: SID });
+  assert.equal(discovery.kind, 'ledger');
+  const args = { discovery, plan, turn: turn(), jobs: [], refusals: 0, sessionId: SID };
+  assert.equal(guard.decideStop(args).reason, 'handback-line'); // readable: the line is there
+  let r;
+  chmodSync(join(ws, 'progress.md'), 0o000);
+  try { r = guard.decideStop(args); } finally { chmodSync(join(ws, 'progress.md'), 0o644); }
+  assert.equal(r.decision, 'allow'); assert.equal(r.reason, 'hook-error');
+  assert.equal(r.detail, `ledger unreadable: ${join(ws, 'progress.md')}`);
+  // an empty ledger is a different claim from a ledger that could not be read
+  assert.equal(guard.decideStop({ ...args, ledgerText: '' }).reason, 'open-tasks');
+});
+test('main: a ledger that cannot be read ends in no refusal, and discovery is what answers', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  let r;
+  chmodSync(join(ws, 'progress.md'), 0o000);
+  try { r = step(e, turn()); } finally { chmodSync(join(ws, 'progress.md'), 0o644); }
+  assert.equal(r.stdout, '');
+  const last = readLines(mirrorOf(e)).at(-1);
+  assert.equal(last.decision, 'allow'); assert.equal(last.reason, 'ambiguous');
+  assert.equal(last.detail, `unreadable: ${join(ws, 'progress.md')}`);
+  assert.equal(existsSync(join(ws, 'stop-guard.jsonl')), false);
+});
+test('the approval pattern reads word boundaries as the field heuristic does, not as ASCII', () => {
+  const plain = ['say the word', 'say continue', 'let me know', 'your call', 'which option', 'which one', 'which do you', 'do you want',
+    'would you like', 'shall i', 'should i', 'want me to', 'approve', 'for your review', 'for you to review', 'when you are ready',
+    'whenever you are ready', "when you're ready", 'your go-ahead', 'decision is yours', 'is yours to make'];
+  for (const p of plain) {
+    assert.equal(guard.asksOrBlocks(`Status update. ${p}.`), true, p);
+    assert.equal(guard.asksOrBlocks(`Status update. é${p}.`), false, `é${p}`);
+    assert.equal(guard.asksOrBlocks(`Status update. ${p}é.`), false, `${p}é`);
+    assert.equal(guard.asksOrBlocks(`Status update. 中${p}.`), false, `中${p}`);
+    assert.equal(guard.asksOrBlocks(`Status update. x${p}.`), false, `x${p}`);
+    assert.equal(guard.asksOrBlocks(`Status update. ${p}x.`), false, `${p}x`);
+  }
+});
+test('main: a malformed authoritative log records hook-error in both logs', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  const wl = join(ws, 'stop-guard.jsonl');
+  writeLog(wl, [line('2026-10-23T10:00:00.100Z', 'block', 'open-tasks', { refusals: 1 })]);
+  appendFileSync(wl, 'not json at all\n');
+  const r = step(e, turn());
+  assert.equal(r.stdout, '');
+  const last = JSON.parse(readFileSync(wl, 'utf8').trim().split('\n').at(-1));
+  assert.equal(last.decision, 'allow'); assert.equal(last.reason, 'hook-error');
+  assert.equal(last.detail, 'decision log unreadable: 1 malformed line(s)');
+  assert.deepEqual(readLines(mirrorOf(e)).at(-1), last);
+});
+test('main: an authoritative log that cannot be written records log-failed carrying the decision it displaced', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  const wl = join(ws, 'stop-guard.jsonl');
+  writeLog(wl, [line('2026-10-23T10:00:00.100Z', 'block', 'open-tasks', { refusals: 1 })]);
+  let r;
+  chmodSync(wl, 0o000);
+  try { r = step(e, turn()); } finally { chmodSync(wl, 0o644); }
+  assert.equal(r.stdout, ''); // a decision no log received refuses nothing
+  const last = readLines(mirrorOf(e)).at(-1);
+  assert.equal(last.decision, 'allow'); assert.equal(last.reason, 'log-failed'); assert.equal(last.refusals, 0);
+  assert.match(last.detail, /^hook-error: decision log unreadable: .*EACCES/);
+  assert.deepEqual(readLines(wl).map((l) => l.reason), ['open-tasks']); // nothing was appended
+});

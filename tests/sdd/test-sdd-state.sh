@@ -283,10 +283,6 @@ out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-after-fetch:$other_1p" ba
 if [ "$rc" -eq 0 ] && [ "$(git -C "$co_b1p" rev-parse refs/heads/hyperpowers/state)" = "$served_1p" ] && grep -q '^Task 2: complete' "$co_b1p/plans/$name_1p/progress.md" && [ "$(git -C "$PAIR_B" rev-parse refs/remotes/origin/hyperpowers/state)" = "$other_1p" ]; then pass "the tip a sync reconciles is the one the pinned endpoint served, and a lost compare-and-swap leaves the shared ref to the fetch that won it"; else fail "the tip a sync reconciles is the one the pinned endpoint served (rc=$rc: $out: local=$(git -C "$co_b1p" rev-parse refs/heads/hyperpowers/state), served=$served_1p, other=$other_1p, shared=$(git -C "$PAIR_B" rev-parse refs/remotes/origin/hyperpowers/state))"; fi
 if ! git -C "$PAIR_B" rev-parse -q --verify "refs/hp-fetch/$gone_1p" >/dev/null && [ "$(git -C "$PAIR_B" rev-parse -q --verify "refs/hp-fetch/$$")" = "$held_1p" ]; then pass "a private fetch ref whose owner is gone is swept before the fetch, and a live owner's is left alone"; else fail "a private fetch ref whose owner is gone is swept before the fetch (gone: $(git -C "$PAIR_B" rev-parse -q --verify "refs/hp-fetch/$gone_1p" || echo swept), live: $(git -C "$PAIR_B" rev-parse -q --verify "refs/hp-fetch/$$" || echo swept))"; fi
 git -C "$PAIR_B" update-ref -d "refs/hp-fetch/$$"
-# No private ref outlives a sync, whatever its outcome: the fixtures above
-# cover a refused stamp, an absent branch, a refused alias, a pinned fetch
-# and a reconciled one.
-if [ -z "$(git -C "$p1_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$chain_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$read_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$rule_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_A" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_B" for-each-ref refs/hp-fetch)" ]; then pass "no private fetch ref outlives a sync"; else fail "no private fetch ref outlives a sync ($(git -C "$p1_a" for-each-ref refs/hp-fetch; git -C "$chain_a" for-each-ref refs/hp-fetch; git -C "$read_a" for-each-ref refs/hp-fetch; git -C "$rule_a" for-each-ref refs/hp-fetch; git -C "$PAIR_A" for-each-ref refs/hp-fetch; git -C "$PAIR_B" for-each-ref refs/hp-fetch))"; fi
 # The same race on a repository that has no local state branch yet. The
 # first branch has to come from the tip this sync fetched: a lost swap
 # leaves another fetch's tip in the shared ref, and the checkout creation
@@ -311,6 +307,10 @@ co_b1n="$STATE_ROOT/$(state_key "$first_b")"
 out=$(cd "$first_b" && HYPERPOWERS_TEST_WRITER_AT="sync-after-fetch:$other_1n" bash "$SDD_STATE" sync docs/plan.md 2>"$TEST_ROOT/p1n.err"); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=created" ] && [ "$(git -C "$first_b" rev-parse hyperpowers/state)" = "$served_1n" ] && grep -q '^Task 1: complete' "$co_b1n/plans/$name_1n/progress.md" && [ "$(git -C "$first_b" rev-parse refs/remotes/origin/hyperpowers/state)" = "$other_1n" ]; then pass "the first local branch is created from the fetched tip, not from the shared ref a lost swap left behind"; else fail "the first local branch is created from the fetched tip (rc=$rc: $out: local=$(git -C "$first_b" rev-parse hyperpowers/state 2>/dev/null), served=$served_1n, other=$other_1n: $(tr '\n' '|' < "$TEST_ROOT/p1n.err"))"; fi
 if [ "$(git -C "$first_b" config branch.hyperpowers/state.remote)" = origin ] && [ "$(git -C "$first_b" config branch.hyperpowers/state.merge)" = "refs/heads/hyperpowers/state" ]; then pass "the branch this sync created tracks the remote, as the checkout creation's own would"; else fail "the branch this sync created tracks the remote ($(git -C "$first_b" config branch.hyperpowers/state.remote))"; fi
+# No private ref outlives a sync, whatever its outcome: the fixtures above
+# cover a refused stamp, an absent branch, a refused alias, a pinned fetch,
+# a reconciled one and a first checkout created from the fetched tip.
+if [ -z "$(git -C "$p1_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$chain_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$read_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$rule_a" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$first_b" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_A" for-each-ref refs/hp-fetch)" ] && [ -z "$(git -C "$PAIR_B" for-each-ref refs/hp-fetch)" ]; then pass "no private fetch ref outlives a sync"; else fail "no private fetch ref outlives a sync ($(git -C "$p1_a" for-each-ref refs/hp-fetch; git -C "$chain_a" for-each-ref refs/hp-fetch; git -C "$read_a" for-each-ref refs/hp-fetch; git -C "$rule_a" for-each-ref refs/hp-fetch; git -C "$first_b" for-each-ref refs/hp-fetch; git -C "$PAIR_A" for-each-ref refs/hp-fetch; git -C "$PAIR_B" for-each-ref refs/hp-fetch))"; fi
 
 # Crash after the worktree add: the next call starts clean.
 r4="$TEST_ROOT/r4"; make_repo "$r4"
@@ -2066,12 +2066,22 @@ add11c=$(printf 'a dotted workspace added by hand\n' | git -C "$PAIR_A" -c user.
 git -C "$PAIR_A" push -q origin "$add11c:refs/heads/hyperpowers/state" 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p11c.out" 2> "$TEST_ROOT/p11c.err"; rc=$?
 out=$(cat "$TEST_ROOT/p11c.out")
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "plans/$dotted11c" "$TEST_ROOT/p11c.err" && diff -r "$TEST_ROOT/p11c-before" "$copy11c" >/dev/null 2>&1 && [ "$(git -C "$PAIR_B" rev-parse hyperpowers/state)" = "$before11c" ] && [ ! -f "$co_b11c/.sync-applying" ]; then pass "an incoming first-add of a dotted name a local removal copy holds is refused, the copy intact and the branch unmoved"; else fail "an incoming first-add of a dotted name a local removal copy holds is refused (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p11c.err"))"; fi
-# The repair the line names: the copy moves aside and the apply completes.
-mv "$copy11c" "$copy11c.aside-999"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "plans/$dotted11c" "$TEST_ROOT/p11c.err" && grep -qF "mv '$copy11c' '$co_b11c/.aside-$dotted11c-" "$TEST_ROOT/p11c.err" && diff -r "$TEST_ROOT/p11c-before" "$copy11c" >/dev/null 2>&1 && [ "$(git -C "$PAIR_B" rev-parse hyperpowers/state)" = "$before11c" ] && [ ! -f "$co_b11c/.sync-applying" ]; then pass "an incoming first-add of a dotted name a local removal copy holds is refused, the copy intact and the branch unmoved"; else fail "an incoming first-add of a dotted name a local removal copy holds is refused (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/p11c.err"))"; fi
+# Why the line names a path outside plans/: a copy left under plans/ whose
+# name still ends in a pid parses as a quarantine, and a later prune
+# --apply would delete the copy the refusal exists to protect.
+mv "$copy11c" "$copy11c.aside-4242"
+find "$copy11c.aside-4242" -depth -exec touch -t 202401010000 {} +
+out=$(run_state "$PAIR_B" prune --repo "$PAIR_B" 2>/dev/null)
+if printf '%s' "$out" | grep -q "$dotted11c\.aside-4242"; then pass "a copy moved aside under plans/ is listed by prune, which is why the refusal does not name one"; else fail "a copy moved aside under plans/ is listed by prune ($out)"; fi
+# The repair the line does name: a root-level path nothing sweeps, scans,
+# lists or commits.
+mv "$copy11c.aside-4242" "$co_b11c/.aside-$dotted11c-4242"
+out=$(run_state "$PAIR_B" prune --repo "$PAIR_B" 2>/dev/null)
+if ! printf '%s' "$out" | grep -q aside; then pass "the root-level path the refusal names is listed by nothing"; else fail "the root-level path the refusal names is listed by nothing ($out)"; fi
 out=$(run_state "$PAIR_B" sync docs/plan.md 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(cat "$co_b11c/plans/$dotted11c/progress.md")" = "incoming ledger" ] && [ -f "$copy11c.aside-999/task-1-report.md" ]; then pass "with the local copy moved aside the incoming workspace of that name is applied"; else fail "with the local copy moved aside the incoming workspace of that name is applied (rc=$rc: $out)"; fi
-rm -rf "$copy11c.aside-999"
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && [ "$(cat "$co_b11c/plans/$dotted11c/progress.md")" = "incoming ledger" ] && [ -f "$co_b11c/.aside-$dotted11c-4242/task-1-report.md" ] && [ -z "$(git -C "$co_b11c" status --porcelain -- plans/)" ]; then pass "with the local copy moved out of plans/ the incoming workspace of that name is applied"; else fail "with the local copy moved out of plans/ the incoming workspace of that name is applied (rc=$rc: $out)"; fi
+rm -rf "$co_b11c/.aside-$dotted11c-4242"
 
 echo ""
 echo "=== containment on the apply path ==="

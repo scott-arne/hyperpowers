@@ -1409,7 +1409,14 @@ apply_target() {
         # A lookup that fails counts as tracked.
         top=${path#plans/}; top=${top%%/*}
         tracked=$(git -C "$CO" ls-tree "$S" -- "plans/$top" 2>/dev/null) || tracked=x
-        incoming=$(git -C "$CO" ls-tree "$target" -- "plans/$top" 2>/dev/null) || incoming=x
+        incoming=$(git -C "$CO" ls-tree "$target" -- "plans/$top" 2>/dev/null) || incoming=unreadable
+        if [ -z "$tracked" ] && [ "$incoming" = unreadable ]; then
+          # Fail closed, but say what actually happened: a human told a
+          # copy collides would go looking for an incoming workspace that
+          # may not be there.
+          echo "sdd-state: the incoming commit could not be read at plans/$top, where an untracked copy sits; nothing was applied. Run sdd-state sync again, and if it persists the repository needs repair" >&2
+          return 2
+        fi
         if [ -z "$tracked" ] && [ -z "$incoming" ]; then continue; fi
         if [ -z "$tracked" ]; then
           # The target adds this name for the first time while a local
@@ -1419,7 +1426,15 @@ apply_target() {
           # dotted workspace name (hp_plan_ws_name strips leading dots),
           # so the incoming entry was committed by hand on some host; the
           # human decides which of the two survives.
-          echo "sdd-state: the state branch adds plans/$top, and an untracked copy of that name is already at $CO/plans/$top; nothing was applied, because a removal or prune copy is never written into. Move the local copy aside (mv '$CO/plans/$top' '$CO/plans/$top.aside-$$', or any name outside $CO/plans) and run sdd-state sync again" >&2
+          #
+          # The destination the line names is at the checkout root, not
+          # under plans/: a copy left there whose name still ends in a pid
+          # parses as a tomb or a quarantine, and a later prune --apply
+          # would delete the very copy this refusal protects. Nothing
+          # reaches a root .aside-*: snapshot_pending and recover_apply
+          # walk plans/*/, prune lists plans/.removing-*, .pruned-* and
+          # .quarantining-*, and this scan is pathspec-limited to plans/.
+          echo "sdd-state: the state branch adds plans/$top, and an untracked copy of that name is already at $CO/plans/$top; nothing was applied, because a removal or prune copy is never written into. Move the local copy out of plans/ (mv '$CO/plans/$top' '$CO/.aside-$top-$$') and run sdd-state sync again" >&2
           return 2
         fi ;;
     esac

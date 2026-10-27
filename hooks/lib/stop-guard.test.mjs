@@ -743,7 +743,7 @@ test('lines are split on the newline byte, so a multibyte character straddling a
   }
   assert.deepEqual([...guard.linesFromEnd(p, 1 << 20, 3)].map((l) => l && JSON.parse(l).timestamp), [at(1), at(0)]);
 });
-test('the reader stops at the cap and reports tooLong; a small last turn on a huge file is read quickly; a file without a prompt is no-prompt', () => {
+test('the reader stops at the cap and reports tooLong; a small last turn on a huge file reads only the tail; a file without a prompt is no-prompt', () => {
   const root = mkdtempSync(join(tmpdir(), 'sg-'));
   try {
     const filler = assistant(1, 'x'.repeat(1000));
@@ -752,8 +752,12 @@ test('the reader stops at the cap and reports tooLong; a small last turn on a hu
     const long = guard.readTurn(pLong, { capBytes: 4 * 1024 * 1024 });
     assert.equal(long.ok, false); assert.equal(long.tooLong, true);
     const pShort = transcript(root, [human(0, 'go'), ...many, human(40000, 'continue'), assistant(40001, 'Moving to Task 3.')]);
-    const t0 = Date.now(); const t = guard.readTurn(pShort, { capBytes: 4 * 1024 * 1024 });
-    assert.equal(t.ok, true); assert.equal(t.promptTs, at(40000)); assert.ok(Date.now() - t0 < 1000);
+    // A cap far smaller than the 22 MB file proves the bounded read without a
+    // clock: an ok answer can only mean the prompt was found in the first
+    // chunk, since a reader that went past the last turn would spend the cap
+    // and answer tooLong, as pLong above does.
+    const t = guard.readTurn(pShort, { capBytes: 64 * 1024 });
+    assert.equal(t.ok, true); assert.equal(t.promptTs, at(40000));
     const none = guard.readTurn(transcript(root, [assistant(1, 'orphan')]));
     assert.equal(none.ok, false); assert.equal(none.tooLong, false); assert.equal(none.detail, 'no-prompt');
   } finally { rmSync(root, { recursive: true, force: true }); } // a 22 MB fixture is not left behind

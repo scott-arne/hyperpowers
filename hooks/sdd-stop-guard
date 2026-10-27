@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Stop hook: the SDD stop guard. Reads the Stop payload once, hands it to the
+# node module, prints the module's output (a block decision or nothing), and
+# exits 0 on every path. When node is missing or the module fails, an allow
+# is recorded in the session mirror as hook-error, with printf alone.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+input=""
+if [ ! -t 0 ]; then IFS= read -r -d '' -t 2 input 2>/dev/null || true; fi
+[ -n "$input" ] || exit 0
+record_error() { # <detail>
+  local sid ts dir
+  sid=$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+  [ -n "$sid" ] || return 0
+  case "$sid" in *[!A-Za-z0-9._-]*) return 0 ;; esac
+  dir="${XDG_CACHE_HOME:-${HOME:-}/.cache}/hyperpowers/stop-guard"
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  mkdir -p "$dir" 2>/dev/null || return 0
+  printf '{"ts":"%s","session":"%s","decision":"allow","reason":"hook-error","detail":"%s"}\n' "$ts" "$sid" "$1" >> "$dir/$sid.jsonl" 2>/dev/null || true
+}
+if ! command -v node >/dev/null 2>&1; then record_error "node not found"; exit 0; fi
+out=$(printf '%s' "$input" | node "$SCRIPT_DIR/lib/stop-guard.mjs" 2>/dev/null); rc=$?
+if [ "$rc" -ne 0 ]; then record_error "module exit $rc"; exit 0; fi
+[ -n "$out" ] && printf '%s\n' "$out"
+exit 0

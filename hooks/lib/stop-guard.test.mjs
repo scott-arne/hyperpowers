@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -841,4 +841,29 @@ test('the cap bounds bytes, not chunks, so a prompt beyond it is tooLong even wi
 });
 test('the cap and chunk defaults are the module constants', () => {
   assert.equal(guard.TAIL_CAP, 16 * 1024 * 1024); assert.equal(guard.TAIL_CHUNK, 512 * 1024);
+});
+
+test('benchmark: no-plan under 100 ms with 50 candidate ledgers; a small last turn on a 300 MB transcript under 1 s', { skip: !process.env.STOP_GUARD_BENCH }, () => {
+  const e = env();
+  for (let k = 0; k < 5; k++) for (let i = 0; i < 10; i++) { const ws = join(e.cache, 'hyperpowers', 'state', `key${k}`, 'plans', `p${i}-0000000${i}`); mkdirSync(ws, { recursive: true }); writeFileSync(join(ws, 'progress.md'), `# SDD ledger — plan: docs/plan.md\nsession other-${k}-${i}: mode worktree on main at /x started x\n`); }
+  // Both numbers, because they answer different questions: the cold call is
+  // what a hook process pays once (the first git spawn in cloneKey, the JIT,
+  // the first touch of the fifty ledgers just written), the median of the
+  // repeats is the decision the spec's bound is about. A no-plan decision
+  // writes nothing, so repeating it leaves no trace.
+  const noPlanInput = JSON.stringify({ session_id: 'nobody', transcript_path: join(e.root, 'none'), cwd: tmpdir() });
+  let t0 = Date.now(); guard.main(noPlanInput, { XDG_CACHE_HOME: e.cache }); const cold = Date.now() - t0;
+  console.log(`# bench no-plan cold ${cold} ms`); assert.ok(cold < 1000, `no-plan cold took ${cold} ms`);
+  const repeats = [];
+  for (let i = 0; i < 5; i++) { const t = Date.now(); guard.main(noPlanInput, { XDG_CACHE_HOME: e.cache }); repeats.push(Date.now() - t); }
+  const noPlan = repeats.sort((a, b) => a - b)[2];
+  console.log(`# bench no-plan ${noPlan} ms`); assert.ok(noPlan < 100, `no-plan took ${noPlan} ms`);
+  const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  const big = join(e.root, 'big.jsonl'); const fd = openSync(big, 'w');
+  const filler = JSON.stringify(assistant(1, 'x'.repeat(4000))) + '\n';
+  for (let i = 0; i < Math.ceil(300 * 1024 * 1024 / filler.length); i++) writeSync(fd, filler);
+  writeSync(fd, JSON.stringify(human(90000, 'continue')) + '\n' + JSON.stringify(assistant(90001, 'Moving to Task 2.')) + '\n'); closeSync(fd);
+  t0 = Date.now(); const r = guard.main(JSON.stringify({ session_id: SID, transcript_path: big, cwd: e.repo }), { XDG_CACHE_HOME: e.cache }); const withPlan = Date.now() - t0;
+  console.log(`# bench with-plan ${withPlan} ms`); assert.ok(withPlan < 1000, `with-plan took ${withPlan} ms`); assert.match(r.stdout, /"decision":"block"/);
+  rmSync(big);
 });

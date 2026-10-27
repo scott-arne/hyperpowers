@@ -648,3 +648,13 @@ export function main(stdinText, env = process.env) {
   if (recorded.line.decision === 'block') return { stdout: JSON.stringify({ decision: 'block', reason: d.message }), exitCode: 0 };
   return { stdout: '', exitCode: 0 };
 }
+
+// CLI entry: the only place that reads stdin and writes stdout, so `main`
+// stays a pure function of its arguments. An uncaught throw exits 1 with the
+// stack on stderr, which the bash wrapper turns into the `hook-error` line.
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  const text = readFileSync(0, 'utf8');
+  const r = main(text, process.env);
+  if (r.stdout) process.stdout.write(r.stdout + '\n');
+  process.exit(r.exitCode);
+}

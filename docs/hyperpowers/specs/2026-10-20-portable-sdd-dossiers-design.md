@@ -1,5 +1,7 @@
 # Portable SDD dossiers: a state branch per repository
 
+**Outcome:** implemented 2026-10-27; 11 decisions under docs/hyperpowers/decisions/.
+
 **Date:** 2026-10-20
 **Status:** design approved in chat on 2026-10-20 (transport, parallel
 model, the approach, and the four design sections); spec self-reviewed;
@@ -127,6 +129,18 @@ Three requirements shape the replacement:
   relocating them to a sibling directory under the cache key removes the
   class and is the natural home for the write protocol. It is scheduled
   after 6.17.0, not before. Decided 2026-10-23 at the hand-back.
+- Restore copies live in a `.restore` sidecar at the checkout root. The
+  sync apply stages them there, never inside a workspace directory, and
+  removes the sidecar once the apply has emptied it; the whole-tree
+  refusal, the link checks and the recovery sweep treat it as the third
+  recovery sidecar, to move with the other two in the later design.
+  Decided 2026-10-27 at the finish, from the implementation.
+- `prune` quarantines a killed removal's copy before it deletes it. The
+  copies such removals leave under `plans/` are listed in a `tombs=`
+  field on its stdout lines, moved to a quarantine on one pass and
+  removed on a later one after quiet days, so a copy that may be the only
+  one of a dossier is never deleted on the pass that finds it. Decided
+  2026-10-27 at the finish, from the implementation.
 
 ## Design
 

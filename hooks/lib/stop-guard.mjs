@@ -121,14 +121,31 @@ export function discover({ sessionId, cwd, cacheRoot }) {
   if (unreadable.length) return { kind: 'ambiguous', candidates: candidates.length, matches, unreadable };
   if (matches.length === 1) return { kind: 'ledger', workspace: dirname(matches[0]), ledger: matches[0] };
   if (matches.length > 1) return { kind: 'ambiguous', candidates: candidates.length, matches };
+  // The fallback answers under the same rule: a receipt the hook is not
+  // allowed to look at may be the one this session wrote, so it is recorded
+  // and the answer is ambiguous rather than "no record".
   const receipts = join(hp, 'receipts');
-  if (existsSync(receipts)) {
+  const all = [];
+  let entries = [];
+  try { entries = readdirSync(receipts); } catch (err) { if (!absent(err)) unreadable.push(receipts); }
+  for (const r of entries) {
+    const dir = join(receipts, r);
     // A dot-prefixed staging is a receipt only once finish marked it FINISHED
-    // (its final rename failed after the workspace was removed, Task 5).
-    const all = readdirSync(receipts).filter((r) => !r.startsWith('.') || existsSync(join(receipts, r, 'FINISHED'))).map((r) => join(receipts, r, 'progress.md')).filter((p) => existsSync(p));
-    const hit = newestFirst(all).slice(0, CANDIDATE_CAP).find((p) => carriesSession(p, sessionId));
-    if (hit) return { kind: 'receipt', receipt: dirname(hit) };
+    // (its final rename failed after the workspace was removed, Task 5). When
+    // the marker cannot be statted, whether the directory is a receipt at all
+    // is the unknown, so the directory itself is what gets recorded.
+    if (r.startsWith('.')) {
+      try { statSync(join(dir, 'FINISHED')); } catch (err) { if (!absent(err)) unreadable.push(dir); continue; }
+    }
+    const p = join(dir, 'progress.md');
+    try { if (statSync(p).isFile()) all.push(p); } catch (err) { if (!absent(err)) unreadable.push(p); }
   }
+  // Every capped candidate is read — filter, not find — because a match that
+  // stopped the scan would leave a sibling unaccounted for, and a receipt
+  // this session wrote may be the one that went unread.
+  const hits = newestFirst(all, unreadable).slice(0, CANDIDATE_CAP).filter((p) => carriesSession(p, sessionId, unreadable));
+  if (unreadable.length) return { kind: 'ambiguous', candidates: candidates.length, matches, unreadable };
+  if (hits.length) return { kind: 'receipt', receipt: dirname(hits[0]) };
   return { kind: 'none' };
 }
 

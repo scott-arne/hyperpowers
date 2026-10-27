@@ -378,3 +378,34 @@ test('cloneKey: null outside a repository, stable inside one', () => {
   assert.equal(guard.cloneKey(tmpdir()), null);
   assert.match(guard.cloneKey(e.repo), /^[0-9a-f]{40}$/);
 });
+test('discover: a receipt the hook cannot search is an ambiguity, not an absence', () => {
+  const e = env(); const r = receipt(e, 'plan-abcdef12-20261023T000000Z');
+  let d;
+  chmodSync(r, 0o000);
+  try { d = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache }); } finally { chmodSync(r, 0o755); }
+  assert.equal(d.kind, 'ambiguous'); assert.deepEqual(d.matches, []);
+  assert.deepEqual(d.unreadable, [join(r, 'progress.md')]);
+  // a staging that cannot be searched cannot be classified either: whether it
+  // is a receipt at all is what is unknown, so the directory is what is named
+  const staging = receipt(e, '.staging-plan-abcdef12-20261023T000001Z');
+  chmodSync(staging, 0o000);
+  try { d = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache }); } finally { chmodSync(staging, 0o755); }
+  assert.equal(d.kind, 'ambiguous'); assert.deepEqual(d.unreadable, [staging]);
+});
+test('discover: a receipts directory the hook cannot list is an ambiguity, not an absence', () => {
+  const e = env(); const receipts = dirname(receipt(e, 'plan-abcdef12-20261023T000000Z'));
+  let d;
+  chmodSync(receipts, 0o000);
+  try { d = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache }); } finally { chmodSync(receipts, 0o755); }
+  assert.equal(d.kind, 'ambiguous'); assert.deepEqual(d.matches, []);
+  assert.deepEqual(d.unreadable, [receipts]);
+});
+test('discover: one matching receipt beside one that cannot be read proves nothing, so it is ambiguous', () => {
+  const e = env(); receipt(e, 'plan-abcdef12-20261023T000000Z');
+  const other = receipt(e, 'other-bbbbbbbb-20261023T000001Z', 'someone-else');
+  let d;
+  chmodSync(join(other, 'progress.md'), 0o000);
+  try { d = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache }); } finally { chmodSync(join(other, 'progress.md'), 0o644); }
+  assert.equal(d.kind, 'ambiguous'); assert.deepEqual(d.matches, []);
+  assert.deepEqual(d.unreadable, [join(other, 'progress.md')]);
+});

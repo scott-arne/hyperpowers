@@ -205,8 +205,17 @@ hp_plan_graph() {
     /^### Task [0-9]+:/ { n = $3; sub(/:$/, "", n); if (n in seen) { printf "duplicate heading: task %s\n", n > "/dev/stderr"; bad = 1; exit 2 } seen[n] = 1; order[++k] = n; cur = n; next }
     cur != "" && /^\*\*Depends on:\*\*/ {
       line = $0; sub(/^\*\*Depends on:\*\*[ \t]*/, "", line); gsub(/[ \t]+$/, "", line)
-      if (line == "none") { dep[cur] = ""; has[cur] = 1; next }
-      gsub(/Task[ \t]*/, "", line); gsub(/[ \t]/, "", line); dep[cur] = line; has[cur] = 1; next }
+      # Validate the raw text before normalizing it: a typo must be an error,
+      # not a dropped prerequisite.
+      ok = (line == "none")
+      if (!ok && line != "") { ok = 1; m = split(line, parts, ","); delete rep
+        for (p = 1; p <= m; p++) { it = parts[p]; gsub(/^[ \t]+|[ \t]+$/, "", it)
+          if (it !~ /^Task[ \t]+[0-9]+$/) { ok = 0; break }
+          sub(/^Task[ \t]+/, "", it); if (it in rep) { ok = 0; break } rep[it] = 1 } }
+      if (!ok || has[cur]) { printf "malformed dependency line: task %s: %s\n", cur, line > "/dev/stderr"; bad = 1; exit 2 }
+      has[cur] = 1
+      if (line == "none") { dep[cur] = ""; next }
+      gsub(/Task[ \t]*/, "", line); gsub(/[ \t]/, "", line); dep[cur] = line; next }
     END {
       if (bad) exit 2
       annotated = 0; for (i = 1; i <= k; i++) if (has[order[i]]) annotated++
@@ -239,7 +248,8 @@ hp_plan_graph() {
 # (a backticked name in one task's Produces and another's Consumes), without
 # one depending on the other directly or through a chain; a consumer must
 # follow its producer, so the reverse edge does not clear an interface pair.
-# Paths are printed with spaces as %20, the form the ledger and amend carry.
+# Only the first backticked span of a Files line is the path; later spans
+# are annotations. Paths are printed with spaces as %20, the form the ledger and amend carry.
 # Paths under "**Merge-expected files:**" in Global Constraints never conflict.
 # Accepted pairs are read from "scan: accepted-overlap" ledger lines and from
 # "accept=" lines in amendment records whose commit is on the plan ref (a
@@ -275,12 +285,12 @@ $(sed -n 's/^accept=//p' "$rec")"
     /^## Global Constraints/ { gc = 1; next }
     /^## / { gc = 0 }
     gc && /Merge-expected files:/ { s = $0; while (match(s, /`[^`]+`/)) { me[substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } }
-    /^### Task [0-9]+:/ { cur = $3; sub(/:$/, "", cur); mode = ""; next }
+    /^### Task [0-9]+:/ { cur = $3; sub(/:$/, "", cur); mode = ""; gc = 0; next }
     cur == "" { next }
     /^\*\*Files:\*\*/ { mode = "files"; next }
     /^\*\*Interfaces:\*\*/ { mode = "ifaces"; next }
     /^\*\*/ && !/^\*\*Files:\*\*/ && !/^\*\*Interfaces:\*\*/ { mode = "" }
-    mode == "files" && /^- (Create|Modify|Test):/ { s = $0; while (match(s, /`[^`]+`/)) { p = substr(s, RSTART + 1, RLENGTH - 2); sub(/:[0-9-]+$/, "", p); if (!(p in me)) { gsub(/ /, "%20", p); paths[cur, p] = 1 }; s = substr(s, RSTART + RLENGTH) } next }
+    mode == "files" && /^- (Create|Modify|Test):/ { s = $0; if (match(s, /`[^`]+`/)) { p = substr(s, RSTART + 1, RLENGTH - 2); sub(/:[0-9-]+$/, "", p); if (!(p in me)) { gsub(/ /, "%20", p); paths[cur, p] = 1 } } next }
     mode == "ifaces" && /^- Produces:/ { s = $0; while (match(s, /`[^`]+`/)) { prod[cur, substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } next }
     mode == "ifaces" && /^- Consumes:/ { s = $0; while (match(s, /`[^`]+`/)) { cons[cur, substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } next }
     END {

@@ -2890,5 +2890,69 @@ printf 'scan: accepted-overlap tasks=1,2 path=docs/design%%20notes.md\n' > "$TES
 out=$(run_state "$dp" deps --from docs/spaced.md docs/plan.md --check --ledger "$TEST_ROOT/dp-space.ledger" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=clean" ]; then pass "an accepted overlap carrying the encoded path is suppressed"; else fail "encoded accepted overlap (rc=$rc: $out)"; fi
 
+# A malformed dependency line is an error, never a normalized guess: a typo must not erase a prerequisite.
+dep_bad() { # <name> <awk program rewriting plan.md> <expected stderr fragment>
+  awk "$2" "$dp/docs/plan.md" > "$dp/docs/$1.md"
+  err=$(run_state "$dp" deps --from "docs/$1.md" docs/plan.md 2>&1 >/dev/null); rc=$?
+  if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -qF "$3"; then pass "dependency line: $1 is a parse error"; else fail "dependency line $1 (rc=$rc: $err)"; fi
+}
+dep_bad blank '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:**"; next } { print }' 'malformed dependency line: task 2: '
+dep_bad bare '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:** Task"; next } { print }' 'malformed dependency line: task 2: Task'
+dep_bad nocomma '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:** Task 1 Task 2"; next } { print }' 'malformed dependency line: task 2: Task 1 Task 2'
+dep_bad repeated '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:** Task 1, Task 1"; next } { print }' 'malformed dependency line: task 2: Task 1, Task 1'
+dep_bad twice '/^\*\*Depends on:\*\* Task 1$/ { print; print ""; print "**Depends on:** none"; next } { print }' 'malformed dependency line: task 2: none'
+# The Global Constraints scope ends at the first task heading, so a task's prose cannot widen the allowlist.
+cat > "$dp/docs/gcscope.md" <<'GCSCOPE'
+# Plan
+
+## Global Constraints
+
+- **Merge-expected files:** `CHANGELOG.md`
+
+### Task 1: A
+
+**Depends on:** none
+
+The **Merge-expected files:** `src/shared.sh` note here is prose.
+
+**Files:**
+- Modify: `src/shared.sh`
+
+### Task 2: B
+
+**Depends on:** none
+
+**Files:**
+- Modify: `src/shared.sh`
+GCSCOPE
+out=$(run_state "$dp" deps --from docs/gcscope.md docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=src/shared.sh'; then pass "task prose cannot extend the merge-expected list"; else fail "constraints scope (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# Only the first backticked span of a Files line is a path; the rest is annotation.
+cat > "$dp/docs/annot.md" <<'ANNOT'
+### Task 1: A
+
+**Depends on:** none
+
+**Files:**
+- Modify: `src/a.sh` (new functions after `helper_fn`, `:186`)
+
+### Task 2: B
+
+**Depends on:** none
+
+**Files:**
+- Modify: `src/b.sh` (new functions after `helper_fn`, `:186`)
+ANNOT
+out=$(run_state "$dp" deps --from docs/annot.md docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=clean" ]; then pass "annotation spans on a Files line are not paths"; else fail "annotated Files lines (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# The plan id and the plan text come from one object even when the branch moves between them.
+make_repo "$TEST_ROOT/dr"; dr="$TEST_ROOT/dr"; mkdir -p "$dr/docs"
+printf '### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** none\n' > "$dr/docs/plan.md"
+git -C "$dr" add docs; git -C "$dr" commit -qm old; old_sha=$(git -C "$dr" rev-parse HEAD)
+printf '\n### Task 3: C\n\n**Depends on:** none\n' >> "$dr/docs/plan.md"
+git -C "$dr" commit -qam new; new_blob=$(git -C "$dr" rev-parse HEAD:docs/plan.md)
+out=$(HYPERPOWERS_TEST_WRITER_AT="deps-after-resolve:$old_sha" run_state "$dr" deps docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=deps plan=${new_blob:0:7} tasks=3" ]; then pass "a branch moved after the id is resolved does not change the plan read"; else fail "plan id and text from one object (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

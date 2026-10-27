@@ -101,17 +101,26 @@ owner_record() { # <sid>
 # file itself only then.
 # Prints "<blob sha> <path of a temporary copy>"; the caller removes the copy.
 authoritative_plan_blob() {
-  local ledger ref rel blob tmp cur
+  local ledger ref rel blob tmp name
   ledger=$(ledger_path); rel=$(hp_plan_rel "$PLAN")
   ref=$(plan_ref_of_ledger "$ledger")
   tmp=$(mktemp "${TMPDIR:-/tmp}/sdd-plan.XXXXXX") || return 2
+  name=""
   if [ -n "$ref" ]; then
     git -C "$REPO" cat-file -e "refs/heads/$ref:$rel" 2>/dev/null || { rm -f "$tmp"; echo "sdd-state: the plan ref $ref does not carry $rel" >&2; return 2; }
-    git -C "$REPO" show "refs/heads/$ref:$rel" > "$tmp" || { rm -f "$tmp"; return 2; }
-    blob=$(git -C "$REPO" rev-parse "refs/heads/$ref:$rel")
-  elif cur=$(git -C "$REPO" branch --show-current 2>/dev/null) && [ -n "$cur" ] && git -C "$REPO" cat-file -e "refs/heads/$cur:$rel" 2>/dev/null; then
-    git -C "$REPO" show "refs/heads/$cur:$rel" > "$tmp" || { rm -f "$tmp"; return 2; }
-    blob=$(git -C "$REPO" rev-parse "refs/heads/$cur:$rel")
+    name=$ref
+  else
+    name=$(git -C "$REPO" branch --show-current 2>/dev/null)
+    if [ -n "$name" ] && git -C "$REPO" cat-file -e "refs/heads/$name:$rel" 2>/dev/null; then :; else name=""; fi
+  fi
+  if [ -n "$name" ]; then
+    # Resolve the id once and read the content from that immutable object, so
+    # a ref moved between the two steps cannot pair one plan with another's id.
+    blob=$(git -C "$REPO" rev-parse --verify "refs/heads/$name:$rel") || { rm -f "$tmp"; return 2; }
+    # Test seam: HYPERPOWERS_TEST_WRITER_AT=deps-after-resolve:<sha> moves the
+    # branch to <sha> after the id is resolved and before the content is read.
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in deps-after-resolve:*) git -C "$REPO" update-ref "refs/heads/$name" "${HYPERPOWERS_TEST_WRITER_AT#*:}" ;; esac
+    git -C "$REPO" cat-file blob "$blob" > "$tmp" || { rm -f "$tmp"; return 2; }
   else
     cp "$PLAN" "$tmp" || { rm -f "$tmp"; return 2; }
     blob=$(git -C "$REPO" hash-object "$tmp")

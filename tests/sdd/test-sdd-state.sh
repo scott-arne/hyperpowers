@@ -1141,6 +1141,16 @@ mkdir -p "$STATE_ROOT/badkey0000000000000000000000000000000000"; printf 'not a g
 mkdir -p "$STATE_ROOT/relkey0000000000000000000000000000000000/.gitdir-here"; printf 'gitdir: .gitdir-here\n' > "$STATE_ROOT/relkey0000000000000000000000000000000000/.git"
 out=$(run_state "$pr" prune --repo "$pr"); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=listed plans=$wso_enc checkouts=deadkey0000000000000000000000000000000000 tombs= quarantined=" ] && [ -d "$wso" ]; then pass "prune lists the idle plan (space percent-encoded) and the dead checkout without removing them"; else fail "prune lists the idle plan and the dead checkout without removing them (rc=$rc: $out)"; fi
+# A workspace whose freshness cannot be read is not idle: a find that
+# fails prints nothing, and reading that as silence would list, and then
+# delete, a dossier nobody could walk. The shim leaves a traversal that
+# only stats the directory (-maxdepth 0) alone, which is the shape a
+# permission error on one subdirectory has.
+fakefind_pr="$TEST_ROOT/fakefind-pr"; mkdir -p "$fakefind_pr"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = -maxdepth ] && exec %s "$@"; done\ncase "$1" in $FINDFAIL) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v find)" "$(command -v find)" > "$fakefind_pr/find"
+chmod 755 "$fakefind_pr/find"
+out=$(cd "$pr" && FINDFAIL="$wso" PATH="$fakefind_pr:$PATH" bash "$SDD_STATE" prune --repo "$pr"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=listed plans= checkouts=deadkey0000000000000000000000000000000000 tombs= quarantined=" ] && [ -d "$wso" ]; then pass "a plan whose freshness cannot be read is not listed for removal"; else fail "a plan whose freshness cannot be read is not listed for removal (rc=$rc: $out)"; fi
 out=$(cd "$pr" && HYPERPOWERS_TEST_WRITER_AT="prune-before-remove:plans/$(basename "$wso")/progress.md" bash "$SDD_STATE" prune --repo "$pr" --apply); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=pruned plans= kept=$wso_enc checkouts=deadkey0000000000000000000000000000000000 tombs= quarantined=" ] && [ -d "$wso" ] && grep -q '^concurrent write$' "$wso/progress.md"; then pass "a workspace written to after selection is kept, line intact"; else fail "a workspace written to after selection is kept (rc=$rc: $out)"; fi
 GIT_COMMITTER_DATE="2026-01-01T00:00:00Z" GIT_AUTHOR_DATE="2026-01-01T00:00:00Z" run_state "$pr" snapshot "docs/old plan.md" >/dev/null

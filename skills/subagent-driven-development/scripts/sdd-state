@@ -782,11 +782,18 @@ cmd_prune() {
   if [ "$(hp_backend "$repo_dir")" = plain ]; then echo "status=plain"; return 0; fi
   co=$(hp_checkout_path "$repo_dir"); br=$(hp_state_branch "$repo_dir")
   now=$(date +%s); cutoff=$((now - days * 86400))
-  # <name> -> 0 when the plan directory is idle: last commit and newest file both older than N days.
+  # <name> -> 0 when the plan directory is idle: last commit and newest
+  # file both older than N days. A traversal that fails (not an empty
+  # answer) keeps the workspace, as it keeps a tomb and a quarantine: a
+  # find that cannot walk a subdirectory prints nothing and exits
+  # non-zero, and reading that as silence would list a dossier nobody
+  # could read, and then delete it.
   idle() {
-    local lc
+    local lc newer
     lc=$(git -C "$co" log -1 --format=%ct -- "plans/$1" 2>/dev/null)
-    [ -n "$lc" ] && [ "$lc" -lt "$cutoff" ] && [ -z "$(find "$co/plans/$1" -type f -mtime -"$days" 2>/dev/null | head -n 1)" ]
+    [ -n "$lc" ] && [ "$lc" -lt "$cutoff" ] || return 1
+    newer=$(find "$co/plans/$1" -type f -mtime -"$days" 2>/dev/null) || return 1
+    [ -z "$newer" ]
   }
   # <tomb dir> <pid> <ws> -> 0 when the copy may be quarantined: its
   # process is gone, nothing in it is newer than N days, and the branch does

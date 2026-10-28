@@ -133,6 +133,9 @@ owner_record() { # <sid> [<task branch> <from sha>]
   # intended name and base.
   [ -z "${2:-}" ] || printf 'branch=%s\nfrom=%s\n' "$2" "$3"
 }
+# Completion is a ledger line that begins with the marker; an amendment or scan
+# line that merely mentions "Task N: complete" must not satisfy a dependency.
+ledger_task_complete() { grep -Eq "^[[:space:]*_>-]*Task $2: complete([^[:alnum:]_]|\$)" "$1" 2>/dev/null; }
 claim_task_branch_name() { # <integration> <ws8> <N> [<k>] -> <integration>.<ws8>.task-<N>[.<k>]
   printf '%s.%s.task-%s%s' "$1" "$2" "$3" "${4:+.$4}"
 }
@@ -452,9 +455,7 @@ cmd_claim() {
     line=$again
   done
   if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace task=$n"; return 2; fi
-  grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md"; rc=$?
-  if [ "$rc" -eq 0 ]; then hp_unlock; echo "status=done task=$n"; return 0; fi
-  if [ "$rc" -ne 1 ]; then hp_unlock; echo "status=error"; return 2; fi
+  if ledger_task_complete "$WSDIR/progress.md" "$n"; then hp_unlock; echo "status=done task=$n"; return 0; fi
   # An existing claim answers held exactly as it always has, even if a plan
   # amendment has since added a predecessor: the dependency check guards
   # publication, and only a takeover publishes a new record. A takeover by
@@ -462,32 +463,29 @@ cmd_claim() {
   if [ -d "$target" ] && { [ "$takeover" -eq 0 ] || [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" = "$sid" ]; }; then
     claim_held; return $?
   fi
-  # Without a plan line the claim keeps the contract it had before the graph
-  # existed: a plan that cannot be read or parsed, or that has no heading for
-  # this task, is claimable with no dependency check. With a plan line the
-  # graph is authoritative and any of those is an error, and the helpers'
-  # stderr reaches the caller.
+  # Every parse error refuses the claim, registered or not: a plan with an
+  # invalid graph would let two sessions claim dependent tasks together. Two
+  # carve-outs keep plans that never had a graph claimable as before, and
+  # apply only without a plan line: a plan absent from both the ref and the
+  # working tree, and a plan with no task headings at all (an empty graph,
+  # so there is nothing to violate).
   claim_quiet() { if [ -n "$line" ]; then "$@"; else "$@" 2>/dev/null; fi; }
   deps=none
   if pair=$(claim_quiet authoritative_plan_blob); then
     blob=${pair%% *}; tmp=${pair#* }
-    graph=$(claim_quiet hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
-    if [ "$rc" -eq 0 ]; then
+    graph=$(hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
+    if [ "$rc" -ne 0 ]; then hp_unlock; echo "status=invalid plan=${blob:0:7}"; return 2; fi
+    if [ -n "$graph" ] || [ -n "$line" ]; then
       deps=$(printf '%s\n' "$graph" | sed -n "s/^task=$n depends=//p")
-      if [ -z "$deps" ]; then
-        [ -z "$line" ] || { hp_unlock; echo "sdd-state: task $n is not in the plan" >&2; echo "status=error"; return 2; }
-        deps=none
-      fi
-    elif [ -n "$line" ]; then
-      hp_unlock; echo "status=invalid plan=${blob:0:7}"; return 2
+      [ -n "$deps" ] || { hp_unlock; echo "sdd-state: task $n is not in the plan" >&2; echo "status=error"; return 2; }
     fi
-  elif [ -n "$line" ]; then
+  elif [ -n "$line" ] || [ -e "$PLAN" ]; then
     hp_unlock; echo "status=error"; return 2
   fi
   waiting=""
   if [ "$deps" != none ]; then
     for d in $(printf '%s' "$deps" | tr ',' ' '); do
-      grep -Eq "(^|[^A-Za-z0-9])Task $d: complete" "$WSDIR/progress.md" || waiting="$waiting,$d"
+      ledger_task_complete "$WSDIR/progress.md" "$d" || waiting="$waiting,$d"
     done
   fi
   if [ -n "$waiting" ]; then hp_unlock; echo "status=blocked task=$n waiting=${waiting#,} plan=${blob:0:7}"; return 7; fi
@@ -965,7 +963,7 @@ open_claims() {
   for d in "$WSDIR"/claims/task-*/; do
     [ -d "$d" ] || continue
     n=${d%/}; n=${n##*/task-}
-    if ! grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md" 2>/dev/null; then open="$open,$n"; fi
+    if ! ledger_task_complete "$WSDIR/progress.md" "$n"; then open="$open,$n"; fi
   done
   printf '%s' "${open#,}"
 }

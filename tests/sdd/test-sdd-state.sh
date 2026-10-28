@@ -3277,5 +3277,31 @@ run_state "$ra_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$ra_a" push -q 
 ws8ra=$(basename "$wsra" | sed 's/.*-//'); Hra=$(git -C "$ra_b" rev-parse main)
 out=$(run_state "$ra_b" claim docs/plan.md 1 --session s2 2>/dev/null); rcc=$?
 if [ "$rc" -eq 99 ] && [ "$rcc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=main.$ws8ra.task-1 from=${Hra:0:7}" ] && git -C "$ra_b" rev-parse -q --verify "main.$ws8ra.task-1" >/dev/null; then pass "a claim that recovery brings a plan line to takes the pair and creates the branch"; else fail "recovery brings plan line (rc=$rc/$rcc: $out)"; fi
+# Without a plan line a parse error still refuses; only a plan with no headings stays claimable.
+mkplan() { # <name> <plan text>: a repository whose ledger has no plan line
+  make_repo "$TEST_ROOT/$1"; mkdir -p "$TEST_ROOT/$1/docs"; printf '%s' "$2" > "$TEST_ROOT/$1/docs/plan.md"
+  git -C "$TEST_ROOT/$1" add docs; git -C "$TEST_ROOT/$1" commit -qm plan
+  MP_WS=$(ws_path "$TEST_ROOT/$1" "$TEST_ROOT/$1/docs/plan.md"); mkdir -p "$MP_WS"; printf '# SDD ledger — plan: docs/plan.md\n' > "$MP_WS/progress.md"
+}
+mkplan ev1 $'# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n'
+out=$(run_state "$TEST_ROOT/ev1" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "${out%% plan=*}" = "status=invalid" ] && [ ! -d "$MP_WS/claims/task-1" ]; then pass "without a plan line a mixed-annotation plan refuses and writes nothing"; else fail "mixed annotation (rc=$rc: $out)"; fi
+mkplan ev2 $'# P\n\n### Task 1: A\n'
+out=$(run_state "$TEST_ROOT/ev2" claim docs/plan.md 5 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -d "$MP_WS/claims/task-5" ]; then pass "without a plan line a task the graph lacks refuses"; else fail "task not in plan (rc=$rc: $out)"; fi
+mkplan ev3 ''
+out=$(run_state "$TEST_ROOT/ev3" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=none" ]; then pass "an empty plan still claims without a dependency check"; else fail "empty plan (rc=$rc: $out)"; fi
+# Completion is a line that begins with the marker, not a mention inside another line.
+mkplan ev4 $'# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** Task 1\n'
+printf 'plan: amended abc1234 by s1: Task 1: complete\nscan: accepted-overlap x: Task 1: complete\n' >> "$MP_WS/progress.md"
+out=$(run_state "$TEST_ROOT/ev4" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=none" ]; then pass "the done check ignores a mention inside an amendment or scan line"; else fail "done ignores mentions (rc=$rc: $out)"; fi
+out=$(run_state "$TEST_ROOT/ev4" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "${out%% plan=*}" = "status=blocked task=2 waiting=1" ]; then pass "a mention of completion inside another line does not satisfy a dependency"; else fail "mention blocks (rc=$rc: $out)"; fi
+printf -- '- Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$MP_WS/progress.md"
+out=$(run_state "$TEST_ROOT/ev4" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2 branch=none" ]; then pass "a list-marked completion line satisfies the dependency"; else fail "marked completion (rc=$rc: $out)"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

@@ -140,8 +140,9 @@ question answered with AskUserQuestion inside its turn; it is recorded under
 that way, writes no decision, so H2's adjudication half and H3 get live cases
 only from the turn ends a run takes mid-plan, and may get none. Correction 10
 (2026-10-28) times a listed entry that quotes the lead-in Claude Code showed
-before an answered AskUserQuestion call as that call's in-turn stop, matching
-without the markdown the terminal hides; it was made after the counted runs
+before an answered AskUserQuestion call as that call's in-turn stop when no
+turn end or question quotes it, matching without the markdown the terminal
+hides; it was made after the counted runs
 were archived and read, moves only the void classification, and is recorded
 under "Corrections" in the campaign README.
 

@@ -120,8 +120,8 @@ rule. The thresholds, restated:
 
 - H1, the hook ran under the plan: every valid run's decision record holds at
   least one line, the session's ledger line gives the plan's start, and every
-  line from that start until Finish published the receipt names the plan
-  (`h1`).
+  line from that start until the transcript records Finish's result names the
+  plan (`h1`).
 - H2, nothing reached the user: the Gauntlet's STOP list has no `neither`
   entry in any valid run, and every allow whose reason is `handback-text`,
   `handback-line` or `cap`, and every `log-failed` allow that displaced one of

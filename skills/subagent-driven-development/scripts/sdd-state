@@ -102,8 +102,10 @@ code_repo_arg() { # <value or empty> [<ledger>] -> physical path; refuses a repo
   printf '%s\n' "$code"
 }
 # <ledger> -> "integration=.. code-root=.. plan-ref=.. plan-root=.. spec=.." from the newest plan line, or nothing.
+# The line on disk keeps the spec path as written; the spec= value is
+# percent-encoded here so that plan_field, which splits on spaces, stays exact.
 plan_line_of() {
-  sed -n 's/^plan: integration \([^ ]*\) code-root \([^ ]*\) plan-ref \([^ ]*\) plan-root \([^ ]*\) spec \(.*\)$/integration=\1 code-root=\2 plan-ref=\3 plan-root=\4 spec=\5/p' "$1" 2>/dev/null | tail -n 1
+  sed -n 's/^plan: integration \([^ ]*\) code-root \([^ ]*\) plan-ref \([^ ]*\) plan-root \([^ ]*\) spec \(.*\)$/integration=\1 code-root=\2 plan-ref=\3 plan-root=\4 spec=\5/p' "$1" 2>/dev/null | tail -n 1 | sed -e ':a' -e 's/\(spec=[^ ]*\) /\1%20/' -e 'ta'
 }
 plan_field() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -n 1; }
 spec_of_plan() { sed -n 's/^\*\*Spec:\*\*[[:space:]]*//p' "$1" | head -n 1; }
@@ -202,7 +204,7 @@ cmd_deps() {
 # repositories' locks, so two Setups cannot both pass and write conflicting
 # lines.
 cmd_register() {
-  local plan="" sid="" integration="" code="" ledger line spec plan_ref plan_root code_root d other ospec field lease rc mine cur
+  local plan="" sid="" integration="" code="" ledger line spec espec plan_ref plan_root code_root d other ospec field lease rc mine cur
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
@@ -217,7 +219,7 @@ cmd_register() {
   ledger=$(ledger_path)
   [ -f "$ledger" ] || { echo "sdd-state: no ledger at $ledger; Setup creates it before registering" >&2; echo "status=error"; return 2; }
   code=$(code_repo_arg "$code" "$ledger") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
-  spec=$(spec_of_plan "$PLAN")
+  spec=$(spec_of_plan "$PLAN"); espec=$(enc "$spec")
   # A first registration names the plan ref after the current branch, so the
   # plan repository must be on one then; a later session starts detached at
   # the integration head and takes the plan ref from the plan line instead.
@@ -247,7 +249,7 @@ cmd_register() {
     # resumed session sits on any of the three.
     case "$cur" in ""|"$plan_ref"|"$integration.$(ws8_of "$WS").task-"*) ;; *) echo "status=wrong-branch expected=$plan_ref repo=plan"; return 9 ;; esac
     [ "$(plan_field "$line" plan-root)" = "${plan_root:0:7}" ] || { echo "status=wrong-repo expected=$(plan_field "$line" plan-root) repo=plan"; return 9; }
-    [ "$(plan_field "$line" spec)" = "$spec" ] || { echo "sdd-state: the plan line names spec $(plan_field "$line" spec), the plan file names $spec" >&2; echo "status=error"; return 2; }
+    [ "$(plan_field "$line" spec)" = "$espec" ] || { echo "sdd-state: the plan line names spec $(plan_field "$line" spec), the plan file names $espec" >&2; echo "status=error"; return 2; }
     echo "status=registered integration=$integration plan-ref=$plan_ref"; return 0
   fi
   [ -n "$cur" ] || { hp_unlock; echo "status=detached-head repo=plan"; return 11; }
@@ -256,11 +258,11 @@ cmd_register() {
     [ -f "$d/progress.md" ] || continue
     [ "${d%/}" != "$WSDIR" ] || continue
     other=$(plan_line_of "$d/progress.md"); [ -n "$other" ] || continue
-    ospec=$(plan_field "$other" spec); [ "$ospec" = "$spec" ] || continue
+    ospec=$(plan_field "$other" spec); [ "$ospec" = "$espec" ] || continue
     for field in integration plan-ref plan-root; do
       case "$field" in integration) mine=$integration ;; plan-ref) mine=$plan_ref ;; plan-root) mine=${plan_root:0:7} ;; esac
       if [ "$(plan_field "$other" "$field")" != "$mine" ]; then
-        hp_unlock; echo "status=spec-branch-mismatch expected=$(plan_field "$other" integration) plan=$(basename "${d%/}")"; return 9
+        hp_unlock; echo "status=spec-branch-mismatch expected=$(plan_field "$other" integration) plan=$(enc "$(basename "${d%/}")")"; return 9
       fi
     done
   done

@@ -3039,6 +3039,26 @@ out=$(run_state "$sp" register docs/plan.md --session s2 --integration feat --co
 if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=plans" ]; then pass "a re-registration from the plan repository with --code-repo matches"; else fail "split re-register (rc=$rc: $out)"; fi
 out=$(run_state "$sp" register docs/plan.md --session s2 --integration feat 2>/dev/null); rc=$?
 if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "the plan repository itself is not the code repository"; else fail "split wrong-repo (rc=$rc: $out)"; fi
+# A spec path with a space and a plan file name with a space: the plan line keeps the path as written, comparisons and status fields are percent-encoded.
+make_pair sp2; sq_a=$PAIR_A
+mkdir -p "$sq_a/docs"; : > "$sq_a/docs/design notes.md"
+printf '# P\n\n**Spec:** docs/design notes.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$sq_a/docs/plan.md"
+printf '# Q\n\n**Spec:** docs/design notes.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$sq_a/docs/old plan.md"
+git -C "$sq_a" add docs; git -C "$sq_a" commit -qm plans; git -C "$sq_a" switch -q -c feat
+run_state "$sq_a" sync docs/plan.md >/dev/null 2>&1
+sq1=$(run_sdd_dir "$sq_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$sq1/progress.md"
+sq2=$(run_sdd_dir "$sq_a" "docs/old plan.md" 2>/dev/null); printf '# SDD ledger — plan: docs/old plan.md\n' > "$sq2/progress.md"
+out=$(run_state "$sq_a" register docs/plan.md --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && grep -q '^plan: integration feat code-root [0-9a-f]\{7\} plan-ref feat plan-root [0-9a-f]\{7\} spec docs/design notes.md$' "$sq1/progress.md"; then pass "a spec path with a space is written as the header has it"; else fail "spaced spec register (rc=$rc: $out: $(grep '^plan:' "$sq1/progress.md"))"; fi
+out=$(run_state "$sq_a" register docs/plan.md --session s2 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=feat" ]; then pass "a plan with a spaced spec path re-registers"; else fail "spaced spec re-register (rc=$rc: $out)"; fi
+out=$(run_state "$sq_a" register "docs/old plan.md" --session s3 --integration feat2 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% plan=*}" = "status=spec-branch-mismatch expected=feat" ] && [ "${out##* plan=}" = "$(basename "$sq1")" ]; then pass "a sibling of a spaced spec on another branch is spec-branch-mismatch"; else fail "spaced spec sibling (rc=$rc: $out)"; fi
+out=$(run_state "$sq_a" register "docs/old plan.md" --session s3 --integration feat 2>/dev/null); rc=$?
+# Only the spaced workspace is registered now, so the mismatch must name it.
+sed -i '' '/^plan: integration/d' "$sq1/progress.md" 2>/dev/null || sed -i '/^plan: integration/d' "$sq1/progress.md"
+out=$(run_state "$sq_a" register docs/plan.md --session s4 --integration feat2 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out##* plan=}" = "$(basename "$sq2" | sed 's/ /%20/g')" ] && [ "${out##* plan=}" != "$(basename "$sq2")" ]; then pass "the plan= field names a spaced workspace percent-encoded"; else fail "spaced workspace encoding (rc=$rc: $out)"; fi
 # Two sibling registrations with different branches through a barrier: exactly one succeeds.
 git -C "$rg_a" switch -q feat
 rm -rf "$wsr2"; wsr2=$(run_sdd_dir "$rg_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsr2/progress.md"

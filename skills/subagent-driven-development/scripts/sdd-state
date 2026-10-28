@@ -455,7 +455,9 @@ cmd_claim() {
     line=$again
   done
   if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace task=$n"; return 2; fi
-  if ledger_task_complete "$WSDIR/progress.md" "$n"; then hp_unlock; echo "status=done task=$n"; return 0; fi
+  ledger_task_complete "$WSDIR/progress.md" "$n"; rc=$?
+  if [ "$rc" -eq 0 ]; then hp_unlock; echo "status=done task=$n"; return 0; fi
+  if [ "$rc" -ne 1 ]; then hp_unlock; echo "status=error"; return 2; fi
   # An existing claim answers held exactly as it always has, even if a plan
   # amendment has since added a predecessor: the dependency check guards
   # publication, and only a takeover publishes a new record. A takeover by

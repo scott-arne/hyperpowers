@@ -503,6 +503,11 @@ cmd_claim() {
     fi
     if [ -n "$lease" ] && [ -f "$lease" ]; then
       lowner=$(sed -n 's/^session=//p' "$lease" | head -n 1); lplan=$(sed -n 's/^plan=//p' "$lease" | head -n 1)
+      # A lease that names no holder is no free lease; only a takeover may
+      # replace it.
+      if { [ -z "$lowner" ] || [ -z "$lplan" ]; } && [ "$takeover" -eq 0 ]; then
+        hp_unlock; echo "sdd-state: lease unreadable or without session= or plan=: $lease" >&2; echo "status=error"; return 2
+      fi
       if [ "$lowner" = "$sid" ] && [ "$lplan" = "$WS" ]; then
         own_lease=1
       elif [ "$takeover" -eq 0 ]; then
@@ -1306,7 +1311,7 @@ remove_verified() {
   return 0
 }
 cmd_finish() {
-  local plan="" force=0 sid="" code="" open last commit rc t owner
+  local plan="" force=0 sid="" code="" open last commit rc t owner out
   while [ $# -gt 0 ]; do
     case "$1" in
       --force) force=1; shift ;;
@@ -1318,9 +1323,9 @@ cmd_finish() {
   done
   [ -n "$plan" ] && [ -n "$sid" ] || usage
   resolve_plan "$plan"
-  # Unconditionally, the cwd's repository when no --code-repo is given: a
-  # session working in the wrong repository must not delete this workspace.
-  code=$(code_repo_arg "$code" "$(ledger_path)") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+  # The cwd's repository when no --code-repo is given. Only the path is
+  # resolved here; the comparison with the plan line waits for the recovery.
+  code=$(code_repo_arg "$code") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
   hp_lock "$PLAN_DIR" || return 2
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   # A removal interrupted after its rename-aside left the dossier at
@@ -1337,12 +1342,17 @@ cmd_finish() {
   done
   [ -d "$WSDIR" ] || { hp_unlock; echo "status=none"; return 0; }
   hp_contained "$ROOT" "plans/$WS" || { hp_unlock; echo "status=error"; return 2; }
+  # A session working in the wrong repository must not delete this
+  # workspace. The comparison reads the ledger as recovery and the restore
+  # above left it, so a plan line that only they brought in still counts.
+  out=$(code_repo_arg "$code" "$(ledger_path)") || { rc=$?; hp_unlock; [ -z "$out" ] || printf '%s\n' "$out"; return "$rc"; }
   # Only the session holding claims/final removes the dossier, and --force
   # never bypasses that. The claim is read here, under the lock and after a
   # copy an interrupted removal left has been put back, so the restored
   # copy's own claim counts and a finish that has nothing left says none.
   if [ ! -d "$WSDIR/claims/final" ]; then hp_unlock; echo "status=no-final-claim"; return 11; fi
   owner=$(sed -n 's/^session=//p' "$WSDIR/claims/final/owner" 2>/dev/null | head -n 1)
+  if [ -z "$owner" ]; then hp_unlock; echo "sdd-state: claim owner unreadable or without a session: $WSDIR/claims/final/owner" >&2; echo "status=error"; return 2; fi
   if [ "$owner" != "$sid" ]; then hp_unlock; echo "status=not-holder owner=$owner"; return 11; fi
   # The claims are read under the lock, so a claim published after a first
   # look, or a takeover in flight, is seen before anything is removed.
@@ -1421,7 +1431,7 @@ lease_find() {
   [ -z "$hit" ] || printf '%s\n' "$hit"
 }
 cmd_lease() {
-  local plan="" sid="" code="" op="" c lease integ d other rc rec
+  local plan="" sid="" code="" op="" c lease integ d other rc rec out
   while [ $# -gt 0 ]; do
     case "$1" in
       --release|--closing) [ -z "$op" ] || usage; op=${1#--}; shift ;;
@@ -1433,10 +1443,17 @@ cmd_lease() {
   done
   [ -n "$plan" ] && [ -n "$sid" ] && [ -n "$op" ] || usage
   resolve_plan "$plan"
-  # After finish there is no ledger, so the code-root check has nothing to
-  # compare and the lease is found by identity alone.
-  code=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+  # The lock pair needs the code repository's path; its comparison with the
+  # plan line waits for the recovery below.
+  code=$(code_repo_arg "$code") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
   hp_lock_pair "$PLAN_DIR" "$code" || { echo "status=error"; return 2; }
+  # Recovery first: an interrupted sync may be what brings in this plan's
+  # line or a sibling's ledger, and the comparison and the sibling check
+  # below must both read the recovered state.
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  # After finish there is no ledger, so the comparison has nothing to compare
+  # and the lease is found by identity alone.
+  out=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; hp_unlock; [ -z "$out" ] || printf '%s\n' "$out"; return "$rc"; }
   c=$(hp_checkout_path "$PLAN_DIR") || { hp_unlock; echo "status=error"; return 2; }
   lease=$(lease_find "$WS" "$sid") || { hp_unlock; echo "status=error"; return 2; }
   if [ -z "$lease" ]; then
@@ -1448,10 +1465,6 @@ cmd_lease() {
     rm -f "$lease" || { hp_unlock; echo "status=error"; return 2; }
     hp_unlock; echo "status=released"; return 0
   fi
-  # The sibling check reads every open plan's ledger, so an interrupted sync
-  # that was bringing one in is finished first, as register does before the
-  # check this one must exclude.
-  recover_apply || { hp_unlock; echo "status=error"; return 2; }
   integ=$(sed -n 's/^branch=//p' "$lease" | head -n 1)
   [ -n "$integ" ] || { hp_unlock; echo "sdd-state: the lease $lease names no branch" >&2; echo "status=error"; return 2; }
   # Checked at this moment under the locks, never from an earlier board: once

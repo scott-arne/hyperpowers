@@ -3557,17 +3557,41 @@ rm -rf "$wsfn3"; wsfn3=$(run_sdd_dir "$fn_a" docs/plan3.md 2>/dev/null); printf 
 co_fn=$(dirname "$(dirname "$wsfn2")")
 : > "$co_fn/.lease-before-close-pause"
 ( cd "$fn_a" && HYPERPOWERS_TEST_PAUSE_AT=lease-before-close bash "$SDD_STATE" lease docs/plan2.md --closing --session s6 > "$TEST_ROOT/fn.close" 2>/dev/null; echo $? > "$TEST_ROOT/fn.closerc" ) &
-n=0; while [ ! -e "$co_fn/.lease-before-close-paused" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+n=0; while [ ! -e "$co_fn/.lease-before-close-paused" ] && [ "$n" -lt 200 ]; do sleep 0.1; n=$((n + 1)); done
+fn_paused=0; [ -e "$co_fn/.lease-before-close-paused" ] && fn_paused=1
 ( cd "$fn_a" && bash "$SDD_STATE" register docs/plan3.md --session s7 --integration feature/foo > "$TEST_ROOT/fn.reg" 2>/dev/null; echo $? > "$TEST_ROOT/fn.regrc" ) &
 # The pause holds until the register has finished or 5 s have passed: under the locks it cannot finish while the closing is paused, and without them it would register inside the window.
 n=0; while [ ! -s "$TEST_ROOT/fn.regrc" ] && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
 rm -f "$co_fn/.lease-before-close-pause"; wait
 r1=$(cat "$TEST_ROOT/fn.closerc"); r2=$(cat "$TEST_ROOT/fn.regrc")
-if { [ "$r1" = 0 ] && [ "$r2" = 15 ]; } || { [ "$r1" = 15 ] && [ "$r2" = 0 ]; }; then pass "a sibling registering during the closing: exactly one of the two succeeds"; else fail "closing race (rcs $r1 $r2: $(cat "$TEST_ROOT/fn.close") / $(cat "$TEST_ROOT/fn.reg"))"; fi
+if [ "$fn_paused" -eq 1 ] && { { [ "$r1" = 0 ] && [ "$r2" = 15 ]; } || { [ "$r1" = 15 ] && [ "$r2" = 0 ]; }; }; then pass "a sibling registering during the closing: exactly one of the two succeeds"; else fail "closing race (paused=$fn_paused rcs $r1 $r2: $(cat "$TEST_ROOT/fn.close") / $(cat "$TEST_ROOT/fn.reg"))"; fi
 rm -rf "$wsfn3"
 run_state "$fn_a" claim docs/plan2.md final --session s6 --release >/dev/null
 out=$(run_state "$fn_a" finish docs/plan2.md --session s6 2>/dev/null); rc=$?
 if [ "$rc" -eq 11 ] && [ "$out" = "status=no-final-claim" ] && [ -d "$wsfn2" ]; then pass "finish without a final claim is no-final-claim"; else fail "no-final-claim (rc=$rc: $out)"; fi
+# A record without its identifying field is an error naming the file, never an answer about an empty holder.
+mkdir -p "$wsfn2/claims/final"; printf 'host=h
+' > "$wsfn2/claims/final/owner"
+out=$(run_state "$fn_a" finish docs/plan2.md --session s6 2>"$TEST_ROOT/fn.own.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'claims/final/owner' "$TEST_ROOT/fn.own.err" && [ -d "$wsfn2" ]; then pass "finish treats a final claim whose owner names no session as an error"; else fail "sessionless final owner in finish (rc=$rc: $out)"; fi
+rm -rf "$wsfn2/claims/final"
+printf 'session=s1
+host=h
+branch=feature/foo
+time=2026-01-01T00:00:00Z
+closing=0
+' > "$lease_fn2"
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s6 2>"$TEST_ROOT/fn.lease.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "$(basename "$lease_fn2")" "$TEST_ROOT/fn.lease.err" && [ ! -d "$wsfn2/claims/final" ]; then pass "a lease without plan= is an error naming the file, and final is not published"; else fail "planless lease (rc=$rc: $out)"; fi
+printf 'host=h
+plan=%s
+branch=feature/foo
+time=2026-01-01T00:00:00Z
+closing=0
+' "$(basename "$wsfn")" > "$lease_fn2"
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s6 2>"$TEST_ROOT/fn.lease.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "$(basename "$lease_fn2")" "$TEST_ROOT/fn.lease.err" && [ ! -d "$wsfn2/claims/final" ]; then pass "a lease without session= is an error naming the file, and final is not published"; else fail "sessionless lease (rc=$rc: $out)"; fi
+rm -f "$lease_fn2"
 # The plan in one repository and the code in another: the claim, the final, the closing, finish and the release after it name the code repository.
 make_repo "$TEST_ROOT/fsp"; make_repo "$TEST_ROOT/fsc"; fsp="$TEST_ROOT/fsp"; fsc="$TEST_ROOT/fsc"
 mkdir -p "$fsp/docs"; printf '# S\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fsp/docs/plan.md"; : > "$fsp/docs/spec.md"; git -C "$fsp" add docs; git -C "$fsp" commit -qm plan; git -C "$fsp" switch -q -c plans
@@ -3584,11 +3608,35 @@ wsfs2=$(run_sdd_dir "$fsp" docs/plan2.md 2>/dev/null); printf '# SDD ledger — 
 run_state "$fsp" register docs/plan2.md --session s2 --integration feat --code-repo "$fsc" >/dev/null
 out=$(run_state "$fsp" lease docs/plan.md --closing --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
 if [ "$rc" -eq 15 ] && [ "$out" = "status=sibling-open plan=$(basename "$wsfs2")" ]; then pass "closing finds the sibling in the plan repository's state when the code lives elsewhere"; else fail "split sibling-open (rc=$rc: $out)"; fi
+# A registered sibling's task claim cannot land in the closing's window: the sibling is an open plan naming the branch, so the closing refuses before it pauses, and the claim goes through. A closing that pauses or hangs fails the bounded wait.
+co_fs=$(dirname "$(dirname "$wsfs")"); : > "$co_fs/.lease-before-close-pause"; rm -f "$TEST_ROOT/fs.closerc"
+( cd "$fsp" && HYPERPOWERS_TEST_PAUSE_AT=lease-before-close bash "$SDD_STATE" lease docs/plan.md --closing --session s1 --code-repo "$fsc" > "$TEST_ROOT/fs.close" 2>/dev/null; echo $? > "$TEST_ROOT/fs.closerc" ) &
+n=0; while [ ! -s "$TEST_ROOT/fs.closerc" ] && [ "$n" -lt 200 ]; do sleep 0.1; n=$((n + 1)); done
+fs_paused=0; [ -e "$co_fs/.lease-before-close-paused" ] && fs_paused=1
+rm -f "$co_fs/.lease-before-close-pause"; wait
+out=$(run_state "$fsp" claim docs/plan2.md 1 --session s2 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$fs_paused" -eq 0 ] && [ "$(cat "$TEST_ROOT/fs.closerc")" = 15 ] && [ "$(cat "$TEST_ROOT/fs.close")" = "status=sibling-open plan=$(basename "$wsfs2")" ] && [ "$rc" -eq 0 ] && [ "${out%% branch=*}" = "status=claimed task=1" ]; then pass "a registered sibling's claim never meets the closing window: the closing refuses first and the claim succeeds"; else fail "sibling claim vs closing (paused=$fs_paused close=$(cat "$TEST_ROOT/fs.closerc" 2>/dev/null) $(cat "$TEST_ROOT/fs.close" 2>/dev/null) / claim rc=$rc: $out)"; fi
 rm -rf "$wsfs2"
 out=$(run_state "$fsp" finish docs/plan.md --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsfs" ]; then pass "the split holder finishes"; else fail "split finish (rc=$rc: $out)"; fi
 out=$(run_state "$fsp" lease docs/plan.md --release --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && ! ls "$STATE_ROOT/$(state_key "$fsp").final-"* >/dev/null 2>&1; then pass "the release after finish works across repositories with no workspace on disk"; else fail "split release (rc=$rc: $out)"; fi
+# A plan line that only a crashed sync's recovery brings in is still compared with --code-repo: the closing recovers first, then refuses a foreign code repository and leaves closing= as it was.
+make_pair lc; lc_a=$PAIR_A; lc_b=$PAIR_B
+mkdir -p "$lc_a/docs"; : > "$lc_a/docs/spec.md"; printf '# L\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$lc_a/docs/plan.md"
+git -C "$lc_a" add docs; git -C "$lc_a" commit -qm plan; git -C "$lc_a" push -q origin main 2>/dev/null
+run_state "$lc_a" sync docs/plan.md >/dev/null 2>&1; git -C "$lc_a" push -q origin hyperpowers/state 2>/dev/null; git -C "$lc_b" pull -q origin main 2>/dev/null; run_state "$lc_b" sync docs/plan.md >/dev/null 2>&1
+wslc=$(run_sdd_dir "$lc_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wslc/progress.md"
+run_state "$lc_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$lc_a" push -q origin hyperpowers/state 2>/dev/null; run_state "$lc_b" sync docs/plan.md >/dev/null 2>&1
+run_state "$lc_a" register docs/plan.md --session s1 --integration main >/dev/null 2>&1
+run_state "$lc_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$lc_a" push -q origin hyperpowers/state 2>/dev/null
+( cd "$lc_b" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+wslc_b="$STATE_ROOT/$(state_key "$lc_b")/plans/$(basename "$wslc")"
+lc_stale=0; [ -f "$wslc_b/progress.md" ] && ! grep -q '^plan: ' "$wslc_b/progress.md" && lc_stale=1
+lease_lc="$STATE_ROOT/$(state_key "$lc_b").final-$(printf 'refs/heads/main' | git -C "$lc_b" hash-object --stdin | cut -c1-12)"
+printf 'session=s1\nhost=h\nplan=%s\nbranch=main\ntime=2026-01-01T00:00:00Z\nclosing=0\n' "$(basename "$wslc")" > "$lease_lc"
+out=$(run_state "$lc_b" lease docs/plan.md --closing --session s1 --code-repo "$TEST_ROOT/foreign-fn" 2>/dev/null); rcl=$?
+if [ "$rc" -eq 99 ] && [ "$lc_stale" -eq 1 ] && [ "$rcl" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ "$(sed -n 's/^closing=//p' "$lease_lc")" = 0 ] && grep -q '^plan: ' "$wslc_b/progress.md"; then pass "closing compares --code-repo with a plan line that arrives through recovery and leaves closing= unchanged"; else fail "closing after recovered plan line (rc=$rc/$rcl stale=$lc_stale: $out)"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

@@ -212,7 +212,7 @@ cmd_deps() {
 # repositories' locks, so two Setups cannot both pass and write conflicting
 # lines.
 cmd_register() {
-  local plan="" sid="" integration="" code="" ledger line spec espec plan_ref plan_root code_root d other ospec field lease rc mine cur
+  local plan="" sid="" integration="" code="" ledger line spec espec same_repo plan_ref plan_root code_root d other ospec field lease rc mine cur
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
@@ -234,8 +234,11 @@ cmd_register() {
   cur=$(git -C "$REPO" branch --show-current 2>/dev/null)
   # A shallow clone's oldest commit is a fetch boundary, so the identity
   # recorded now would differ after an unshallow; handoff refuses the same way.
+  # Linked worktrees of one repository have different roots but one key, the
+  # test the lock pair uses, so the key decides whether the layout is split.
+  same_repo=0; [ "$(hp_key "$code")" = "$(hp_key "$REPO")" ] && same_repo=1
   if [ "$(git -C "$code" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=code"; return 12; fi
-  if [ "$code" != "$REPO" ] && [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=plan"; return 12; fi
+  if [ "$same_repo" -eq 0 ] && [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=plan"; return 12; fi
   plan_root=$(root_of "$REPO"); code_root=$(root_of "$code")
   hp_lock_pair "$PLAN_DIR" "$code" || return 2
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
@@ -283,7 +286,7 @@ cmd_register() {
   done
   # With one repository the plan ref is the integration branch itself, so a
   # mistyped --integration would record a line that verify then rejects.
-  if [ "$code" = "$REPO" ] && [ "$cur" != "$integration" ]; then hp_unlock; echo "status=wrong-branch expected=$cur"; return 9; fi
+  if [ "$same_repo" -eq 1 ] && [ "$cur" != "$integration" ]; then hp_unlock; echo "status=wrong-branch expected=$cur"; return 9; fi
   if ! git -C "$code" rev-parse -q --verify "refs/heads/$integration^{commit}" >/dev/null 2>&1; then
     hp_unlock; echo "sdd-state: the integration branch $integration does not exist in $code" >&2; echo "status=error"; return 2
   fi

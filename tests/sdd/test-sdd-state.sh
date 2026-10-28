@@ -3106,6 +3106,14 @@ out=$(run_state "$TEST_ROOT/dd" register docs/pa.md --session s1 --integration f
 git -C "$TEST_ROOT/dd" switch -q -c feat2 feat
 out2=$(run_state "$TEST_ROOT/dd" register docs/pb.md --session s2 --integration feat2 2>/dev/null); rc2=$?
 if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ]; then pass "specs docs/a b.md and docs/a%20b.md are not siblings"; else fail "look-alike specs (rc $rc1 $rc2: $out / $out2)"; fi
+# Linked worktrees of one repository are one repository: the plan ref must still be the integration branch.
+lw=$TEST_ROOT/lw; wlw=$(reg_repo "$lw" spec.md)
+git -C "$lw" worktree add -q "$TEST_ROOT/lw-linked" -b other 2>/dev/null
+out=$(run_state "$lw" register docs/plan.md --session s1 --integration other --code-repo "$TEST_ROOT/lw-linked" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-branch expected=feat" ] && ! grep -q '^plan:' "$wlw/progress.md"; then pass "a linked worktree of the plan repository is the same repository: a mismatched integration is wrong-branch"; else fail "linked worktree mismatch (rc=$rc: $out)"; fi
+out=$(run_state "$lw" register docs/plan.md --session s1 --integration feat --code-repo "$TEST_ROOT/lw-linked" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && grep -q '^plan: integration feat code-root [0-9a-f]\{7\} plan-ref feat ' "$wlw/progress.md"; then pass "the same call with the plan's branch registers"; else fail "linked worktree register (rc=$rc: $out: $(grep '^plan:' "$wlw/progress.md"))"; fi
+git -C "$lw" worktree remove --force "$TEST_ROOT/lw-linked" 2>/dev/null
 # Two sibling registrations with different branches through a barrier: exactly one succeeds.
 git -C "$rg_a" switch -q feat
 rm -rf "$wsr2"; wsr2=$(run_sdd_dir "$rg_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsr2/progress.md"

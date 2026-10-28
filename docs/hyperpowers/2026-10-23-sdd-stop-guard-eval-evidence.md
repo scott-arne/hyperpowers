@@ -224,7 +224,70 @@ itself.
 
 ## Scenario results
 
-To be filled in by Task 20.
+The campaign passes its rule, and the ten counted runs never put the guard to
+a decision under a plan. `tally.py` prints `decision: PASS` with H1 to H4 and
+R true. In every counted run the session ran its plan from the first prompt
+to Finish's result inside one turn, both of its turn ends came after Finish
+had removed the ledger, and the hook's whole record is two `no-ledger` allows
+in the session mirror. `plan_decisions` is 0 in all ten runs, and no receipt
+holds a plan log.
+
+The record of these results is in hyperpowers-evals (branch
+`sdd-stop-guard`): the campaign README's "Results" section, `tally.txt`, the
+eleven attempts archived under
+`evidence/2026-10-23-sdd-stop-guard/task-20-runs/treatment/`, and the
+experiment entry `docs/experiments/2026-10-23-sdd-stop-guard.md`.
+
+The controller launched eleven attempts on 2026-10-28. The first `p1` ran
+inside the command sandbox and is a `void-setup` attempt (quorum's
+`git init` refused with "Operation not permitted"), replaced by `r1`. The ten
+counted runs (`p2` to `p10` and `r1`) ran outside it from 01:40:44Z to
+03:42:46Z, at the pin, and each has quorum's final status and the Gauntlet's
+status `pass`. All ten passed the archive's post-check with `finish=yes`, one
+receipt, one mirror and the last task's mark. Correction 10 was made after
+these runs were archived and read; under the Correction 9 analyzer, six of
+them would have read `void-instrument` and been relaunched.
+
+| Criterion | Threshold | Reading | Holds |
+|---|---|---|---|
+| H1 | `h1` in every counted run | 10 of 10; `plan_decisions` 0 in 10 of 10 | yes, with no decision under a plan |
+| H2 | no `neither` entry; no allow owing a label labelled `neither` or left unlabelled | 0 of 22 listed entries; no allow owing a label in any run | yes, its adjudication half with no cases |
+| H3 | no false or unadjudicated block | no block in any run | yes, with no cases |
+| H4 | foreground share at least 0.9; no untracked launch; both slow commands handled in at least 9 runs; no live-shell turn end | 1.0 (132 of 132); 0; 9; 0 | yes |
+| R | at least 7 successful runs | 10 | yes |
+
+The runs show that no stop reached the human partner as a `neither` stop on
+the Gauntlet's list, and that the mechanism held. Every SDD dispatch ran in the
+foreground, every run watched the long soak through `tracked-job wait` to
+`status=exited code=0`, no turn ended with only a tracked shell live, and all
+ten plans completed with a receipt and a final review. The hook ran at all
+twenty turn ends, within a second of each, and answered `no-ledger` after
+Finish, which is correct.
+
+The runs do not show any decision the guard makes about a plan. The
+refusal of a premature stop (`open-tasks`), the refusal while a tracked shell
+is live (`live-shell`), the hand-back allows, the cap, `live-agent` and the
+fail-open `log-failed` path did not run in any counted run. H2's adjudication
+half and H3 held with no cases, `adjudications.tsv` gained no row, and H1
+holds because no hook line fell inside its window. The absence of a premature
+stop here belongs to sessions that ran their plans in one turn and cannot be
+credited to the hook. Read with H1 as the spec first wrote it
+(`plan_decisions >= 1`), all ten runs fail H1 and the campaign is FAIL on H1;
+Correction 9 restated H1 after the smoke and after these runs were launched,
+before any was archived or tallied.
+
+Every legitimate hand-back in these runs was an AskUserQuestion call answered
+inside its turn, which no Stop hook sees: the fixture's question before Task 1
+in all ten, and one more in `cc92` after its final review, with the ledger
+live. The Gauntlet's list omitted the pre-flight questions in three runs that
+asked them; nothing on any list was labelled `neither`. F is 9 of 10 because
+in `82f7` the first call that names the short soak redirected into a
+directory that did not exist yet and never started the soak; the session
+reran it in the foreground for 241.8 s, and the rule, which counts every
+execution, was applied as written. The uncounted T1 (below) is the only run
+of the campaign in which the hook judged a plan. The field rule over the
+after-window is where the guard's decisions under a plan will first be
+measured.
 
 ## T1
 

@@ -101,11 +101,19 @@ code_repo_arg() { # <value or empty> [<ledger>] -> physical path; refuses a repo
   fi
   printf '%s\n' "$code"
 }
+# Reversible, unlike enc: percent first, then space, so "a b" and "a%20b"
+# stay distinct specs.
+enc_spec() { printf '%s' "$1" | sed 's/%/%25/g; s/ /%20/g'; }
 # <ledger> -> "integration=.. code-root=.. plan-ref=.. plan-root=.. spec=.." from the newest plan line, or nothing.
 # The line on disk keeps the spec path as written; the spec= value is
-# percent-encoded here so that plan_field, which splits on spaces, stays exact.
+# enc_spec-encoded here so that plan_field, which splits on spaces, stays exact.
 plan_line_of() {
-  sed -n 's/^plan: integration \([^ ]*\) code-root \([^ ]*\) plan-ref \([^ ]*\) plan-root \([^ ]*\) spec \(.*\)$/integration=\1 code-root=\2 plan-ref=\3 plan-root=\4 spec=\5/p' "$1" 2>/dev/null | tail -n 1 | sed -e ':a' -e 's/\(spec=[^ ]*\) /\1%20/' -e 'ta'
+  local raw
+  raw=$(sed -n '/^plan: integration [^ ]* code-root [^ ]* plan-ref [^ ]* plan-root [^ ]* spec /p' "$1" 2>/dev/null | tail -n 1)
+  [ -n "$raw" ] || return 0
+  printf '%s spec=%s\n' \
+    "$(printf '%s' "$raw" | sed 's/^plan: integration \([^ ]*\) code-root \([^ ]*\) plan-ref \([^ ]*\) plan-root \([^ ]*\) spec .*$/integration=\1 code-root=\2 plan-ref=\3 plan-root=\4/')" \
+    "$(enc_spec "$(printf '%s' "$raw" | sed 's/^plan: integration [^ ]* code-root [^ ]* plan-ref [^ ]* plan-root [^ ]* spec //')")"
 }
 plan_field() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -n 1; }
 spec_of_plan() { sed -n 's/^\*\*Spec:\*\*[[:space:]]*//p' "$1" | head -n 1; }
@@ -219,14 +227,21 @@ cmd_register() {
   ledger=$(ledger_path)
   [ -f "$ledger" ] || { echo "sdd-state: no ledger at $ledger; Setup creates it before registering" >&2; echo "status=error"; return 2; }
   code=$(code_repo_arg "$code" "$ledger") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
-  spec=$(spec_of_plan "$PLAN"); espec=$(enc "$spec")
+  spec=$(spec_of_plan "$PLAN"); espec=$(enc_spec "$spec")
   # A first registration names the plan ref after the current branch, so the
   # plan repository must be on one then; a later session starts detached at
   # the integration head and takes the plan ref from the plan line instead.
   cur=$(git -C "$REPO" branch --show-current 2>/dev/null)
+  # A shallow clone's oldest commit is a fetch boundary, so the identity
+  # recorded now would differ after an unshallow; handoff refuses the same way.
+  if [ "$(git -C "$code" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=code"; return 12; fi
+  if [ "$code" != "$REPO" ] && [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=plan"; return 12; fi
   plan_root=$(root_of "$REPO"); code_root=$(root_of "$code")
   hp_lock_pair "$PLAN_DIR" "$code" || return 2
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  # The ledger is appended to below; a workspace or ledger swapped for a link
+  # since the checkout was made must not receive the write.
+  hp_contained "$ROOT" "plans/$WS/progress.md" || { hp_unlock; echo "status=error"; return 2; }
   if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = register-before-write ]; then
     : > "$CO/.register-before-write-paused"
     while [ -e "$CO/.register-before-write-pause" ]; do sleep 0.1; done
@@ -266,6 +281,12 @@ cmd_register() {
       fi
     done
   done
+  # With one repository the plan ref is the integration branch itself, so a
+  # mistyped --integration would record a line that verify then rejects.
+  if [ "$code" = "$REPO" ] && [ "$cur" != "$integration" ]; then hp_unlock; echo "status=wrong-branch expected=$cur"; return 9; fi
+  if ! git -C "$code" rev-parse -q --verify "refs/heads/$integration^{commit}" >/dev/null 2>&1; then
+    hp_unlock; echo "sdd-state: the integration branch $integration does not exist in $code" >&2; echo "status=error"; return 2
+  fi
   printf 'plan: integration %s code-root %s plan-ref %s plan-root %s spec %s\n' "$integration" "${code_root:0:7}" "$plan_ref" "${plan_root:0:7}" "$spec" >> "$ledger" || { hp_unlock; echo "status=error"; return 2; }
   hp_unlock
   echo "status=registered integration=$integration plan-ref=$plan_ref"

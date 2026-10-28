@@ -3059,6 +3059,53 @@ out=$(run_state "$sq_a" register "docs/old plan.md" --session s3 --integration f
 sed -i '' '/^plan: integration/d' "$sq1/progress.md" 2>/dev/null || sed -i '/^plan: integration/d' "$sq1/progress.md"
 out=$(run_state "$sq_a" register docs/plan.md --session s4 --integration feat2 2>/dev/null); rc=$?
 if [ "$rc" -eq 9 ] && [ "${out##* plan=}" = "$(basename "$sq2" | sed 's/ /%20/g')" ] && [ "${out##* plan=}" != "$(basename "$sq2")" ]; then pass "the plan= field names a spaced workspace percent-encoded"; else fail "spaced workspace encoding (rc=$rc: $out)"; fi
+# register guards: a mistyped integration branch, a missing one, links, shallow clones and look-alike specs.
+reg_repo() { # <path> <spec name>: a plan repository on branch feat with a ledger; prints the workspace
+  make_repo "$1"; mkdir -p "$1/docs"
+  printf '# P\n\n**Spec:** docs/%s\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' "$2" > "$1/docs/plan.md"; : > "$1/docs/$2"
+  git -C "$1" add docs; git -C "$1" commit -qm plan; git -C "$1" switch -q -c feat
+  run_state "$1" sync docs/plan.md >/dev/null 2>&1
+  local w; w=$(run_sdd_dir "$1" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$w/progress.md"; printf '%s\n' "$w"
+}
+ty=$TEST_ROOT/ty; wty=$(reg_repo "$ty" spec.md)
+out=$(run_state "$ty" register docs/plan.md --session s1 --integration typo 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-branch expected=feat" ] && ! grep -q '^plan:' "$wty/progress.md"; then pass "a mistyped integration branch on one repository is wrong-branch and writes nothing"; else fail "typo integration (rc=$rc: $out)"; fi
+mc=$TEST_ROOT/mc; make_repo "$mc"
+out=$(cd "$mc" && bash "$SDD_STATE" register "$ty/docs/plan.md" --session s1 --integration nothere 2>"$TEST_ROOT/ty.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "the integration branch nothere does not exist" "$TEST_ROOT/ty.err" && ! grep -q '^plan:' "$wty/progress.md"; then pass "an integration branch missing from the code repository is an error and writes nothing"; else fail "missing integration branch (rc=$rc: $out)"; fi
+# A workspace or a ledger replaced by a link is never written through.
+mkdir -p "$TEST_ROOT/outside"; printf '# SDD ledger — plan: docs/plan.md\n' > "$TEST_ROOT/outside/progress.md"; cp "$TEST_ROOT/outside/progress.md" "$TEST_ROOT/outside/progress.orig"
+rm -rf "$wty"; ln -s "$TEST_ROOT/outside" "$wty"
+out=$(run_state "$ty" register docs/plan.md --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && cmp -s "$TEST_ROOT/outside/progress.md" "$TEST_ROOT/outside/progress.orig"; then pass "a workspace replaced by a link is refused and the referent is untouched"; else fail "workspace link (rc=$rc: $out)"; fi
+rm -f "$wty"; wty=$(run_sdd_dir "$ty" docs/plan.md 2>/dev/null); rm -f "$wty/progress.md"; ln -s "$TEST_ROOT/outside/progress.md" "$wty/progress.md"
+out=$(run_state "$ty" register docs/plan.md --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && cmp -s "$TEST_ROOT/outside/progress.md" "$TEST_ROOT/outside/progress.orig"; then pass "a ledger replaced by a link is refused and the referent is untouched"; else fail "ledger link (rc=$rc: $out)"; fi
+# A shallow clone's root is a fetch boundary: register refuses it until it is unshallowed.
+make_repo "$TEST_ROOT/shsrc"; git -C "$TEST_ROOT/shsrc" commit -q --allow-empty -m two; mkdir -p "$TEST_ROOT/shsrc/docs"
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$TEST_ROOT/shsrc/docs/plan.md"; : > "$TEST_ROOT/shsrc/docs/spec.md"; git -C "$TEST_ROOT/shsrc" add docs; git -C "$TEST_ROOT/shsrc" commit -qm three
+git clone -q --depth 1 "file://$TEST_ROOT/shsrc" "$TEST_ROOT/shc" 2>/dev/null; git -C "$TEST_ROOT/shc" switch -q -c feat
+run_state "$TEST_ROOT/shc" sync docs/plan.md >/dev/null 2>&1; wshc=$(run_sdd_dir "$TEST_ROOT/shc" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wshc/progress.md"
+out=$(run_state "$TEST_ROOT/shc" register docs/plan.md --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=shallow-source repo=code" ] && ! grep -q '^plan:' "$wshc/progress.md"; then pass "a shallow code repository is refused"; else fail "shallow code (rc=$rc: $out)"; fi
+git clone -q --depth 1 "file://$TEST_ROOT/shsrc" "$TEST_ROOT/shp" 2>/dev/null
+run_state "$TEST_ROOT/shp" sync docs/plan.md >/dev/null 2>&1; wshp=$(run_sdd_dir "$TEST_ROOT/shp" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wshp/progress.md"
+make_repo "$TEST_ROOT/shk"; git -C "$TEST_ROOT/shk" switch -q -c feat
+out=$(cd "$TEST_ROOT/shk" && bash "$SDD_STATE" register "$TEST_ROOT/shp/docs/plan.md" --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=shallow-source repo=plan" ] && ! grep -q '^plan:' "$wshp/progress.md"; then pass "a shallow plan repository in a split layout is refused"; else fail "shallow plan (rc=$rc: $out)"; fi
+git -C "$TEST_ROOT/shc" fetch -q --unshallow 2>/dev/null
+out=$(run_state "$TEST_ROOT/shc" register docs/plan.md --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ]; then pass "after an unshallow the same registration succeeds"; else fail "unshallowed register (rc=$rc: $out)"; fi
+# Specs that differ only by a literal %20 are different specs.
+make_repo "$TEST_ROOT/dd"; mkdir -p "$TEST_ROOT/dd/docs"
+printf '# P\n\n**Spec:** docs/a b.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$TEST_ROOT/dd/docs/pa.md"
+printf '# P\n\n**Spec:** docs/a%%20b.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$TEST_ROOT/dd/docs/pb.md"
+git -C "$TEST_ROOT/dd" add docs; git -C "$TEST_ROOT/dd" commit -qm plans; git -C "$TEST_ROOT/dd" switch -q -c feat
+for pn in pa pb; do run_state "$TEST_ROOT/dd" sync docs/$pn.md >/dev/null 2>&1; w=$(run_sdd_dir "$TEST_ROOT/dd" docs/$pn.md 2>/dev/null); printf '# SDD ledger — plan: docs/%s.md\n' "$pn" > "$w/progress.md"; done
+out=$(run_state "$TEST_ROOT/dd" register docs/pa.md --session s1 --integration feat 2>/dev/null); rc1=$?
+git -C "$TEST_ROOT/dd" switch -q -c feat2 feat
+out2=$(run_state "$TEST_ROOT/dd" register docs/pb.md --session s2 --integration feat2 2>/dev/null); rc2=$?
+if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ]; then pass "specs docs/a b.md and docs/a%20b.md are not siblings"; else fail "look-alike specs (rc $rc1 $rc2: $out / $out2)"; fi
 # Two sibling registrations with different branches through a barrier: exactly one succeeds.
 git -C "$rg_a" switch -q feat
 rm -rf "$wsr2"; wsr2=$(run_sdd_dir "$rg_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsr2/progress.md"

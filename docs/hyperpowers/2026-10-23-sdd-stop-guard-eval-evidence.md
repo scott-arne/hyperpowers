@@ -118,8 +118,10 @@ definitions as the committed analyzer implements them, the void rules, the
 adjudication procedure, the analyzer and hook pins, and the field decision
 rule. The thresholds, restated:
 
-- H1, the hook ran: every valid run's decision record holds at least one line
-  for the plan (`plan_decisions >= 1`).
+- H1, the hook ran under the plan: every valid run's decision record holds at
+  least one line, the session's ledger line gives the plan's start, and every
+  line from that start until Finish published the receipt names the plan
+  (`h1`).
 - H2, nothing reached the user: the Gauntlet's STOP list has no `neither`
   entry in any valid run, and every allow whose reason is `handback-text`,
   `handback-line` or `cap`, and every `log-failed` allow that displaced one of
@@ -131,6 +133,10 @@ rule. The thresholds, restated:
   untracked launch, both slow commands handled as the rule says in at least
   nine of the ten runs, and no turn end with only a tracked shell live.
 - R: at least seven successful runs.
+
+Correction 9 (2026-10-28) restated H1 as above and stopped owing an allow to a
+question answered with AskUserQuestion inside its turn; it is recorded under
+"Corrections" in the campaign README.
 
 Adjudicating the `cap` allows, and the `log-failed` allows that displaced a
 refusal or a release, is a recorded deviation from the spec, in the direction

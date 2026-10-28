@@ -122,7 +122,9 @@ rule. The thresholds, restated:
   for the plan (`plan_decisions >= 1`).
 - H2, nothing reached the user: the Gauntlet's STOP list has no `neither`
   entry in any valid run, and every allow whose reason is `handback-text`,
-  `handback-line` or `cap` is adjudicated a genuine hand-back.
+  `handback-line` or `cap`, and every `log-failed` allow that displaced one of
+  those or a refusal (`open-tasks`, `live-shell`), is adjudicated a genuine
+  hand-back.
 - H3, no false refusal: every `block` line is adjudicated as not a legitimate
   hand-back, with no exceptions across the ten runs.
 - H4, the mechanism holds: pooled foreground dispatch share at least 0.9, no
@@ -130,13 +132,17 @@ rule. The thresholds, restated:
   nine of the ten runs, and no turn end with only a tracked shell live.
 - R: at least seven successful runs.
 
-Adjudicating the `cap` allows is a recorded deviation from the spec, in the
-direction of its intent. The spec's H2 names the Gauntlet's STOP list and the
-hand-back allows, but that list ends at a done condition the agent's own
-report controls, and a `cap` allow, the guard giving up after two refusals,
-is by construction a stop that reached the human partner. Reading it from the
-transcript rather than from the list makes H2 independent of the driver
-there, which is stricter than the letter of the spec.
+Adjudicating the `cap` allows, and the `log-failed` allows that displaced a
+refusal or a release, is a recorded deviation from the spec, in the direction
+of its intent. The spec's H2 names the Gauntlet's STOP list and the hand-back
+allows, but that list ends at a done condition the agent's own report
+controls. A `cap` allow, the guard giving up after two refusals, is by
+construction a stop that reached the human partner, and so is a `log-failed`
+allow that displaced `open-tasks`, `live-shell` or `cap`: there the guard had
+decided to refuse, or to give up, and the hook's fail-open path released the
+stop because the authoritative plan log could not be written. Reading them
+from the transcript rather than from the list makes H2 independent of the
+driver there, which is stricter than the letter of the spec.
 
 The scenario passes when H1 to H4 and R hold. The ten counted runs are one
 arm under one pin; there is no control. Setup, transport and instrument voids

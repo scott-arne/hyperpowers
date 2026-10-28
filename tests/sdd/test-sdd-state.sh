@@ -3435,6 +3435,36 @@ chmod a-r "$nxp_ws/progress.md"
 out=$(run_state "$TEST_ROOT/nxp" next docs/plan.md --session s1 2>/dev/null); rc=$?
 chmod u+r "$nxp_ws/progress.md"
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "an unreadable ledger is status=error"; else fail "unreadable ledger (rc=$rc: $out)"; fi
+# next recovers an interrupted sync under the lock before it classifies: a stale ledger must not offer a task the newer assignment line excludes.
+make_pair nr; nr_a=$PAIR_A; nr_b=$PAIR_B
+mkdir -p "$nr_a/docs"; : > "$nr_a/docs/spec.md"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 2: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$nr_a/docs/plan.md"
+git -C "$nr_a" add docs; git -C "$nr_a" commit -qm plan; git -C "$nr_a" push -q origin main 2>/dev/null
+run_state "$nr_a" sync docs/plan.md >/dev/null 2>&1; git -C "$nr_a" push -q origin hyperpowers/state 2>/dev/null; git -C "$nr_b" pull -q origin main 2>/dev/null; run_state "$nr_b" sync docs/plan.md >/dev/null 2>&1
+wsnr=$(run_sdd_dir "$nr_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsnr/progress.md"
+run_state "$nr_a" register docs/plan.md --session s1 --integration main >/dev/null 2>&1
+run_state "$nr_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$nr_a" push -q origin hyperpowers/state 2>/dev/null
+run_state "$nr_b" sync docs/plan.md >/dev/null 2>&1
+printf 'session s1: tasks 2\n' >> "$wsnr/progress.md"
+run_state "$nr_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$nr_a" push -q origin hyperpowers/state 2>/dev/null
+( cd "$nr_b" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+out=$(run_state "$nr_b" next docs/plan.md --session s1 2>/dev/null); rcn=$?
+if [ "$rc" -eq 99 ] && [ "$rcn" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=2 own-blocked=none" ]; then pass "next recovers an interrupted sync and offers only what the recovered assignment allows"; else fail "next after crashed sync (rc=$rc/$rcn: $out)"; fi
+# A claim directory whose owner is unreadable or has no session is an error, not an unclaimed task.
+mkplan nxk $'# P\n\n### Task 1: A\n\n**Depends on:** none\n'
+nxk_ws=$MP_WS
+mkdir -p "$nxk_ws/claims/task-1"; printf 'session=s2\n' > "$nxk_ws/claims/task-1/owner"; chmod 000 "$nxk_ws/claims/task-1/owner"
+out=$(run_state "$TEST_ROOT/nxk" next docs/plan.md --session s1 2>/dev/null); rc=$?
+chmod 600 "$nxk_ws/claims/task-1/owner"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "a claim whose owner file is unreadable is status=error"; else fail "unreadable owner (rc=$rc: $out)"; fi
+printf 'host=h\n' > "$nxk_ws/claims/task-1/owner"
+out=$(run_state "$TEST_ROOT/nxk" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "a claim whose owner file has no session is status=error"; else fail "ownerless claim (rc=$rc: $out)"; fi
+# The code-repository errors still print one status line.
+mkdir -p "$TEST_ROOT/nogit"
+out=$(cd "$TEST_ROOT/nogit" && bash "$SDD_STATE" next "$nx_a/docs/plan.md" --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "next outside any repository prints status=error"; else fail "nogit cwd (rc=$rc: $out)"; fi
+out=$(run_state "$nx_a" next docs/plan.md --session s1 --code-repo "$TEST_ROOT/does-not-exist" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "next with a missing --code-repo prints status=error"; else fail "missing code repo (rc=$rc: $out)"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

@@ -91,9 +91,9 @@ enc() { printf '%s' "$1" | sed 's/ /%20/g'; }
 code_repo_arg() { # <value or empty> [<ledger>] -> physical path; refuses a repository whose root is not the recorded code root
   local code=$1 ledger=${2:-} line want
   if [ -z "$code" ]; then
-    code=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "sdd-state: not inside a code repository; pass --code-repo DIR" >&2; exit 2; }
+    code=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "sdd-state: not inside a code repository; pass --code-repo DIR" >&2; echo "status=error"; exit 2; }
   fi
-  code=$(hp_physical_dir "$code") || { echo "sdd-state: no such directory: $code" >&2; exit 2; }
+  code=$(hp_physical_dir "$code") || { echo "sdd-state: no such directory: $code" >&2; echo "status=error"; exit 2; }
   if [ -n "$ledger" ] && [ -f "$ledger" ]; then
     line=$(plan_line_of "$ledger")
     if [ -n "$line" ]; then
@@ -560,7 +560,7 @@ map_get() { # map_get DEP 5
   eval "printf '%s' \"\${MAP_$1_$2:-}\""
 }
 cmd_next() {
-  local plan="" sid="" code="" rc
+  local plan="" sid="" code="" rc out
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
@@ -573,13 +573,22 @@ cmd_next() {
   resolve_plan "$plan"
   [ -f "$WSDIR/progress.md" ] || { echo "status=no-workspace"; return 2; }
   code=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
-  next_classify "$sid"
+  # The classification reads the ledger and the claims, so it runs under the
+  # lock after the same recovery a claim performs: an interrupted sync leaves
+  # a stale working-tree ledger that would otherwise offer a task the
+  # recovered assignment line excludes.
+  hp_lock "$PLAN_DIR" || { echo "status=error"; return 2; }
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  out=$(next_classify "$sid"); rc=$?
+  hp_unlock
+  printf '%s\n' "$out"
+  return "$rc"
 }
 # <sid> -> the status line, from the resolved plan's state alone. The board
 # calls this directly rather than the subcommand, so a board run from a cwd
 # that is no repository still computes the frontier.
 next_classify() {
-  local sid=$1 pair blob tmp graph t deps cls assigned="" line n_list mine_list own_list held_list wait_list excl_list waitown_list remaining held_all open_any=0 p rc
+  local sid=$1 pair blob tmp graph t deps cls assigned="" line n_list mine_list own_list held_list wait_list excl_list waitown_list remaining held_all open_any=0 p rc owner
   pair=$(authoritative_plan_blob) || { echo "status=error"; return 2; }
   blob=${pair%% *}; tmp=${pair#* }
   graph=$(hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
@@ -598,7 +607,13 @@ next_classify() {
     if [ "$rc" -eq 0 ]; then map_set CLASS "$t" complete; continue; fi
     if [ "$rc" -ne 1 ]; then echo "sdd-state: cannot read $WSDIR/progress.md" >&2; echo "status=error"; return 2; fi
     open_any=1
-    map_set OWNER "$t" "$(sed -n 's/^session=//p' "$WSDIR/claims/task-$t/owner" 2>/dev/null)"
+    if [ -e "$WSDIR/claims/task-$t" ]; then
+      # A claim directory whose owner cannot be read is no claim at all to
+      # this code, yet claim refuses the task, so it must not be offered.
+      owner=$(sed -n 's/^session=//p' "$WSDIR/claims/task-$t/owner" 2>/dev/null | head -n 1)
+      if [ -z "$owner" ]; then echo "sdd-state: claim owner unreadable or without a session: $WSDIR/claims/task-$t/owner" >&2; echo "status=error"; return 2; fi
+      map_set OWNER "$t" "$owner"
+    fi
   done <<< "$graph"
   [ "$open_any" -eq 1 ] || { echo "status=none reason=complete"; return 0; }
   allowed() { [ -z "$assigned" ] && return 0; case ",$assigned," in *",$1,"*) return 0 ;; esac; return 1; }

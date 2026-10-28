@@ -138,7 +138,12 @@ Correction 9 (2026-10-28) restated H1 as above and stopped owing an allow to a
 question answered with AskUserQuestion inside its turn; it is recorded under
 "Corrections" in the campaign README. The fixture's batched question, asked
 that way, writes no decision, so H2's adjudication half and H3 get live cases
-only from the turn ends a run takes mid-plan, and may get none.
+only from the turn ends a run takes mid-plan, and may get none. Correction 10
+(2026-10-28) times a listed entry that quotes the lead-in Claude Code showed
+before an answered AskUserQuestion call as that call's in-turn stop, matching
+without the markdown the terminal hides; it was made after the counted runs
+were archived and read, moves only the void classification, and is recorded
+under "Corrections" in the campaign README.
 
 Adjudicating the `cap` allows, and the `log-failed` allows that displaced a
 refusal or a release, is a recorded deviation from the spec, in the direction
@@ -250,10 +255,11 @@ The allow at 01:30:50Z also names the tracked long soak, launched through
 `status=exited code=0` in the foreground. The run reads `h1` true, `short_ok`
 and `long_ok` true, and `success` true.
 
-One of the Gauntlet's three STOP entries could not be timed. It quotes the
-narration Claude Code showed before the pre-flight question (a `thinking`
-block), not the AskUserQuestion call's own text. In a counted run, that entry
-would void the run as an instrument failure.
+One of the Gauntlet's three STOP entries could not be timed under Correction 9.
+It quotes the narration Claude Code showed before the pre-flight question (a
+`thinking` block), not the AskUserQuestion call's own text. In a counted run,
+that entry would have voided the run as an instrument failure; under
+Correction 10 it is that call's in-turn stop.
 
 ## Zed checks
 

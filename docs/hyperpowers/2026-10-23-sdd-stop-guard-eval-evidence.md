@@ -222,7 +222,38 @@ To be filled in by Task 20.
 
 ## T1
 
-To be filled in by Task 19.
+T1 is the uncounted run of the `sdd-turn-liveness-fork` copy of the
+scenario, with Claude Code's fork mode on, under the campaign pin. No H
+criterion is applied to it. The run of record is
+`sdd-turn-liveness-fork-claude-auto-20261028T010948Z-93d7`, archived in
+hyperpowers-evals at
+`evidence/2026-10-23-sdd-stop-guard/task-19-runs/t1/`, and its reading is in
+`smoke.md` beside it. The first attempt (`...010556Z-f352`) was launched inside
+the command sandbox and is a setup void. The run of record finished, and the
+Gauntlet passed it.
+
+None of the 13 SDD dispatches passed `run_in_background`, and every one came
+back as an async launch. Fork mode's Agent tool has no such parameter, as the
+previous campaign's smoke recorded. Each of the 12 turn ends with work live
+drew a `live-agent` allow within a second.
+
+| Count | Value |
+|---|---|
+| Background dispatches, foreground dispatches | 13, 0 |
+| Background dispatches with a completion matched by tool-use id | 13 of 13 |
+| `live-agent` allows in the hook log | 12 |
+| `live-agent` allows whose tool-use ids name a background agent live at the allow, with a recorded completion | 12 of 12 |
+| Other decisions | 2 `no-ledger` allows after Finish's result, no block |
+
+The allow at 01:30:50Z also names the tracked long soak, launched through
+`tracked-job run` in a background Bash call. The controller watched it to
+`status=exited code=0` in the foreground. The run reads `h1` true, `short_ok`
+and `long_ok` true, and `success` true.
+
+One of the Gauntlet's three STOP entries could not be timed. It quotes the
+narration Claude Code showed before the pre-flight question (a `thinking`
+block), not the AskUserQuestion call's own text. In a counted run, that entry
+would void the run as an instrument failure.
 
 ## Zed checks
 

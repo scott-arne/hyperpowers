@@ -3303,5 +3303,103 @@ printf -- '- Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$M
 out=$(run_state "$TEST_ROOT/ev4" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2 branch=none" ]; then pass "a list-marked completion line satisfies the dependency"; else fail "marked completion (rc=$rc: $out)"; fi
 
+
+echo "next: the claimable frontier"
+make_pair nx; nx_a=$PAIR_A
+mkdir -p "$nx_a/docs"; : > "$nx_a/docs/spec.md"
+cat > "$nx_a/docs/plan.md" <<'PLAN'
+# P
+
+**Spec:** docs/spec.md
+
+### Task 1: A
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+### Task 2: B
+
+**Risk tier:** standard
+
+**Depends on:** Task 1
+
+### Task 3: C
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+### Task 4: D
+
+**Risk tier:** standard
+
+**Depends on:** Task 3
+
+### Task 5: E
+
+**Risk tier:** standard
+
+**Depends on:** Task 2, Task 4
+PLAN
+git -C "$nx_a" add docs; git -C "$nx_a" commit -qm plan; git -C "$nx_a" push -q origin main 2>/dev/null; git -C "$nx_a" switch -q -c feat
+run_state "$nx_a" sync docs/plan.md >/dev/null 2>&1; wsnx=$(run_sdd_dir "$nx_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsnx/progress.md"
+run_state "$nx_a" register docs/plan.md --session s1 --integration feat >/dev/null
+make_repo "$TEST_ROOT/foreign-nx"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 --code-repo "$TEST_ROOT/foreign-nx" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "next refuses a foreign --code-repo"; else fail "next wrong-repo (rc=$rc: $out)"; fi
+out=$(cd "$TEST_ROOT/foreign-nx" && bash "$SDD_STATE" next "$nx_a/docs/plan.md" --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "next run from a foreign repository without --code-repo is wrong-repo"; else fail "next foreign cwd (rc=$rc: $out)"; fi
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=1,3 own-blocked=none" ]; then pass "the frontier is the tasks with no incomplete predecessor, in plan order"; else fail "frontier (rc=$rc: $out)"; fi
+run_state "$nx_a" claim docs/plan.md 1 --session s1 >/dev/null; run_state "$nx_a" claim docs/plan.md 3 --session s2 >/dev/null
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=1 own-blocked=none" ]; then pass "this session's own claim is listed first and a held task is not listed"; else fail "own first (rc=$rc: $out)"; fi
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=2 own-blocked=none" ]; then pass "a completed predecessor opens its dependent"; else fail "dependent opens (rc=$rc: $out)"; fi
+run_state "$nx_a" claim docs/plan.md 2 --session s2 >/dev/null
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=held held=2@s2,3@s2 waiting=4,5" ]; then pass "every open task held or waiting on a held one reads held with holders"; else fail "none held (rc=$rc: $out)"; fi
+printf 'session s1: tasks 5\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=blocked waiting=5 excluded=2,3,4 held=2@s2,3@s2" ]; then pass "an assigned list narrows the frontier: a predecessor outside the list is an exclusion, and the holders are still named"; else fail "assigned blocked (rc=$rc: $out)"; fi
+sed -i '' '/^session s1: tasks 5$/d' "$wsnx/progress.md" 2>/dev/null || sed -i '/^session s1: tasks 5$/d' "$wsnx/progress.md"
+printf 'session s1: tasks 4\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=blocked waiting=4 excluded=2,3,5 held=2@s2,3@s2" ]; then pass "an allowed task whose held predecessor is outside the list waits on the exclusion"; else fail "allowed waiting-on-excluded (rc=$rc: $out)"; fi
+printf 'Task 3: complete (commits 3333333..4444444, review clean)\nTask 2: complete (commits 5555555..6666666, review clean)\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=4 own-blocked=none" ]; then pass "the assigned task becomes claimable when its predecessor completes"; else fail "assigned claimable (rc=$rc: $out)"; fi
+printf 'Task 4: complete (commits 7777777..8888888, review clean)\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=assigned-complete remaining=5" ]; then pass "a finished assigned list reports the remaining tasks"; else fail "assigned-complete (rc=$rc: $out)"; fi
+sed -i '' '/^session s1: tasks 4$/d' "$wsnx/progress.md" 2>/dev/null || sed -i '/^session s1: tasks 4$/d' "$wsnx/progress.md"
+printf 'session s2: tasks 1,2,3\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=assigned-complete remaining=5" ]; then pass "an excluded open task with complete predecessors is still excluded"; else fail "excluded (rc=$rc: $out)"; fi
+# own-blocked: an edge amended onto a claimed task; Task 7 behind it is a descendant of an own-blocked task and is neither offered nor named.
+run_state "$nx_a" claim docs/plan.md 5 --session s1 >/dev/null
+sed -i '' 's/^\*\*Depends on:\*\* Task 2, Task 4$/**Depends on:** Task 2, Task 4, Task 6/' "$nx_a/docs/plan.md" 2>/dev/null || sed -i 's/^\*\*Depends on:\*\* Task 2, Task 4$/**Depends on:** Task 2, Task 4, Task 6/' "$nx_a/docs/plan.md"
+printf '\n### Task 6: F\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 7: G\n\n**Risk tier:** standard\n\n**Depends on:** Task 5\n' >> "$nx_a/docs/plan.md"
+git -C "$nx_a" add docs; git -C "$nx_a" commit -qm amend
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=6 own-blocked=5" ]; then pass "a claimable task is offered, the own-blocked task is named, and its descendant is neither"; else fail "own-blocked with frontier (rc=$rc: $out)"; fi
+run_state "$nx_a" claim docs/plan.md 6 --session s2 >/dev/null
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=own-blocked task=5 waiting=6@s2" ]; then pass "an own claim whose new predecessor is held reads own-blocked"; else fail "own-blocked (rc=$rc: $out)"; fi
+printf 'Task 6: complete (commits 9999999..aaaaaaa, review clean)\nTask 5: complete (commits bbbbbbb..ccccccc, review clean)\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=7 own-blocked=none" ]; then pass "the descendant opens once the own-blocked task completes"; else fail "descendant opens (rc=$rc: $out)"; fi
+printf 'Task 7: complete (commits ddddddd..eeeeeee, review clean)\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=complete" ]; then pass "every task complete reads complete"; else fail "complete (rc=$rc: $out)"; fi
+# A plan line whose ref does not carry the plan file is an error, never a read of the worktree copy.
+printf '# U\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$nx_a/docs/unc.md"
+wsunc=$(run_sdd_dir "$nx_a" docs/unc.md 2>/dev/null); printf '# SDD ledger — plan: docs/unc.md\n' > "$wsunc/progress.md"
+run_state "$nx_a" register docs/unc.md --session s9 --integration feat >/dev/null
+err=$(run_state "$nx_a" next docs/unc.md --session s9 2>&1 >"$TEST_ROOT/nx.unc"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$(cat "$TEST_ROOT/nx.unc")" = "status=error" ] && printf '%s' "$err" | grep -q 'does not carry docs/unc.md'; then pass "a registered plan its ref does not carry is an error, not a worktree read"; else fail "uncommitted registered plan (rc=$rc: $(cat "$TEST_ROOT/nx.unc"): $err)"; fi
+rm -f "$nx_a/docs/unc.md"; rm -rf "$wsunc"
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

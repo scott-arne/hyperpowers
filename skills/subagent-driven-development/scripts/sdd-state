@@ -14,6 +14,7 @@
 #   sdd-state claim PLAN_FILE N --session SID [--takeover] [--code-repo DIR]
 #   sdd-state deps PLAN_FILE [--check] [--ledger FILE] [--from FILE] [--code-repo DIR]
 #   sdd-state register PLAN_FILE --session SID --integration BRANCH [--code-repo DIR]
+#   sdd-state next PLAN_FILE --session SID [--code-repo DIR]
 #
 # stdout: one line of space-separated key=value pairs, status= first; sync
 # adds a second line "merge=<command>" on diverged.
@@ -51,7 +52,8 @@ usage() {
     '  prune [--days N] [--apply] --repo DIR' \
     '  claim PLAN_FILE N --session SID [--takeover] [--code-repo DIR]' \
     '  deps PLAN_FILE [--check] [--ledger FILE] [--from FILE] [--code-repo DIR]' \
-    '  register PLAN_FILE --session SID --integration BRANCH [--code-repo DIR]' >&2
+    '  register PLAN_FILE --session SID --integration BRANCH [--code-repo DIR]' \
+    '  next PLAN_FILE --session SID [--code-repo DIR]' >&2
   exit 2
 }
 
@@ -537,6 +539,107 @@ cmd_claim() {
   rm -rf "$tmp"
   if [ "$rc" -ne 4 ]; then hp_unlock; echo "status=error"; return 2; fi
   claim_held; return $?
+}
+# --- next --------------------------------------------------------------------
+# Classifies every open task of the authoritative plan. The assignment split
+# comes first: a task outside the session's assigned list is excluded
+# whatever its graph state. Every allowed task is then claimable,
+# own-blocked, held, or waiting, and the waiting kind is the first kind
+# found in the order held, own-blocked, excluded, open over its incomplete
+# predecessors, transitively. The classification is total, so the status
+# below is defined for every ledger. Bash 3.2 has no associative arrays, so
+# the three maps are variables named by task number (digits only, which is
+# what makes the eval safe).
+map_set() { eval "MAP_$1_$2=\$3"; }                  # map_set DEP 5 "1,3"
+map_get() { eval "printf '%s' \"\${MAP_$1_$2:-}\""; } # map_get DEP 5
+cmd_next() {
+  local plan="" sid="" code="" rc
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$sid" ] || usage
+  resolve_plan "$plan"
+  [ -f "$WSDIR/progress.md" ] || { echo "status=no-workspace"; return 2; }
+  code=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+  next_classify "$sid"
+}
+# <sid> -> the status line, from the resolved plan's state alone. The board
+# calls this directly rather than the subcommand, so a board run from a cwd
+# that is no repository still computes the frontier.
+next_classify() {
+  local sid=$1 pair blob tmp graph t deps cls assigned="" line n_list own_list held_list wait_list excl_list waitown_list remaining held_all open_any=0 p rc
+  pair=$(authoritative_plan_blob) || { echo "status=error"; return 2; }
+  blob=${pair%% *}; tmp=${pair#* }
+  graph=$(hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
+  [ "$rc" -eq 0 ] || { echo "status=invalid plan=${blob:0:7}"; return 2; }
+  assigned=$(grep -E "^session $sid: tasks " "$WSDIR/progress.md" | tail -n 1 | sed 's/^session [^:]*: tasks //; s/ //g')
+  while IFS= read -r line; do
+    t=${line#task=}; t=${t%% *}; deps=${line#*depends=}
+    map_set DEP "$t" "$deps"; map_set CLASS "$t" ""; map_set OWNER "$t" ""
+    # An unreadable ledger is an error, never "not complete": reading it as
+    # open work would offer finished tasks to a session.
+    ledger_task_complete "$WSDIR/progress.md" "$t"; rc=$?
+    if [ "$rc" -eq 0 ]; then map_set CLASS "$t" complete; continue; fi
+    if [ "$rc" -ne 1 ]; then echo "sdd-state: cannot read $WSDIR/progress.md" >&2; echo "status=error"; return 2; fi
+    open_any=1
+    map_set OWNER "$t" "$(sed -n 's/^session=//p' "$WSDIR/claims/task-$t/owner" 2>/dev/null)"
+  done <<< "$graph"
+  [ "$open_any" -eq 1 ] || { echo "status=none reason=complete"; return 0; }
+  allowed() { [ -z "$assigned" ] && return 0; case ",$assigned," in *",$1,"*) return 0 ;; esac; return 1; }
+  # Classes resolve recursively through the predecessors; a valid graph has
+  # no cycle, so the recursion ends.
+  classify() { # <task> -> sets CLASS[task]
+    local task=$1 kinds="" p pc owner
+    [ -z "$(map_get CLASS "$task")" ] || return 0
+    if ! allowed "$task"; then map_set CLASS "$task" excluded; return 0; fi
+    if [ "$(map_get DEP "$task")" != none ]; then
+      for p in $(map_get DEP "$task" | tr ',' ' '); do
+        classify "$p"; pc=$(map_get CLASS "$p")
+        [ "$pc" != complete ] || continue
+        case "$pc" in held|waiting-on-held) kinds="$kinds held" ;; own-blocked|waiting-on-own-blocked) kinds="$kinds own" ;; excluded|waiting-on-excluded) kinds="$kinds excluded" ;; *) kinds="$kinds open" ;; esac
+      done
+    fi
+    owner=$(map_get OWNER "$task")
+    if [ -n "$owner" ] && [ "$owner" != "$sid" ]; then map_set CLASS "$task" held; return 0; fi
+    if [ -z "$kinds" ]; then map_set CLASS "$task" claimable; return 0; fi
+    if [ -n "$owner" ]; then map_set CLASS "$task" own-blocked; return 0; fi
+    case " $kinds " in *" held "*) map_set CLASS "$task" waiting-on-held ;; *" own "*) map_set CLASS "$task" waiting-on-own-blocked ;; *" excluded "*) map_set CLASS "$task" waiting-on-excluded ;; *) map_set CLASS "$task" waiting-on-open ;; esac
+  }
+  n_list=""; own_list=""; held_list=""; wait_list=""; excl_list=""; waitown_list=""; remaining=""; held_all=""
+  while IFS= read -r line; do
+    t=${line#task=}; t=${t%% *}
+    [ "$(map_get CLASS "$t")" != complete ] || continue
+    classify "$t"
+    cls=$(map_get CLASS "$t")
+    if [ -n "$(map_get OWNER "$t")" ] && [ "$(map_get OWNER "$t")" != "$sid" ]; then held_all="${held_all:+$held_all,}$t@$(map_get OWNER "$t")"; fi
+    case "$cls" in
+      claimable) if [ "$(map_get OWNER "$t")" = "$sid" ]; then n_list="$t${n_list:+,$n_list}"; else n_list="${n_list:+$n_list,}$t"; fi ;;
+      own-blocked) own_list="${own_list:+$own_list,}$t" ;;
+      held) held_list="${held_list:+$held_list,}$t@$(map_get OWNER "$t")" ;;
+      waiting-on-held) wait_list="${wait_list:+$wait_list,}$t" ;;
+      waiting-on-own-blocked) waitown_list="${waitown_list:+$waitown_list,}$t" ;;
+      waiting-on-excluded|waiting-on-open) excl_list="${excl_list:+$excl_list,}$t" ;;
+      excluded) remaining="${remaining:+$remaining,}$t" ;;
+    esac
+  done <<< "$graph"
+  if [ -n "$n_list" ]; then echo "status=next tasks=$n_list own-blocked=${own_list:-none} plan=${blob:0:7}"; return 0; fi
+  if [ -n "$own_list" ] || [ -n "$waitown_list" ]; then
+    t=${own_list%%,*}; [ -n "$t" ] || t=${waitown_list%%,*}
+    wait_list=""
+    for p in $(map_get DEP "$t" | tr ',' ' '); do
+      [ "$(map_get CLASS "$p")" != complete ] || continue
+      if [ -n "$(map_get OWNER "$p")" ] && [ "$(map_get OWNER "$p")" != "$sid" ]; then wait_list="${wait_list:+$wait_list,}$p@$(map_get OWNER "$p")"; else wait_list="${wait_list:+$wait_list,}$p"; fi
+    done
+    echo "status=none reason=own-blocked task=$t waiting=$wait_list"; return 0
+  fi
+  if [ -n "$assigned" ] && [ -z "$held_list" ] && [ -z "$wait_list" ] && [ -z "$excl_list" ]; then echo "status=none reason=assigned-complete remaining=${remaining:-none}"; return 0; fi
+  if [ -z "$excl_list" ]; then echo "status=none reason=held held=$held_list waiting=${wait_list:-none}"; return 0; fi
+  echo "status=none reason=blocked waiting=$excl_list excluded=${remaining:-none} held=${held_all:-none}"
 }
 
 # --- import ------------------------------------------------------------------
@@ -2431,6 +2534,7 @@ case "$sub" in
   snapshot) cmd_snapshot "$@" ;;
   import) cmd_import "$@" ;;
   claim) cmd_claim "$@" ;;
+  next) cmd_next "$@" ;;
   deps) cmd_deps "$@" ;;
   register) cmd_register "$@" ;;
   finish) cmd_finish "$@" ;;

@@ -251,7 +251,7 @@ them would have read `void-instrument` and been relaunched.
 
 | Criterion | Threshold | Reading | Holds |
 |---|---|---|---|
-| H1 | `h1` in every counted run | 10 of 10; `plan_decisions` 0 in 10 of 10 | yes, with no decision under a plan |
+| H1 (Correction 9): no off-plan hook line in the plan window | `h1` in every counted run | `plan_decisions` 0 in 10 of 10; no hook line fell in any run's plan window; `h1` 10 of 10 | yes, with no decision under a plan |
 | H2 | no `neither` entry; no allow owing a label labelled `neither` or left unlabelled | 0 of 22 listed entries; no allow owing a label in any run | yes, its adjudication half with no cases |
 | H3 | no false or unadjudicated block | no block in any run | yes, with no cases |
 | H4 | foreground share at least 0.9; no untracked launch; both slow commands handled in at least 9 runs; no live-shell turn end | 1.0 (132 of 132); 0; 9; 0 | yes |

@@ -592,21 +592,21 @@ rcs="$(cat "$TEST_ROOT/c1.rc1") $(cat "$TEST_ROOT/c1.rc2")"
 outs="$(cat "$TEST_ROOT/c1.o1")
 $(cat "$TEST_ROOT/c1.o2")"
 case "$rcs" in "0 4"|"4 0") pass "two concurrent claims: one claimed, one held" ;; *) fail "two concurrent claims: one claimed, one held (rcs: $rcs)" ;; esac
-if printf '%s\n' "$outs" | grep -q '^status=claimed task=1$' && printf '%s\n' "$outs" | grep -Eq '^status=held task=1 owner=s-(one|two) since=[0-9TZ:-]+ worktree=/'; then pass "the loser's line carries the winner's complete owner record"; else fail "the loser's line carries the winner's complete owner record ($outs)"; fi
+if printf '%s\n' "$outs" | grep -q '^status=claimed task=1 branch=none$' && printf '%s\n' "$outs" | grep -Eq '^status=held task=1 owner=s-(one|two) since=[0-9TZ:-]+ worktree=/'; then pass "the loser's line carries the winner's complete owner record"; else fail "the loser's line carries the winner's complete owner record ($outs)"; fi
 winner=$(sed -n 's/^session=//p' "$wsc/claims/task-1/owner")
 out=$(run_state "$c1" claim docs/plan.md 1 --session "$winner"); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=1 owner=$winner own=1" ]; then pass "re-claiming with the owner's own session exits 0"; else fail "re-claiming with the owner's own session exits 0 (rc=$rc: $out)"; fi
-if grep -q "^worktree=$c1$" "$wsc/claims/task-1/owner" && grep -q '^branch=main$' "$wsc/claims/task-1/owner" && grep -q '^host=' "$wsc/claims/task-1/owner"; then pass "the owner record names worktree, branch and host"; else fail "the owner record names worktree, branch and host"; fi
+if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=1 owner=$winner own=1 branch=none" ]; then pass "re-claiming with the owner's own session exits 0"; else fail "re-claiming with the owner's own session exits 0 (rc=$rc: $out)"; fi
+if grep -q "^worktree=$c1$" "$wsc/claims/task-1/owner" && grep -q '^checkout=main$' "$wsc/claims/task-1/owner" && grep -q '^host=' "$wsc/claims/task-1/owner"; then pass "the owner record names worktree, branch and host"; else fail "the owner record names worktree, branch and host"; fi
 mkdir -p "$wsc/claims/.tmp-prepared"; printf 'session=ghost\n' > "$wsc/claims/.tmp-prepared/owner"
 out=$(run_state "$c1" claim docs/plan.md 2 --session s-three); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2" ]; then pass "a prepared but unpublished claim is invisible to the next claimant"; else fail "a prepared but unpublished claim is invisible to the next claimant (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2 branch=none" ]; then pass "a prepared but unpublished claim is invisible to the next claimant"; else fail "a prepared but unpublished claim is invisible to the next claimant (rc=$rc: $out)"; fi
 out=$(run_state "$c1" claim docs/plan.md 1 --session s-four --takeover); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 takeover=1" ] && [ "$(sed -n 's/^session=//p' "$wsc/claims/task-1/owner")" = s-four ] && grep -q "^session=$winner" "$wsc/claims/task-1/owner.history"; then pass "--takeover rewrites the owner and keeps the history"; else fail "--takeover rewrites the owner and keeps the history (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 takeover=1 branch=none" ] && [ "$(sed -n 's/^session=//p' "$wsc/claims/task-1/owner")" = s-four ] && grep -q "^session=$winner" "$wsc/claims/task-1/owner.history"; then pass "--takeover rewrites the owner and keeps the history"; else fail "--takeover rewrites the owner and keeps the history (rc=$rc: $out)"; fi
 run_state "$c1" claim docs/plan.md 3 >/dev/null 2>&1; rc=$?
    if [ "$rc" -eq 2 ] && [ ! -d "$wsc/claims/task-3" ]; then pass "claim without --session is a usage error (exit 2, nothing created)"; else fail "claim without --session is a usage error (rc=$rc)"; fi
 bash -c '. "$1"; hp_lock "$2"; sleep 1.5; hp_unlock' _ "$LIB" "$c1" &
 sleep 0.3; start=$(date +%s); out=$(run_state "$c1" claim docs/plan.md 4 --session s-seven); end=$(date +%s); wait
-if [ "$out" = "status=claimed task=4" ] && [ $((end - start)) -ge 1 ]; then pass "claim waits for the repository lock, so it serializes with finish"; else fail "claim waits for the repository lock ($out, waited $((end - start))s)"; fi
+if [ "$out" = "status=claimed task=4 branch=none" ] && [ $((end - start)) -ge 1 ]; then pass "claim waits for the repository lock, so it serializes with finish"; else fail "claim waits for the repository lock ($out, waited $((end - start))s)"; fi
 printf 'Task 5: complete (commits 1111111..2222222, review clean)\n' >> "$wsc/progress.md"
 out=$(run_state "$c1" claim docs/plan.md 5 --session s-eight); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=done task=5" ] && [ ! -d "$wsc/claims/task-5" ]; then pass "a task the ledger records complete is not claimed"; else fail "a task the ledger records complete is not claimed (rc=$rc: $out)"; fi
@@ -3136,6 +3136,83 @@ sleep 0.3
 sleep 0.3; rm -f "$XDG_CACHE_HOME"/hyperpowers/state/*.lock-pair-between-pause 2>/dev/null; wait
 k1=$(state_key "$TEST_ROOT/lk1"); k2=$(state_key "$TEST_ROOT/lk2"); lower=$k1; [ "$k1" \< "$k2" ] || lower=$k2
 if [ "$(basename "$(cat "$TEST_ROOT/lk.first")" .lock)" = "$lower" ] && [ "$(basename "$(cat "$TEST_ROOT/lk.second")" .lock)" = "$lower" ]; then pass "hp_lock_pair takes the lower key first whichever role each repository plays"; else fail "lock pair order ($(cat "$TEST_ROOT/lk.first") / $(cat "$TEST_ROOT/lk.second") lower=$lower)"; fi
+
+echo "claim: dependencies and branches"
+make_pair cl; cl_a=$PAIR_A
+mkdir -p "$cl_a/docs"; : > "$cl_a/docs/spec.md"
+cat > "$cl_a/docs/plan.md" <<'PLAN'
+# P
+
+**Spec:** docs/spec.md
+
+### Task 1: A
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+### Task 2: B
+
+**Risk tier:** standard
+
+**Depends on:** Task 1
+
+### Task 3: C
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+### Task 4: D
+
+**Risk tier:** standard
+
+**Depends on:** none
+PLAN
+git -C "$cl_a" add docs; git -C "$cl_a" commit -qm plan; git -C "$cl_a" push -q origin main 2>/dev/null; git -C "$cl_a" switch -q -c feat
+run_state "$cl_a" sync docs/plan.md >/dev/null 2>&1; wscl=$(run_sdd_dir "$cl_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wscl/progress.md"
+run_state "$cl_a" register docs/plan.md --session s1 --integration feat >/dev/null
+ws8cl=$(basename "$wscl" | sed 's/.*-//'); H0=$(git -C "$cl_a" rev-parse feat)
+make_repo "$TEST_ROOT/foreign-cl"
+out=$(run_state "$cl_a" claim docs/plan.md 1 --session s1 --code-repo "$TEST_ROOT/foreign-cl" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ ! -d "$wscl/claims/task-1" ]; then pass "a claim refuses a foreign code repository before writing"; else fail "claim wrong-repo (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "${out%% plan=*}" = "status=blocked task=2 waiting=1" ] && [ ! -d "$wscl/claims/task-2" ]; then pass "a task whose predecessor is incomplete is blocked and nothing is written"; else fail "blocked (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=feat.$ws8cl.task-1 from=${H0:0:7}" ] && [ "$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-1")" = "$H0" ] && grep -q "^Task 1: branch feat.$ws8cl.task-1 from ${H0:0:7}$" "$wscl/progress.md" && grep -q "^branch=feat.$ws8cl.task-1$" "$wscl/claims/task-1/owner" && [ -f "$wscl/activity/s1" ]; then pass "a claim creates the task branch at the integration head, records it and stamps activity"; else fail "claim creates the branch (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=1 owner=s1 own=1 branch=feat.$ws8cl.task-1 from=${H0:0:7}" ]; then pass "the owner's re-claim repeats the branch"; else fail "own re-claim (rc=$rc: $out)"; fi
+# A crash after the rename: the retry creates the branch and the line.
+out=$(run_state "$cl_a" claim docs/plan.md 3 --session s1 2>/dev/null); rc=$?
+git -C "$cl_a" branch -D "feat.$ws8cl.task-3" >/dev/null 2>&1; sed -i '' '/^Task 3: branch/d' "$wscl/progress.md" 2>/dev/null || sed -i '/^Task 3: branch/d' "$wscl/progress.md"
+out=$(run_state "$cl_a" claim docs/plan.md 3 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% owner=*}" = "status=held task=3" ] && git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-3" >/dev/null && grep -q '^Task 3: branch' "$wscl/progress.md"; then pass "the owner's retry completes a missing branch and ledger line"; else fail "own retry completes (rc=$rc: $out)"; fi
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wscl/progress.md"
+( cd "$cl_a" && HYPERPOWERS_TEST_CRASH_AT=claim-after-rename bash "$SDD_STATE" claim docs/plan.md 2 --session s1 >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -d "$wscl/claims/task-2" ] && ! git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-2" >/dev/null; then pass "the crash seam stops after the rename with no branch yet"; else fail "crash after rename (rc=$rc)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-2" >/dev/null && grep -q '^Task 2: branch' "$wscl/progress.md"; then pass "the retry after the crash finishes the claim"; else fail "retry after crash (rc=$rc: $out)"; fi
+# A crash after the branch: the branch exists, the ledger line is owed; the retry appends it.
+( cd "$cl_a" && HYPERPOWERS_TEST_CRASH_AT=claim-after-branch bash "$SDD_STATE" claim docs/plan.md 4 --session s1 >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-4" >/dev/null && ! grep -q '^Task 4: branch' "$wscl/progress.md"; then pass "the crash seam after the branch leaves the ledger line owed"; else fail "crash after branch (rc=$rc)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 4 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% owner=*}" = "status=held task=4" ] && grep -q "^Task 4: branch feat.$ws8cl.task-4 from " "$wscl/progress.md"; then pass "the retry after the branch crash appends the line"; else fail "retry after branch crash (rc=$rc: $out)"; fi
+# A losing claimant creates no branch; a takeover gets task-N.2 from the old head.
+git -C "$cl_a" commit -q --allow-empty -m "work on 3" --no-verify 2>/dev/null; git -C "$cl_a" update-ref "refs/heads/feat.$ws8cl.task-3" HEAD
+out=$(run_state "$cl_a" claim docs/plan.md 3 --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && ! git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-3.2" >/dev/null; then pass "a losing claimant creates no branch"; else fail "loser no branch (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 3 --session s2 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% from=*}" = "status=claimed task=3 takeover=1 branch=feat.$ws8cl.task-3.2" ] && [ "$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-3.2")" = "$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-3")" ] && git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-3" >/dev/null; then pass "a takeover branches task-3.2 from the old head and leaves the old branch"; else fail "takeover branch (rc=$rc: $out)"; fi
+# Two sibling plans both claiming Task 1 create distinct branches.
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: Z\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$cl_a/docs/plan2.md"; git -C "$cl_a" add docs; git -C "$cl_a" commit -qm plan2
+wscl2=$(run_sdd_dir "$cl_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wscl2/progress.md"; run_state "$cl_a" register docs/plan2.md --session s3 --integration feat >/dev/null
+out=$(run_state "$cl_a" claim docs/plan2.md 1 --session s3 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out#*branch=}" != "${out#*branch=feat.$ws8cl.}" ] && git -C "$cl_a" rev-parse -q --verify "feat.$(basename "$wscl2" | sed 's/.*-//').task-1" >/dev/null; then pass "sibling plans' Task 1 branches carry their own ws8"; else fail "sibling branch names (rc=$rc: $out)"; fi
+# A plan without a plan line keeps today's claim: no branch.
+make_repo "$TEST_ROOT/cl0"; mkdir -p "$TEST_ROOT/cl0/docs"; printf '# P\n\n### Task 1: A\n\n**Risk tier:** standard\n' > "$TEST_ROOT/cl0/docs/plan.md"; git -C "$TEST_ROOT/cl0" add docs; git -C "$TEST_ROOT/cl0" commit -qm plan
+ws0=$(ws_path "$TEST_ROOT/cl0" "$TEST_ROOT/cl0/docs/plan.md"); mkdir -p "$ws0"; printf '# SDD ledger — plan: docs/plan.md\n' > "$ws0/progress.md"
+out=$(run_state "$TEST_ROOT/cl0" claim docs/plan.md 1 --session s9 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=none" ]; then pass "a claim without a plan line creates no branch"; else fail "no plan line (rc=$rc: $out)"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

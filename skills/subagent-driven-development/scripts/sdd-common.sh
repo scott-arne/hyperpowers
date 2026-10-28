@@ -426,13 +426,45 @@ hp_lock_at() { # <lock-dir>
   trap 'hp_unlock; exit 130' INT
   trap 'hp_unlock; exit 143' TERM
 }
-# Remove the lock only when this pid owns it: a stale takeover may have
+# Two repositories' locks are taken in ascending key order whichever role
+# each plays (plan or code), so two sessions whose roles are swapped cannot
+# wait on each other. Equal keys mean one repository: one lock.
+: "${HP_LOCK_DIR2:=}"
+hp_lock_pair() { # <repoA> <repoB>
+  local ka kb first second la lb
+  ka=$(hp_key "$1") || return 2; kb=$(hp_key "$2") || return 2
+  if [ "$ka" = "$kb" ]; then hp_lock "$1"; return $?; fi
+  if [ "$ka" \< "$kb" ]; then first=$1; second=$2; else first=$2; second=$1; fi
+  la=$(hp_checkout_path "$first") || return 2; lb=$(hp_checkout_path "$second") || return 2
+  hp_lock_at "$la.lock" || return 2
+  if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = lock-pair-between ]; then
+    : > "$la.lock-pair-between-paused"
+    while [ -e "$la.lock-pair-between-pause" ]; do sleep 0.1; done
+    rm -f "$la.lock-pair-between-paused"
+  fi
+  HP_LOCK_DIR2=$HP_LOCK_DIR; HP_LOCK_DIR=""
+  if ! hp_lock_at "$lb.lock"; then HP_LOCK_DIR=$HP_LOCK_DIR2; HP_LOCK_DIR2=""; hp_unlock; return 2; fi
+  # hp_lock_at left HP_LOCK_DIR on the second lock; the first is held in
+  # HP_LOCK_DIR2 so that one hp_unlock, the trap included, releases both,
+  # the first-taken lock last.
+}
+# Remove each lock only when this pid owns it: a stale takeover may have
 # replaced it with another process's lock.
 hp_unlock() {
-  if [ -n "$HP_LOCK_DIR" ] && [ "$(sed -n 's/^pid=//p' "$HP_LOCK_DIR/owner" 2>/dev/null)" = "$$" ]; then
-    rm -rf "$HP_LOCK_DIR"
-  fi
-  HP_LOCK_DIR=""
+  local d
+  for d in "$HP_LOCK_DIR" "$HP_LOCK_DIR2"; do
+    if [ -n "$d" ] && [ "$(sed -n 's/^pid=//p' "$d/owner" 2>/dev/null)" = "$$" ]; then rm -rf "$d"; fi
+  done
+  HP_LOCK_DIR=""; HP_LOCK_DIR2=""
+}
+# <repo-dir> <branch> -> the lease file for the branch beside the lock: a
+# branch name may hold slashes, so the file is keyed by a digest of the full
+# ref name and carries the name inside.
+hp_lease_key() {
+  local c ref12
+  c=$(hp_checkout_path "$1") || return 1
+  ref12=$(printf 'refs/heads/%s' "$2" | git -C "$1" hash-object --stdin | cut -c1-12)
+  printf '%s.final-%s\n' "$c" "$ref12"
 }
 
 # --- containment ------------------------------------------------------------

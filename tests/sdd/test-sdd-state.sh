@@ -2956,6 +2956,8 @@ if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=deps pla
 
 # --from is read from the caller's directory, and its hash is of that same file.
 mkdir -p "$TEST_ROOT/elsewhere/docs"
+# deps resolves the cwd's repository as the code repository, so the caller's directory must be one.
+git init -q "$TEST_ROOT/elsewhere"
 printf '### Task 1: A\n\n**Depends on:** none\n' > "$TEST_ROOT/elsewhere/docs/only-here.md"
 out=$(cd "$TEST_ROOT/elsewhere" && bash "$SDD_STATE" deps --from docs/only-here.md "$dp/docs/plan.md" 2>/dev/null); rc=$?
 want=$(git -C "$dp" hash-object "$TEST_ROOT/elsewhere/docs/only-here.md")
@@ -2965,6 +2967,100 @@ printf '### Task 1: A\n\n**Depends on:** none\n' > "$TEST_ROOT/elsewhere/docs/ca
 out=$(cd "$TEST_ROOT/elsewhere" && bash "$SDD_STATE" deps --from docs/candidate.md "$dp/docs/plan.md" 2>/dev/null); rc=$?
 want=$(git -C "$dp" hash-object "$TEST_ROOT/elsewhere/docs/candidate.md")
 if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=deps plan=${want:0:7} tasks=1" ]; then pass "a same-named file in the plan repository does not stand in for the caller's --from"; else fail "same-named --from (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+echo "register: the plan line, siblings and the lock pair"
+make_pair rg; rg_a=$PAIR_A
+mkdir -p "$rg_a/docs"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rg_a/docs/plan.md"; : > "$rg_a/docs/spec.md"
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rg_a/docs/plan2.md"
+git -C "$rg_a" add docs; git -C "$rg_a" commit -qm plans; git -C "$rg_a" push -q origin main 2>/dev/null
+git -C "$rg_a" switch -q -c feat
+run_state "$rg_a" sync docs/plan.md >/dev/null 2>&1; wsr=$(run_sdd_dir "$rg_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsr/progress.md"
+out=$(run_state "$rg_a" register docs/plan.md --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=feat" ] && grep -q "^plan: integration feat code-root [0-9a-f]\{7\} plan-ref feat plan-root [0-9a-f]\{7\} spec docs/spec.md$" "$wsr/progress.md"; then pass "register writes the plan line once"; else fail "register writes the plan line (rc=$rc: $out: $(grep '^plan:' "$wsr/progress.md" 2>/dev/null))"; fi
+out=$(run_state "$rg_a" register docs/plan.md --session s2 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=feat" ] && [ "$(grep -c '^plan: integration' "$wsr/progress.md")" = 1 ]; then pass "a matching re-registration is a no-op"; else fail "matching re-registration (rc=$rc: $out)"; fi
+out=$(run_state "$rg_a" register docs/plan.md --session s2 --integration other 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-branch expected=feat" ]; then pass "a different branch for a registered plan is wrong-branch"; else fail "wrong-branch (rc=$rc: $out)"; fi
+wsr2=$(run_sdd_dir "$rg_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsr2/progress.md"
+out=$(run_state "$rg_a" register docs/plan2.md --session s3 --integration feat2 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% plan=*}" = "status=spec-branch-mismatch expected=feat" ] && [ "${out##* plan=}" = "$(basename "$wsr")" ]; then pass "a sibling plan of the same spec must share the integration branch"; else fail "spec-branch-mismatch (rc=$rc: $out)"; fi
+out=$(run_state "$rg_a" register docs/plan2.md --session s3 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ]; then pass "a sibling on the same branch registers"; else fail "sibling registers (rc=$rc: $out)"; fi
+# verify: a named branch that is neither the integration branch nor a task branch.
+git -C "$rg_a" switch -q -c stray
+out=$(run_state "$rg_a" verify docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-branch expected=feat" ]; then pass "verify reports wrong-branch on a stray branch"; else fail "verify wrong-branch (rc=$rc: $out)"; fi
+git -C "$rg_a" switch -q -c "feat.$(basename "$wsr" | sed 's/.*-//').task-1" feat
+out=$(run_state "$rg_a" verify docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=ok" ]; then pass "verify accepts this plan's task branch"; else fail "verify task branch (rc=$rc: $out)"; fi
+git -C "$rg_a" switch -q --detach feat
+out=$(run_state "$rg_a" verify docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ]; then pass "verify accepts a detached checkout"; else fail "verify detached (rc=$rc: $out)"; fi
+# A later session registers detached (the plan ref comes from the plan line) or from this plan's task branch; a first registration needs a named branch.
+out=$(run_state "$rg_a" register docs/plan.md --session s9 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=feat" ]; then pass "a later session registers from a detached checkout"; else fail "detached re-registration (rc=$rc: $out)"; fi
+git -C "$rg_a" switch -q "feat.$(basename "$wsr" | sed 's/.*-//').task-1"
+out=$(run_state "$rg_a" register docs/plan.md --session s9 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ]; then pass "a session on this plan's task branch re-registers"; else fail "task-branch re-registration (rc=$rc: $out)"; fi
+git -C "$rg_a" switch -q --detach feat
+printf '# T\n\n**Spec:** docs/spec3.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rg_a/docs/plan3.md"; : > "$rg_a/docs/spec3.md"
+wsr3=$(run_sdd_dir "$rg_a" docs/plan3.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan3.md\n' > "$wsr3/progress.md"
+out=$(run_state "$rg_a" register docs/plan3.md --session s9 --integration feat3 2>/dev/null); rc=$?
+if [ "$rc" -eq 11 ] && [ "$out" = "status=detached-head repo=plan" ] && ! grep -q '^plan:' "$wsr3/progress.md"; then pass "a first registration needs a named branch to name the plan ref"; else fail "detached first registration (rc=$rc: $out)"; fi
+rm -rf "$wsr3"; rm -f "$rg_a/docs/plan3.md" "$rg_a/docs/spec3.md"
+git -C "$rg_a" switch -q feat
+make_repo "$TEST_ROOT/foreign"
+out=$(run_state "$rg_a" register docs/plan.md --session s2 --integration feat --code-repo "$TEST_ROOT/foreign" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "register refuses a code repository whose root is not the recorded code root"; else fail "register wrong-repo (rc=$rc: $out)"; fi
+out=$(run_state "$rg_a" deps docs/plan.md --code-repo "$TEST_ROOT/foreign" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "deps refuses a foreign --code-repo once the plan line exists"; else fail "deps wrong-repo (rc=$rc: $out)"; fi
+out=$(cd "$TEST_ROOT/foreign" && bash "$SDD_STATE" deps "$rg_a/docs/plan.md" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "deps run from a foreign repository without --code-repo is wrong-repo"; else fail "deps foreign cwd (rc=$rc: $out)"; fi
+# A re-registration must match the whole plan line: the plan ref and the plan root too.
+git -C "$rg_a" switch -q -c feat-b feat
+out=$(run_state "$rg_a" register docs/plan.md --session s2 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-branch expected=feat repo=plan" ]; then pass "a plan repository on another branch than the recorded plan ref is wrong-branch repo=plan"; else fail "plan-ref mismatch (rc=$rc: $out)"; fi
+git -C "$rg_a" switch -q feat
+pl_orig=$(grep '^plan: integration' "$wsr/progress.md")
+sed -i '' 's| plan-root [0-9a-f]* spec | plan-root 0000000 spec |' "$wsr/progress.md" 2>/dev/null || sed -i 's| plan-root [0-9a-f]* spec | plan-root 0000000 spec |' "$wsr/progress.md"
+out=$(run_state "$rg_a" register docs/plan.md --session s2 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-repo expected=0000000 repo=plan" ]; then pass "a recorded plan root that is not this repository's is wrong-repo repo=plan"; else fail "plan-root mismatch (rc=$rc: $out)"; fi
+sed -i '' "s|^plan: integration .*|$pl_orig|" "$wsr/progress.md" 2>/dev/null || sed -i "s|^plan: integration .*|$pl_orig|" "$wsr/progress.md"
+# The plan in one repository and the code in another: the state lives with the plan, the plan line records both roots.
+make_repo "$TEST_ROOT/sp"; make_repo "$TEST_ROOT/sc"; sp="$TEST_ROOT/sp"; sc="$TEST_ROOT/sc"
+# Two repositories made in the same second would share a root commit id, and the root is what identifies the code repository.
+git -C "$sc" commit -q --amend --allow-empty -m "code root"
+mkdir -p "$sp/docs"; printf '# S\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$sp/docs/plan.md"; : > "$sp/docs/spec.md"; git -C "$sp" add docs; git -C "$sp" commit -qm plan; git -C "$sp" switch -q -c plans
+git -C "$sc" switch -q -c feat
+wssp=$(run_sdd_dir "$sp" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wssp/progress.md"
+root_sc=$(git -C "$sc" rev-list --max-parents=0 HEAD | sort | head -n 1 | cut -c1-7); root_sp=$(git -C "$sp" rev-list --max-parents=0 HEAD | sort | head -n 1 | cut -c1-7)
+out=$(cd "$sc" && bash "$SDD_STATE" register "$sp/docs/plan.md" --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=plans" ] && grep -q "^plan: integration feat code-root $root_sc plan-ref plans plan-root $root_sp spec docs/spec.md$" "$wssp/progress.md"; then pass "a split layout records the code root from the cwd and the plan ref from the plan repository"; else fail "split register (rc=$rc: $out: $(grep '^plan:' "$wssp/progress.md" 2>/dev/null))"; fi
+out=$(run_state "$sp" register docs/plan.md --session s2 --integration feat --code-repo "$sc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=plans" ]; then pass "a re-registration from the plan repository with --code-repo matches"; else fail "split re-register (rc=$rc: $out)"; fi
+out=$(run_state "$sp" register docs/plan.md --session s2 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "the plan repository itself is not the code repository"; else fail "split wrong-repo (rc=$rc: $out)"; fi
+# Two sibling registrations with different branches through a barrier: exactly one succeeds.
+git -C "$rg_a" switch -q feat
+rm -rf "$wsr2"; wsr2=$(run_sdd_dir "$rg_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsr2/progress.md"
+sed -i '' '/^plan: integration/d' "$wsr/progress.md" 2>/dev/null || sed -i '/^plan: integration/d' "$wsr/progress.md"
+co_r=$(dirname "$(dirname "$wsr")")
+: > "$co_r/.register-before-write-pause"
+( cd "$rg_a" && HYPERPOWERS_TEST_PAUSE_AT=register-before-write bash "$SDD_STATE" register docs/plan.md --session s1 --integration feat > "$TEST_ROOT/rg.1" 2>/dev/null; echo $? > "$TEST_ROOT/rg.1rc" ) &
+n=0; while [ ! -e "$co_r/.register-before-write-paused" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+( cd "$rg_a" && bash "$SDD_STATE" register docs/plan2.md --session s3 --integration feat2 > "$TEST_ROOT/rg.2" 2>/dev/null; echo $? > "$TEST_ROOT/rg.2rc" ) &
+sleep 0.5; rm -f "$co_r/.register-before-write-pause"; wait
+r1=$(cat "$TEST_ROOT/rg.1rc"); r2=$(cat "$TEST_ROOT/rg.2rc")
+if { [ "$r1" = 0 ] && [ "$r2" = 9 ]; } || { [ "$r1" = 9 ] && [ "$r2" = 0 ]; }; then pass "two sibling registrations with different branches: exactly one succeeds"; else fail "registration race (rcs $r1 $r2: $(cat "$TEST_ROOT/rg.1") / $(cat "$TEST_ROOT/rg.2"))"; fi
+# The lock pair in ascending key order, roles swapped between two operations.
+make_repo "$TEST_ROOT/lk1"; make_repo "$TEST_ROOT/lk2"
+# HP_LOCK_DIR2 is the first-taken (lower-key) lock. The pause files make the barrier real: without them the first holder would finish before the second starts.
+for lkr in lk1 lk2; do : > "$( . "$LIB"; hp_checkout_path "$TEST_ROOT/$lkr" ).lock-pair-between-pause"; done
+( . "$LIB"; HYPERPOWERS_TEST_PAUSE_AT=lock-pair-between hp_lock_pair "$TEST_ROOT/lk1" "$TEST_ROOT/lk2" > /dev/null 2>&1; echo "$HP_LOCK_DIR2" > "$TEST_ROOT/lk.first"; hp_unlock ) &
+sleep 0.3
+( . "$LIB"; hp_lock_pair "$TEST_ROOT/lk2" "$TEST_ROOT/lk1" > /dev/null 2>&1; echo "$HP_LOCK_DIR2" > "$TEST_ROOT/lk.second"; hp_unlock ) &
+sleep 0.3; rm -f "$XDG_CACHE_HOME"/hyperpowers/state/*.lock-pair-between-pause 2>/dev/null; wait
+k1=$(state_key "$TEST_ROOT/lk1"); k2=$(state_key "$TEST_ROOT/lk2"); lower=$k1; [ "$k1" \< "$k2" ] || lower=$k2
+if [ "$(basename "$(cat "$TEST_ROOT/lk.first")" .lock)" = "$lower" ] && [ "$(basename "$(cat "$TEST_ROOT/lk.second")" .lock)" = "$lower" ]; then pass "hp_lock_pair takes the lower key first whichever role each repository plays"; else fail "lock pair order ($(cat "$TEST_ROOT/lk.first") / $(cat "$TEST_ROOT/lk.second") lower=$lower)"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

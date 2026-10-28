@@ -12,7 +12,8 @@
 #   sdd-state import PLAN_FILE
 #   sdd-state prune [--days N] [--apply] --repo DIR
 #   sdd-state claim PLAN_FILE N --session SID [--takeover]
-#   sdd-state deps PLAN_FILE [--check] [--ledger FILE] [--from FILE]
+#   sdd-state deps PLAN_FILE [--check] [--ledger FILE] [--from FILE] [--code-repo DIR]
+#   sdd-state register PLAN_FILE --session SID --integration BRANCH [--code-repo DIR]
 #
 # stdout: one line of space-separated key=value pairs, status= first; sync
 # adds a second line "merge=<command>" on diverged.
@@ -49,7 +50,8 @@ usage() {
     '  import PLAN_FILE' \
     '  prune [--days N] [--apply] --repo DIR' \
     '  claim PLAN_FILE N --session SID [--takeover]' \
-    '  deps PLAN_FILE [--check] [--ledger FILE] [--from FILE]' >&2
+    '  deps PLAN_FILE [--check] [--ledger FILE] [--from FILE] [--code-repo DIR]' \
+    '  register PLAN_FILE --session SID --integration BRANCH [--code-repo DIR]' >&2
   exit 2
 }
 
@@ -82,6 +84,30 @@ resolve_plan() {
 ledger_path() { printf '%s/progress.md\n' "$WSDIR"; }
 # One encoding for every path-valued stdout field: a space becomes %20.
 enc() { printf '%s' "$1" | sed 's/ /%20/g'; }
+# --code-repo DIR, or the cwd's toplevel: the repository that owns the
+# integration branch when the plan lives elsewhere. Exits 2 as verify does.
+code_repo_arg() { # <value or empty> [<ledger>] -> physical path; refuses a repository whose root is not the recorded code root
+  local code=$1 ledger=${2:-} line want
+  if [ -z "$code" ]; then
+    code=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "sdd-state: not inside a code repository; pass --code-repo DIR" >&2; exit 2; }
+  fi
+  code=$(hp_physical_dir "$code") || { echo "sdd-state: no such directory: $code" >&2; exit 2; }
+  if [ -n "$ledger" ] && [ -f "$ledger" ]; then
+    line=$(plan_line_of "$ledger")
+    if [ -n "$line" ]; then
+      want=$(plan_field "$line" code-root)
+      if [ "$(root_of "$code" | cut -c1-7)" != "$want" ]; then echo "status=wrong-repo expected=$want"; exit 9; fi
+    fi
+  fi
+  printf '%s\n' "$code"
+}
+# <ledger> -> "integration=.. code-root=.. plan-ref=.. plan-root=.. spec=.." from the newest plan line, or nothing.
+plan_line_of() {
+  sed -n 's/^plan: integration \([^ ]*\) code-root \([^ ]*\) plan-ref \([^ ]*\) plan-root \([^ ]*\) spec \(.*\)$/integration=\1 code-root=\2 plan-ref=\3 plan-root=\4 spec=\5/p' "$1" 2>/dev/null | tail -n 1
+}
+plan_field() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -n 1; }
+spec_of_plan() { sed -n 's/^\*\*Spec:\*\*[[:space:]]*//p' "$1" | head -n 1; }
+ws8_of() { printf '%s' "$1" | sed 's/.*-//'; }
 owner_record() { # <sid>
   local top b
   # Test hook: a failed owner write, so the fail-closed paths are provable.
@@ -128,12 +154,13 @@ authoritative_plan_blob() {
   printf '%s %s\n' "$blob" "$tmp"
 }
 cmd_deps() {
-  local plan="" check=0 ledger="" from="" pair blob tmp graph rc out n ref
+  local plan="" check=0 ledger="" from="" code="" pair blob tmp graph rc out n ref
   while [ $# -gt 0 ]; do
     case "$1" in
       --check) check=1; shift ;;
       --ledger) [ $# -ge 2 ] || usage; ledger=$2; shift 2 ;;
       --from) [ $# -ge 2 ] || usage; from=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
       -*) usage ;;
       *) [ -z "$plan" ] || usage; plan=$1; shift ;;
     esac
@@ -141,6 +168,7 @@ cmd_deps() {
   [ -n "$plan" ] || usage
   resolve_plan "$plan"
   [ -n "$ledger" ] || ledger=$(ledger_path)
+  code=$(code_repo_arg "$code" "$ledger") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
   ref=$(plan_ref_of_ledger "$ledger"); [ -n "$ref" ] || ref=$(git -C "$REPO" branch --show-current 2>/dev/null)
   if [ -n "$from" ]; then
     [ -f "$from" ] || { echo "sdd-state: no such file: $from" >&2; echo "status=error"; return 2; }
@@ -165,6 +193,80 @@ cmd_deps() {
   if [ "$rc" -eq 0 ]; then echo "status=clean plan=${blob:0:7}"; return 0; fi
   n=$(printf '%s\n' "$out" | grep -c .)
   echo "status=conflicts plan=${blob:0:7} count=$n"; printf '%s\n' "$out"; return 1
+}
+
+# --- register ----------------------------------------------------------------
+# A session's first act on a plan. The check (siblings of the same spec share
+# the integration branch, the plan ref and the plan root; the branch is not
+# closing; an existing line matches) and the write happen under both
+# repositories' locks, so two Setups cannot both pass and write conflicting
+# lines.
+cmd_register() {
+  local plan="" sid="" integration="" code="" ledger line spec plan_ref plan_root code_root d other ospec field lease rc mine cur
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --integration) [ $# -ge 2 ] || usage; integration=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$sid" ] && [ -n "$integration" ] || usage
+  resolve_plan "$plan"
+  ledger=$(ledger_path)
+  [ -f "$ledger" ] || { echo "sdd-state: no ledger at $ledger; Setup creates it before registering" >&2; echo "status=error"; return 2; }
+  code=$(code_repo_arg "$code" "$ledger") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+  spec=$(spec_of_plan "$PLAN")
+  # A first registration names the plan ref after the current branch, so the
+  # plan repository must be on one then; a later session starts detached at
+  # the integration head and takes the plan ref from the plan line instead.
+  cur=$(git -C "$REPO" branch --show-current 2>/dev/null)
+  plan_root=$(root_of "$REPO"); code_root=$(root_of "$code")
+  hp_lock_pair "$PLAN_DIR" "$code" || return 2
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = register-before-write ]; then
+    : > "$CO/.register-before-write-paused"
+    while [ -e "$CO/.register-before-write-pause" ]; do sleep 0.1; done
+    rm -f "$CO/.register-before-write-paused"
+  fi
+  # The closing check comes first: a branch being torn down admits nothing,
+  # not even a session of a plan already registered on it.
+  lease=$(hp_lease_key "$PLAN_DIR" "$integration")
+  if [ -f "$lease" ] && [ "$(sed -n 's/^closing=//p' "$lease")" = 1 ]; then hp_unlock; echo "status=branch-closing"; return 15; fi
+  line=$(plan_line_of "$ledger")
+  if [ -n "$line" ]; then
+    # A re-registration must match the whole recorded identity: a session
+    # arriving from another checkout of the plan repository, or with another
+    # spec header, is not this plan's session.
+    hp_unlock
+    plan_ref=$(plan_field "$line" plan-ref)
+    [ "$(plan_field "$line" integration)" = "$integration" ] || { echo "status=wrong-branch expected=$(plan_field "$line" integration)"; return 9; }
+    [ "$(plan_field "$line" code-root)" = "${code_root:0:7}" ] || { echo "status=wrong-repo expected=$(plan_field "$line" code-root)"; return 9; }
+    # Detached, on the plan ref, or on one of this plan's task branches: a
+    # resumed session sits on any of the three.
+    case "$cur" in ""|"$plan_ref"|"$integration.$(ws8_of "$WS").task-"*) ;; *) echo "status=wrong-branch expected=$plan_ref repo=plan"; return 9 ;; esac
+    [ "$(plan_field "$line" plan-root)" = "${plan_root:0:7}" ] || { echo "status=wrong-repo expected=$(plan_field "$line" plan-root) repo=plan"; return 9; }
+    [ "$(plan_field "$line" spec)" = "$spec" ] || { echo "sdd-state: the plan line names spec $(plan_field "$line" spec), the plan file names $spec" >&2; echo "status=error"; return 2; }
+    echo "status=registered integration=$integration plan-ref=$plan_ref"; return 0
+  fi
+  [ -n "$cur" ] || { hp_unlock; echo "status=detached-head repo=plan"; return 11; }
+  plan_ref=$cur
+  for d in "$ROOT"/plans/*/; do
+    [ -f "$d/progress.md" ] || continue
+    [ "${d%/}" != "$WSDIR" ] || continue
+    other=$(plan_line_of "$d/progress.md"); [ -n "$other" ] || continue
+    ospec=$(plan_field "$other" spec); [ "$ospec" = "$spec" ] || continue
+    for field in integration plan-ref plan-root; do
+      case "$field" in integration) mine=$integration ;; plan-ref) mine=$plan_ref ;; plan-root) mine=${plan_root:0:7} ;; esac
+      if [ "$(plan_field "$other" "$field")" != "$mine" ]; then
+        hp_unlock; echo "status=spec-branch-mismatch expected=$(plan_field "$other" integration) plan=$(basename "${d%/}")"; return 9
+      fi
+    done
+  done
+  printf 'plan: integration %s code-root %s plan-ref %s plan-root %s spec %s\n' "$integration" "${code_root:0:7}" "$plan_ref" "${plan_root:0:7}" "$spec" >> "$ledger" || { hp_unlock; echo "status=error"; return 2; }
+  hp_unlock
+  echo "status=registered integration=$integration plan-ref=$plan_ref"
 }
 
 # --- snapshot ----------------------------------------------------------------
@@ -1977,7 +2079,7 @@ verify_ledger() {
   echo "status=ok tasks=$tasks"
 }
 cmd_verify() {
-  local plan="" code="" ledger copy rc
+  local plan="" code="" ledger copy rc line cur integ
   while [ $# -gt 0 ]; do
     case "$1" in
       --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
@@ -2007,6 +2109,15 @@ cmd_verify() {
   copy=$(mktemp "${TMPDIR:-/tmp}/sdd-verify.XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
   cp "$ledger" "$copy" || { rm -f "$copy"; hp_unlock; echo "status=error"; return 2; }
   hp_unlock
+  line=$(plan_line_of "$copy")
+  if [ -n "$line" ]; then
+    cur=$(git -C "$code" branch --show-current 2>/dev/null)
+    integ=$(plan_field "$line" integration)
+    case "$cur" in
+      ""|"$integ"|"$integ.$(ws8_of "$WS").task-"*) ;;
+      *) rm -f "$copy"; echo "status=wrong-branch expected=$integ"; return 9 ;;
+    esac
+  fi
   verify_ledger "$copy" "$code"; rc=$?
   rm -f "$copy"
   return "$rc"
@@ -2145,6 +2256,7 @@ case "$sub" in
   import) cmd_import "$@" ;;
   claim) cmd_claim "$@" ;;
   deps) cmd_deps "$@" ;;
+  register) cmd_register "$@" ;;
   finish) cmd_finish "$@" ;;
   prune) cmd_prune "$@" ;;
   sync) cmd_sync "$@" ;;

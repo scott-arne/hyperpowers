@@ -3190,6 +3190,8 @@ if [ "$rc" -eq 0 ] && [ "${out%% owner=*}" = "status=held task=3" ] && git -C "$
 printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wscl/progress.md"
 ( cd "$cl_a" && HYPERPOWERS_TEST_CRASH_AT=claim-after-rename bash "$SDD_STATE" claim docs/plan.md 2 --session s1 >/dev/null 2>&1 ); rc=$?
 if [ "$rc" -eq 99 ] && [ -d "$wscl/claims/task-2" ] && ! git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-2" >/dev/null; then pass "the crash seam stops after the rename with no branch yet"; else fail "crash after rename (rc=$rc)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 2 --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && ! git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-2" >/dev/null; then pass "a losing claimant creates no branch"; else fail "loser no branch (rc=$rc: $out)"; fi
 out=$(run_state "$cl_a" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-2" >/dev/null && grep -q '^Task 2: branch' "$wscl/progress.md"; then pass "the retry after the crash finishes the claim"; else fail "retry after crash (rc=$rc: $out)"; fi
 # A crash after the branch: the branch exists, the ledger line is owed; the retry appends it.
@@ -3198,11 +3200,10 @@ if [ "$rc" -eq 99 ] && git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-4"
 out=$(run_state "$cl_a" claim docs/plan.md 4 --session s1 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% owner=*}" = "status=held task=4" ] && grep -q "^Task 4: branch feat.$ws8cl.task-4 from " "$wscl/progress.md"; then pass "the retry after the branch crash appends the line"; else fail "retry after branch crash (rc=$rc: $out)"; fi
 # A losing claimant creates no branch; a takeover gets task-N.2 from the old head.
-git -C "$cl_a" commit -q --allow-empty -m "work on 3" --no-verify 2>/dev/null; git -C "$cl_a" update-ref "refs/heads/feat.$ws8cl.task-3" HEAD
-out=$(run_state "$cl_a" claim docs/plan.md 3 --session s2 2>/dev/null); rc=$?
-if [ "$rc" -eq 4 ] && ! git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-3.2" >/dev/null; then pass "a losing claimant creates no branch"; else fail "loser no branch (rc=$rc: $out)"; fi
+# The dead session's work sits on the task branch, ahead of the integration branch.
+wk=$(git -C "$cl_a" commit-tree -p "$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-3")" -m "work on 3" "$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-3^{tree}")"); git -C "$cl_a" update-ref "refs/heads/feat.$ws8cl.task-3" "$wk"
 out=$(run_state "$cl_a" claim docs/plan.md 3 --session s2 --takeover 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && [ "${out%% from=*}" = "status=claimed task=3 takeover=1 branch=feat.$ws8cl.task-3.2" ] && [ "$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-3.2")" = "$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-3")" ] && git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-3" >/dev/null; then pass "a takeover branches task-3.2 from the old head and leaves the old branch"; else fail "takeover branch (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "${out%% from=*}" = "status=claimed task=3 takeover=1 branch=feat.$ws8cl.task-3.2" ] && [ "$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-3.2")" = "$wk" ] && [ "$wk" != "$(git -C "$cl_a" rev-parse feat)" ] && git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-3" >/dev/null; then pass "a takeover branches task-3.2 from the old branch head, not the integration head, and leaves the old branch"; else fail "takeover branch (rc=$rc: $out)"; fi
 # Two sibling plans both claiming Task 1 create distinct branches.
 printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: Z\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$cl_a/docs/plan2.md"; git -C "$cl_a" add docs; git -C "$cl_a" commit -qm plan2
 wscl2=$(run_sdd_dir "$cl_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wscl2/progress.md"; run_state "$cl_a" register docs/plan2.md --session s3 --integration feat >/dev/null
@@ -3213,6 +3214,38 @@ make_repo "$TEST_ROOT/cl0"; mkdir -p "$TEST_ROOT/cl0/docs"; printf '# P\n\n### T
 ws0=$(ws_path "$TEST_ROOT/cl0" "$TEST_ROOT/cl0/docs/plan.md"); mkdir -p "$ws0"; printf '# SDD ledger — plan: docs/plan.md\n' > "$ws0/progress.md"
 out=$(run_state "$TEST_ROOT/cl0" claim docs/plan.md 1 --session s9 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=none" ]; then pass "a claim without a plan line creates no branch"; else fail "no plan line (rc=$rc: $out)"; fi
+# Review fixtures: pre-upgrade owner records, containment, takeover retry, leftovers.
+printf '# R\n\n**Spec:** docs/spec.md\n' > "$cl_a/docs/plan3.md"
+for t in 1 2 3 4 5 6; do printf '\n### Task %s: T\n\n**Risk tier:** standard\n\n**Depends on:** none\n' "$t" >> "$cl_a/docs/plan3.md"; done
+git -C "$cl_a" add docs; git -C "$cl_a" commit -qm plan3
+wscl3=$(run_sdd_dir "$cl_a" docs/plan3.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan3.md\n' > "$wscl3/progress.md"; run_state "$cl_a" register docs/plan3.md --session s4 --integration feat >/dev/null
+ws83=$(basename "$wscl3" | sed 's/.*-//'); H3=$(git -C "$cl_a" rev-parse feat)
+mkdir -p "$wscl3/claims/task-2" "$wscl3/claims/task-3"
+for t in 2 3; do printf 'session=sold\nworktree=%s\nbranch=main\nhost=h\ntime=2026-01-01T00:00:00Z\n' "$cl_a" > "$wscl3/claims/task-$t/owner"; done
+out=$(run_state "$cl_a" claim docs/plan3.md 2 --session sold 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=2 owner=sold own=1 branch=none" ]; then pass "an owner's re-claim of a pre-upgrade record has no task branch"; else fail "pre-upgrade own (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan3.md 3 --session s5 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(git -C "$cl_a" rev-parse "feat.$ws83.task-3.2")" = "$H3" ]; then pass "a takeover of a pre-upgrade record branches from the integration head"; else fail "pre-upgrade takeover (rc=$rc: $out)"; fi
+# A takeover retried after a crash between the record and the branch.
+run_state "$cl_a" claim docs/plan3.md 1 --session s4 >/dev/null 2>&1
+wk1=$(git -C "$cl_a" commit-tree -p "$H3" -m "work on 1" "$(git -C "$cl_a" rev-parse "feat^{tree}")"); git -C "$cl_a" update-ref "refs/heads/feat.$ws83.task-1" "$wk1"
+run_state "$cl_a" claim docs/plan3.md 1 --session s5 --takeover >/dev/null 2>&1
+git -C "$cl_a" branch -D "feat.$ws83.task-1.2" >/dev/null 2>&1; sed -i '' '/^Task 1: branch feat.[0-9a-f]*.task-1.2 /d' "$wscl3/progress.md" 2>/dev/null || sed -i '/^Task 1: branch .*task-1.2 /d' "$wscl3/progress.md"
+out=$(run_state "$cl_a" claim docs/plan3.md 1 --session s5 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% from=*}" = "status=held task=1 owner=s5 own=1 branch=feat.$ws83.task-1.2" ] && [ "$(git -C "$cl_a" rev-parse "feat.$ws83.task-1.2")" = "$wk1" ] && ! git -C "$cl_a" rev-parse -q --verify "feat.$ws83.task-1.3" >/dev/null && [ "$(grep -c '^--- superseded' "$wscl3/claims/task-1/owner.history")" = 1 ]; then pass "a retried takeover completes at the recorded base without superseding itself"; else fail "takeover retry (rc=$rc: $out)"; fi
+# A leftover branch past its base makes a fresh claim an error that names it.
+wk4=$(git -C "$cl_a" commit-tree -p "$H3" -m leftover "$(git -C "$cl_a" rev-parse "feat^{tree}")"); git -C "$cl_a" update-ref "refs/heads/feat.$ws83.task-4" "$wk4"
+out=$(run_state "$cl_a" claim docs/plan3.md 4 --session s4 2>&1); rc=$?
+case "$out" in *"feat.$ws83.task-4 already exists"*"status=error"*) lf=1 ;; *) lf=0 ;; esac
+if [ "$rc" -eq 2 ] && [ "$lf" = 1 ]; then pass "a fresh claim refuses a leftover task branch and names it"; else fail "leftover branch (rc=$rc: $out)"; fi
+# Containment: a hostile session id cannot reach the ledger, a symlinked activity directory receives nothing.
+cp "$wscl3/progress.md" "$TEST_ROOT/ledger3.before"
+out=$(run_state "$cl_a" claim docs/plan3.md 5 --session ../progress.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "${out##*$'\n'}" = "status=error" ] && grep -q '^# SDD ledger' "$wscl3/progress.md" && cmp -s "$wscl3/progress.md" <(cat "$TEST_ROOT/ledger3.before"; grep '^Task 5: branch' "$wscl3/progress.md"); then pass "a session id with .. cannot overwrite the ledger"; else fail "hostile session id (rc=$rc: $out)"; fi
+mkdir -p "$TEST_ROOT/outside-activity"; rm -rf "$wscl3/activity"; ln -s "$TEST_ROOT/outside-activity" "$wscl3/activity"
+out=$(run_state "$cl_a" claim docs/plan3.md 6 --session s4 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$(ls "$TEST_ROOT/outside-activity")" ]; then pass "an activity symlink receives no write"; else fail "activity symlink (rc=$rc: $out)"; fi
+rm -f "$wscl3/activity"
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

@@ -120,6 +120,7 @@ spec_of_plan() { sed -n 's/^\*\*Spec:\*\*[[:space:]]*//p' "$1" | head -n 1; }
 ws8_of() { printf '%s' "$1" | sed 's/.*-//'; }
 owner_record() { # <sid> [<task branch> <from sha>]
   local top b
+  # Test hook: a failed owner write, so the fail-closed paths are provable.
   [ -z "${HYPERPOWERS_TEST_FAIL_OWNER_WRITE:-}" ] || return 1
   top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
   b=$(git branch --show-current 2>/dev/null)
@@ -136,6 +137,9 @@ claim_task_branch_name() { # <integration> <ws8> <N> [<k>] -> <integration>.<ws8
   printf '%s.%s.task-%s%s' "$1" "$2" "$3" "${4:+.$4}"
 }
 write_activity() { # <sid>
+  # The session id is caller input and the activity directory arrives with a
+  # fetched state branch, so containment is checked at the write point.
+  hp_contained "$ROOT" "plans/$WS/activity/$1" || return 1
   mkdir -p "$WSDIR/activity" && printf '%s\n' "$(hp_utc_now)" > "$WSDIR/activity/$1.new" && mv -f "$WSDIR/activity/$1.new" "$WSDIR/activity/$1"
 }
 
@@ -341,7 +345,7 @@ cmd_snapshot() {
 # workspace, so a claim can never slip in between those two steps.
 cmd_claim() {
   local plan="" n="" sid="" takeover=0 code="" claims target tmp rc owner since wt prev
-  local graph pair blob deps d waiting line integ ref from k prev_ref tb branch_out lease
+  local graph pair blob deps d waiting line again integ ref from k prev_ref tb branch_out lease
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
@@ -363,14 +367,65 @@ cmd_claim() {
   # is durable and names this session, because a caller that believes it
   # owns a task it does not own duplicates work.
   # A claim with a plan line writes a code ref, so it holds both repositories'
-  # locks in the pair's order; without one it writes only state.
-  line=$(plan_line_of "$WSDIR/progress.md"); integ=""; ref=""; from=""
-  if [ -n "$line" ]; then
-    integ=$(plan_field "$line" integration)
-    code=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
-    hp_lock_pair "$PLAN_DIR" "$code" || return 2
-  else
-    hp_lock "$PLAN_DIR" || return 2
+  # locks in the pair's order; without one it writes only state. A
+  # --code-repo is validated whenever it is given, so a mistyped directory is
+  # refused rather than silently ignored.
+  claim_take_locks() {
+    integ=""
+    if [ -n "$line" ]; then
+      integ=$(plan_field "$line" integration)
+      code=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+      hp_lock_pair "$PLAN_DIR" "$code" || return 2
+    else
+      if [ -n "$code" ]; then
+        code=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+      fi
+      hp_lock "$PLAN_DIR" || return 2
+    fi
+  }
+  # Creates the task branch at its base and records it, idempotently. A fresh
+  # claim (strict) accepts only an absent branch or one exactly at its base,
+  # because anything else is a leftover of an abandoned run; the owner's retry
+  # also keeps a branch that has moved past its base, the work it made.
+  claim_finish_branch() { # [strict]
+    local have
+    branch_out=""
+    [ -n "$ref" ] || { branch_out=" branch=none"; return 0; }
+    if have=$(git -C "$code" rev-parse -q --verify "refs/heads/$ref^{commit}" 2>/dev/null); then
+      if [ "$have" != "$from" ]; then
+        if [ "${1:-}" = strict ]; then echo "sdd-state: $ref already exists at ${have:0:7}, not at its base ${from:0:7}; it is a leftover of an abandoned run" >&2; return 1; fi
+        git -C "$code" merge-base --is-ancestor "$from" "$have" 2>/dev/null || { echo "sdd-state: $ref exists at ${have:0:7}, not at or past its recorded base ${from:0:7}" >&2; return 1; }
+      fi
+    else
+      git -C "$code" branch "$ref" "$from" >/dev/null || return 1
+    fi
+    if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = claim-after-branch ]; then hp_unlock; exit 99; fi
+    hp_contained "$ROOT" "plans/$WS/progress.md" || return 1
+    grep -q "^Task $n: branch $ref from ${from:0:7}$" "$WSDIR/progress.md" || printf 'Task %s: branch %s from %s\n' "$n" "$ref" "${from:0:7}" >> "$WSDIR/progress.md" || return 1
+    write_activity "$sid" || return 1
+    branch_out=" branch=$ref from=${from:0:7}"
+  }
+  # The owner's own record names the task branch only when it also names its
+  # base: records written before task branches existed carry the session's
+  # checked-out branch under branch= and no from=, and carry no task branch.
+  claim_finish_own() {
+    ref=$(sed -n 's/^branch=//p' "$target/owner" 2>/dev/null); from=$(sed -n 's/^from=//p' "$target/owner" 2>/dev/null)
+    if [ -n "$ref" ] && [ -n "$from" ]; then claim_finish_branch; else ref=""; from=""; branch_out=" branch=none"; fi
+  }
+  line=$(plan_line_of "$WSDIR/progress.md"); ref=""; from=""
+  claim_take_locks || return $?
+  # A register may have appended the plan line between the read and the
+  # lock; a claim that went on with one lock would be branchless on a
+  # registered plan.
+  again=$(plan_line_of "$WSDIR/progress.md")
+  if [ "$again" != "$line" ]; then
+    if [ -z "$line" ]; then
+      hp_unlock; line=$again
+      claim_take_locks || return $?
+      [ "$(plan_line_of "$WSDIR/progress.md")" = "$line" ] || { hp_unlock; echo "sdd-state: the plan line changed while the claim took its locks" >&2; echo "status=error"; return 2; }
+    else
+      hp_unlock; echo "sdd-state: the plan line changed while the claim took its locks" >&2; echo "status=error"; return 2
+    fi
   fi
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace task=$n"; return 2; fi
@@ -380,11 +435,13 @@ cmd_claim() {
   # Without a plan line the claim keeps the contract it had before the graph
   # existed: a plan that cannot be read or parsed, or that has no heading for
   # this task, is claimable with no dependency check. With a plan line the
-  # graph is authoritative and any of those is an error.
+  # graph is authoritative and any of those is an error, and the helpers'
+  # stderr reaches the caller.
+  claim_quiet() { if [ -n "$line" ]; then "$@"; else "$@" 2>/dev/null; fi; }
   deps=none
-  if pair=$(authoritative_plan_blob 2>/dev/null); then
+  if pair=$(claim_quiet authoritative_plan_blob); then
     blob=${pair%% *}; tmp=${pair#* }
-    graph=$(hp_plan_graph "$tmp" 2>/dev/null); rc=$?; rm -f "$tmp"
+    graph=$(claim_quiet hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
     if [ "$rc" -eq 0 ]; then
       deps=$(printf '%s\n' "$graph" | sed -n "s/^task=$n depends=//p")
       if [ -z "$deps" ]; then
@@ -412,35 +469,29 @@ cmd_claim() {
   fi
   hp_contained "$ROOT" "plans/$WS/claims" || { hp_unlock; echo "status=error"; return 2; }
   mkdir -p "$claims" || { hp_unlock; echo "status=error"; return 2; }
-  # Creates the task branch at its base and records it, idempotently: a
-  # branch already at its base or past it is kept, one elsewhere is an error.
-  claim_finish_branch() {
-    local have
-    branch_out=""
-    [ -n "$ref" ] || { branch_out=" branch=none"; return 0; }
-    if have=$(git -C "$code" rev-parse -q --verify "refs/heads/$ref^{commit}" 2>/dev/null); then
-      [ "$have" = "$from" ] || git -C "$code" merge-base --is-ancestor "$from" "$have" 2>/dev/null || { echo "sdd-state: $ref exists at ${have:0:7}, not at or past its recorded base ${from:0:7}" >&2; return 1; }
-    else
-      git -C "$code" branch "$ref" "$from" >/dev/null 2>&1 || return 1
-    fi
-    if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = claim-after-branch ]; then hp_unlock; exit 99; fi
-    grep -q "^Task $n: branch $ref from ${from:0:7}$" "$WSDIR/progress.md" || printf 'Task %s: branch %s from %s\n' "$n" "$ref" "${from:0:7}" >> "$WSDIR/progress.md" || return 1
-    write_activity "$sid"
-    branch_out=" branch=$ref from=${from:0:7}"
-  }
   if [ "$takeover" -eq 1 ] && [ -d "$target" ]; then
+    # A takeover retried by the session that already took over is the owner's
+    # retry: superseding itself would lose the recorded base and strand a
+    # second branch.
+    if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" = "$sid" ]; then
+      claim_finish_own || { hp_unlock; echo "status=error"; return 2; }
+      hp_unlock; echo "status=held task=$n owner=$sid own=1${branch_out}"; return 0
+    fi
     if [ -n "$ref" ]; then
-      prev_ref=$(sed -n 's/^branch=//p' "$target/owner" 2>/dev/null)
+      prev_ref=""
+      [ -z "$(sed -n 's/^from=//p' "$target/owner" 2>/dev/null)" ] || prev_ref=$(sed -n 's/^branch=//p' "$target/owner" 2>/dev/null)
       k=2; while git -C "$code" rev-parse -q --verify "refs/heads/$ref.$k" >/dev/null 2>&1; do k=$((k + 1)); done
       if [ -n "$prev_ref" ] && tb=$(git -C "$code" rev-parse -q --verify "refs/heads/$prev_ref^{commit}" 2>/dev/null); then from=$tb; fi
       ref="$ref.$k"
     fi
+    # New record first (invisible until the rename), then the history line,
+    # then the atomic replacement; a failure anywhere leaves the old owner.
     if ! owner_record "$sid" "$ref" "$from" > "$target/owner.new"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
     prev=$(cat "$target/owner" 2>/dev/null)
     if ! printf -- '--- superseded at %s\n%s\n' "$(hp_utc_now)" "$prev" >> "$target/owner.history"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
     if ! mv -f "$target/owner.new" "$target/owner"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
     if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
-    claim_finish_branch || { hp_unlock; echo "status=error"; return 2; }
+    claim_finish_branch strict || { hp_unlock; echo "status=error"; return 2; }
     hp_unlock
     echo "status=claimed task=$n takeover=1${branch_out}"; return 0
   fi
@@ -450,20 +501,20 @@ cmd_claim() {
   if [ "$rc" -eq 0 ]; then
     if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
     if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = claim-after-rename ]; then hp_unlock; exit 99; fi
-    claim_finish_branch || { hp_unlock; echo "status=error"; return 2; }
+    claim_finish_branch strict || { hp_unlock; echo "status=error"; return 2; }
     hp_unlock; echo "status=claimed task=$n${branch_out}"; return 0
   fi
   rm -rf "$tmp"
   if [ "$rc" -ne 4 ]; then hp_unlock; echo "status=error"; return 2; fi
+  # Read the holder's record while the lock still excludes takeovers and
+  # finish, so the fields come from one record.
   owner=$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)
   since=$(sed -n 's/^time=//p' "$target/owner" 2>/dev/null)
   wt=$(sed -n 's/^worktree=//p' "$target/owner" 2>/dev/null)
   if [ -z "$owner" ]; then hp_unlock; echo "status=error"; return 2; fi
   if [ "$owner" = "$sid" ]; then
     # The owner's retry completes whatever a crash left undone.
-    ref=$(sed -n 's/^branch=//p' "$target/owner" 2>/dev/null); from=$(sed -n 's/^from=//p' "$target/owner" 2>/dev/null)
-    # An owner record without a branch is a claim made without a plan line.
-    if [ -n "$ref" ]; then claim_finish_branch || { hp_unlock; echo "status=error"; return 2; }; else branch_out=" branch=none"; fi
+    claim_finish_own || { hp_unlock; echo "status=error"; return 2; }
     hp_unlock; echo "status=held task=$n owner=$owner own=1${branch_out}"; return 0
   fi
   hp_unlock

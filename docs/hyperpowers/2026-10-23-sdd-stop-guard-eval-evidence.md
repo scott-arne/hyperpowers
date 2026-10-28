@@ -118,10 +118,11 @@ definitions as the committed analyzer implements them, the void rules, the
 adjudication procedure, the analyzer and hook pins, and the field decision
 rule. The thresholds, restated:
 
-- H1, the hook ran under the plan: every valid run's decision record holds at
-  least one line, the session's ledger line gives the plan's start, and every
-  line from that start until the transcript records Finish's result names the
-  plan (`h1`).
+- H1 (Correction 9), no off-plan hook line in the plan window, which a run
+  whose hook never judged the plan also meets: every valid run's decision
+  record holds at least one line, the session's ledger line gives the plan's
+  start, and every line from that start until the transcript records
+  Finish's result names the plan (`h1`).
 - H2, nothing reached the user: the Gauntlet's STOP list has no `neither`
   entry in any valid run, and every allow whose reason is `handback-text`,
   `handback-line` or `cap`, and every `log-failed` allow that displaced one of
@@ -277,9 +278,13 @@ Correction 9 restated H1 after the smoke and after these runs were launched,
 before any was archived or tallied.
 
 Every legitimate hand-back in these runs was an AskUserQuestion call answered
-inside its turn, which no Stop hook sees: the fixture's question before Task 1
-in all ten, and one more in `cc92` after its final review, with the ledger
-live. The Gauntlet's list omitted the pre-flight questions in three runs that
+inside its turn, which no Stop hook sees. Before Task 1, six runs asked a
+separate workspace question and then a combined call carrying the fixture's
+`DEFAULT_WINDOW_SECONDS` question, and four asked one combined call with the
+workspace or branch question folded in beside it: 16 pre-flight calls, of
+which the Gauntlet listed eleven, in seven runs, as in-turn stops. `cc92`
+made a third call after its final review, with the ledger live. The
+Gauntlet's list omitted the pre-flight questions in three runs that
 asked them; nothing on any list was labelled `neither`. F is 9 of 10 because
 in `82f7` the first call that names the short soak redirected into a
 directory that did not exist yet and never started the soak; the session

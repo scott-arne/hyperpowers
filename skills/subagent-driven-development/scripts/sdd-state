@@ -137,10 +137,16 @@ claim_task_branch_name() { # <integration> <ws8> <N> [<k>] -> <integration>.<ws8
   printf '%s.%s.task-%s%s' "$1" "$2" "$3" "${4:+.$4}"
 }
 write_activity() { # <sid>
+  local dest="$WSDIR/activity/$1" t
   # The session id is caller input and the activity directory arrives with a
-  # fetched state branch, so containment is checked at the write point.
+  # fetched state branch, so containment is checked at the write point, leaf
+  # included. The timestamp goes through an exclusively created temporary
+  # file: a fixed temporary name would follow a planted link or collide with
+  # a session whose id ends in the suffix.
   hp_contained "$ROOT" "plans/$WS/activity/$1" || return 1
-  mkdir -p "$WSDIR/activity" && printf '%s\n' "$(hp_utc_now)" > "$WSDIR/activity/$1.new" && mv -f "$WSDIR/activity/$1.new" "$WSDIR/activity/$1"
+  mkdir -p "$WSDIR/activity" || return 1
+  t=$(mktemp "$WSDIR/activity/.$1.XXXXXX") || return 1
+  { printf '%s\n' "$(hp_utc_now)" > "$t" && mv -f "$t" "$dest"; } || { rm -f "$t"; return 1; }
 }
 
 # --- deps --------------------------------------------------------------------
@@ -345,7 +351,7 @@ cmd_snapshot() {
 # workspace, so a claim can never slip in between those two steps.
 cmd_claim() {
   local plan="" n="" sid="" takeover=0 code="" claims target tmp rc owner since wt prev
-  local graph pair blob deps d waiting line again integ ref from k prev_ref tb branch_out lease
+  local graph pair blob deps d waiting line again pass integ ref from k prev_ref tb branch_out lease have
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
@@ -412,26 +418,50 @@ cmd_claim() {
     ref=$(sed -n 's/^branch=//p' "$target/owner" 2>/dev/null); from=$(sed -n 's/^from=//p' "$target/owner" 2>/dev/null)
     if [ -n "$ref" ] && [ -n "$from" ]; then claim_finish_branch; else ref=""; from=""; branch_out=" branch=none"; fi
   }
-  line=$(plan_line_of "$WSDIR/progress.md"); ref=""; from=""
-  claim_take_locks || return $?
-  # A register may have appended the plan line between the read and the
-  # lock; a claim that went on with one lock would be branchless on a
-  # registered plan.
-  again=$(plan_line_of "$WSDIR/progress.md")
-  if [ "$again" != "$line" ]; then
-    if [ -z "$line" ]; then
-      hp_unlock; line=$again
-      claim_take_locks || return $?
-      [ "$(plan_line_of "$WSDIR/progress.md")" = "$line" ] || { hp_unlock; echo "sdd-state: the plan line changed while the claim took its locks" >&2; echo "status=error"; return 2; }
-    else
-      hp_unlock; echo "sdd-state: the plan line changed while the claim took its locks" >&2; echo "status=error"; return 2
+  # The plan line is only settled once recovery has run: finishing an
+  # interrupted sync can bring in a registered ledger. Locks are taken for the
+  # line as it stands, recovery runs under them, and the line is read again;
+  # a claim that went on with one lock would publish a branchless record on a
+  # registered plan, which the owner's retry could not repair.
+  claim_held() {
+    # Read the holder's record while the lock still excludes takeovers and
+    # finish, so the fields come from one record.
+    owner=$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)
+    since=$(sed -n 's/^time=//p' "$target/owner" 2>/dev/null)
+    wt=$(sed -n 's/^worktree=//p' "$target/owner" 2>/dev/null)
+    if [ -z "$owner" ]; then hp_unlock; echo "status=error"; return 2; fi
+    if [ "$owner" = "$sid" ]; then
+      # The owner's retry completes whatever a crash left undone.
+      claim_finish_own || { hp_unlock; echo "status=error"; return 2; }
+      hp_unlock; echo "status=held task=$n owner=$owner own=1${branch_out}"; return 0
     fi
-  fi
-  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+    hp_unlock
+    echo "status=held task=$n owner=$owner since=$since worktree=$(enc "$wt")"
+    return 4
+  }
+  line=$(plan_line_of "$WSDIR/progress.md"); ref=""; from=""; pass=0
+  while :; do
+    pass=$((pass + 1))
+    if [ "$pass" -gt 3 ]; then echo "sdd-state: the plan line has not settled after three passes" >&2; echo "status=error"; return 2; fi
+    claim_take_locks || return $?
+    recover_apply || { hp_unlock; echo "status=error"; return 2; }
+    again=$(plan_line_of "$WSDIR/progress.md")
+    [ "$again" != "$line" ] || break
+    hp_unlock
+    if [ -n "$line" ]; then echo "sdd-state: the plan line changed while the claim took its locks" >&2; echo "status=error"; return 2; fi
+    line=$again
+  done
   if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace task=$n"; return 2; fi
   grep -Eq "(^|[^A-Za-z0-9])Task $n: complete" "$WSDIR/progress.md"; rc=$?
   if [ "$rc" -eq 0 ]; then hp_unlock; echo "status=done task=$n"; return 0; fi
   if [ "$rc" -ne 1 ]; then hp_unlock; echo "status=error"; return 2; fi
+  # An existing claim answers held exactly as it always has, even if a plan
+  # amendment has since added a predecessor: the dependency check guards
+  # publication, and only a takeover publishes a new record. A takeover by
+  # the owner itself is the owner's retry, not a publication.
+  if [ -d "$target" ] && { [ "$takeover" -eq 0 ] || [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" = "$sid" ]; }; then
+    claim_held; return $?
+  fi
   # Without a plan line the claim keeps the contract it had before the graph
   # existed: a plan that cannot be read or parsed, or that has no heading for
   # this task, is claimable with no dependency check. With a plan line the
@@ -469,14 +499,14 @@ cmd_claim() {
   fi
   hp_contained "$ROOT" "plans/$WS/claims" || { hp_unlock; echo "status=error"; return 2; }
   mkdir -p "$claims" || { hp_unlock; echo "status=error"; return 2; }
+  # A task branch that is not exactly at its base is a leftover of an
+  # abandoned run; refusing it here, before the record is published, keeps
+  # the claim from owning commits it never made. A takeover's branch takes the
+  # smallest unused suffix, so it never meets this.
+  if [ -n "$ref" ] && ! { [ "$takeover" -eq 1 ] && [ -d "$target" ]; } && have=$(git -C "$code" rev-parse -q --verify "refs/heads/$ref^{commit}" 2>/dev/null) && [ "$have" != "$from" ]; then
+    hp_unlock; echo "sdd-state: $ref already exists at ${have:0:7}, not at its base ${from:0:7}; it is a leftover of an abandoned run" >&2; echo "status=error"; return 2
+  fi
   if [ "$takeover" -eq 1 ] && [ -d "$target" ]; then
-    # A takeover retried by the session that already took over is the owner's
-    # retry: superseding itself would lose the recorded base and strand a
-    # second branch.
-    if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" = "$sid" ]; then
-      claim_finish_own || { hp_unlock; echo "status=error"; return 2; }
-      hp_unlock; echo "status=held task=$n owner=$sid own=1${branch_out}"; return 0
-    fi
     if [ -n "$ref" ]; then
       prev_ref=""
       [ -z "$(sed -n 's/^from=//p' "$target/owner" 2>/dev/null)" ] || prev_ref=$(sed -n 's/^branch=//p' "$target/owner" 2>/dev/null)
@@ -506,20 +536,7 @@ cmd_claim() {
   fi
   rm -rf "$tmp"
   if [ "$rc" -ne 4 ]; then hp_unlock; echo "status=error"; return 2; fi
-  # Read the holder's record while the lock still excludes takeovers and
-  # finish, so the fields come from one record.
-  owner=$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)
-  since=$(sed -n 's/^time=//p' "$target/owner" 2>/dev/null)
-  wt=$(sed -n 's/^worktree=//p' "$target/owner" 2>/dev/null)
-  if [ -z "$owner" ]; then hp_unlock; echo "status=error"; return 2; fi
-  if [ "$owner" = "$sid" ]; then
-    # The owner's retry completes whatever a crash left undone.
-    claim_finish_own || { hp_unlock; echo "status=error"; return 2; }
-    hp_unlock; echo "status=held task=$n owner=$owner own=1${branch_out}"; return 0
-  fi
-  hp_unlock
-  echo "status=held task=$n owner=$owner since=$since worktree=$(enc "$wt")"
-  return 4
+  claim_held; return $?
 }
 
 # --- import ------------------------------------------------------------------

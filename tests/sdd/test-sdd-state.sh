@@ -3216,7 +3216,7 @@ out=$(run_state "$TEST_ROOT/cl0" claim docs/plan.md 1 --session s9 2>/dev/null);
 if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=none" ]; then pass "a claim without a plan line creates no branch"; else fail "no plan line (rc=$rc: $out)"; fi
 # Review fixtures: pre-upgrade owner records, containment, takeover retry, leftovers.
 printf '# R\n\n**Spec:** docs/spec.md\n' > "$cl_a/docs/plan3.md"
-for t in 1 2 3 4 5 6; do printf '\n### Task %s: T\n\n**Risk tier:** standard\n\n**Depends on:** none\n' "$t" >> "$cl_a/docs/plan3.md"; done
+for t in 1 2 3 4 5 6 7 8 9; do printf '\n### Task %s: T\n\n**Risk tier:** standard\n\n**Depends on:** none\n' "$t" >> "$cl_a/docs/plan3.md"; done
 git -C "$cl_a" add docs; git -C "$cl_a" commit -qm plan3
 wscl3=$(run_sdd_dir "$cl_a" docs/plan3.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan3.md\n' > "$wscl3/progress.md"; run_state "$cl_a" register docs/plan3.md --session s4 --integration feat >/dev/null
 ws83=$(basename "$wscl3" | sed 's/.*-//'); H3=$(git -C "$cl_a" rev-parse feat)
@@ -3237,7 +3237,8 @@ if [ "$rc" -eq 0 ] && [ "${out%% from=*}" = "status=held task=1 owner=s5 own=1 b
 wk4=$(git -C "$cl_a" commit-tree -p "$H3" -m leftover "$(git -C "$cl_a" rev-parse "feat^{tree}")"); git -C "$cl_a" update-ref "refs/heads/feat.$ws83.task-4" "$wk4"
 out=$(run_state "$cl_a" claim docs/plan3.md 4 --session s4 2>&1); rc=$?
 case "$out" in *"feat.$ws83.task-4 already exists"*"status=error"*) lf=1 ;; *) lf=0 ;; esac
-if [ "$rc" -eq 2 ] && [ "$lf" = 1 ]; then pass "a fresh claim refuses a leftover task branch and names it"; else fail "leftover branch (rc=$rc: $out)"; fi
+out2=$(run_state "$cl_a" claim docs/plan3.md 4 --session s4 2>&1); rc2=$?
+if [ "$rc" -eq 2 ] && [ "$lf" = 1 ] && [ ! -d "$wscl3/claims/task-4" ] && [ "$rc2" -eq 2 ] && [ "$out2" = "$out" ]; then pass "a fresh claim refuses a leftover task branch before publishing, every time"; else fail "leftover branch (rc=$rc/$rc2: $out)"; fi
 # Containment: a hostile session id cannot reach the ledger, a symlinked activity directory receives nothing.
 cp "$wscl3/progress.md" "$TEST_ROOT/ledger3.before"
 out=$(run_state "$cl_a" claim docs/plan3.md 5 --session ../progress.md 2>/dev/null); rc=$?
@@ -3246,6 +3247,35 @@ mkdir -p "$TEST_ROOT/outside-activity"; rm -rf "$wscl3/activity"; ln -s "$TEST_R
 out=$(run_state "$cl_a" claim docs/plan3.md 6 --session s4 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$(ls "$TEST_ROOT/outside-activity")" ]; then pass "an activity symlink receives no write"; else fail "activity symlink (rc=$rc: $out)"; fi
 rm -f "$wscl3/activity"
-
+# The temporary name is exclusive: a planted link at <sid>.new is never followed, and a link at the final path is refused.
+mkdir -p "$wscl3/activity"; printf keep > "$TEST_ROOT/victim-new"; ln -s "$TEST_ROOT/victim-new" "$wscl3/activity/s4.new"
+out=$(run_state "$cl_a" claim docs/plan3.md 7 --session s4 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(cat "$TEST_ROOT/victim-new")" = keep ] && [ -f "$wscl3/activity/s4" ] && [ ! -L "$wscl3/activity/s4" ]; then pass "a planted link at the old temporary name is not followed"; else fail "planted .new link (rc=$rc: $out)"; fi
+printf keep > "$TEST_ROOT/victim-final"; ln -s "$TEST_ROOT/victim-final" "$wscl3/activity/s7"
+out=$(run_state "$cl_a" claim docs/plan3.md 8 --session s7 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "${out##*$'\n'}" = "status=error" ] && [ "$(cat "$TEST_ROOT/victim-final")" = keep ]; then pass "a link at the final activity path is refused and its target is unchanged"; else fail "final activity link (rc=$rc: $out)"; fi
+rm -f "$wscl3/activity/s7"
+# An existing claim answers held even after an amendment adds an incomplete predecessor; only a takeover is blocked.
+run_state "$cl_a" claim docs/plan3.md 9 --session s4 >/dev/null 2>&1
+sed '$d' "$cl_a/docs/plan3.md" > "$TEST_ROOT/plan3.amend"; printf '**Depends on:** Task 8\n' >> "$TEST_ROOT/plan3.amend"
+cp "$TEST_ROOT/plan3.amend" "$cl_a/docs/plan3.md"; git -C "$cl_a" add docs; git -C "$cl_a" commit -qm amend
+out=$(run_state "$cl_a" claim docs/plan3.md 9 --session s4 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% branch=*}" = "status=held task=9 owner=s4 own=1" ]; then pass "the owner's re-claim stays held after an amendment adds a predecessor"; else fail "amended own (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan3.md 9 --session s6 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "${out%% since=*}" = "status=held task=9 owner=s4" ]; then pass "a competitor's claim stays held after an amendment adds a predecessor"; else fail "amended competitor (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan3.md 9 --session s6 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "${out%% plan=*}" = "status=blocked task=9 waiting=8" ] && [ "$(sed -n 's/^session=//p' "$wscl3/claims/task-9/owner")" = s4 ]; then pass "a takeover is blocked by the new predecessor and the owner is unchanged"; else fail "amended takeover (rc=$rc: $out)"; fi
+# Recovery can bring in the registered ledger: the claim settles the plan line after recovery.
+make_pair ra; ra_a=$PAIR_A; ra_b=$PAIR_B
+mkdir -p "$ra_a/docs"; : > "$ra_a/docs/spec.md"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$ra_a/docs/plan.md"
+git -C "$ra_a" add docs; git -C "$ra_a" commit -qm plan; git -C "$ra_a" push -q origin main 2>/dev/null
+run_state "$ra_a" sync docs/plan.md >/dev/null 2>&1; git -C "$ra_a" push -q origin hyperpowers/state 2>/dev/null; git -C "$ra_b" pull -q origin main 2>/dev/null; run_state "$ra_b" sync docs/plan.md >/dev/null 2>&1
+wsra=$(run_sdd_dir "$ra_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsra/progress.md"
+run_state "$ra_a" register docs/plan.md --session s1 --integration main >/dev/null 2>&1
+run_state "$ra_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$ra_a" push -q origin hyperpowers/state 2>/dev/null
+( cd "$ra_b" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+ws8ra=$(basename "$wsra" | sed 's/.*-//'); Hra=$(git -C "$ra_b" rev-parse main)
+out=$(run_state "$ra_b" claim docs/plan.md 1 --session s2 2>/dev/null); rcc=$?
+if [ "$rc" -eq 99 ] && [ "$rcc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=main.$ws8ra.task-1 from=${Hra:0:7}" ] && git -C "$ra_b" rev-parse -q --verify "main.$ws8ra.task-1" >/dev/null; then pass "a claim that recovery brings a plan line to takes the pair and creates the branch"; else fail "recovery brings plan line (rc=$rc/$rcc: $out)"; fi
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

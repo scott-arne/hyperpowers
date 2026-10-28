@@ -3403,7 +3403,8 @@ wsunc=$(run_sdd_dir "$nx_a" docs/unc.md 2>/dev/null); printf '# SDD ledger — p
 run_state "$nx_a" register docs/unc.md --session s9 --integration feat >/dev/null
 err=$(run_state "$nx_a" next docs/unc.md --session s9 2>&1 >"$TEST_ROOT/nx.unc"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$(cat "$TEST_ROOT/nx.unc")" = "status=error" ] && printf '%s' "$err" | grep -q 'does not carry docs/unc.md'; then pass "a registered plan its ref does not carry is an error, not a worktree read"; else fail "uncommitted registered plan (rc=$rc: $(cat "$TEST_ROOT/nx.unc"): $err)"; fi
-rm -f "$nx_a/docs/unc.md"; rm -rf "$wsunc"# A heading that carries shell text is a parse error, and nothing runs it.
+rm -f "$nx_a/docs/unc.md"; rm -rf "$wsunc"
+# A heading that carries shell text is a parse error, and nothing runs it.
 nx_mark="$TEST_ROOT/nx.pwned"
 mkplan nxi "$(printf '# P\n\n### Task 1: A\n\n### Task 2:x$(touch %s)\n' "$nx_mark")"
 err=$(run_state "$TEST_ROOT/nxi" next docs/plan.md --session s1 2>&1 >"$TEST_ROOT/nx.inj"); rc=$?

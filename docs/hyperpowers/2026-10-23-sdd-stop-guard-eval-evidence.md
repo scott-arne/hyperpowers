@@ -136,7 +136,9 @@ rule. The thresholds, restated:
 
 Correction 9 (2026-10-28) restated H1 as above and stopped owing an allow to a
 question answered with AskUserQuestion inside its turn; it is recorded under
-"Corrections" in the campaign README.
+"Corrections" in the campaign README. The fixture's batched question, asked
+that way, writes no decision, so H2's adjudication half and H3 get live cases
+only from the turn ends a run takes mid-plan, and may get none.
 
 Adjudicating the `cap` allows, and the `log-failed` allows that displaced a
 refusal or a release, is a recorded deviation from the spec, in the direction

@@ -1037,11 +1037,13 @@ f1="$TEST_ROOT/f1"; make_repo "$f1"
 mkdir -p "$f1/docs"; : > "$f1/docs/plan.md"; git -C "$f1" add docs; git -C "$f1" commit -qm plan
 wsf=$(run_sdd_dir "$f1" docs/plan.md); co_f1="$STATE_ROOT/$(state_key "$f1")"
 printf '# SDD ledger — plan: docs/plan.md\n' > "$wsf/progress.md"
+# final is claimed before the task, so finish gets past the holder check to the open claim.
+run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
 run_state "$f1" claim docs/plan.md 1 --session s-f >/dev/null
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 6 ] && [ "$out" = "status=open-claims tasks=1" ] && [ -d "$wsf" ]; then pass "finish refuses while a claim has no completion line"; else fail "finish refuses while a claim has no completion line (rc=$rc: $out)"; fi
 printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsf/progress.md"
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 last=$(printf '%s' "$out" | sed -n 's/.* last=\([0-9a-f]*\).*/\1/p')
 case "$out" in
     "status=finished sha="???????" last="????????????????????????????????????????" push=origin/hyperpowers/state") pass "finish prints the finish sha, the full last sha and the push target" ;;
@@ -1049,78 +1051,79 @@ case "$out" in
 esac
 if [ ! -d "$wsf" ] && ! git -C "$co_f1" ls-tree -r --name-only hyperpowers/state | grep -q "plans/$(basename "$wsf")/"; then pass "finish removes the workspace from the tree and the disk"; else fail "finish removes the workspace from the tree and the disk"; fi
 if [ "$(git -C "$co_f1" show "$last:plans/$(basename "$wsf")/progress.md" 2>/dev/null | sed -n 2p)" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "the last sha still shows the ledger"; else fail "the last sha still shows the ledger"; fi
-if [ "$(run_state "$f1" finish docs/plan.md)" = "status=none" ]; then pass "finishing twice reports none"; else fail "finishing twice reports none"; fi
-wsf3=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf3/progress.md"
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove:plans/$(basename "$wsf3")/progress.md" bash "$SDD_STATE" finish docs/plan.md); rc=$?
+if [ "$(run_state "$f1" finish docs/plan.md --session s-f)" = "status=none" ]; then pass "finishing twice reports none"; else fail "finishing twice reports none"; fi
+wsf3=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf3/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove:plans/$(basename "$wsf3")/progress.md" bash "$SDD_STATE" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ -d "$wsf3" ] && grep -q '^concurrent write$' "$wsf3/progress.md"; then pass "a line appended between the final snapshot and the removal makes finish busy and keeps the workspace"; else fail "a line appended between the final snapshot and the removal makes finish busy (rc=$rc: $out)"; fi
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ]; then pass "finish succeeds on the retry"; else fail "finish succeeds on the retry (rc=$rc: $out)"; fi
 wsf2=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsf2/progress.md"
+run_state "$f1" claim docs/plan.md final --session s-g >/dev/null
 run_state "$f1" claim docs/plan.md 2 --session s-g >/dev/null
-out=$(run_state "$f1" finish docs/plan.md --force); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --force --session s-g); rc=$?
 if [ "$rc" -eq 0 ] && [ ! -d "$wsf2" ]; then pass "--force finishes over an open claim"; else fail "--force finishes over an open claim (rc=$rc: $out)"; fi
-wsf4=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf4/progress.md"
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove:plans/$(basename "$wsf4")/notes.txt" bash "$SDD_STATE" finish docs/plan.md); rc=$?
+wsf4=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf4/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove:plans/$(basename "$wsf4")/notes.txt" bash "$SDD_STATE" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ -f "$wsf4/notes.txt" ] && [ "$(sed -n 2p "$wsf4/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "a file created between the snapshot and the removal makes finish busy and keeps it"; else fail "a file created between the snapshot and the removal makes finish busy (rc=$rc: $out)"; fi
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 last4=$(printf '%s' "$out" | sed -n 's/.* last=\([0-9a-f]*\).*/\1/p')
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsf4" ] && [ "$(git -C "$co_f1" show "$last4:plans/$(basename "$wsf4")/notes.txt" 2>/dev/null)" = "concurrent write" ]; then pass "the retry snapshots the new file and finishes"; else fail "the retry snapshots the new file and finishes (rc=$rc: $out)"; fi
-wsf5=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf5/progress.md"
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove:plans/$(basename "$wsf5")/task-9-brief.md" bash "$SDD_STATE" finish docs/plan.md); rc=$?
+wsf5=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf5/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove:plans/$(basename "$wsf5")/task-9-brief.md" bash "$SDD_STATE" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsf5" ]; then pass "an ignored file created between the snapshot and the removal does not block finish"; else fail "an ignored file created between the snapshot and the removal does not block finish (rc=$rc: $out)"; fi
-wsf6=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf6/progress.md"
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
+wsf6=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf6/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md --session s-f 2>/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$(sed -n 2p "$wsf6/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ] && [ ! -e "$wsf6/task-2-report.md" ] && ! ls -d "$wsf6"/.removing-* >/dev/null 2>&1 && [ "$(cat "$wsf6".reappeared-*/task-2-report.md 2>/dev/null)" = "written after rename" ]; then pass "a workspace recreated after the rename-aside is moved beside the restored copy and finish is busy"; else fail "a workspace recreated after the rename-aside is moved beside the restored copy (rc=$rc: $out)"; fi
 rm -rf "$wsf6".reappeared-*
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md --session s-f 2>/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -q '^concurrent write$' "$wsf6/progress.md" && ! ls -d "$wsf6"/.removing-* >/dev/null 2>&1 && [ "$(cat "$wsf6".reappeared-*/task-2-report.md 2>/dev/null)" = "written after rename" ]; then pass "a changed copy restored over a recreated workspace is not nested inside it"; else fail "a changed copy restored over a recreated workspace is not nested inside it (rc=$rc: $out; $(ls -a "$wsf6" 2>/dev/null | tr '\n' ' '))"; fi
 rm -rf "$wsf6".reappeared-*
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsf6" ]; then pass "finish succeeds once the recreated files are out of the way"; else fail "finish succeeds once the recreated files are out of the way (rc=$rc: $out)"; fi
-wsf7=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf7/progress.md"
-out=$(run_state "$f1" finish docs/plan.md docs/other.md 2>/dev/null); rc=$?
+wsf7=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf7/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(run_state "$f1" finish docs/plan.md docs/other.md --session s-f 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ -d "$wsf7" ]; then pass "a second positional argument is a usage error and finishes nothing"; else fail "a second positional argument is a usage error and finishes nothing (rc=$rc: $out)"; fi
 ln -s progress.md "$wsf7/ledger-link"; run_state "$f1" snapshot docs/plan.md >/dev/null
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsf7" ]; then pass "a tracked symlink compares by its link text and does not block finish"; else fail "a tracked symlink compares by its link text and does not block finish (rc=$rc: $out)"; fi
-wsf8=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf8/progress.md"
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove-link:plans/$(basename "$wsf8")/late-link" bash "$SDD_STATE" finish docs/plan.md); rc=$?
+wsf8=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf8/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove-link:plans/$(basename "$wsf8")/late-link" bash "$SDD_STATE" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ -L "$wsf8/late-link" ]; then pass "a symlink created between the snapshot and the removal counts as an extra entry"; else fail "a symlink created between the snapshot and the removal counts as an extra entry (rc=$rc: $out)"; fi
 rm -f "$wsf8/late-link"
 tomb8="$(dirname "$wsf8")/.removing-$(basename "$wsf8")-424242"; mv "$wsf8" "$tomb8"
-out=$(run_state "$f1" finish docs/plan.md 2>/dev/null); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f 2>/dev/null); rc=$?
 last8=$(printf '%s' "$out" | sed -n 's/.* last=\([0-9a-f]*\).*/\1/p')
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$tomb8" ] && [ ! -d "$wsf8" ] && [ "$(git -C "$co_f1" show "$last8:plans/$(basename "$wsf8")/progress.md" 2>/dev/null | sed -n 2p)" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "a copy left by an interrupted removal is restored and finished, its ledger in history"; else fail "a copy left by an interrupted removal is restored and finished (rc=$rc: $out)"; fi
-wsf9=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf9/progress.md"
+wsf9=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf9/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
 tomb9="$(dirname "$wsf9")/.removing-$(basename "$wsf9")-434343"; mkdir -p "$tomb9"; printf 'older copy\n' > "$tomb9/progress.md"
-err=$(run_state "$f1" finish docs/plan.md 2>&1 >/dev/null); rc=$?
+err=$(run_state "$f1" finish docs/plan.md --session s-f 2>&1 >/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && printf '%s' "$err" | grep -q "$tomb9" && [ -d "$wsf9" ] && [ -d "$tomb9" ]; then pass "a leftover copy beside a live workspace makes finish refuse and name the copy"; else fail "a leftover copy beside a live workspace makes finish refuse and name the copy (rc=$rc: $err)"; fi
 rm -rf "$tomb9"
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ]; then pass "finish proceeds once the leftover copy is resolved"; else fail "finish proceeds once the leftover copy is resolved (rc=$rc: $out)"; fi
 wsf10=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nrestored by sdd-dir\n' > "$wsf10/progress.md"
 mv "$wsf10" "$(dirname "$wsf10")/.removing-$(basename "$wsf10")-454545"
 out=$(run_sdd_dir "$f1" docs/plan.md)
 if [ "$out" = "$wsf10" ] && [ "$(sed -n 2p "$wsf10/progress.md")" = "restored by sdd-dir" ] && ! ls -d "$(dirname "$wsf10")"/.removing-* >/dev/null 2>&1; then pass "sdd-dir brings back a copy left by an interrupted removal instead of creating an empty workspace"; else fail "sdd-dir brings back a copy left by an interrupted removal instead of creating an empty workspace ($out)"; fi
-run_state "$f1" finish docs/plan.md >/dev/null
-wsf11=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsf11/progress.md"; mkdir "$wsf11/held"; : > "$wsf11/held/f"; chmod 555 "$wsf11/held"
-err=$(run_state "$f1" finish docs/plan.md 2>&1 >/dev/null); rc=$?
+run_state "$f1" claim docs/plan.md final --session s-f >/dev/null; run_state "$f1" finish docs/plan.md --session s-f >/dev/null
+wsf11=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsf11/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null; mkdir "$wsf11/held"; : > "$wsf11/held/f"; chmod 555 "$wsf11/held"
+err=$(run_state "$f1" finish docs/plan.md --session s-f 2>&1 >/dev/null); rc=$?
 chmod 755 "$(dirname "$wsf11")"/.removing-*/held 2>/dev/null
 if [ "$rc" -eq 0 ] && printf '%s' "$err" | grep -q 'could not delete' && ! git -C "$co_f1" ls-tree -r --name-only hyperpowers/state | grep -q "plans/$(basename "$wsf11")/" && ls -d "$(dirname "$wsf11")"/.removing-* >/dev/null 2>&1 && [ ! -d "$wsf11" ]; then pass "under the branch backend the removal is committed and a deletion that fails names the surviving copy"; else fail "under the branch backend the removal is committed and a deletion that fails names the surviving copy (rc=$rc: $err)"; fi
 rm -rf "$(dirname "$wsf11")"/.removing-*
-wsf12=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf12/progress.md"
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-after-verify:task-3-report.md" bash "$SDD_STATE" finish docs/plan.md 2>"$TEST_ROOT/wsf12.err"); rc=$?
+wsf12=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf12/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-after-verify:task-3-report.md" bash "$SDD_STATE" finish docs/plan.md --session s-f 2>"$TEST_ROOT/wsf12.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recreated during finish' "$TEST_ROOT/wsf12.err" && ! git -C "$co_f1" ls-tree -r --name-only hyperpowers/state | grep -q "plans/$(basename "$wsf12")/" && [ "$(cat "$wsf12/task-3-report.md")" = "late" ] && [ ! -e "$wsf12/progress.md" ] && ! ls -d "$(dirname "$wsf12")"/.removing-* >/dev/null 2>&1; then pass "a workspace recreated after the verification stays on disk, is named, and never enters the removal commit"; else fail "a workspace recreated after the verification stays on disk, is named, and never enters the removal commit (rc=$rc: $out)"; fi
 rm -rf "$wsf12"
-wsp=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp/progress.md"
-out=$(run_state "$rp" finish docs/plan.md 2>/dev/null)
+wsp=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp/progress.md"; run_state "$rp" claim docs/plan.md final --session s-f >/dev/null
+out=$(run_state "$rp" finish docs/plan.md --session s-f 2>/dev/null)
 if [ "$out" = "status=finished backend=plain" ] && [ ! -d "$wsp" ]; then pass "finish under the plain backend removes the plain workspace"; else fail "finish under the plain backend removes the plain workspace ($out)"; fi
-wsp2=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp2/progress.md"
-out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
+wsp2=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp2/progress.md"; run_state "$rp" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md --session s-f 2>/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -q '^concurrent write$' "$wsp2/progress.md" && ! ls -d "$wsp2"/.removing-* >/dev/null 2>&1 && [ "$(cat "$wsp2".reappeared-*/task-2-report.md 2>/dev/null)" = "written after rename" ]; then pass "under the plain backend a changed copy restored over a recreated workspace is not nested either"; else fail "under the plain backend a changed copy restored over a recreated workspace is not nested (rc=$rc: $out)"; fi
 rm -rf "$wsp2".reappeared-*
-wsp3=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp3/progress.md"; mkdir "$wsp3/held"; : > "$wsp3/held/f"; chmod 555 "$wsp3/held"
-err=$(run_state "$rp" finish docs/plan.md 2>&1 >/dev/null); rc=$?
+wsp3=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp3/progress.md"; run_state "$rp" claim docs/plan.md final --session s-f >/dev/null; mkdir "$wsp3/held"; : > "$wsp3/held/f"; chmod 555 "$wsp3/held"
+err=$(run_state "$rp" finish docs/plan.md --session s-f 2>&1 >/dev/null); rc=$?
 chmod 755 "$wsp3/held" 2>/dev/null; chmod 755 "$(dirname "$wsp3")"/.removing-*/held 2>/dev/null
 if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'could not delete' && [ -f "$wsp3/held/f" ] && ! ls -d "$(dirname "$wsp3")"/.removing-* >/dev/null 2>&1; then pass "under the plain backend a deletion that fails is an error and what remains is restored"; else fail "under the plain backend a deletion that fails is an error and what remains is restored (rc=$rc: $err)"; fi
 rm -rf "$wsp3"
@@ -1575,10 +1578,10 @@ if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7r: comp
 
 # A remote finish racing a local writer: refused, nothing changed. The seam
 # writes after the pending check and right before the rename.
-printf 'Task 6: complete (commits ddddddd..eeeeeee, review clean)\n' >> "$wsa/progress.md"
+printf 'Task 6: complete (commits ddddddd..eeeeeee, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" claim docs/plan.md final --session s-a >/dev/null
 run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md >/dev/null
-run_state "$PAIR_A" finish docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_A" finish docs/plan.md --session s-a >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-before-delete:plans/$(basename "$wsa")/progress.md" bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && [ "${out%% *}" = "status=remote-finished" ] && grep -q "plans=$(basename "$wsa")" < <(printf '%s\n' "$out") && [ -f "$wsb/progress.md" ] && grep -q '^concurrent write$' "$wsb/progress.md" && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" != "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "a line written after the check and before the rename still makes the remote finish refuse, ledger and ref intact"; else fail "a remote finish racing a local ledger write is refused (rc=$rc: $out)"; fi
 if ( cd "$co_b" && printf 'late\n' >> "plans/.removing-probe-0/progress.md" ) 2>/dev/null; then fail "a write to a renamed-away path fails loudly"; else pass "a write to a renamed-away path fails loudly (ENOENT), never silently"; fi
@@ -1679,9 +1682,9 @@ printf 'Task 10: complete (commits 1212121..3434343, review clean)\n' >> "$ws2a/
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/second.md >/dev/null 2>&1 )
 out=$(run_state "$PAIR_B" prune --repo "$PAIR_B" --apply); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=pruned" ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 10: complete' "$ws2b/progress.md"; then pass "prune --apply recovers an interrupted apply before it selects"; else fail "prune --apply recovers an interrupted apply before it selects (rc=$rc: $out)"; fi
-printf 'Task 11: complete (commits 5656565..7878787, review clean)\n' >> "$ws2a/progress.md"; run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+printf 'Task 11: complete (commits 5656565..7878787, review clean)\n' >> "$ws2a/progress.md"; run_state "$PAIR_A" claim docs/second.md final --session s-a >/dev/null; run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/second.md >/dev/null 2>&1 )
-out=$(run_state "$PAIR_B" finish docs/second.md --force); rc=$?
+out=$(run_state "$PAIR_B" finish docs/second.md --force --session s-a); rc=$?
 last_b=$(printf '%s' "$out" | sed -n 's/.* last=\([0-9a-f]*\).*/\1/p')
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -f "$co_b/.sync-applying" ] && git -C "$co_b" show "$last_b:plans/$(basename "$ws2a")/progress.md" 2>/dev/null | grep -q '^Task 11: complete'; then pass "finish recovers an interrupted apply before it reads claims or snapshots"; else fail "finish recovers an interrupted apply before it reads claims or snapshots (rc=$rc: $out)"; fi
 # A marker that cannot be trusted fails closed and is named.
@@ -1723,17 +1726,17 @@ out=$(run_state "$PAIR_A" sync docs/plan.md); rc2=$?
 if [ "$rc" -eq 99 ] && [ "$rc2" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ "$(cat "$wsa/progress.md")" = "$(git -C "$co_a" show "hyperpowers/state:$lpath")" ] && [ ! -e "$co_a/.rewrite/$(basename "$wsa").journal" ] && [ "$(grep -c '^j2 A$' "$wsa/progress.md")" -eq 1 ] && [ "$(grep -c '^j2 B$' "$wsa/progress.md")" -eq 1 ]; then pass "recovery finishes a rewrite interrupted between its two writes without duplicating bytes"; else fail "recovery finishes a rewrite interrupted between its two writes without duplicating bytes (rc=$rc/$rc2: $out)"; fi
 # A crash after the marker but before the copies go, and one after they went: both recover forward.
 : > "$PAIR_A/docs/fin.md"; git -C "$PAIR_A" add docs/fin.md; git -C "$PAIR_A" commit -qm fin; git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
-wsf=$(run_sdd_dir "$PAIR_A" docs/fin.md); printf '# SDD ledger — plan: docs/fin.md\n' > "$wsf/progress.md"; run_state "$PAIR_A" snapshot docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+wsf=$(run_sdd_dir "$PAIR_A" docs/fin.md); printf '# SDD ledger — plan: docs/fin.md\n' > "$wsf/progress.md"; run_state "$PAIR_A" claim docs/fin.md final --session s-a >/dev/null; run_state "$PAIR_A" snapshot docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md >/dev/null; wsfb="$co_b/plans/$(basename "$wsf")"
-run_state "$PAIR_A" finish docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_A" finish docs/fin.md --session s-a >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-marker bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
 if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ ! -d "$wsfb" ] && ls -d "$co_b"/plans/.removing-* >/dev/null 2>&1 && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" != "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "the crash seam after the marker leaves the copy renamed aside, the marker down and the ref at S"; else fail "the crash seam after the marker leaves the copy renamed aside, the marker down and the ref at S (rc=$rc)"; fi
 out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -d "$wsfb" ] && ! ls -d "$co_b"/plans/.removing-* >/dev/null 2>&1 && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "recovery moves the ref forward, drops the verified copy, and the remote finish holds"; else fail "recovery moves the ref forward, drops the verified copy, and the remote finish holds (rc=$rc: $out)"; fi
 : > "$PAIR_A/docs/fin2.md"; git -C "$PAIR_A" add docs/fin2.md; git -C "$PAIR_A" commit -qm fin2; git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
-wsf2=$(run_sdd_dir "$PAIR_A" docs/fin2.md); printf '# SDD ledger — plan: docs/fin2.md\n' > "$wsf2/progress.md"; run_state "$PAIR_A" snapshot docs/fin2.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+wsf2=$(run_sdd_dir "$PAIR_A" docs/fin2.md); printf '# SDD ledger — plan: docs/fin2.md\n' > "$wsf2/progress.md"; run_state "$PAIR_A" claim docs/fin2.md final --session s-a >/dev/null; run_state "$PAIR_A" snapshot docs/fin2.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md >/dev/null; wsf2b="$co_b/plans/$(basename "$wsf2")"
-run_state "$PAIR_A" finish docs/fin2.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_A" finish docs/fin2.md --session s-a >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-discard bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
 if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ ! -d "$wsf2b" ] && ! ls -d "$co_b"/plans/.removing-* >/dev/null 2>&1 && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" != "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "the crash seam after the discard leaves the copy gone, the marker down and the ref at S"; else fail "the crash seam after the discard leaves the copy gone, the marker down and the ref at S (rc=$rc)"; fi
 out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
@@ -1996,10 +1999,10 @@ if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && grep -q '^li
 # A crash inside the recovery between its ref move and its tomb loop: the
 # tombs go before the ref, so the crash leaves nothing under plans/.
 : > "$PAIR_A/docs/fin.md"; git -C "$PAIR_A" add docs/fin.md; git -C "$PAIR_A" commit -qm fin; git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
-wsf=$(run_sdd_dir "$PAIR_A" docs/fin.md); printf '# SDD ledger — plan: docs/fin.md\n' > "$wsf/progress.md"
+wsf=$(run_sdd_dir "$PAIR_A" docs/fin.md); printf '# SDD ledger — plan: docs/fin.md\n' > "$wsf/progress.md"; run_state "$PAIR_A" claim docs/fin.md final --session s-a >/dev/null
 run_state "$PAIR_A" snapshot docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md >/dev/null
-run_state "$PAIR_A" finish docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_A" finish docs/fin.md --session s-a >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-marker bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 )
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=recover-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
 if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && ! ls -d "$co_b/plans/.removing-$(basename "$wsf")-"* >/dev/null 2>&1; then pass "the recovery deletes the verified copies before it moves the ref"; else fail "the recovery deletes the verified copies before it moves the ref (rc=$rc)"; fi
@@ -2206,7 +2209,7 @@ git -C "$PAIR_B" pull -q origin main 2>/dev/null
 co_b14="$STATE_ROOT/$(state_key "$PAIR_B")"
 run_state "$PAIR_A" sync docs/plan.md >/dev/null
 wsy=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsy/progress.md"
-wsx=$(run_sdd_dir "$PAIR_A" docs/x.md); printf '# SDD ledger — plan: docs/x.md\n' > "$wsx/progress.md"
+wsx=$(run_sdd_dir "$PAIR_A" docs/x.md); printf '# SDD ledger — plan: docs/x.md\n' > "$wsx/progress.md"; run_state "$PAIR_A" claim docs/x.md final --session s-a >/dev/null
 wsz=$(run_sdd_dir "$PAIR_A" docs/z.md); printf '# SDD ledger — plan: docs/z.md\n' > "$wsz/progress.md"
 run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
 run_state "$PAIR_A" snapshot docs/x.md >/dev/null
@@ -2215,7 +2218,7 @@ git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md >/dev/null
 wsy_b="$co_b14/plans/$(basename "$wsy")"; wsx_b="$co_b14/plans/$(basename "$wsx")"; wsz_b="$co_b14/plans/$(basename "$wsz")"
 advance14() { printf '%s\n' "$1" >> "$wsy/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null; }
-( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=remove-after-rename bash "$SDD_STATE" finish docs/x.md >/dev/null 2>&1 ); rc=$?
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=remove-after-rename bash "$SDD_STATE" finish docs/x.md --session s-a >/dev/null 2>&1 ); rc=$?
 if [ "$rc" -eq 99 ] && [ ! -d "$wsx_b" ] && ls -d "$co_b14/plans/.removing-$(basename "$wsx")-"* >/dev/null 2>&1; then pass "the seam leaves finish's copy renamed aside"; else fail "the seam leaves finish's copy renamed aside (rc=$rc)"; fi
 advance14 'line after the killed finish'
 run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p14a.out" 2> "$TEST_ROOT/p14a.err"; rc=$?
@@ -3478,6 +3481,114 @@ out=$(cd "$TEST_ROOT/nogit" && bash "$SDD_STATE" next "$nx_a/docs/plan.md" --ses
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "next outside any repository prints status=error"; else fail "nogit cwd (rc=$rc: $out)"; fi
 out=$(run_state "$nx_a" next docs/plan.md --session s1 --code-repo "$TEST_ROOT/does-not-exist" 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "next with a missing --code-repo prints status=error"; else fail "missing code repo (rc=$rc: $out)"; fi
+
+
+echo "final: claim, lease, finish"
+make_pair fn; fn_a=$PAIR_A
+mkdir -p "$fn_a/docs"; : > "$fn_a/docs/spec.md"
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fn_a/docs/plan.md"
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fn_a/docs/plan2.md"
+git -C "$fn_a" add docs; git -C "$fn_a" commit -qm plans; git -C "$fn_a" push -q origin main 2>/dev/null; git -C "$fn_a" switch -q -c feature/foo
+run_state "$fn_a" sync docs/plan.md >/dev/null 2>&1; wsfn=$(run_sdd_dir "$fn_a" docs/plan.md 2>/dev/null); wsfn2=$(run_sdd_dir "$fn_a" docs/plan2.md 2>/dev/null)
+printf '# SDD ledger — plan: docs/plan.md\n' > "$wsfn/progress.md"; printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsfn2/progress.md"
+run_state "$fn_a" register docs/plan.md --session s1 --integration feature/foo >/dev/null; run_state "$fn_a" register docs/plan2.md --session s2 --integration feature/foo >/dev/null
+run_state "$fn_a" claim docs/plan.md 1 --session s1 >/dev/null
+out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "$out" = "status=blocked task=final waiting=1" ]; then pass "final is blocked while a task is open"; else fail "final blocked (rc=$rc: $out)"; fi
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsfn/progress.md"
+out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
+lease_fn=$(ls "$STATE_ROOT/$(state_key "$fn_a").final-"* 2>/dev/null | head -n 1)
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=claimed task=final" ] && [ -n "$lease_fn" ] && [ "$(sed -n 's/^branch=//p' "$lease_fn")" = "feature/foo" ] && [ "$(sed -n 's/^closing=//p' "$lease_fn")" = 0 ] && [ -d "$wsfn/claims/final" ]; then pass "final claims the plan and takes a slash-safe lease on the branch"; else fail "final claimed (rc=$rc: $out: $lease_fn)"; fi
+printf 'time=2026-01-01T00:00:00Z\n' >> "$lease_fn"
+out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=final owner=s1 own=1 lease=$(basename "$lease_fn")" ] && grep -q '^time=2026-01-01T00:00:00Z$' "$lease_fn"; then pass "the holder's repeated final claim leaves the lease untouched"; else fail "own final re-claim (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" claim docs/plan.md final --session s3 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "${out%% since=*}" = "status=held task=final owner=s1" ]; then pass "a second session of the same plan sees final held"; else fail "final held (rc=$rc: $out)"; fi
+printf 'Task 1: complete (commits 3333333..4444444, review clean)\n' >> "$wsfn2/progress.md"
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "$out" = "status=held task=final lease=s1 plan=$(basename "$wsfn")" ] && [ -d "$wsfn2/claims/final" ]; then pass "a sibling plan's final waits for the branch lease and keeps its own claim"; else fail "sibling lease held (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" finish docs/plan.md --session s3 2>/dev/null); rc=$?
+if [ "$rc" -eq 11 ] && [ "$out" = "status=not-holder owner=s1" ]; then pass "finish refuses a session that does not hold final"; else fail "finish not-holder (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" finish docs/plan.md --session s3 --force 2>/dev/null); rc=$?
+if [ "$rc" -eq 11 ]; then pass "--force does not bypass the final claim"; else fail "force bypass (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" lease docs/plan2.md --closing --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "$out" = "status=no-lease" ]; then pass "closing without the lease is no-lease"; else fail "closing no-lease (rc=$rc: $out)"; fi
+make_repo "$TEST_ROOT/foreign-fn"
+out=$(run_state "$fn_a" lease docs/plan.md --release --session s1 --code-repo "$TEST_ROOT/foreign-fn" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ -f "$lease_fn" ]; then pass "lease refuses a foreign --code-repo while the ledger exists"; else fail "lease wrong-repo (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" finish docs/plan.md --session s1 --code-repo "$TEST_ROOT/foreign-fn" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ -d "$wsfn" ]; then pass "finish refuses a foreign --code-repo before touching the workspace"; else fail "finish wrong-repo (rc=$rc: $out)"; fi
+out=$(cd "$TEST_ROOT/foreign-fn" && bash "$SDD_STATE" finish "$fn_a/docs/plan.md" --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ -d "$wsfn" ]; then pass "finish run from a foreign repository without --code-repo leaves the workspace intact"; else fail "finish foreign cwd (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" lease docs/plan.md --closing --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=sibling-open plan=$(basename "$wsfn2")" ] && [ "$(sed -n 's/^closing=//p' "$lease_fn")" = 0 ]; then pass "closing is refused while a sibling plan is open"; else fail "sibling-open (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" finish docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsfn" ] && [ -f "$lease_fn" ]; then pass "the holder finishes and the lease survives the workspace"; else fail "holder finishes (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ]; then pass "the lease still blocks the sibling after finish"; else fail "lease after finish (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" lease docs/plan.md --release --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && [ ! -f "$lease_fn" ]; then pass "release finds the lease by workspace and session with no workspace on disk"; else fail "release after finish (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" lease docs/plan.md --release --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=no-lease" ]; then pass "a second release is quiet"; else fail "second release (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=claimed task=final" ]; then pass "the sibling takes the lease once released"; else fail "sibling takes lease (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" lease docs/plan2.md --closing --session s2 2>/dev/null); rc=$?
+lease_fn2=$(ls "$STATE_ROOT/$(state_key "$fn_a").final-"* | head -n 1)
+if [ "$rc" -eq 0 ] && [ "$out" = "status=closing" ] && [ "$(sed -n 's/^closing=//p' "$lease_fn2")" = 1 ]; then pass "the last open plan may close the branch"; else fail "closing (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=held task=final owner=s2 own=1" ] && [ "$(sed -n 's/^closing=//p' "$lease_fn2")" = 1 ]; then pass "the holder's repeated final claim keeps closing=1"; else fail "own re-claim keeps closing (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s2 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=held task=final owner=s2 own=1" ] && [ "$(sed -n 's/^closing=//p' "$lease_fn2")" = 1 ] && [ ! -e "$wsfn2/claims/final/owner.history" ]; then pass "the holder's own takeover is the repeat and cannot reopen a closing branch"; else fail "own takeover keeps closing (rc=$rc: $out)"; fi
+# finish removed plan.md's workspace; a new session's Setup writes the ledger again before it registers.
+printf '# SDD ledger — plan: docs/plan.md\n' > "$(run_sdd_dir "$fn_a" docs/plan.md 2>/dev/null)/progress.md"
+out=$(run_state "$fn_a" register docs/plan.md --session s4 --integration feature/foo 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=branch-closing" ]; then pass "a registration on a closing branch is refused"; else fail "register branch-closing (rc=$rc: $out)"; fi
+printf '# R\n\n**Spec:** docs/spec2.md\n\n### Task 1: C\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fn_a/docs/plan3.md"; : > "$fn_a/docs/spec2.md"; git -C "$fn_a" add docs; git -C "$fn_a" commit -qm plan3
+wsfn3=$(run_sdd_dir "$fn_a" docs/plan3.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan3.md\nplan: integration feature/foo code-root %s plan-ref feature/foo plan-root %s spec docs/spec2.md\n' "$(git -C "$fn_a" rev-list --max-parents=0 HEAD | sort | head -n 1 | cut -c1-7)" "$(git -C "$fn_a" rev-list --max-parents=0 HEAD | sort | head -n 1 | cut -c1-7)" > "$wsfn3/progress.md"
+out=$(run_state "$fn_a" claim docs/plan3.md 1 --session s5 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=branch-closing" ]; then pass "a task claim on a closing branch is refused"; else fail "claim branch-closing (rc=$rc: $out)"; fi
+# A takeover of a dead holder's final and lease, on the explicit flag alone.
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s6 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ]; then pass "final is held for a stranger without the flag"; else fail "stranger held (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s6 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(sed -n 's/^session=//p' "$lease_fn2")" = s6 ] && [ "$(sed -n 's/^session=//p' "$wsfn2/claims/final/owner")" = s6 ] && grep -q 'superseded' "$wsfn2/claims/final/owner.history"; then pass "a takeover moves the final claim and the lease on the flag alone"; else fail "final takeover (rc=$rc: $out)"; fi
+# The closing race: the closing pauses between its sibling check and its write while a sibling registers; the locks serialize them, so exactly one succeeds.
+rm -rf "$wsfn3"; wsfn3=$(run_sdd_dir "$fn_a" docs/plan3.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan3.md\n' > "$wsfn3/progress.md"
+co_fn=$(dirname "$(dirname "$wsfn2")")
+: > "$co_fn/.lease-before-close-pause"
+( cd "$fn_a" && HYPERPOWERS_TEST_PAUSE_AT=lease-before-close bash "$SDD_STATE" lease docs/plan2.md --closing --session s6 > "$TEST_ROOT/fn.close" 2>/dev/null; echo $? > "$TEST_ROOT/fn.closerc" ) &
+n=0; while [ ! -e "$co_fn/.lease-before-close-paused" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+( cd "$fn_a" && bash "$SDD_STATE" register docs/plan3.md --session s7 --integration feature/foo > "$TEST_ROOT/fn.reg" 2>/dev/null; echo $? > "$TEST_ROOT/fn.regrc" ) &
+# The pause holds until the register has finished or 5 s have passed: under the locks it cannot finish while the closing is paused, and without them it would register inside the window.
+n=0; while [ ! -s "$TEST_ROOT/fn.regrc" ] && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+rm -f "$co_fn/.lease-before-close-pause"; wait
+r1=$(cat "$TEST_ROOT/fn.closerc"); r2=$(cat "$TEST_ROOT/fn.regrc")
+if { [ "$r1" = 0 ] && [ "$r2" = 15 ]; } || { [ "$r1" = 15 ] && [ "$r2" = 0 ]; }; then pass "a sibling registering during the closing: exactly one of the two succeeds"; else fail "closing race (rcs $r1 $r2: $(cat "$TEST_ROOT/fn.close") / $(cat "$TEST_ROOT/fn.reg"))"; fi
+rm -rf "$wsfn3"
+run_state "$fn_a" claim docs/plan2.md final --session s6 --release >/dev/null
+out=$(run_state "$fn_a" finish docs/plan2.md --session s6 2>/dev/null); rc=$?
+if [ "$rc" -eq 11 ] && [ "$out" = "status=no-final-claim" ] && [ -d "$wsfn2" ]; then pass "finish without a final claim is no-final-claim"; else fail "no-final-claim (rc=$rc: $out)"; fi
+# The plan in one repository and the code in another: the claim, the final, the closing, finish and the release after it name the code repository.
+make_repo "$TEST_ROOT/fsp"; make_repo "$TEST_ROOT/fsc"; fsp="$TEST_ROOT/fsp"; fsc="$TEST_ROOT/fsc"
+mkdir -p "$fsp/docs"; printf '# S\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fsp/docs/plan.md"; : > "$fsp/docs/spec.md"; git -C "$fsp" add docs; git -C "$fsp" commit -qm plan; git -C "$fsp" switch -q -c plans
+git -C "$fsc" switch -q -c feat
+wsfs=$(run_sdd_dir "$fsp" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsfs/progress.md"; ws8fs=$(basename "$wsfs" | sed 's/.*-//')
+run_state "$fsp" register docs/plan.md --session s1 --integration feat --code-repo "$fsc" >/dev/null
+out=$(run_state "$fsp" claim docs/plan.md 1 --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && git -C "$fsc" rev-parse -q --verify "feat.$ws8fs.task-1" >/dev/null && ! git -C "$fsp" rev-parse -q --verify "feat.$ws8fs.task-1" >/dev/null; then pass "a split claim creates the task branch in the code repository only"; else fail "split claim (rc=$rc: $out)"; fi
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsfs/progress.md"
+out=$(run_state "$fsp" claim docs/plan.md final --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=claimed task=final" ] && ls "$STATE_ROOT/$(state_key "$fsp").final-"* >/dev/null 2>&1; then pass "a split final claim leases the branch beside the plan repository's lock"; else fail "split final (rc=$rc: $out)"; fi
+printf '# S2\n\n**Spec:** docs/spec.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fsp/docs/plan2.md"; git -C "$fsp" add docs; git -C "$fsp" commit -qm plan2
+wsfs2=$(run_sdd_dir "$fsp" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsfs2/progress.md"
+run_state "$fsp" register docs/plan2.md --session s2 --integration feat --code-repo "$fsc" >/dev/null
+out=$(run_state "$fsp" lease docs/plan.md --closing --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=sibling-open plan=$(basename "$wsfs2")" ]; then pass "closing finds the sibling in the plan repository's state when the code lives elsewhere"; else fail "split sibling-open (rc=$rc: $out)"; fi
+rm -rf "$wsfs2"
+out=$(run_state "$fsp" finish docs/plan.md --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsfs" ]; then pass "the split holder finishes"; else fail "split finish (rc=$rc: $out)"; fi
+out=$(run_state "$fsp" lease docs/plan.md --release --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && ! ls "$STATE_ROOT/$(state_key "$fsp").final-"* >/dev/null 2>&1; then pass "the release after finish works across repositories with no workspace on disk"; else fail "split release (rc=$rc: $out)"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

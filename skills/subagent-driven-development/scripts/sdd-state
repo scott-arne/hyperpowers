@@ -548,10 +548,17 @@ cmd_claim() {
 # found in the order held, own-blocked, excluded, open over its incomplete
 # predecessors, transitively. The classification is total, so the status
 # below is defined for every ledger. Bash 3.2 has no associative arrays, so
-# the three maps are variables named by task number (digits only, which is
-# what makes the eval safe).
-map_set() { eval "MAP_$1_$2=\$3"; }                  # map_set DEP 5 "1,3"
-map_get() { eval "printf '%s' \"\${MAP_$1_$2:-}\""; } # map_get DEP 5
+# the three maps are variables named by task number. The key is spliced into
+# an eval, so both helpers refuse anything but digits themselves instead of
+# trusting the plan parser to have kept the id clean.
+map_set() { # map_set DEP 5 "1,3"
+  case "$2" in ''|*[!0-9]*) echo "sdd-state: not a task number: $2" >&2; return 2 ;; esac
+  eval "MAP_$1_$2=\$3"
+}
+map_get() { # map_get DEP 5
+  case "$2" in ''|*[!0-9]*) echo "sdd-state: not a task number: $2" >&2; return 2 ;; esac
+  eval "printf '%s' \"\${MAP_$1_$2:-}\""
+}
 cmd_next() {
   local plan="" sid="" code="" rc
   while [ $# -gt 0 ]; do
@@ -572,15 +579,19 @@ cmd_next() {
 # calls this directly rather than the subcommand, so a board run from a cwd
 # that is no repository still computes the frontier.
 next_classify() {
-  local sid=$1 pair blob tmp graph t deps cls assigned="" line n_list own_list held_list wait_list excl_list waitown_list remaining held_all open_any=0 p rc
+  local sid=$1 pair blob tmp graph t deps cls assigned="" line n_list mine_list own_list held_list wait_list excl_list waitown_list remaining held_all open_any=0 p rc
   pair=$(authoritative_plan_blob) || { echo "status=error"; return 2; }
   blob=${pair%% *}; tmp=${pair#* }
   graph=$(hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
   [ "$rc" -eq 0 ] || { echo "status=invalid plan=${blob:0:7}"; return 2; }
-  assigned=$(grep -E "^session $sid: tasks " "$WSDIR/progress.md" | tail -n 1 | sed 's/^session [^:]*: tasks //; s/ //g')
+  # A fixed-string prefix match: an id with a regex metacharacter must not
+  # match another session's assignment line.
+  assigned=$(SID=$sid awk 'BEGIN { p = "session " ENVIRON["SID"] ": tasks " } index($0, p) == 1 { l = substr($0, length(p) + 1); gsub(/ /, "", l); found = l } END { print found }' "$WSDIR/progress.md" 2>/dev/null)
+  # A plan with no task headings leaves nothing to claim.
+  [ -n "$graph" ] || { echo "status=none reason=complete"; return 0; }
   while IFS= read -r line; do
     t=${line#task=}; t=${t%% *}; deps=${line#*depends=}
-    map_set DEP "$t" "$deps"; map_set CLASS "$t" ""; map_set OWNER "$t" ""
+    map_set DEP "$t" "$deps" && map_set CLASS "$t" "" && map_set OWNER "$t" "" || { echo "status=invalid plan=${blob:0:7}"; return 2; }
     # An unreadable ledger is an error, never "not complete": reading it as
     # open work would offer finished tasks to a session.
     ledger_task_complete "$WSDIR/progress.md" "$t"; rc=$?
@@ -610,7 +621,7 @@ next_classify() {
     if [ -n "$owner" ]; then map_set CLASS "$task" own-blocked; return 0; fi
     case " $kinds " in *" held "*) map_set CLASS "$task" waiting-on-held ;; *" own "*) map_set CLASS "$task" waiting-on-own-blocked ;; *" excluded "*) map_set CLASS "$task" waiting-on-excluded ;; *) map_set CLASS "$task" waiting-on-open ;; esac
   }
-  n_list=""; own_list=""; held_list=""; wait_list=""; excl_list=""; waitown_list=""; remaining=""; held_all=""
+  n_list=""; mine_list=""; own_list=""; held_list=""; wait_list=""; excl_list=""; waitown_list=""; remaining=""; held_all=""
   while IFS= read -r line; do
     t=${line#task=}; t=${t%% *}
     [ "$(map_get CLASS "$t")" != complete ] || continue
@@ -618,7 +629,7 @@ next_classify() {
     cls=$(map_get CLASS "$t")
     if [ -n "$(map_get OWNER "$t")" ] && [ "$(map_get OWNER "$t")" != "$sid" ]; then held_all="${held_all:+$held_all,}$t@$(map_get OWNER "$t")"; fi
     case "$cls" in
-      claimable) if [ "$(map_get OWNER "$t")" = "$sid" ]; then n_list="$t${n_list:+,$n_list}"; else n_list="${n_list:+$n_list,}$t"; fi ;;
+      claimable) if [ "$(map_get OWNER "$t")" = "$sid" ]; then mine_list="${mine_list:+$mine_list,}$t"; else n_list="${n_list:+$n_list,}$t"; fi ;;
       own-blocked) own_list="${own_list:+$own_list,}$t" ;;
       held) held_list="${held_list:+$held_list,}$t@$(map_get OWNER "$t")" ;;
       waiting-on-held) wait_list="${wait_list:+$wait_list,}$t" ;;
@@ -627,6 +638,8 @@ next_classify() {
       excluded) remaining="${remaining:+$remaining,}$t" ;;
     esac
   done <<< "$graph"
+  # This session's own claims lead, each group in heading order.
+  n_list="$mine_list${mine_list:+${n_list:+,}}$n_list"
   if [ -n "$n_list" ]; then echo "status=next tasks=$n_list own-blocked=${own_list:-none} plan=${blob:0:7}"; return 0; fi
   if [ -n "$own_list" ] || [ -n "$waitown_list" ]; then
     t=${own_list%%,*}; [ -n "$t" ] || t=${waitown_list%%,*}

@@ -2900,6 +2900,9 @@ dep_bad blank '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:**"; next } 
 dep_bad bare '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:** Task"; next } { print }' 'malformed dependency line: task 2: Task'
 dep_bad nocomma '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:** Task 1 Task 2"; next } { print }' 'malformed dependency line: task 2: Task 1 Task 2'
 dep_bad repeated '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:** Task 1, Task 1"; next } { print }' 'malformed dependency line: task 2: Task 1, Task 1'
+# A heading that starts like a task but breaks the grammar is an error: it must not drop the task or carry text into its id.
+dep_bad headtext '/^### Task 2:/ { print "### Task 2:x"; next } { print }' 'malformed task heading: ### Task 2:x'
+dep_bad headsub '/^### Task 2:/ { print "### Task 2:$(true)"; next } { print }' 'malformed task heading: ### Task 2:$(true)'
 dep_bad twice '/^\*\*Depends on:\*\* Task 1$/ { print; print ""; print "**Depends on:** none"; next } { print }' 'malformed dependency line: task 2: none'
 # The Global Constraints scope ends at the first task heading, so a task's prose cannot widen the allowlist.
 cat > "$dp/docs/gcscope.md" <<'GCSCOPE'
@@ -3400,6 +3403,37 @@ wsunc=$(run_sdd_dir "$nx_a" docs/unc.md 2>/dev/null); printf '# SDD ledger — p
 run_state "$nx_a" register docs/unc.md --session s9 --integration feat >/dev/null
 err=$(run_state "$nx_a" next docs/unc.md --session s9 2>&1 >"$TEST_ROOT/nx.unc"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$(cat "$TEST_ROOT/nx.unc")" = "status=error" ] && printf '%s' "$err" | grep -q 'does not carry docs/unc.md'; then pass "a registered plan its ref does not carry is an error, not a worktree read"; else fail "uncommitted registered plan (rc=$rc: $(cat "$TEST_ROOT/nx.unc"): $err)"; fi
-rm -f "$nx_a/docs/unc.md"; rm -rf "$wsunc"
+rm -f "$nx_a/docs/unc.md"; rm -rf "$wsunc"# A heading that carries shell text is a parse error, and nothing runs it.
+nx_mark="$TEST_ROOT/nx.pwned"
+mkplan nxi "$(printf '# P\n\n### Task 1: A\n\n### Task 2:x$(touch %s)\n' "$nx_mark")"
+err=$(run_state "$TEST_ROOT/nxi" next docs/plan.md --session s1 2>&1 >"$TEST_ROOT/nx.inj"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$(sed 's/ plan=.*//' "$TEST_ROOT/nx.inj")" = "status=invalid" ] && [ ! -e "$nx_mark" ] && printf '%s' "$err" | grep -q 'malformed task heading'; then pass "a task heading carrying shell text is invalid and runs nothing"; else fail "heading injection (rc=$rc: $(cat "$TEST_ROOT/nx.inj"): $err; marker=$([ -e "$nx_mark" ] && echo made || echo none))"; fi
+# Own claims lead in heading order, then the rest in heading order.
+mkplan nxo $'# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** none\n\n### Task 3: C\n\n**Depends on:** none\n'
+nxo_ws=$MP_WS
+run_state "$TEST_ROOT/nxo" claim docs/plan.md 1 --session s1 >/dev/null; run_state "$TEST_ROOT/nxo" claim docs/plan.md 3 --session s1 >/dev/null
+out=$(run_state "$TEST_ROOT/nxo" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=1,3,2 own-blocked=none" ]; then pass "own claims lead in heading order, then the unclaimed tasks"; else fail "own claims order (rc=$rc: $out)"; fi
+# A session id is matched as text: s.1 does not read sx1's assignment.
+printf 'session sx1: tasks 1\n' >> "$nxo_ws/progress.md"
+out=$(run_state "$TEST_ROOT/nxo" next docs/plan.md --session s.1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=2 own-blocked=none" ]; then pass "a session id with a regex metacharacter does not pick up another session's assignment"; else fail "sid metacharacter (rc=$rc: $out)"; fi
+# A plan with no task headings has nothing to claim.
+mkplan nxe $'# P\n'
+out=$(run_state "$TEST_ROOT/nxe" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=complete" ]; then pass "a plan with no task headings reads complete"; else fail "empty graph (rc=$rc: $out)"; fi
+# Held outranks excluded among an allowed task's predecessors.
+mkplan nxp $'# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** none\n\n### Task 3: C\n\n**Depends on:** Task 1, Task 2\n'
+nxp_ws=$MP_WS
+run_state "$TEST_ROOT/nxp" claim docs/plan.md 2 --session s2 >/dev/null
+printf 'session s1: tasks 2,3\n' >> "$nxp_ws/progress.md"
+out=$(run_state "$TEST_ROOT/nxp" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=held held=2@s2 waiting=3" ]; then pass "a task waiting on both a held and an excluded predecessor reads held"; else fail "held over excluded (rc=$rc: $out)"; fi
+# An unreadable ledger is an error, never "not complete".
+chmod a-r "$nxp_ws/progress.md"
+out=$(run_state "$TEST_ROOT/nxp" next docs/plan.md --session s1 2>/dev/null); rc=$?
+chmod u+r "$nxp_ws/progress.md"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "an unreadable ledger is status=error"; else fail "unreadable ledger (rc=$rc: $out)"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

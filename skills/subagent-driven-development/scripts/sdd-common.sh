@@ -202,7 +202,11 @@ hp_plan_graph() {
   out=$(awk '
     /^(```|~~~)/ { match($0, /^(`+|~+)/); run = substr($0, 1, RLENGTH); if (fence == "") fence = run; else if (substr(run, 1, 1) == substr(fence, 1, 1) && RLENGTH >= length(fence)) fence = ""; next }
     fence != "" { next }
-    /^### Task [0-9]+:/ { n = $3; sub(/:$/, "", n); if (n in seen) { printf "duplicate heading: task %s\n", n > "/dev/stderr"; bad = 1; exit 2 } seen[n] = 1; order[++k] = n; cur = n; next }
+    # A heading that starts like a task but is not "### Task N:" plus a space or
+    # the line end would otherwise drop the task silently, or carry shell text
+    # into the task id.
+    /^### Task [0-9]/ { if ($0 !~ /^### Task [0-9]+:([ \t]|$)/) { printf "malformed task heading: %s\n", $0 > "/dev/stderr"; bad = 1; exit 2 }
+      n = $0; sub(/^### Task /, "", n); sub(/:.*$/, "", n); if (n in seen) { printf "duplicate heading: task %s\n", n > "/dev/stderr"; bad = 1; exit 2 } seen[n] = 1; order[++k] = n; cur = n; next }
     cur != "" && /^\*\*Depends on:\*\*/ {
       line = $0; sub(/^\*\*Depends on:\*\*[ \t]*/, "", line); gsub(/[ \t]+$/, "", line)
       # Validate the raw text before normalizing it: a typo must be an error,

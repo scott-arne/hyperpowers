@@ -571,14 +571,21 @@ cmd_next() {
   done
   [ -n "$plan" ] && [ -n "$sid" ] || usage
   resolve_plan "$plan"
-  [ -f "$WSDIR/progress.md" ] || { echo "status=no-workspace"; return 2; }
-  code=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
-  # The classification reads the ledger and the claims, so it runs under the
-  # lock after the same recovery a claim performs: an interrupted sync leaves
-  # a stale working-tree ledger that would otherwise offer a task the
-  # recovered assignment line excludes.
+  # Recovery comes first: a sync that crashed while introducing this plan's
+  # workspace leaves no ledger on disk until the apply is finished, and the
+  # workspace check below would call that state no-workspace. The lock also
+  # covers the classification, which reads the ledger and the claims, so a
+  # stale working-tree ledger cannot offer a task the recovered assignment
+  # line excludes.
   hp_lock "$PLAN_DIR" || { echo "status=error"; return 2; }
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace"; return 2; fi
+  out=$(code_repo_arg "$code" "$WSDIR/progress.md") || {
+    rc=$?; hp_unlock
+    [ -z "$out" ] || printf '%s\n' "$out"
+    return "$rc"
+  }
+  code=$out
   out=$(next_classify "$sid"); rc=$?
   hp_unlock
   printf '%s\n' "$out"

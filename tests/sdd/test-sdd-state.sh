@@ -3449,6 +3449,19 @@ run_state "$nr_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$nr_a" push -q 
 ( cd "$nr_b" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
 out=$(run_state "$nr_b" next docs/plan.md --session s1 2>/dev/null); rcn=$?
 if [ "$rc" -eq 99 ] && [ "$rcn" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=2 own-blocked=none" ]; then pass "next recovers an interrupted sync and offers only what the recovered assignment allows"; else fail "next after crashed sync (rc=$rc/$rcn: $out)"; fi
+# A crashed sync that was introducing the workspace leaves no ledger yet; next still recovers it and reports the frontier.
+make_pair nw; nw_a=$PAIR_A; nw_b=$PAIR_B
+mkdir -p "$nw_a/docs"; : > "$nw_a/docs/spec.md"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$nw_a/docs/plan.md"
+git -C "$nw_a" add docs; git -C "$nw_a" commit -qm plan; git -C "$nw_a" push -q origin main 2>/dev/null
+run_state "$nw_a" sync docs/plan.md >/dev/null 2>&1; git -C "$nw_a" push -q origin hyperpowers/state 2>/dev/null; git -C "$nw_b" pull -q origin main 2>/dev/null; run_state "$nw_b" sync docs/plan.md >/dev/null 2>&1
+wsnw=$(run_sdd_dir "$nw_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsnw/progress.md"
+run_state "$nw_a" register docs/plan.md --session s1 --integration main >/dev/null 2>&1
+run_state "$nw_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$nw_a" push -q origin hyperpowers/state 2>/dev/null
+( cd "$nw_b" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+wsnw_b=$(run_sdd_dir "$nw_b" docs/plan.md 2>/dev/null)
+nw_absent=0; [ ! -e "$wsnw_b/progress.md" ] && nw_absent=1
+out=$(run_state "$nw_b" next docs/plan.md --session s1 2>/dev/null); rcn=$?
+if [ "$rc" -eq 99 ] && [ "$nw_absent" -eq 1 ] && [ "$rcn" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=1 own-blocked=none" ] && [ ! -e "$(dirname "$(dirname "$wsnw_b")")/.sync-applying" ]; then pass "next recovers a crashed sync that was introducing the workspace and reports the frontier"; else fail "next after crashed first sync (rc=$rc/$rcn absent=$nw_absent: $out)"; fi
 # A claim directory whose owner is unreadable or has no session is an error, not an unclaimed task.
 mkplan nxk $'# P\n\n### Task 1: A\n\n**Depends on:** none\n'
 nxk_ws=$MP_WS

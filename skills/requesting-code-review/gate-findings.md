@@ -120,7 +120,7 @@ verdict inline. Do not add
 `--background` and do not poll — backgrounding a document review only replaces a
 clean blocking call with a detached worker you then have to chase through
 `status`/`result`. If you ever do need a job's terminal state, use
-`gate-wait <job-id>`, never a blind `sleep`.
+`bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-wait" <job-id>` with `CODEX_PATH` exported (outside the shell sandbox), never a blind `sleep`.
 
 > **Red Flag — Never** treat an unfinished, timed-out, or "still verifying"
 > Codex result as "no findings" / approval. Incomplete is not a pass. Recover via
@@ -128,7 +128,7 @@ clean blocking call with a detached worker you then have to chase through
 
 > **Red Flag — Never** background a document review, and never `sleep`-then-poll
 > for any Codex result. Foreground `task` returns the verdict inline; when a job
-> genuinely needs awaiting, `gate-wait <job-id>` returns the instant it is
+> genuinely needs awaiting, `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-wait" <job-id>` returns the instant it is
 > done. A blind wait-then-poll burns wall-clock and risks reading a verdict
 > before it exists.
 

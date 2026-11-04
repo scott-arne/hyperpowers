@@ -140,6 +140,10 @@ assert_contains "$GATE" "keeps a blocking \`gate-wait\` call in the" \
   "red flag names gate-wait as the watch call"
 assert_not_contains "$GATE" "immediately issue the next \`status <job-id> --wait --json\`" \
   "agents no longer loop status --wait themselves"
+assert_contains "$REPO_ROOT/skills/requesting-code-review/gate-findings.md" "scripts/gate-wait\" <job-id>\` with \`CODEX_PATH\` exported (outside the shell sandbox)" \
+  "gate-findings names gate-wait with its full path for document routes"
+assert_contains "$REPO_ROOT/skills/requesting-code-review/recipe-code.md" "if it is still unreadable, that review is incomplete per §4b" \
+  "recipe defines the unreadable-job recovery"
 assert_contains "$GATE" "600000 ms (10 minutes)" \
   "document reviews pin a concrete explicit timeout"
 assert_contains "$GATE" "Write the captured result" \

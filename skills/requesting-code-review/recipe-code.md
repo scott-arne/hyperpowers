@@ -16,9 +16,9 @@ unrecoverable except by a full re-run. Instead:
    `jobClass: "review"`; if the job has not registered yet, re-run the status
    call after a couple of seconds.
 3. **Watch in the foreground — never idle.** Block on one shell call (timeout 600000 ms) that watches every job id at once:
-   `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-wait" <job-id>...` with `CODEX_PATH` exported;
+   `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-wait" <job-id>...` with `CODEX_PATH` exported, outside the shell sandbox like every companion command;
    it re-reads every job without blocking, waits on one at a time in slices of at most 30 s, and returns when all are terminal (exit 0, last line `all-terminal`) or after its 480 s budget (exit 2, last line `running: <ids>`).
-   On exit 2, immediately issue the next `gate-wait` over the ids still running. On exit 1 from a usage error, fix the call and re-run; on exit 1 for a job it could not read (last line `unreadable: <ids>`, stderr names the cause), run the §4b code-gate recovery for that job only and keep watching the ids still running with `gate-wait`.
+   On exit 2, immediately issue the next `gate-wait` over the ids still running. On exit 1 from a usage error, fix the call and re-run; on exit 1 for a job it could not read (last line `unreadable: <ids>`; the `running:` line before it, when present, lists the ids still running; stderr names the cause), run one `status <job-id> --json` for that job: if it is still unreadable, that review is incomplete per §4b, with at most one relaunch if the failure looked transient; keep watching the ids still running with `gate-wait`.
    Never call `status <job-id> --wait` yourself; it is the primitive `gate-wait` runs for you.
    While the review runs, the session must always be inside one of these
    blocking watch calls — never `sleep`, never fire-and-forget and move on.

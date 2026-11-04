@@ -21,7 +21,7 @@ the approval gate never does.
 
 **REQUIRED SUB-SKILL:** Use hyperpowers:communication for everything your human partner reads on every path: the questions, the approach comparison, the design presentation, and the spec.
 
-**After a context compaction:** a re-attached copy of this skill can be cut short (Claude Code keeps its first 20,000 characters, which ends before the spec-writing steps). Before resuming work after any compaction, Read this file in full, along with any other skill you are following whose re-attached copy is cut short.
+**After every context compaction:** Claude Code re-attaches this skill cut to its first 20,000 characters, which ends before the spec-writing steps, and a full Read you made before the compaction does not survive it. After each compaction, the first and every later one, Read this file in full before your next action (a question to your human partner, a visual-companion step, or writing the spec), along with any other skill you are following whose re-attached copy is cut short.
 
 ## Three Paths
 

@@ -18,7 +18,7 @@ ledger and the tool results carry the record.
 
 **Continuous execution:** Do not pause to check in with your human partner between tasks. Execute all tasks from the plan without stopping. The only reasons to stop are: BLOCKED status you cannot resolve, ambiguity that genuinely prevents progress, or all tasks complete. "Should I continue?" prompts and progress summaries waste their time — they asked you to execute the plan, so execute it.
 
-**After a context compaction:** a re-attached copy of this skill can be cut short (Claude Code keeps its first 20,000 characters, which ends partway through the task loop). Before resuming work after any compaction, Read this file in full, then the ledger, along with any other skill you are following whose re-attached copy is cut short.
+**After every context compaction:** Claude Code re-attaches this skill cut to its first 20,000 characters, which ends partway through the task loop, and a full Read you made before the compaction does not survive it. After each compaction, the first and every later one, Read this file in full before your next action (a dispatch, a ledger write, or the finishing steps), then the ledger, along with any other skill you are following whose re-attached copy is cut short.
 
 ## When to Use
 

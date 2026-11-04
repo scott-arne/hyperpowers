@@ -28,8 +28,8 @@ check() {
   [ "$res" = "ok" ] && pass "$label" || fail "$label ($res)"
 }
 
-check "$SDD" "Before resuming work after any compaction, Read this file in full, then the ledger, along with any other skill you are following whose re-attached copy is cut short." "## When to Use" "SDD re-read paragraph present, early, before When to Use"
-check "$BRAIN" "Before resuming work after any compaction, Read this file in full, along with any other skill you are following whose re-attached copy is cut short." "## Three Paths" "brainstorming re-read paragraph present, early, before Three Paths"
+check "$SDD" "**After every context compaction:** Claude Code re-attaches this skill cut to its first 20,000 characters, which ends partway through the task loop, and a full Read you made before the compaction does not survive it. After each compaction, the first and every later one, Read this file in full before your next action (a dispatch, a ledger write, or the finishing steps), then the ledger, along with any other skill you are following whose re-attached copy is cut short." "## When to Use" "SDD re-read paragraph present, early, before When to Use"
+check "$BRAIN" "**After every context compaction:** Claude Code re-attaches this skill cut to its first 20,000 characters, which ends before the spec-writing steps, and a full Read you made before the compaction does not survive it. After each compaction, the first and every later one, Read this file in full before your next action (a question to your human partner, a visual-companion step, or writing the spec), along with any other skill you are following whose re-attached copy is cut short." "## Three Paths" "brainstorming re-read paragraph present, early, before Three Paths"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

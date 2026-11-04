@@ -230,8 +230,11 @@ A new section after "The Basic Workflow" with:
   dispatched; otherwise it is void (instrument failure, per the eval
   void-attempt rule). Outcome checks: every task whose task review had not
   returned when the compaction landed (including a task whose implementer
-  was already dispatched or had just returned) gets a task-review dispatch
-  after the compaction; the final review and Finish run; no task whose
+  was already dispatched or had just returned) is reviewed after the
+  compaction: a task review must return after the compaction and before the
+  next task's implementer is dispatched (for the last task, before the final
+  review is dispatched); a review already in flight at the compaction counts
+  when it returns in that span; the final review and Finish run; no task whose
   review returned before the compaction is dispatched again. Mechanism check: the controller Reads
   `subagent-driven-development/SKILL.md` after the compaction and before its
   next dispatch. Control on `v6.16.1`, treatment on the release branch, 10
@@ -289,6 +292,9 @@ With the human partner's standing approval from 2026-11-03:
 - `gate-wait` sweeps every job before each blocking slice and keeps the
   16-minute watch cap; it only reduces the number of model calls inside it.
 - The opus alias is out of scope by the human partner's choice.
+- Credit a task review in flight at the compaction when it returns after it
+  and before the next task starts (human partner, 2026-11-04, after the RED
+  tally: the literal wording counted three correct control runs as failures).
 
 ## Assumptions
 

@@ -2,6 +2,16 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
+## 6.16.2 (2026-11-04)
+
+Three changes cut the cost of long sessions without changing what the skills do.
+
+- **SDD and brainstorming re-read the full skill after a context compaction.** Claude Code re-attaches each skill cut to its first 20,000 characters, which drops SDD's task loop from "3. Review the task" on and brainstorming's spec-writing steps. Both skills now tell the agent to Read the full skill after a compaction. Measured in a paired campaign at a forced 100000-token auto-compact window (evidence in `evals/evidence/2026-11-03-cost-reduction-6-16-2/`, note `docs/hyperpowers/2026-11-03-cost-reduction-6-16-2-eval-evidence.md`):
+  - SDD control (v6.16.1): 10 valid sessions, outcome 10 of 10, re-read 0 of 10. Treatment: 10 valid, outcome 10 of 10, re-read 10 of 10 (9 of them whole-file).
+  - Brainstorming control: 10 valid sessions (one grader void replaced), outcome 10 of 10, re-read 0 of 10. Treatment: 10 valid, outcome 10 of 10, re-read 10 of 10 (9 of them whole-file).
+- **`gate-wait` watches every Codex job of a gate in one call.** The new script in `skills/requesting-code-review/scripts/` blocks in slices of at most 30 seconds with a full status sweep before each, within a 480-second default budget. The code-gate recipe, lens and findings docs use it, and document routes get its full path. The 16-minute watch cap is unchanged.
+- **README "Cost and Context" recommends a compaction window.** It suggests `"autoCompactWindow": 400000` (a replay of a month of real sessions cut cost by about 28%; 300K and 200K saved 4 and 7 more points with 1.5 and 2.6 times the extra compactions), keeping `ENABLE_PROMPT_CACHING_1H=1` (a five-minute cache priced about 56% higher in the same replay), and running `/clear` between a finished plan and SDD.
+
 ## 6.16.1 (2026-10-19)
 
 Two bundled scripts misread the state they report on.

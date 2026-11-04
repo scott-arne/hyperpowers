@@ -33,12 +33,25 @@ One control observation worth keeping: the voided p8 run was graded `investigate
 | sdd-compaction-reread | 10 | 10 | none | 10/10 | 10/10 |
 | brainstorming-bounded-companion-after-compaction | 10 | 10 | none | 10/10 | 10/10 |
 
-No replacements were needed. After the measured compaction the agent Read the skill file in 10 of 10 runs for each skill, which is what the mechanism check counts, and outcomes stayed at 10 of 10. The check credits any successful Read of the skill path and ignores `offset` and `limit`, so the transcripts were re-read for what each Read covered. In 9 of 10 runs per skill the qualifying Read had no offset and covered the whole file (SDD is 655 lines, brainstorming 339). In one run per skill the only qualifying Read in the window started at line 300: SDD `...-b5ad` and brainstorming `...-d824`. That Read restores the tail the 20,000-character re-attachment cut off, but not the lines before 300; for brainstorming, lines from roughly 280 to 299 were never re-read. Under a strict full-file count both cells are 9 of 10, which still clears the bar of 8. All four bars read PASS in `tally.txt`:
+No replacements were needed. After the measured compaction the agent Read the skill file in 10 of 10 runs for each skill, which is what the mechanism check counts, and outcomes stayed at 10 of 10. The check credits any successful Read of the skill path and ignores `offset` and `limit`, so the transcripts were re-read for what each Read covered. In 9 of 10 runs per skill the qualifying Read had no offset and covered the whole file (SDD is 655 lines, brainstorming 339). In one run per skill the only qualifying Read in the window started at line 300: SDD `...-b5ad` and brainstorming `...-d824`. That Read restores the tail the 20,000-character re-attachment cut off, but not the lines before 300; for brainstorming, lines from roughly 280 to 299 were never re-read. Under a strict full-file count both cells are 9 of 10, which still clears the bar of 8. The mechanism bar counts the first compaction inside the spec's window, as the pass bar defines it. All four bars read PASS in `tally.txt`:
 
 - SDD outcome: treatment 10 of 10 valid, at least 8 and at least the control's 10 of 10.
 - SDD mechanism: 10 of 10, at least 8.
 - Brainstorming outcome: treatment rate equals the control's 10 of 10.
 - Brainstorming mechanism: 10 of 10, at least 8.
+
+Per-compaction rates. The runs compact more than once, so the transcripts were also measured over every automatic compaction after the skill load (for brainstorming, before the first question). The count is whether a successful Read of the skill's `SKILL.md` followed before the next dispatch (SDD) or the next question, server call or compaction (brainstorming).
+
+| Arm | Scenario | Compactions followed by a re-read | Runs that re-read after every compaction |
+| --- | --- | --- | --- |
+| Control | SDD | 0 of 38 | 0 of 10 |
+| Control | Brainstorming | 0 of 20 | 0 of 10 |
+| Treatment | SDD | 117 of 127 (92%) | 2 of 10 |
+| Treatment | Brainstorming | 15 of 20 (75%) | 5 of 10 |
+
+So the 10 of 10 mechanism result measures the first in-window compaction. Some treatment runs compacted again and did not re-read afterward, and the paragraph does not yet reach every compaction.
+
+Compaction count. Treatment SDD compacted 127 times against the control's 38 at the forced 100000-token window. Each re-read adds about 10K tokens to a post-compaction context of about 45K to 50K under a threshold near 67K, so at that window the re-read itself brings the next compaction sooner. At the recommended 400000 window the headroom is about 300K, so the effect should be small. That is unchecked and is part of the two-week field re-measure.
 
 Who ran what. The RED wave was launched by the subagent that ran Task 8. The GREEN wave was launched by the controller after the human partner approved it, because the permission classifier had denied the launch to the Task 10 subagent. The command was identical to the RED wave's (`launch-all.sh` with the wave's manifest and 14 parallel slots). The evidence staging for the GREEN runs was likewise done by the controller after approval, after the classifier denied it to the subagent. Evals commits: `3c6b76ed3` (RED runs and tally), `28d0fcad1` (treatment pin), `8920e7c2e` (GREEN runs and tally).
 
@@ -53,4 +66,5 @@ The skill text did not change after the first measurement; `1478a4a` is the only
 
 - **writing-skills.** The change to that skill is deferred and has no measurement here.
 - **Field cost savings.** The campaign measures behavior after a compaction, not spend. Savings from the settings change are measured in the field two weeks after it takes effect and will be reported separately.
+- **Extra compactions at the recommended window.** Whether the added compactions seen at the forced 100000-token window matter at 400000 is not measured here. The two-week field re-measure checks it.
 - Only the 100000-token window and one plan size were tested, with one coding-agent model and one SDD subagent model (a single treatment run also used a smaller model, as noted above).

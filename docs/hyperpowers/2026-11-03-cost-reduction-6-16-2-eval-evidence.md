@@ -4,7 +4,7 @@
 
 **Method:** paired live Claude Code sessions driven by the quorum harness, ten trials per arm per scenario. The control arm loads v6.16.1 and the treatment arm loads the release branch; nothing else differs. A Gauntlet agent plays the human partner and a grader judges the outcome checks. The spec is `docs/hyperpowers/specs/2026-11-03-cost-reduction-6-16-2-design.md` (Testing section, as amended 2026-11-04).
 
-**Environment:** Claude Code 2.1.317. Coding agent and grader both `claude-opus-5-5`. Pins: harness `829fe83b0` (evals repo), control `f1fd935` (v6.16.1), treatment `1478a4a` (release branch, the commit with the two paragraphs). Run artifacts, tallies and logs: `evals/evidence/2026-11-03-cost-reduction-6-16-2/` in hyperpowers-evals.
+**Environment:** Claude Code 2.1.317. The coding agent (the controller session) and the grader were `claude-opus-5-5`. From each run's token-usage record, the SDD subagents ran on `claude-sonnet-5-5` in all 20 SDD runs of both arms, and one treatment SDD run (`...-b5ad`) also used `claude-haiku-4-5` for some work; the brainstorming runs used `claude-opus-5-5` only. Pins: harness `829fe83b0` (evals repo), control `f1fd935` (v6.16.1), treatment `1478a4a` (release branch, the commit with the two paragraphs). Run artifacts, tallies and logs: `evals/evidence/2026-11-03-cost-reduction-6-16-2/` in hyperpowers-evals.
 
 **Date:** 2026-11-04.
 
@@ -33,7 +33,7 @@ One control observation worth keeping: the voided p8 run was graded `investigate
 | sdd-compaction-reread | 10 | 10 | none | 10/10 | 10/10 |
 | brainstorming-bounded-companion-after-compaction | 10 | 10 | none | 10/10 | 10/10 |
 
-No replacements were needed. The agent re-read the full skill in 10 of 10 measured compactions for both skills, and outcomes stayed at 10 of 10. All four bars read PASS in `tally.txt`:
+No replacements were needed. After the measured compaction the agent Read the skill file in 10 of 10 runs for each skill, which is what the mechanism check counts, and outcomes stayed at 10 of 10. The check credits any successful Read of the skill path and ignores `offset` and `limit`, so the transcripts were re-read for what each Read covered. In 9 of 10 runs per skill the qualifying Read had no offset and covered the whole file (SDD is 655 lines, brainstorming 339). In one run per skill the only qualifying Read in the window started at line 300: SDD `...-b5ad` and brainstorming `...-d824`. That Read restores the tail the 20,000-character re-attachment cut off, but not the lines before 300; for brainstorming, lines from roughly 280 to 299 were never re-read. Under a strict full-file count both cells are 9 of 10, which still clears the bar of 8. All four bars read PASS in `tally.txt`:
 
 - SDD outcome: treatment 10 of 10 valid, at least 8 and at least the control's 10 of 10.
 - SDD mechanism: 10 of 10, at least 8.
@@ -53,4 +53,4 @@ The skill text did not change after the first measurement; `1478a4a` is the only
 
 - **writing-skills.** The change to that skill is deferred and has no measurement here.
 - **Field cost savings.** The campaign measures behavior after a compaction, not spend. Savings from the settings change are measured in the field two weeks after it takes effect and will be reported separately.
-- Only the 100000-token window, one plan size and one model pair were tested.
+- Only the 100000-token window and one plan size were tested, with one coding-agent model and one SDD subagent model (a single treatment run also used a smaller model, as noted above).

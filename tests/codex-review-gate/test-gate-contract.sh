@@ -126,12 +126,20 @@ assert_contains "$GATE" "Launch in the background" \
   "code recipes launch the review detached"
 assert_contains "$GATE" "Watch in the foreground — never idle" \
   "watch loop keeps a blocking foreground call while the review runs"
-assert_contains "$GATE" "4 consecutive wait cycles" \
+assert_contains "$GATE" "2 consecutive \`gate-wait\` calls" \
   "watch loop has a bounded cap"
 assert_not_contains "$GATE" "adversarial-review --base <BASE_SHA> --wait" \
   "per-task and code-review recipes drop the ignored --wait flag"
 assert_not_contains "$GATE" "adversarial-review --base <MERGE_BASE_SHA> --wait" \
   "final whole-branch recipe drops the ignored --wait flag"
+assert_contains "$GATE" "skills/requesting-code-review/scripts/gate-wait\" <job-id>..." \
+  "recipe watch step blocks on gate-wait"
+assert_contains "$GATE" "watch them all with one \`gate-wait\` call over every recorded id" \
+  "lens fan-out watches every lens with one gate-wait call"
+assert_contains "$GATE" "keeps a blocking \`gate-wait\` call in the" \
+  "red flag names gate-wait as the watch call"
+assert_not_contains "$GATE" "immediately issue the next \`status <job-id> --wait --json\`" \
+  "agents no longer loop status --wait themselves"
 assert_contains "$GATE" "600000 ms (10 minutes)" \
   "document reviews pin a concrete explicit timeout"
 assert_contains "$GATE" "Write the captured result" \

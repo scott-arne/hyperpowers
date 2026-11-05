@@ -3558,6 +3558,12 @@ out=$(run_state "$fn_a" claim docs/plan2.md final --session s6 2>/dev/null); rc=
 if [ "$rc" -eq 4 ]; then pass "final is held for a stranger without the flag"; else fail "stranger held (rc=$rc: $out)"; fi
 out=$(run_state "$fn_a" claim docs/plan2.md final --session s6 --takeover 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$(sed -n 's/^session=//p' "$lease_fn2")" = s6 ] && [ "$(sed -n 's/^session=//p' "$wsfn2/claims/final/owner")" = s6 ] && grep -q 'superseded' "$wsfn2/claims/final/owner.history"; then pass "a takeover moves the final claim and the lease on the flag alone"; else fail "final takeover (rc=$rc: $out)"; fi
+# s2 had closed the branch before s6 took over with the workspace present: the takeover must not reopen it to registrations or task claims.
+out=$(run_state "$fn_a" register docs/plan.md --session s4 --integration feature/foo 2>/dev/null); rc=$?
+out2=$(run_state "$fn_a" claim docs/plan3.md 1 --session s5 2>/dev/null); rc2=$?
+if [ "$(sed -n 's/^closing=//p' "$lease_fn2")" = 1 ] && grep -q '^session=s2$' "$lease_fn2.history" && [ "$rc" -eq 15 ] && [ "$out" = "status=branch-closing" ] && [ "$rc2" -eq 15 ] && [ "$out2" = "status=branch-closing" ]; then pass "a takeover of a closing branch's lease keeps closing=1, and registration and task claims stay refused"; else fail "takeover keeps closing (closing=$(sed -n 's/^closing=//p' "$lease_fn2") register rc=$rc: $out / claim rc=$rc2: $out2)"; fi
+# The race needs an open branch, so the closing=1 the takeover kept is reset by hand, as a holder that never closed would have left it.
+sed 's/^closing=.*/closing=0/' "$lease_fn2" > "$TEST_ROOT/fn.lease2" && mv -f "$TEST_ROOT/fn.lease2" "$lease_fn2"
 # The closing race: the closing pauses between its sibling check and its write while a sibling registers; the locks serialize them, so exactly one succeeds.
 rm -rf "$wsfn3"; wsfn3=$(run_sdd_dir "$fn_a" docs/plan3.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan3.md\n' > "$wsfn3/progress.md"
 co_fn=$(dirname "$(dirname "$wsfn2")")

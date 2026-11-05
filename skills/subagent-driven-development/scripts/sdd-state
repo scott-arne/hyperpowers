@@ -459,7 +459,7 @@ cmd_claim() {
   # (a plan that predates registration) there is no branch to lease, and only
   # claims/final is published. Runs under the locks the loop below settled.
   claim_final() {
-    local c lowner="" lplan="" own_lease=0 lease_prev=0 took=0 missing="" t open lease_out rec
+    local c lowner="" lplan="" own_lease=0 lease_prev=0 took=0 missing="" t open lease_out rec lclosing=0
     lease=""
     c=$(hp_checkout_path "$PLAN_DIR") || { hp_unlock; echo "status=error"; return 2; }
     if [ "$release" -eq 1 ]; then
@@ -545,7 +545,12 @@ cmd_claim() {
     fi
     if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null | head -n 1)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
     if [ -n "$lease" ] && [ "$own_lease" -eq 0 ]; then
-      rec=$(printf 'session=%s\nhost=%s\nplan=%s\nbranch=%s\ntime=%s\nclosing=0' "$sid" "$(hostname)" "$WS" "$integ" "$(hp_utc_now)")
+      # A takeover keeps the replaced lease's closing=: once the closing has
+      # found the branch free of open plans, a new holder must not reopen it
+      # to registrations and task claims while the branch can still be
+      # deleted under them.
+      if [ "$lease_prev" -eq 1 ]; then lclosing=$(sed -n 's/^closing=//p' "$lease" | head -n 1); [ "$lclosing" = 1 ] || lclosing=0; fi
+      rec=$(printf 'session=%s\nhost=%s\nplan=%s\nbranch=%s\ntime=%s\nclosing=%s' "$sid" "$(hostname)" "$WS" "$integ" "$(hp_utc_now)" "$lclosing")
       if [ "$lease_prev" -eq 1 ]; then
         lease_supersede "$c" "$lease" "$rec" || { hp_unlock; echo "status=error"; return 2; }
       else

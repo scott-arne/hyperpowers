@@ -1,6 +1,6 @@
 ---
-sources: skills/requesting-code-review skills/subagent-driven-development/SKILL.md skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/executing-plans/SKILL.md skills/receiving-code-review/SKILL.md skills/optimizing-performance/SKILL.md
-source-digest: cbce94763be8
+sources: skills/requesting-code-review skills/subagent-driven-development/SKILL.md skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/executing-plans/SKILL.md skills/receiving-code-review/SKILL.md skills/optimizing-performance/SKILL.md scripts/claude-skill-root.md
+source-digest: 5c37e987a377
 ---
 # requesting-code-review
 
@@ -60,13 +60,13 @@ The skill's core principle is to review early and review often, so that issues a
 
 - A review adds a subagent run to every task or feature it covers, and the Codex gate adds a longer one, with a fix-and-re-review loop when it finds blockers.
 - The Codex gate depends on a third-party plugin, and it has to run outside the Bash sandbox, so a sandboxed shell cannot run it.
-- The gate runs in Claude Code only. In another harness it is skipped silently, with no notice.
+- The gate runs under Claude Code only. The gate document says to skip it silently in other harnesses, and the Claude Desktop and claude.ai bundle prints a one-time notice instead.
 - Findings can send the agent back into fixes, so a review that was meant to end the task can lengthen it.
 - The reviewer sees only the range and the context the agent writes down, so a vague description or missing requirements weakens the review.
 
 ## Skipping or overriding
 
-The skill's red flags say never to skip review because "it's simple" and never to ignore Critical issues. The skill gives you no option to switch review off. The Codex gate is skipped only when Codex is absent, and then the agent tells you with a notice and finishes the review without it. When a finding is wrong, the agent pushes back with technical reasoning, shows code or tests that prove the work, or asks the reviewer for clarification.
+The skill's red flags say never to skip review because "it's simple" and never to ignore Critical issues. The skill gives you no option to switch review off. The Codex gate is skipped when the Codex plugin is missing or not ready, or outside Claude Code, and the review finishes without it. Under Claude Code the agent tells you with a status notice, the Claude Desktop and claude.ai bundle prints a one-time notice, and other harnesses give no notice. When a finding is wrong, the agent pushes back with technical reasoning, shows code or tests that prove the work, or asks the reviewer for clarification.
 
 ## Works with
 

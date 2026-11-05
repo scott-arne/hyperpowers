@@ -4,7 +4,7 @@ source-digest: 5a2cc00dea72
 ---
 # receiving-code-review
 
-`receiving-code-review` makes the agent check review feedback against the code before acting on it, and answer with a technical statement or reasoned pushback in place of agreement.
+`receiving-code-review` makes the agent check an external reviewer's feedback against the code before acting on it (your own feedback is implemented once the agent understands it), and answer with a technical statement or reasoned pushback in place of agreement.
 
 :::{card} At a glance
 **Category:** Review · **Triggers on:** receiving code review feedback, before implementing suggestions, especially when the feedback is unclear or technically questionable · **Hands off to:** {doc}`communication` (the reply itself) · **Harness notes:** none
@@ -22,7 +22,7 @@ Example requests:
 
 ## What it does
 
-The skill gives the agent a six-step response pattern for any feedback.
+The skill gives the agent a six-step response pattern for review feedback.
 
 1. **Read** the complete feedback without reacting.
 2. **Understand** it by restating the requirement in the agent's own words, or asking.

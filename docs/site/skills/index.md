@@ -32,4 +32,4 @@ Skills trigger automatically: the agent matches your request against each skill'
 | Skill | What it does | Triggers when |
 |---|---|---|
 | {doc}`requesting-code-review` | Dispatches a reviewer subagent over an exact commit range, and under Claude Code adds an optional Codex review. | You complete a task or a major feature, or are about to merge. |
-| {doc}`receiving-code-review` | Checks review feedback against the code before acting, pushes back with evidence, and skips performative agreement. | The agent receives review feedback. |
+| {doc}`receiving-code-review` | Checks an external reviewer's feedback against the code before acting (yours is implemented once understood), pushes back with evidence, and skips performative agreement. | The agent receives review feedback. |

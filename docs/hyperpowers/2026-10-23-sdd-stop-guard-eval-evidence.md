@@ -294,6 +294,62 @@ of the campaign in which the hook judged a plan. The field rule over the
 after-window is where the guard's decisions under a plan will first be
 measured.
 
+The Z4 contingency re-measured the campaign after Z4 failed in Zed (see Zed
+checks), with ten runs at treatment `36a6255` under `manifest-z4.tsv`, on
+Claude Code 2.1.317, on 2026-11-05. It fails its rule. All ten runs are
+counted, none is void, each passed the archive's post-check with `finish=yes`,
+one receipt, one mirror and the last task's mark, and each has quorum's final
+status and the Gauntlet's status `pass`. `tally-z4.txt` is the decision of
+record for the release; its lines:
+
+```
+runs_h1: 10
+runs_with_plan_decisions: 0
+H1: True
+neither_listed_total: 1
+false_handbacks_total: 0
+unadjudicated_allows_total: 0
+H2: False
+false_blocks_total: 0
+unadjudicated_blocks_total: 0
+H3: True
+foreground_share: 1.0
+untracked_total: 0
+f_runs: 6
+live_shell_turn_ends_total: 0
+H4: False
+success_runs: 10
+R: True
+decision: FAIL
+```
+
+H2 fails on one entry: in `95e8` the Gauntlet labelled `neither` the
+session's report after the merge, 157.2 s after Finish's result, when the
+ledger was gone and the hook answered `no-ledger`, which is its designed
+answer once Finish has run. The driver listed it because the session never
+said that `sdd-state finish` had published its receipt, which the scenario's
+done condition asks for. H4 fails on F, 6 of 10: five readings of a command's
+shape in four runs (two short soaks behind a `time` prefix, two closing
+watches followed by `; date -u`, one watch reached through a command
+substitution), each a foreground call that did what the rule asks when read
+by eye, applied as the pre-registered analyzer reads it. The rest of the
+mechanism held: 134 of 134 dispatches in the foreground, no untracked launch,
+no live-shell turn end, ten successful runs. As in the first campaign, the
+guard made no decision under a plan (`plan_decisions` 0 in 10 of 10; all 21
+decisions are `no-ledger` allows after Finish), so H2's adjudication half
+and H3 held with no cases, and H1 holds because no line fell in its window.
+No task in any run needed a fix round and no run called `SendMessage`, so the
+contingency's change ran in none of these runs; they neither show nor refute
+that a fix round on Claude Code now keeps the turn open. Neither failure is a
+decision the guard got wrong, and neither passes through the fix-round path.
+The first campaign's PASS (`tally.txt`, Claude Code 2.1.302, `4a4f354`) and
+this FAIL (`tally-z4.txt`, Claude Code 2.1.317, `36a6255`) differ in the
+Claude Code version as well as the treatment, so no difference between them
+can be attributed to the treatment alone. The full record is the campaign
+README's "Results (Z4 contingency)" section, `tally-z4.txt` and the runs
+under `evidence/2026-10-23-sdd-stop-guard/task-21-runs/treatment/` in
+hyperpowers-evals, and the experiment entry's second verdict.
+
 ## T1
 
 T1 is the uncounted run of the `sdd-turn-liveness-fork` copy of the
@@ -332,7 +388,36 @@ Correction 10 it is that call's in-turn stop.
 
 ## Zed checks
 
-To be filled in by Task 21.
+The human partner ran the checks in Zed on 2026-11-05, on scratch
+repositories with a two-task plan and an SDD ledger, with the treatment
+`4a4f354` installed.
+
+- Z1, pass, 2026-11-05: Zed run 1 (session `9558e8d7`, scratch `zed-scratch`,
+  treatment `4a4f354`, 03:05Z to 03:53Z). The Task 1 implementer ran in the
+  foreground from 03:07:45Z to 03:17:09Z, and the human partner saw Zed's
+  indicator busy throughout.
+- Z2, pass, 2026-11-05: Zed run 2 (session `d15435c6`, scratch
+  `zed-scratch-2`, treatment `4a4f354`, 05:29Z to 06:28Z). Esc at 05:35:15Z,
+  19 s into the Task 1 implementer; on "Resume" the controller ledgered the
+  interrupted dispatch and dispatched a foreground takeover at 05:35:54Z. The
+  indicator stayed busy throughout, and the ledger was intact. In run 1 both
+  Esc presses landed in setup, before the first dispatch, so Z2 was not
+  exercised there.
+- Z3, pending (Zed run 3): not yet exercised. In run 2 Zed held the mid-turn
+  stop request until the human partner pressed "Send Now", which interrupted
+  the turn; the controller went on to Task 2 in the same turn with no stop
+  attempt, so the hook made no decision.
+- Z4, fail, 2026-11-05: in run 1 the controller resumed the Task 2
+  implementer with `SendMessage` at 03:33:26Z for a Codex fix round, the turn
+  ended at 03:33:36Z (hook allow `live-agent`), and the hand-back opened a new
+  turn at 03:37:48Z, so no turn was open for 4 min 12 s; in run 2 the resume
+  came at 06:06:10Z, the turn ended at 06:06:15Z, and the new turn opened at
+  06:06:34Z (19 s). The human partner did not watch the indicator during
+  either resume and decided on the transcript. Z4 failed; contingency shipped
+  at `36a6255`; re-measured: `tally-z4.txt`, `decision: FAIL` (Scenario
+  results).
+- The hook fired in Zed: four decisions across runs 1 and 2, two `live-agent`
+  allows and two post-Finish `no-ledger` allows, and no block.
 
 ## Release
 

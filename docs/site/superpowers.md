@@ -4,7 +4,7 @@ Hyperpowers is a fork of [Superpowers](https://github.com/obra/superpowers), bui
 
 ## What is upstream's
 
-The methodology, the skill design, and most of the prose are the upstream project's work, and credit for the approach belongs there. The fork is maintained independently, so it can change skills and prompts locally without colliding with an installed copy of Superpowers. To get the original, install Superpowers from its own repository.
+The methodology and most of the skill design and prose are the upstream project's work, and credit for the approach belongs there. The fork is maintained independently, so it can change skills and prompts locally without colliding with an installed copy of Superpowers. To get the original, install Superpowers from its own repository.
 
 ## The word "superpowers"
 

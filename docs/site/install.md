@@ -92,4 +92,6 @@ The bootstrap column says how the repository's files load the `using-hyperpowers
 | Pi | `pi install` | A Pi extension injects it at session start and after compaction | Skipped |
 | Claude Desktop, claude.ai | Uploaded skill bundle | No hook. A router `SKILL.md` stands in for `using-hyperpowers` | Not run. The router prints a one-time notice |
 
+Skills trigger automatically only when the bootstrap loads at session start, as {source}`CLAUDE.md` describes under New Harness Support. For the harnesses marked "Not stated", no file here shows the bootstrap loading, so this site cannot confirm that skills trigger automatically there.
+
 Next, read {doc}`first-session`.

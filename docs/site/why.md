@@ -20,6 +20,6 @@ You do not name the skills. {doc}`skills/using-hyperpowers` is loaded at session
 
 ## What it costs
 
-The method asks more questions and uses more tokens up front than an agent that starts coding. Every request gets a classification, a design, and your approval before work begins. Architectural work adds a spec, a plan, and reviews. The ceremony shrinks for small requests (a short design in chat for a bounded change), and the approval step stays on every path. In return you see what will be built before it exists.
+The method asks more questions and uses more tokens up front than an agent that starts coding. A request to build or change something is classified first. Bounded and architectural work get a design and your approval before work begins. A spike gets a short statement of the question and the probe, and your nod. Architectural work adds a spec, a plan, and reviews. The ceremony shrinks for small requests (a short design in chat for a bounded change), and approval stays on every path. In return you see what will be built before it exists.
 
 For the paths, see {doc}`workflow`. To see them applied to one request, read {doc}`first-session`.

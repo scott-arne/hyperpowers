@@ -24,11 +24,18 @@ Full installation commands are in the {source}`README.md`.
 ```{toctree}
 :caption: Skills
 :hidden:
+
+skills/index
 ```
 
 ```{toctree}
 :caption: Process skills
 :hidden:
+
+skills/brainstorming
+skills/writing-plans
+skills/executing-plans
+skills/subagent-driven-development
 ```
 
 ```{toctree}

@@ -31,6 +31,7 @@ CI. `bash tests/run-offline.sh` runs the documented offline set, one script per
 | `tests/writing-skills/`, `tests/systematic-debugging/` | skill-specific structural checks | each `test-*.sh`, one per `bash` call |
 | `tests/explicit-skill-requests/` | Haiku-specific, multi-turn, and skill-name-prompted behavior (live) | `tests/explicit-skill-requests/run-all.sh` |
 | `tests/shell-lint/` | shellcheck over the repo's shell scripts | `bash tests/shell-lint/test-lint-shell.sh` |
+| `tests/docs/` | the documentation site: every skill has a page, the skills index links it, each page's `source-digest` matches its `sources`, skill pages keep the template, no dollar amounts; plus the checker's own fixture test | each `test-*.sh`, one per `bash` call |
 
 Run one suite directly:
 
@@ -58,6 +59,22 @@ any automated run. `tests/run-offline.sh` runs exactly that set; the
 `tests/brainstorm-server/` suite inside it needs `npm ci` there first
 (`node_modules` is not committed) and a shell outside the Claude Code
 sandbox, whose file watchers it cannot open.
+
+## Building the docs
+
+The Read the Docs site lives in `docs/site/` (Sphinx, the Lumina theme,
+MyST). Build it, and check its external links, with pinned dependencies in
+an ephemeral environment:
+
+```bash
+uv run --python 3.13 --with-requirements docs/site/requirements.txt \
+  sphinx-build -W --keep-going docs/site docs/site/_build/html
+uv run --python 3.13 --with-requirements docs/site/requirements.txt \
+  sphinx-build -b linkcheck docs/site docs/site/_build/linkcheck
+```
+
+`bash tests/docs/docs-check.sh --digest <page>` prints the digest a page's
+`source-digest:` should hold after its sources change.
 
 ## Skill behavior evals
 

@@ -25,6 +25,7 @@ Before changing anything in this repo:
 - Match the existing project style and voice before introducing new patterns. Superpowers has a deliberately-tuned voice (e.g., "your human partner" is intentional, not interchangeable with "the user"). Preserve it unless you have a specific reason and evidence to change it.
 - Test on at least one harness and note the result.
 - Update or add tests when the change is testable and the repo has an established pattern for it.
+- A change to a skill, hook, or script that a page under `docs/site/` lists in its `sources:` front matter also re-reads that page, fixes what is stale, and updates its `source-digest:` (`bash tests/docs/docs-check.sh --digest <page>` prints the new value).
 
 ## Planning and Spec Docs Are Tracked Here
 

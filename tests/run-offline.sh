@@ -17,7 +17,7 @@ run() {
   name=$(printf '%s' "$1" | tr '/' '_')
   if ! bash "$1" > "$OUT/$name.log" 2>&1; then echo "FAILED: $1 (log: $OUT/$name.log)"; fails=$((fails + 1)); fi
 }
-for t in tests/hooks/test-*.sh tests/codex-review-gate/test-*.sh tests/sdd/test-*.sh tests/packaging/test-*.sh tests/writing-skills/test-*.sh tests/systematic-debugging/test-*.sh tests/shell-lint/test-*.sh tests/opencode/test-*.sh tests/kimi/test-*.sh tests/antigravity/test-*.sh; do
+for t in tests/hooks/test-*.sh tests/codex-review-gate/test-*.sh tests/sdd/test-*.sh tests/packaging/test-*.sh tests/writing-skills/test-*.sh tests/systematic-debugging/test-*.sh tests/shell-lint/test-*.sh tests/docs/test-*.sh tests/opencode/test-*.sh tests/kimi/test-*.sh tests/antigravity/test-*.sh; do
   case "$t" in tests/opencode/test-tools.sh|tests/opencode/test-priority.sh) continue ;; esac
   [ -f "$t" ] && run "$t"
 done

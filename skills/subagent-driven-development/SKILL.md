@@ -418,9 +418,9 @@ and fix-round diffs need it.
   stderr line.
 - Record the implementer's agent identity from the dispatch result in the
   ledger's task entry
-  (`Task <N>: implementer <agent-id-or-name> (session <sid>, worktree <path>, branch <name>)`) —
+  (`Task <N>: implementer <agent-id-or-name> (model <model>, session <sid>, worktree <path>, branch <name>)`) —
   fix-loop rounds 1-3 resume this agent where the harness has no foreground
-  dispatch, and after compaction the ledger is
+  dispatch and dispatch on its recorded model where it does, and after compaction the ledger is
   the only place the identity survives once its agent has exited. An
   identity that was never written down forces a fresh takeover where a
   resume was owed.
@@ -559,14 +559,17 @@ loop with ONE shared cap of **five rounds per task**: the gate does not run
 a count of its own. A fix round is one fix dispatch — or one
 controller-applied de-minimis fix — plus one scoped re-review.
 
-**Rounds 1-3 — the same model, carrying the task's record.** On Claude Code,
-dispatch a fresh implementer in the foreground (`run_in_background: false`)
-with the brief path, the report-file path, and the open findings verbatim,
-on the original implementer's model; tell it a prior implementer did the
+**Rounds 1-3 — the same model, carrying the task's record.** Where the Agent
+tool offers `run_in_background` (Claude Code outside fork mode), dispatch a
+fresh implementer in the foreground (`run_in_background: false`) with the
+brief path, the report-file path, and the open findings verbatim, on the
+original implementer's model (the `model` in its ledger identity line);
+tell it a prior implementer did the
 task and the report file records what it did and tried. A foreground
 dispatch keeps your turn open until the fix returns, so a fix round on
 Claude Code dispatches a fresh foreground implementer; a SendMessage resume
-is for harnesses without the option. On those harnesses, resume the original
+is for harnesses without the option, Claude Code's fork mode among them. On
+those harnesses, resume the original
 implementer with the findings verbatim: its context is intact. If the
 harness cannot message a live subagent either, dispatch a fresh implementer
 with the brief path, the report-file path, and the findings; the report file
@@ -576,9 +579,8 @@ is the persistent memory either way.
 model** (per Model Selection), with the brief path, the report-file path,
 the open findings, and this framing: "A prior implementer attempted this
 task [N] times; you own it now. Read the report file for what was tried." A
-loop that survives three rounds usually means the implementer cannot see
-its own problem: the takeover brings the capability bump, and fresh eyes
-where rounds 1-3 resumed one agent.
+loop that survives three rounds usually means the same model cannot see
+its own problem: the takeover brings a more capable one.
 
 **Every round, either way:** the implementer fixes, re-runs the tests
 covering the amended code, appends its fix report to the same report file,

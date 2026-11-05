@@ -163,9 +163,9 @@ fi
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "## Example Workflow" "example workflow carries its section header"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Using hyperpowers:finishing-a-development-branch" \
   "example workflow runs through to the finishing handoff"
-assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes" \
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 (model sonnet, session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix rounds" \
   "example workflow records the implementer identity in the ledger"
-assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes" \
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 (model sonnet, session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix rounds" \
   "example workflow records the identity on the task that enters the fix loop"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Re-run the covering command myself: 8/8 — matches the report" \
   "example fix-loop task re-runs the covering command before review"
@@ -405,7 +405,7 @@ assert_contains "$SDD" "\$(date -u +%s)-\$RANDOM\$RANDOM" "session id fallback n
 assert_contains "$SDD" "Then run \`scripts/sdd-state verify PLAN_FILE\`" "verify runs after the session line"
 assert_contains "$SDD" "scripts/sdd-state claim PLAN_FILE N --session <sid>" "claim before dispatch"
 assert_contains "$SDD" "take over (\`--takeover\`) only on their explicit yes" "takeover needs an explicit yes"
-assert_contains "$SDD" "(session <sid>, worktree <path>, branch <name>)" "implementer identity carries session, worktree, branch"
+assert_contains "$SDD" "(model <model>, session <sid>, worktree <path>, branch <name>)" "implementer identity carries model, session, worktree, branch"
 assert_contains "$SDD" "never with the Edit tool" "append discipline when another session may be live"
 assert_contains "$SDD" "scripts/sdd-state snapshot PLAN_FILE" "snapshot cadence named"
 assert_contains "$SDD" "\`remote-finished plans=<ws,...>\` (exit 3)" "the remote-finished outcome stops and asks"
@@ -495,6 +495,8 @@ assert_contains "$SDD" "\"Mark the task's todo complete (where kept)\" -> \"More
 assert_not_contains "$SDD" "Append completion to ledger" "the hand-written completion node is gone"
 assert_contains "$SDD" 'a fix round on Claude Code dispatches a fresh foreground implementer; a SendMessage resume is for harnesses without the option' "fix rounds dispatch a fresh foreground implementer on Claude Code"
 assert_not_contains "$SDD" 'the stop guard treats it as live work, and your turn may end while it runs' "the resumed-agent-is-live-work sentence is gone"
+assert_not_contains "$SDD" "rounds 1-3 resumed one agent" "the takeover sentence no longer says rounds 1-3 resumed one agent"
+assert_contains "$SDD" "a SendMessage resume is for harnesses without the option, Claude Code's fork mode among them" "fork mode takes the resume branch, not the foreground one"
 assert_contains "$SDD" 'where it does not (fork mode in an interactive terminal), dispatches run in the background and the stop guard treats them as live work' "the fork-mode sentence"
 assert_contains "$SDD" 'receipt=<path>' "finish records the receipt"
 assert_not_contains "$SDD" '<out>.exit' "the hand-written exit-file protocol is gone"

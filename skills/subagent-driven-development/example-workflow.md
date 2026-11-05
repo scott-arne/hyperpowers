@@ -15,7 +15,7 @@ Task 1: Hook installation script (declared low)
 
 [scripts/sdd-state claim docs/hyperpowers/plans/feature-plan.md 1 --session 1f3a9c → status=claimed task=1]
 [Run task-brief for Task 1; dispatch implementer with brief + report paths + context]
-[Ledger: Task 1: implementer subagent-01f3 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes]
+[Ledger: Task 1: implementer subagent-01f3 (model sonnet, session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix rounds]
 
 Implementer: "Before I begin - should the hook be installed at user or system level?"
 
@@ -40,7 +40,7 @@ Task 2: Recovery modes (declared standard)
 
 [scripts/sdd-state claim docs/hyperpowers/plans/feature-plan.md 2 --session 1f3a9c → status=claimed task=2]
 [Run task-brief for Task 2; dispatch implementer with brief + report paths + context]
-[Ledger: Task 2: implementer subagent-7c42 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes]
+[Ledger: Task 2: implementer subagent-7c42 (model sonnet, session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix rounds]
 
 Implementer: [No questions]
   - Added verify/repair modes
@@ -54,7 +54,7 @@ Task reviewer: Spec ❌:
   - Missing: Progress reporting (spec says "report every 100 items")
   Issues (Important): Magic number (100)
 
-[Fix round 1: dispatch a fresh foreground implementer with the brief, the report file and both findings]
+[Fix round 1, on Claude Code: dispatch a fresh foreground implementer on the recorded model (sonnet) with the brief, the report file and both findings; on a harness without the option, resume subagent-7c42 with both findings]
 Implementer: Added progress reporting, extracted PROGRESS_INTERVAL constant.
   Re-ran test/recovery.test.js — 10/10 passing. Fix report appended.
 

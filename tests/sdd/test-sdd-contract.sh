@@ -219,7 +219,7 @@ assert_contains "$SDD" "then commits the verified fix" \
 # the round-4/5 takeover rule has already replaced.
 assert_contains "$SDD" "revert the edit, spend no round, and go back to the round's own rule" \
   "carve-out failure path reverts, spends no round, and defers to the round's rule"
-assert_contains "$SDD" "give it to the implementer at rounds 1-3, dispatch the takeover at rounds 4-5" \
+assert_contains "$SDD" "hand the findings to an implementer at rounds 1-3, dispatch the takeover at rounds 4-5" \
   "carve-out two-strike escape respects the round-4 takeover rule"
 assert_contains "$SDD" "or one controller-applied de-minimis fix" \
   "fix-round definition counts controller-applied fixes"
@@ -228,7 +228,7 @@ assert_contains "$SDD" "where you keep todos" \
 assert_contains "$SDD" "Mark the task's todo complete (where kept)" \
   "digraph todo node stays conditional"
 assert_contains "$SDD_RATIONALIZATIONS" "Outside the de-minimis exception" "rationalization row scoped to the exception"
-assert_contains "$SDD_RATIONALIZATIONS" "Resume the implementer at rounds 1-3; dispatch the takeover at rounds 4-5." "rationalization row defers to the round's own rule"
+assert_contains "$SDD_RATIONALIZATIONS" "Hand the findings to an implementer at rounds 1-3; dispatch the takeover at rounds 4-5." "rationalization row defers to the round's own rule"
 
 # --- durable fences: helper output claims (Important 1 from 2026-09-05 review) -
 # The helpers print `wrote <path>: <N> ...` lines, never a bare path. Stale
@@ -347,8 +347,8 @@ rm -rf "$a1_scratch"
 # --- A3 task-reviewer findings are claims too ----------------------------
 assert_contains "$SDD" "Task-reviewer findings are claims too." \
   "SKILL.md treats task-reviewer findings as claims"
-assert_contains "$SDD" "The resumed implementer verifies each finding against the code before fixing it (hyperpowers:receiving-code-review)" \
-  "SKILL.md routes the resumed implementer through receiving-code-review"
+assert_contains "$SDD" "The fixing implementer verifies each finding against the code before fixing it (hyperpowers:receiving-code-review)" \
+  "SKILL.md routes the fixing implementer through receiving-code-review"
 assert_contains "$SDD" "a finding is declined only as refuted or corrected with file:line evidence, which the controller records in the ledger" \
   "SKILL.md narrows a decline to refuted or corrected"
 assert_contains "$SDD" "a confirmed finding is fixed or carried open" \
@@ -384,7 +384,7 @@ assert_contains "$SDD" "The covering-tests precondition applies only to findings
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "(2 addressed, 0 declined, 0 open; commits d4e5f6a..b7c8d9e)" \
   "the example ledger line carries the declined counter"
 assert_contains "$IMPL" "Every finding is a claim: verify it against the cited code before acting." \
-  "the resumed implementer verifies findings before fixing"
+  "the fixing implementer verifies findings before fixing"
 assert_contains "$IMPL" "A round in which you decline every finding changes no code: report the evidence and return the short contract with no commit." \
   "the implementer knows the all-declined round"
 assert_contains "$REREVW" "An all-declined round has no fix diff: the diff file above is then the previous review's package" \

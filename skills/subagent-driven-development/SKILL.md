@@ -63,7 +63,7 @@ digraph process {
         "Spec ✅ and quality approved?" [shape=diamond];
         "Finding conflicts with plan text?" [shape=diamond];
         "Ask your human partner which governs" [shape=box];
-        "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [shape=box];
+        "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model" [shape=box];
         "Dispatch scoped re-review (./re-review-prompt.md)" [shape=box];
         "All findings addressed or declined?" [shape=diamond];
         "R = 5?" [shape=diamond];
@@ -96,19 +96,19 @@ digraph process {
     "Spec ✅ and quality approved?" -> "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" [label="yes"];
     "Spec ✅ and quality approved?" -> "Finding conflicts with plan text?" [label="no"];
     "Finding conflicts with plan text?" -> "Ask your human partner which governs" [label="yes"];
-    "Ask your human partner which governs" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model";
-    "Finding conflicts with plan text?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="no"];
-    "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" -> "Dispatch scoped re-review (./re-review-prompt.md)";
+    "Ask your human partner which governs" -> "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model";
+    "Finding conflicts with plan text?" -> "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model" [label="no"];
+    "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model" -> "Dispatch scoped re-review (./re-review-prompt.md)";
     "Dispatch scoped re-review (./re-review-prompt.md)" -> "All findings addressed or declined?";
     "All findings addressed or declined?" -> "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" [label="yes"];
     "All findings addressed or declined?" -> "R = 5?" [label="no"];
-    "R = 5?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="no - next round"];
+    "R = 5?" -> "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model" [label="no - next round"];
     "R = 5?" -> "Surface open findings to your human partner (BLOCKED)" [label="yes - breaker trips"];
     "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Record tier-skip (ungated-ledger), skip Codex task gate" [label="yes"];
     "Record tier-skip (ungated-ledger), skip Codex task gate" -> "Complete the task (scripts/sdd-state complete); any status but complete stops";
     "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Codex task code gate\n(Claude Code; degrade if absent)" [label="no"];
     "Codex task code gate\n(Claude Code; degrade if absent)" -> "Codex gate blocking findings?";
-    "Codex gate blocking findings?" -> "Fix round R of 5: R≤3 resume implementer; R≥4 fresh implementer, more capable model" [label="yes - same five-round cap"];
+    "Codex gate blocking findings?" -> "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model" [label="yes - same five-round cap"];
     "Codex gate blocking findings?" -> "Complete the task (scripts/sdd-state complete); any status but complete stops" [label="no"];
     "Complete the task (scripts/sdd-state complete); any status but complete stops" -> "Mark the task's todo complete (where kept)";
     "Mark the task's todo complete (where kept)" -> "More tasks remain?";
@@ -419,7 +419,8 @@ and fix-round diffs need it.
 - Record the implementer's agent identity from the dispatch result in the
   ledger's task entry
   (`Task <N>: implementer <agent-id-or-name> (session <sid>, worktree <path>, branch <name>)`) —
-  fix-loop rounds 1-3 resume this agent, and after compaction the ledger is
+  fix-loop rounds 1-3 resume this agent where the harness has no foreground
+  dispatch, and after compaction the ledger is
   the only place the identity survives once its agent has exited. An
   identity that was never written down forces a fresh takeover where a
   resume was owed.
@@ -532,7 +533,7 @@ The loop triggers when the review reports spec ❌, any Critical or Important
 finding, a ⚠️ item you confirmed as a real gap, or a blocking finding from
 the per-task Codex gate below.
 
-Task-reviewer findings are claims too. The resumed implementer verifies
+Task-reviewer findings are claims too. The fixing implementer verifies
 each finding against the code before fixing it
 (hyperpowers:receiving-code-review); a finding is declined only as
 refuted or corrected with file:line evidence, which the controller
@@ -576,8 +577,9 @@ persistent memory either way.
 model** (per Model Selection), with the brief path, the report-file path,
 the open findings, and this framing: "A prior implementer attempted this
 task [N] times; you own it now. Read the report file for what was tried." A
-loop that survives three resumes usually means the implementer cannot see
-its own problem — fresh eyes and a capability bump in one move.
+loop that survives three rounds usually means the implementer cannot see
+its own problem: the takeover brings the capability bump, and fresh eyes
+where rounds 1-3 resumed one agent.
 
 **Every round, either way:** the implementer fixes, re-runs the tests
 covering the amended code, appends its fix report to the same report file,
@@ -635,8 +637,8 @@ itself, exactly as an implementer would. Its ledger line keeps the
 fix-round schema with the marker inside it:
 `Task <N>: fix round <R>/5 controller-applied (de minimis) (<X> addressed, <Y> declined, <Z> open — <finding one-liners>; commits <a7>..<b7>)`.
 Reaching for it twice in the same task means the findings are not de
-minimis — go back to the round's own rule: give it to the implementer at
-rounds 1-3, dispatch the takeover at rounds 4-5.
+minimis — go back to the round's own rule: hand the findings to an
+implementer at rounds 1-3, dispatch the takeover at rounds 4-5.
 
 **Codex Review Gate (Claude Code only).** When running under Claude Code, add
 a Codex **code** review gate at two points — here, per task, and once more

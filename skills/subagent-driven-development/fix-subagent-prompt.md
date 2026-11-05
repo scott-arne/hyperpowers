@@ -1,8 +1,8 @@
 # Fix Subagent Prompt Template
 
 You are dispatched for the FINAL-REVIEW fix wave only: the per-task fix loop
-resumes the original implementer (rounds 1-3), applies a de-minimis fix
-itself under the carve-out's bounds, or dispatches a takeover implementer
+hands rounds 1-3 to an implementer (a fresh foreground one on Claude Code, a
+resume elsewhere), applies a de-minimis fix itself under the carve-out's bounds, or dispatches a takeover implementer
 (rounds 4-5) — it never uses this prompt. You fix the final review's
 blocking findings in one wave; exactly one scoped re-review follows.
 

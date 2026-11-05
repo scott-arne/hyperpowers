@@ -54,7 +54,7 @@ Task reviewer: Spec ❌:
   - Missing: Progress reporting (spec says "report every 100 items")
   Issues (Important): Magic number (100)
 
-[Fix round 1: resume the implementer with both findings]
+[Fix round 1: dispatch a fresh foreground implementer with the brief, the report file and both findings]
 Implementer: Added progress reporting, extracted PROGRESS_INTERVAL constant.
   Re-ran test/recovery.test.js — 10/10 passing. Fix report appended.
 

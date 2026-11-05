@@ -295,6 +295,13 @@ With the human partner's standing approval from 2026-11-03:
 - Credit a task review in flight at the compaction when it returns after it
   and before the next task starts (human partner, 2026-11-04, after the RED
   tally: the literal wording counted three correct control runs as failures).
+- Strengthen the re-read paragraph to name every compaction, after the first
+  wording re-read at 92% (SDD) and 75% (brainstorming) of compactions (human
+  partner, 2026-11-04).
+- Ship the strengthened wording with a README floor of about 200K for
+  autoCompactWindow, recording the SDD outcome of 9 of 10 (one compaction and
+  re-read loop at the eval's forced 100K window) as a tiny-window artifact
+  (human partner, 2026-11-04).
 
 ## Assumptions
 

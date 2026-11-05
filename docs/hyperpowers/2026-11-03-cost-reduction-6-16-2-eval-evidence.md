@@ -1,10 +1,10 @@
 # Re-read After Compaction: Evaluation Evidence
 
-**Change under test:** one added paragraph in each of `skills/subagent-driven-development/SKILL.md` and `skills/brainstorming/SKILL.md` telling the agent to re-read the full skill with the Read tool after an automatic context compaction. Claude Code re-attaches an invoked skill after a compaction, but caps each skill at 20,000 characters and cuts the rest, so a long skill comes back truncated. The paragraph exists so the agent restores the missing text instead of working from the cut version.
+**Change under test:** one added paragraph in each of `skills/subagent-driven-development/SKILL.md` and `skills/brainstorming/SKILL.md` telling the agent to re-read the full skill with the Read tool after every automatic context compaction. The shipped wording is the strengthened one (`683e6b0`); the first wording (`1478a4a`) is recorded below as superseded. Claude Code re-attaches an invoked skill after a compaction, but caps each skill at 20,000 characters and cuts the rest, so a long skill comes back truncated. The paragraph exists so the agent restores the missing text instead of working from the cut version.
 
 **Method:** paired live Claude Code sessions driven by the quorum harness, ten trials per arm per scenario. The control arm loads v6.16.1 and the treatment arm loads the release branch; nothing else differs. A Gauntlet agent plays the human partner and a grader judges the outcome checks. The spec is `docs/hyperpowers/specs/2026-11-03-cost-reduction-6-16-2-design.md` (Testing section, as amended 2026-11-04).
 
-**Environment:** Claude Code 2.1.317. The coding agent (the controller session) and the grader were `claude-opus-5-5`. From each run's token-usage record, the SDD subagents ran on `claude-sonnet-5-5` in all 20 SDD runs of both arms, and one treatment SDD run (`...-b5ad`) also used `claude-haiku-4-5` for some work; the brainstorming runs used `claude-opus-5-5` only. Pins: harness `829fe83b0` (evals repo), control `f1fd935` (v6.16.1), treatment `1478a4a` (release branch, the commit with the two paragraphs). Run artifacts, tallies and logs: `evals/evidence/2026-11-03-cost-reduction-6-16-2/` in hyperpowers-evals.
+**Environment:** Claude Code 2.1.317. The coding agent (the controller session) and the grader were `claude-opus-5-5`. From each run's token-usage record, the SDD subagents ran on `claude-sonnet-5-5` in all 20 SDD runs of both arms, and one treatment SDD run (`...-b5ad`) also used `claude-haiku-4-5` for some work; the brainstorming runs used `claude-opus-5-5` only. Pins: harness `829fe83b0` (evals repo), control `f1fd935` (v6.16.1), treatment `683e6b0` (release branch, strengthened paragraphs; wave 2, the shipped wording) and `1478a4a` (first wording; wave 1, superseded). Run artifacts, tallies and logs: `evals/evidence/2026-11-03-cost-reduction-6-16-2/` in hyperpowers-evals.
 
 **Date:** 2026-11-04.
 
@@ -26,7 +26,9 @@ The brainstorming control had one grader void (p8). It was replaced by relaunch 
 
 One control observation worth keeping: the voided p8 run was graded `investigate` by the grader for the phrase "autocompact is thrashing". Claude Code printed that warning in the session and the grader read it as a defect in the agent's behavior. It was an instrument void, not a skill result.
 
-## GREEN: treatment arm (release branch)
+## GREEN, wave 1: first wording (`1478a4a`), superseded
+
+This wave measured the first wording, "after a compaction". It is kept as the record of why the wording was strengthened. The shipped behavior is measured in wave 2 below.
 
 | Scenario | Runs | Valid n | Voids | Outcome pass | Mechanism |
 | --- | --- | --- | --- | --- | --- |
@@ -57,10 +59,38 @@ Who ran what. The RED wave was launched by the subagent that ran Task 8. The GRE
 
 ## REFACTOR
 
-The skill text did not change after the first measurement; `1478a4a` is the only treatment pin. The tally rules did, twice, during the control wave. Both changes concern how the instrument reads a run, and both were made before any treatment run existed.
+The tally rules changed twice during the control wave, before any treatment run existed. The skill text changed once, after wave 1 (see Re-measure below). Both changes concern how the instrument reads a run, and both were made before any treatment run existed.
 
 1. **Measure at the first compaction inside the spec's window** (evals `0f5841384`). The first plan-level rule voided every smoke run because the first compaction always precedes the first dispatch. The spec's rule is that a compaction lands after task 1's review returns and before the final review is dispatched, so the tally now measures the first automatic compaction inside that window and ignores earlier ones.
 2. **Credit a review in flight at the compaction** (evals `b571e39d0`, `503623ac5`, `a3565942b`; spec amendment `c275a8f` in this repository). The first RED tally counted three correct runs as outcome failures because a review dispatched before the compaction returned after it. The human partner decided on 2026-11-04 that such a review counts for the SDD outcome when it returns before the next task's first implementer dispatch. The final commit makes that dispatch the bound wherever the review falls. The RED control was re-tallied under the corrected rule (`4fb34bd04`).
+
+## Re-measure, wave 2: strengthened wording (`683e6b0`)
+
+The final Codex gate found the first wording re-read after only 92% of SDD and 75% of brainstorming compactions (wave 1's per-compaction rates above). The human partner chose to strengthen it (`683e6b0`): the paragraph now says that after every compaction a full Read made before the compaction does not survive it, and that after each compaction, the first and every later one, the agent Reads the file in full before its next action. Only the treatment arm was re-run; the control results above are unchanged, and wave 1 is archived (evals `c0b4ebf8b`, per-compaction measure `84280cc98`, treatment re-pinned `0f9bbaa3d`, wave-2 runs `b480d7299`). The same four bars apply.
+
+| Scenario | Runs | Valid n | Voids | Outcome pass | Mechanism |
+| --- | --- | --- | --- | --- | --- |
+| sdd-compaction-reread | 10 | 10 | none | 9/10 | 10/10 |
+| brainstorming-bounded-companion-after-compaction | 10 | 10 | none | 10/10 | 10/10 |
+
+Bars, from `tally.txt`: SDD outcome FAIL (9 against the control's 10), SDD mechanism PASS, brainstorming outcome PASS, brainstorming mechanism PASS.
+
+Per-compaction rates, same counting rule as wave 1:
+
+| Arm | Scenario | Compactions followed by a re-read | Whole-file | Runs that re-read after every compaction |
+| --- | --- | --- | --- | --- |
+| Control | SDD | 0 of 38 | 0 | 0 of 10 |
+| Control | Brainstorming | 0 of 20 | 0 | 0 of 10 |
+| Treatment, wave 2 | SDD | 148 of 151 (98%) | 147 | 7 of 10 |
+| Treatment, wave 2 | Brainstorming | 20 of 20 (100%) | 20 | 10 of 10 |
+| Treatment, wave 1 (first wording) | SDD | 117 of 127 (92%) | not tallied here | 2 of 10 |
+| Treatment, wave 1 (first wording) | Brainstorming | 15 of 20 (75%) | not tallied here | 5 of 10 |
+
+The one SDD outcome failure is run p3 (`...-bf86`). At the forced 100000-token window it entered a compaction and re-read loop: 13 compactions, each followed by a re-read, plus 14 invocations of the Skill tool. It finished only tasks 1 and 2 (Gauntlet fail). After a compaction the controller holds about 45K to 50K tokens. Re-reading SDD (about 10K) and re-invoking the skill brings it back near the threshold of about 67K at a 100K window, so the next compaction follows soon. At the recommended 400K window there is about 300K of headroom. The control also hit the "autocompact is thrashing" warning once at 100K (brainstorming p8, graded `investigate`), so the small window is the common factor.
+
+Compaction counts: treatment SDD compacted 151 times in wave 2 (127 in wave 1) against the control's 38, for the same reason: each re-read adds about 10K tokens to a small post-compaction context. Treatment brainstorming compacted 20 times, as the control did.
+
+Decision (human partner, 2026-11-04): ship the strengthened wording with a README floor of about 200K for `autoCompactWindow`, and record the SDD outcome of 9 of 10 as a tiny-window artifact, not a defect of the wording. The README now says the window should not go below about 200K.
 
 ## Not measured
 

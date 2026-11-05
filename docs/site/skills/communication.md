@@ -76,9 +76,9 @@ Tell the agent to write in your own style, give it a writing sample, or put a st
 - {doc}`dispatching-parallel-agents` requires it for the report to you after integration.
 - {doc}`executing-plans` requires it for the concerns the agent raises before starting and for the completion report.
 - {doc}`subagent-driven-development` requires it for anything written to you: the pre-flight question, an escalation, a BLOCKED hand-back.
-- `receiving-code-review` requires it for the reply itself, whether it goes to you or into a review thread.
-- `requesting-code-review` requires it when the agent reports findings or a gate hand-back to you.
-- `systematic-debugging` requires it when the agent reports a root cause, states a hypothesis, or brings you a question.
+- {doc}`receiving-code-review` requires it for the reply itself, whether it goes to you or into a review thread.
+- {doc}`requesting-code-review` requires it when the agent reports findings or a gate hand-back to you.
+- {doc}`systematic-debugging` requires it when the agent reports a root cause, states a hypothesis, or brings you a question.
 - `profiling-performance` requires it for the deliverable you read.
 - `optimizing-performance` requires it for its report.
 

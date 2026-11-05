@@ -14,3 +14,22 @@ Skills trigger automatically: the agent matches your request against each skill'
 | {doc}`using-git-worktrees` | Reuses an isolated workspace or asks where the work happens, runs project setup, and checks that tests pass first. | You start feature work that needs isolation, or are about to execute a plan. |
 | {doc}`finishing-a-development-branch` | Records the branch decisions, runs the tests, offers merge, pull request, or keep, and removes the worktree after a merge or a confirmed discard. | Implementation is complete and the tests pass. |
 | {doc}`communication` | Writes reports and replies with the answer first, in plain words, without stock phrasing. | The agent writes prose you will read, or you ask it to make text read less like AI. |
+
+## Testing
+
+| Skill | What it does | Triggers when |
+|---|---|---|
+| {doc}`test-driven-development` | Requires a failing test before any production code, then the least code that passes, and deletes code written before its test. | You implement a feature or a bugfix. |
+
+## Debugging
+
+| Skill | What it does | Triggers when |
+|---|---|---|
+| {doc}`systematic-debugging` | Finds the root cause before any fix, in four phases, and questions the design after three failed fixes. | You hit a bug, a test failure, or unexpected behavior. |
+
+## Review
+
+| Skill | What it does | Triggers when |
+|---|---|---|
+| {doc}`requesting-code-review` | Dispatches a reviewer subagent over an exact commit range, and under Claude Code adds an optional Codex review. | You complete a task or a major feature, or are about to merge. |
+| {doc}`receiving-code-review` | Checks review feedback against the code before acting, pushes back with evidence, and skips performative agreement. | The agent receives review feedback. |

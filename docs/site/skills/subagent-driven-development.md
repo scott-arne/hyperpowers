@@ -28,7 +28,7 @@ The controller (your main session) does coordination and never implements. Each 
 
 **Per task.**
 
-1. The controller claims the task, extracts its text into a brief file with `scripts/task-brief`, and dispatches a fresh implementer subagent with the brief path, the relevant interfaces, the global constraints, and a report-file path. The implementer follows `test-driven-development`, commits, self-reviews, and returns a short status contract. It never dispatches subagents of its own.
+1. The controller claims the task, extracts its text into a brief file with `scripts/task-brief`, and dispatches a fresh implementer subagent with the brief path, the relevant interfaces, the global constraints, and a report-file path. The implementer follows {doc}`test-driven-development`, commits, self-reviews, and returns a short status contract. It never dispatches subagents of its own.
 2. The controller treats the report as a claim. It re-runs the named covering test command itself and compares the output against the report. A misreported result is a failed task.
 3. The controller builds a review package with `scripts/review-package` (commit list, stat, and full diff in one file) and dispatches a task reviewer. The reviewer returns two verdicts: spec compliance and code quality. Both are required.
 4. If either verdict has Critical or Important findings, the fix loop starts. It has a cap of five rounds per task. Rounds one to three resume the original implementer. Rounds four and five dispatch a fresh implementer on a more capable model. Every round ends with a scoped re-review of the fix diff only. Minor findings are written to the ledger as deferred and never enter the loop. A finding that conflicts with the plan's text goes to you to decide which governs. When round five still leaves blocking findings, the controller stops and reports the task BLOCKED to you.
@@ -75,8 +75,8 @@ If you want one agent to do the work in your session, say "execute inline" and t
 
 - {doc}`writing-plans` produces the plan and hands off to this skill by default.
 - {doc}`using-git-worktrees` settles where the work happens during setup.
-- `test-driven-development` is what implementer subagents follow for the task's tests.
-- `requesting-code-review` supplies the final reviewer prompt and the Codex review gate.
+- {doc}`test-driven-development` is what implementer subagents follow for the task's tests.
+- {doc}`requesting-code-review` supplies the final reviewer prompt and the Codex review gate.
 - {doc}`finishing-a-development-branch` closes the run and compiles the decision records.
 - {doc}`executing-plans` is the inline alternative when you do not want subagents.
 - {doc}`communication` governs the pre-flight question, escalations, and BLOCKED hand-backs.

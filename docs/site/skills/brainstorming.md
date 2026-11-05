@@ -72,7 +72,7 @@ Tell the agent the path you want: "treat this as a spike", "skip the spec, a sho
 - `using-hyperpowers` loads this skill when your request looks like creative work.
 - {doc}`writing-plans` is the next step on the architectural path.
 - {doc}`communication` governs everything you read from the agent during brainstorming: the questions, the comparison, the design, and the spec.
-- `requesting-code-review` holds the Codex review gate that checks the spec before you see it.
+- {doc}`requesting-code-review` holds the Codex review gate that checks the spec before you see it.
 
 ## Under the hood
 

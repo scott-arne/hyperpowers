@@ -45,16 +45,23 @@ skills/communication
 ```{toctree}
 :caption: Testing skills
 :hidden:
+
+skills/test-driven-development
 ```
 
 ```{toctree}
 :caption: Debugging skills
 :hidden:
+
+skills/systematic-debugging
 ```
 
 ```{toctree}
 :caption: Review skills
 :hidden:
+
+skills/requesting-code-review
+skills/receiving-code-review
 ```
 
 ```{toctree}

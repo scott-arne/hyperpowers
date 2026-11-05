@@ -71,7 +71,7 @@ Tell the agent where to save the plan if you do not want the default `docs/hyper
 - {doc}`brainstorming` invokes this skill after you approve the spec.
 - {doc}`subagent-driven-development` is the default handoff.
 - {doc}`executing-plans` is the handoff when you ask for inline execution.
-- `requesting-code-review` holds the Codex review gate that checks the plan before you see it.
+- {doc}`requesting-code-review` holds the Codex review gate that checks the plan before you see it.
 - {doc}`communication` governs the plan's prose and the handoff message.
 
 ## Under the hood

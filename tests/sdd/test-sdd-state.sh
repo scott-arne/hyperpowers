@@ -4063,6 +4063,13 @@ sed -i '' "s/^Task 1: pending$/Task 1: complete (commits 1111111..${t1:0:7}, rev
 git -C "$mb_a" switch -q feat; printf 'other\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "stranger edit"; git -C "$mb_a" switch -q --detach feat
 out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>/dev/null); rc=$?
 if [ "$rc" -eq 8 ] && [ "$out" = "status=conflict task=3 paths=src/a.txt" ] && [ "$(git -C "$mb_a" log -1 --format=%s feat)" = "stranger edit" ] && [ "$(sed -n 's/^kind=//p' "$wsmb/waiting/s1")" = merge ]; then pass "a conflict moves no ref and posts a merge waiting record"; else fail "conflict (rc=$rc: $out)"; fi
+# The record names the claim's worktree and task branch, never the caller's location: the same conflict run from an unrelated repository with --code-repo writes the same names, and a claim owner without branch= is an error.
+out=$(cd "$TEST_ROOT/foreign-mb" && bash "$SDD_STATE" merge-back "$mb_a/docs/plan.md" 3 --session s1 --commit "$t3" --code-repo "$mb_a" 2>/dev/null); rc=$?
+if [ "$rc" -eq 8 ] && [ "$(sed -n 's/^worktree=//p' "$wsmb/waiting/s1")" = "$(sed -n 's/^worktree=//p' "$wsmb/claims/task-3/owner")" ] && [ "$(sed -n 's/^worktree=//p' "$wsmb/waiting/s1")" = "$mb_a" ] && [ "$(sed -n 's/^branch=//p' "$wsmb/waiting/s1")" = "feat.$ws8mb.task-3" ]; then pass "the merge waiting record names the claim's worktree and task branch, not the caller's location"; else fail "waiting record names the claim (rc=$rc: $out: $(tr '\n' ' ' < "$wsmb/waiting/s1"))"; fi
+cp "$wsmb/claims/task-3/owner" "$TEST_ROOT/mb.owner3"; sed '/^branch=/d' "$TEST_ROOT/mb.owner3" > "$wsmb/claims/task-3/owner"
+out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>"$TEST_ROOT/mb.owner3.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'claims/task-3/owner' "$TEST_ROOT/mb.owner3.err" && [ "$(git -C "$mb_a" log -1 --format=%s feat)" = "stranger edit" ]; then pass "a conflict whose claim owner lacks branch= is an error naming the file"; else fail "conflict with an owner lacking branch= (rc=$rc: $out)"; fi
+cp "$TEST_ROOT/mb.owner3" "$wsmb/claims/task-3/owner"
 # Resolve on the task branch, re-approve, retry: the record is cleared.
 git -C "$mb_a" switch -q "feat.$ws8mb.task-3"; git -C "$mb_a" merge -q feat >/dev/null 2>&1; printf 'three\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "resolve" ; t3b=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
 printf 'Task 3: approved %s\n' "${t3b:0:7}" >> "$wsmb/progress.md"
@@ -4124,6 +4131,37 @@ printf 'Task 2: complete (commits 1111111..%s, review clean)\n' "${y1:0:7}" >> "
 out=$(run_state "$mb_a" merge-back docs/plan2.md 6 --session s3 --commit "$w1" 2>/dev/null); rc=$?
 hw=$(git -C "$mb_a" rev-parse feat)
 if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=6 head=${hw:0:7}" ] && [ "$(git -C "$mb_a" log -1 --format=%s "$hw")" = "Merge task 6: W-renamed" ] && grep -qx '### Task 6: W' "$mb_a/docs/plan2.md"; then pass "the merge commit takes the task's title from the plan ref, not the worktree's copy"; else fail "title from the plan ref (rc=$rc: $out: $(git -C "$mb_a" log -1 --format=%s "$hw"))"; fi
+# Task 7 carries the approval-token, lost-swap and after-ledger checks.
+git -C "$mb_a" switch -q feat; printf '\n### Task 7: Z\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" commit -qam "plan2 task 7"; git -C "$mb_a" switch -q --detach feat
+run_state "$mb_a" claim docs/plan2.md 7 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-7"; printf 'z\n' > "$mb_a/src/z.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm z; z1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+h7=$(git -C "$mb_a" rev-parse feat)
+# The approval token is resolved to exactly one commit in the code repository, and full ids are compared. A token that names no commit is an error naming it, never not-approved.
+printf 'Task 7: approved 0000000\n' >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>"$TEST_ROOT/mb.tok.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q '0000000' "$TEST_ROOT/mb.tok.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "an approval token that names no commit is an error naming it"; else fail "unresolvable approval token (rc=$rc: $out)"; fi
+# A token naming an annotated tag of the commit is no commit id: git would peel it to the commit.
+git -C "$mb_a" tag -a -m "z tag" mb-z "$z1"; ztag=$(git -C "$mb_a" rev-parse mb-z)
+printf 'Task 7: approved %s\n' "${ztag:0:7}" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>"$TEST_ROOT/mb.tag.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "${ztag:0:7}" "$TEST_ROOT/mb.tag.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "an approval token naming a tag object rather than the commit is an error"; else fail "tag-object approval token (rc=$rc: $out)"; fi
+git -C "$mb_a" tag -d mb-z >/dev/null
+# A seven-character collision cannot be built here. Once a second commit shares the approved prefix, git finds the token ambiguous; a git wrapper gives that answer for the token, and the commit sharing the prefix is refused, not merged.
+printf 'Task 7: approved %s\n' "${z1:0:7}" >> "$wsmb2/progress.md"
+mkdir -p "$TEST_ROOT/ambgit"; printf '#!/bin/sh\nfor a in "$@"; do if [ "$a" = "%s^{commit}" ]; then echo "error: short object ID %s is ambiguous" >&2; exit 128; fi; done\nexec "%s" "$@"\n' "${z1:0:7}" "${z1:0:7}" "$(command -v git)" > "$TEST_ROOT/ambgit/git"; chmod 755 "$TEST_ROOT/ambgit/git"
+out=$(cd "$mb_a" && PATH="$TEST_ROOT/ambgit:$PATH" bash "$SDD_STATE" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>"$TEST_ROOT/mb.amb.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "${z1:0:7}" "$TEST_ROOT/mb.amb.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ] && ! grep -q '^Task 7: merged' "$wsmb2/progress.md"; then pass "an approval token git finds ambiguous is an error, and the commit sharing its prefix is not merged"; else fail "ambiguous approval token (rc=$rc: $out)"; fi
+# Three lost swaps: a git wrapper moves the integration ref ahead before each swap. The merge-back gives up after three attempts naming the head it expected and the one it found, and publishes nothing.
+mkdir -p "$TEST_ROOT/racegit"; : > "$TEST_ROOT/race.log"
+printf '#!/bin/sh\nreal="%s"\nif [ "$3" = update-ref ] && [ "$4" = -m ]; then case "$5" in "sdd merge-back task "*) tip=$("$real" -C "$2" rev-parse "$6") && adv=$("$real" -C "$2" commit-tree "$tip^{tree}" -p "$tip" -m race) && "$real" -C "$2" update-ref "$6" "$adv" "$tip" && echo "$adv" >> "%s" ;; esac; fi\nexec "$real" "$@"\n' "$(command -v git)" "$TEST_ROOT/race.log" > "$TEST_ROOT/racegit/git"; chmod 755 "$TEST_ROOT/racegit/git"
+out=$(cd "$mb_a" && PATH="$TEST_ROOT/racegit:$PATH" bash "$SDD_STATE" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>"$TEST_ROOT/mb.race.err"); rc=$?
+r2=$(sed -n 2p "$TEST_ROOT/race.log"); r3=$(sed -n 3p "$TEST_ROOT/race.log")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(grep -c . "$TEST_ROOT/race.log")" = 3 ] && grep -qF "expected ${r2:0:7}, found ${r3:0:7}" "$TEST_ROOT/mb.race.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$r3" ] && ! git -C "$mb_a" merge-base --is-ancestor "$z1" feat && ! grep -q '^Task 7: merged' "$wsmb2/progress.md"; then pass "three lost swaps give up naming both heads and publish nothing"; else fail "three lost swaps (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.race.err"))"; fi
+# A crash after the ledger line on the first bookkeeping pass: one line, and the merge waiting record and the stale activity are left; the retry clears and stamps them without a second line.
+printf 'session=s3\ntask=7\nkind=merge\nsince=2026-01-01T00:00:00Z\nnote=merge-back conflict in src/z.txt\nworktree=%s\nbranch=feat.%s.task-7\nhost=h\n' "$mb_a" "$ws8mb2" > "$wsmb2/waiting/s3"; printf '2026-01-01T00:00:00Z\n' > "$wsmb2/activity/s3"
+( cd "$mb_a" && HYPERPOWERS_TEST_CRASH_AT=merge-back-after-ledger bash "$SDD_STATE" merge-back docs/plan2.md 7 --session s3 --commit "$z1" >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ "$(grep -c '^Task 7: merged' "$wsmb2/progress.md")" = 1 ] && git -C "$mb_a" merge-base --is-ancestor "$z1" feat && [ "$(sed -n 's/^task=//p' "$wsmb2/waiting/s3")" = 7 ] && [ "$(cat "$wsmb2/activity/s3")" = "2026-01-01T00:00:00Z" ]; then pass "a crash after the ledger line leaves one line, the merge waiting record and the stale activity"; else fail "crash after ledger, first pass (rc=$rc: $(grep -c '^Task 7: merged' "$wsmb2/progress.md") lines)"; fi
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% head=*}" = "status=merged task=7" ] && [ "${out##* }" = "already=1" ] && [ "$(grep -c '^Task 7: merged' "$wsmb2/progress.md")" = 1 ] && [ ! -f "$wsmb2/waiting/s3" ] && [ "$(cat "$wsmb2/activity/s3")" != "2026-01-01T00:00:00Z" ]; then pass "the retry after the ledger line clears the record and stamps activity without a second line"; else fail "retry after ledger, owed bookkeeping (rc=$rc: $out)"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

@@ -1877,7 +1877,7 @@ amend_refresh() {
 # controller's detach and branch deletion follow this command and are its
 # own idempotent steps.
 cmd_merge_back() {
-  local plan="" n="" sid="" sha="" code="" rc out line integ ref owner_f owner full approved
+  local plan="" n="" sid="" sha="" code="" rc out line integ ref owner_f owner full approved approved_full
   local pair blob tmp graph title deps d waiting c lease lowner wt record H new mt mrc tree paths published t uerr cur
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -1921,7 +1921,15 @@ cmd_merge_back() {
   # The newest approval line names the approved commit; a longer hex run is
   # some other token, not a seven-character abbreviation.
   approved=$(grep -E "^Task $n: approved [0-9a-f]{7}([^0-9a-f]|\$)" "$WSDIR/progress.md" | tail -n 1 | cut -d' ' -f4 | cut -c1-7)
-  [ "${sha:0:7}" = "$approved" ] || { hp_unlock; echo "status=not-approved approved=${approved:-none}"; return 12; }
+  [ -n "$approved" ] || { hp_unlock; echo "status=not-approved approved=none"; return 12; }
+  # The token is resolved to one commit here and the full ids compared: a
+  # prefix comparison would pass any commit that shares the approved one's
+  # seven characters. git refuses an ambiguous prefix, and the resolved id
+  # must begin with the token, since git peels a tag object's id to the
+  # commit it tags. An approval that cannot be resolved is an error, never
+  # read as no approval.
+  { approved_full=$(git -C "$code" rev-parse -q --verify "$approved^{commit}" 2>/dev/null) && [ "${approved_full:0:7}" = "$approved" ]; } || { hp_unlock; echo "sdd-state: the approval line's token $approved for task $n does not name exactly one commit in $code" >&2; echo "status=error"; return 2; }
+  [ "$sha" = "$approved_full" ] || { hp_unlock; echo "status=not-approved approved=$approved"; return 12; }
   # The predecessors come from the authoritative plan, never a worktree copy:
   # an amendment may have added an edge to a task claimed before it.
   pair=$(authoritative_plan_blob) || { hp_unlock; echo "status=error"; return 2; }
@@ -2073,17 +2081,19 @@ merge_back_bookkeeping() {
 # <paths>: this session's waiting record of kind merge, in the record format
 # the board reads, written to an exclusively created temporary file beside
 # it and renamed, so no reader sees half a record. The worktree and branch
-# are the session's own, as a claim's owner record names them. Reads n and
-# sid from cmd_merge_back.
+# are the claim's, read from its owner record, never the caller's location:
+# merge-back may run detached, or from another repository with --code-repo.
+# An owner record without either names no place to resolve the conflict.
+# Reads n, sid and owner_f from cmd_merge_back.
 merge_back_wait() {
-  local d="$WSDIR/waiting" top b t
+  local d="$WSDIR/waiting" owt ob t
+  owt=$(sed -n 's/^worktree=//p' "$owner_f" 2>/dev/null | head -n 1)
+  ob=$(sed -n 's/^branch=//p' "$owner_f" 2>/dev/null | head -n 1)
+  if [ -z "$owt" ] || [ -z "$ob" ]; then echo "sdd-state: claim owner without worktree= or branch=: $owner_f" >&2; return 1; fi
   hp_contained "$ROOT" "plans/$WS/waiting/$sid" || return 1
   mkdir -p "$d" || return 1
-  top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
-  b=$(git branch --show-current 2>/dev/null)
-  [ -n "$b" ] || b="detached@$(git rev-parse --short=7 HEAD 2>/dev/null || echo none)"
   t=$(mktemp "$d/.$sid.XXXXXX") || return 1
-  { printf 'session=%s\ntask=%s\nkind=merge\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s\n' "$sid" "$n" "$(hp_utc_now)" "merge-back conflict in $1" "$(enc "$top")" "$b" "$(hostname)" > "$t" && mv -f "$t" "$d/$sid"; } || { rm -f "$t"; return 1; }
+  { printf 'session=%s\ntask=%s\nkind=merge\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s\n' "$sid" "$n" "$(hp_utc_now)" "merge-back conflict in $1" "$(enc "$owt")" "$ob" "$(hostname)" > "$t" && mv -f "$t" "$d/$sid"; } || { rm -f "$t"; return 1; }
 }
 
 # --- prune -------------------------------------------------------------------

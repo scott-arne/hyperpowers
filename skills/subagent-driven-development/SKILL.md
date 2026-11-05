@@ -559,19 +559,18 @@ loop with ONE shared cap of **five rounds per task**: the gate does not run
 a count of its own. A fix round is one fix dispatch — or one
 controller-applied de-minimis fix — plus one scoped re-review.
 
-**Rounds 1-3 — the original implementer's context carries the fix.** On
-Claude Code, dispatch a fresh implementer in the foreground
-(`run_in_background: false`) carrying the brief path, the report-file path,
-and the open findings verbatim, on the same model as the original; tell it a
-prior implementer did the task and that the report file records what it did
-and tried. Your turn then holds until the fix returns, which a background
-resume would not:
-a fix round on Claude Code dispatches a fresh foreground implementer; a SendMessage resume is for harnesses without the option.
-On a harness without that option, resume the original implementer with the
-findings sent verbatim — its context is intact, it knows the task, the code,
-and its own choices. If that harness cannot send another message to a live
-subagent, dispatch a fresh implementer as above — the report file is the
-persistent memory either way.
+**Rounds 1-3 — the same model, carrying the task's record.** On Claude Code,
+dispatch a fresh implementer in the foreground (`run_in_background: false`)
+with the brief path, the report-file path, and the open findings verbatim,
+on the original implementer's model; tell it a prior implementer did the
+task and the report file records what it did and tried. A foreground
+dispatch keeps your turn open until the fix returns, so a fix round on
+Claude Code dispatches a fresh foreground implementer; a SendMessage resume
+is for harnesses without the option. On those harnesses, resume the original
+implementer with the findings verbatim: its context is intact. If the
+harness cannot message a live subagent either, dispatch a fresh implementer
+with the brief path, the report-file path, and the findings; the report file
+is the persistent memory either way.
 
 **Rounds 4-5 — dispatch a fresh takeover implementer on a more capable
 model** (per Model Selection), with the brief path, the report-file path,

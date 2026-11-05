@@ -125,6 +125,26 @@ This design closes those five gaps with the model decision 2 chose.
   checks the plan's siblings and the branch's lease and writes the line,
   so two Setups cannot both pass a check and write conflicting lines.
   Decided 2026-10-27 at the spec gate.
+- An amendment refreshes a worktree that has the plan ref checked out.
+  Moving a checked-out branch with `update-ref` leaves that worktree's
+  index holding the old plan as a staged revert that a later commit or a
+  switch to a task branch would carry forward. Before the swap, `amend`
+  refuses with `status=checked-out worktree=<path>` (exit 13) when such a
+  worktree's index entry or file for the plan path is not the base blob;
+  after the swap it rewrites that worktree's index entry and file to the
+  new blob, the way git's `updateInstead` updates a pushed-to checkout.
+  Rejected: refusing whenever the plan ref is checked out, as merge-back
+  does (a plan kept in another repository would need that checkout moved
+  off its branch before every amendment); documenting a refresh command
+  only (the staged revert stays silent). Decided 2026-11-04 in chat, during
+  Task 6 of the plan.
+- A retry is recognised by its base as well as its candidate. A published
+  amendment record answers `already=1` only when its `base=` is this
+  call's base; a call for the same candidate from another base finishes
+  that record's ledger lines and then publishes as a fresh amendment, so
+  amending B, crashing, amending to C and back to B republishes B instead
+  of reporting it published. Decided 2026-11-04 in chat, during Task 6 of
+  the plan.
 
 ## Design
 
@@ -268,7 +288,9 @@ accepted-overlap ledger lines and `plan: amended ...` and removes the
 record. A retry after a crash finds the record: when the plan ref carries
 `commit=`, it completes the ledger lines and removes the record
 (`status=amended already=1`); when it does not, it recomputes from the
-record's base and candidate as if freshly called. `deps --check --ledger`
+record's base and candidate as if freshly called. Only a record whose
+`base=` is this call's base counts as the retry; another base finishes the
+record and continues as a fresh amendment. `deps --check --ledger`
 also honours `accept=` lines in a surviving amendment record, so a window
 between the swap and the ledger line never makes an accepted overlap read
 as undeclared;
@@ -279,8 +301,12 @@ ref. A lost compare-and-swap re-reads P and retries only while the plan
 blob at the new P is still the base (another file moved the ref), three
 attempts, then `status=error`; a changed blob is `stale`. It then prints
 `status=amended head=<sha7> plan=<blob sha7>` and appends `plan: amended <blob sha7> by <sid>:
-<subject>` to the ledger. A session's worktree keeps its own copy of the
-plan; the controller takes the amended copy and its blob from the plan ref
+<subject>` to the ledger. A worktree that has the plan ref checked out is
+refreshed to the new blob after the swap, and an amendment is refused with
+`status=checked-out worktree=<path>` (exit 13) while such a worktree's
+copy of the plan is not the base, so the controller writes its edited copy
+outside that worktree's plan path; any other worktree keeps its own copy,
+and the controller takes the amended copy and its blob from the plan ref
 before editing again. An amendment refused with `conflicts` goes to your human partner as the
 first scan's rows did; the answer is a new edge in the edited copy or an
 `--accept` on the retry. A claim already held is never revoked: a new prerequisite

@@ -10,3 +10,7 @@ Skills trigger automatically: the agent matches your request against each skill'
 | {doc}`writing-plans` | Turns an approved design into bite-sized tasks with exact files, steps, and risk tiers. | You have a spec or requirements for a multi-step task. |
 | {doc}`executing-plans` | Works through a written plan in the current session and stops when blocked. | You have a plan to run in a separate session, or subagents are unavailable. |
 | {doc}`subagent-driven-development` | Dispatches a fresh implementer subagent per task and reviews each task and the whole branch. | You have a plan with mostly independent tasks to run in the current session. |
+| {doc}`dispatching-parallel-agents` | Splits independent problems across subagents that run at the same time, then checks and combines the results. | You face two or more tasks with no shared state or ordering between them. |
+| {doc}`using-git-worktrees` | Reuses an isolated workspace or asks where the work happens, runs project setup, and checks that tests pass first. | You start feature work that needs isolation, or are about to execute a plan. |
+| {doc}`finishing-a-development-branch` | Records the branch decisions, runs the tests, offers merge, pull request, or keep, and cleans up the worktree. | Implementation is complete and the tests pass. |
+| {doc}`communication` | Writes reports and replies with the answer first, in plain words, without stock phrasing. | The agent writes prose you will read, or you ask it to make text read less like AI. |

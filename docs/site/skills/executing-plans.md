@@ -7,7 +7,7 @@ source-digest: 14df16bdb414
 `executing-plans` has one agent load a written plan, check it for problems, work through every task in order, and report when the work is complete.
 
 :::{card} At a glance
-**Category:** Process · **Triggers on:** you have a written implementation plan to execute in a separate session with review checkpoints · **Hands off to:** `finishing-a-development-branch` · **Harness notes:** none; the skill itself tells the agent to prefer {doc}`subagent-driven-development` where subagents exist
+**Category:** Process · **Triggers on:** you have a written implementation plan to execute in a separate session with review checkpoints · **Hands off to:** {doc}`finishing-a-development-branch` · **Harness notes:** none; the skill itself tells the agent to prefer {doc}`subagent-driven-development` where subagents exist
 :::
 
 ## When it triggers
@@ -26,9 +26,9 @@ The agent announces that it is using the skill, then tells you something the ski
 
 The process has three steps.
 
-1. **Load and review the plan.** The agent settles where the work happens through `using-git-worktrees`, which detects an existing worktree or asks you to choose between the current branch, a new branch in place, and a worktree. It reads the plan and reviews it critically. If it has concerns, it raises them with you before starting. If not, it creates todos for the plan items and proceeds.
+1. **Load and review the plan.** The agent settles where the work happens through {doc}`using-git-worktrees`, which detects an existing worktree or asks you to choose between the current branch, a new branch in place, and a worktree. It reads the plan and reviews it critically. If it has concerns, it raises them with you before starting. If not, it creates todos for the plan items and proceeds.
 2. **Execute the tasks.** For each task it marks the task in progress, follows each step exactly, runs the verifications the plan specifies, reviews after each task or at natural checkpoints using `requesting-code-review`, and marks the task completed.
-3. **Complete the development.** It announces `finishing-a-development-branch`, passes along the mode `using-git-worktrees` reported, and follows that skill to verify tests and present your options.
+3. **Complete the development.** It announces {doc}`finishing-a-development-branch`, passes along the mode {doc}`using-git-worktrees` reported, and follows that skill to verify tests and present your options.
 
 The skill lists when to stop immediately and ask: a blocker such as a missing dependency, a failing test, or an unclear instruction; critical gaps in the plan; an instruction the agent does not understand; or verification that fails repeatedly. It says to ask rather than guess. It sends the agent back to the review step when you update the plan or when the approach needs rethinking. It never starts implementation on main or master without your explicit consent.
 
@@ -59,10 +59,10 @@ To use this skill, ask for inline execution or execution in this session without
 
 - {doc}`writing-plans` produces the plan this skill executes and names this skill as the inline option.
 - {doc}`subagent-driven-development` is what the skill tells the agent to use instead when subagents are available.
-- `using-git-worktrees` settles where the work happens in step 1.
+- {doc}`using-git-worktrees` settles where the work happens in step 1.
 - `requesting-code-review` is the review the agent runs after tasks or at checkpoints.
-- `finishing-a-development-branch` closes out the work in step 3.
-- `communication` governs the concerns the agent raises before starting and the completion report.
+- {doc}`finishing-a-development-branch` closes out the work in step 3.
+- {doc}`communication` governs the concerns the agent raises before starting and the completion report.
 
 ## Under the hood
 

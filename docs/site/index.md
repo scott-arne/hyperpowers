@@ -36,6 +36,10 @@ skills/brainstorming
 skills/writing-plans
 skills/executing-plans
 skills/subagent-driven-development
+skills/dispatching-parallel-agents
+skills/using-git-worktrees
+skills/finishing-a-development-branch
+skills/communication
 ```
 
 ```{toctree}

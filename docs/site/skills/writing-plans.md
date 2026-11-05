@@ -72,7 +72,7 @@ Tell the agent where to save the plan if you do not want the default `docs/hyper
 - {doc}`subagent-driven-development` is the default handoff.
 - {doc}`executing-plans` is the handoff when you ask for inline execution.
 - `requesting-code-review` holds the Codex review gate that checks the plan before you see it.
-- `communication` governs the plan's prose and the handoff message.
+- {doc}`communication` governs the plan's prose and the handoff message.
 
 ## Under the hood
 

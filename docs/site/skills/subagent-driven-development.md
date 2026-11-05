@@ -7,7 +7,7 @@ source-digest: 6d24e25368c2
 `subagent-driven-development` (SDD) runs a written plan by dispatching a fresh implementer subagent for each task, reviewing each task's result, and reviewing the whole branch at the end.
 
 :::{card} At a glance
-**Category:** Process · **Triggers on:** executing an implementation plan with independent tasks in the current session · **Hands off to:** `finishing-a-development-branch` · **Harness notes:** the Codex task and final gates run on Claude Code only; the skill degrades to its Claude reviewers when Codex is absent
+**Category:** Process · **Triggers on:** executing an implementation plan with independent tasks in the current session · **Hands off to:** {doc}`finishing-a-development-branch` · **Harness notes:** the Codex task and final gates run on Claude Code only; the skill degrades to its Claude reviewers when Codex is absent
 :::
 
 ## When it triggers
@@ -24,7 +24,7 @@ Example requests:
 
 The controller (your main session) does coordination and never implements. Each task goes through the same loop.
 
-**Setup.** The controller settles where the work happens through `using-git-worktrees`, syncs the plan's state with `scripts/sdd-state sync`, and finds the plan's workspace with `scripts/sdd-dir`. The workspace lives in a per-repository state checkout under your user cache, outside the working tree, so nothing in it can be committed with your code. It holds the plan's ledger (`progress.md`), task briefs, reports, and review packages. The ledger is the recovery map: it records each completed task, so a controller that loses its context to compaction resumes at the first task without a completion line instead of redoing finished work. The controller reads the plan and its spec, then scans the plan for conflicts between tasks and asks you about any it finds in one batched question before execution begins.
+**Setup.** The controller settles where the work happens through {doc}`using-git-worktrees`, syncs the plan's state with `scripts/sdd-state sync`, and finds the plan's workspace with `scripts/sdd-dir`. The workspace lives in a per-repository state checkout under your user cache, outside the working tree, so nothing in it can be committed with your code. It holds the plan's ledger (`progress.md`), task briefs, reports, and review packages. The ledger is the recovery map: it records each completed task, so a controller that loses its context to compaction resumes at the first task without a completion line instead of redoing finished work. The controller reads the plan and its spec, then scans the plan for conflicts between tasks and asks you about any it finds in one batched question before execution begins.
 
 **Per task.**
 
@@ -39,7 +39,7 @@ The controller (your main session) does coordination and never implements. Each 
 
 **Final review.** After the last task, the controller dispatches a whole-branch reviewer on the most capable available model, pointed at the ledger's deferred minors. If it returns findings, one fix subagent gets the complete list and one scoped re-review follows. There is no second fix wave. Whatever remains open goes to you. On Claude Code a final Codex review runs after that, with its own three-round backstop. When the plan has a spec, the controller also dispatches a background extractor that drafts notes for the decision records.
 
-**Finish.** The controller removes the plan's workspace with `scripts/sdd-state finish`, verifies it is gone, and invokes `finishing-a-development-branch` with the mode, the plan, and the spec.
+**Finish.** The controller removes the plan's workspace with `scripts/sdd-state finish`, verifies it is gone, and invokes {doc}`finishing-a-development-branch` with the mode, the plan, and the spec.
 
 **Model selection.** The controller names a model for every dispatch, because an omitted model inherits the session's, usually the most expensive. A mid-tier model is the floor for reviewers and for implementers working from prose. The cheapest tier is for transcription, where the task text carries the complete code. The final review takes the most capable model. {source}`skills/subagent-driven-development/model-selection.md` has the per-role guidance.
 
@@ -74,12 +74,12 @@ If you want one agent to do the work in your session, say "execute inline" and t
 ## Works with
 
 - {doc}`writing-plans` produces the plan and hands off to this skill by default.
-- `using-git-worktrees` settles where the work happens during setup.
+- {doc}`using-git-worktrees` settles where the work happens during setup.
 - `test-driven-development` is what implementer subagents follow for the task's tests.
 - `requesting-code-review` supplies the final reviewer prompt and the Codex review gate.
-- `finishing-a-development-branch` closes the run and compiles the decision records.
+- {doc}`finishing-a-development-branch` closes the run and compiles the decision records.
 - {doc}`executing-plans` is the inline alternative when you do not want subagents.
-- `communication` governs the pre-flight question, escalations, and BLOCKED hand-backs.
+- {doc}`communication` governs the pre-flight question, escalations, and BLOCKED hand-backs.
 
 ## Under the hood
 

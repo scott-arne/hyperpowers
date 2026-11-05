@@ -145,6 +145,18 @@ This design closes those five gaps with the model decision 2 chose.
   amending B, crashing, amending to C and back to B republishes B instead
   of reporting it published. Decided 2026-11-04 in chat, during Task 6 of
   the plan.
+- A retry answers `already=1` unless its amendment was undone. A record
+  whose commit is on the plan ref and whose base is this call's base
+  answers `already=1` while the ref's plan is anything but that base, a
+  later amendment's blob included; a plan back at exactly the base
+  finishes the record's ledger lines and publishes the amendment again,
+  and a ref that no longer carries the plan answers `status=error`. An
+  undo that also edits the plan still answers `already=1`, an accepted
+  gap. Rejected: `already=1` only while the plan is still the record's
+  blob (a retry after a later amendment would answer `stale` although its
+  change is in force); the literal rule, `already=1` whenever the commit
+  is in the ref's history (it reports an undone amendment as published).
+  Decided 2026-11-05 in chat, during Task 6 of the plan.
 
 ## Design
 
@@ -279,7 +291,11 @@ conflict lines when any undeclared overlap is neither in the ledger's
 accepted lines nor named by an `--accept tasks=<a>,<b> path=<p>` (or
 `interface=<name>`) argument of this call, so an unsafe graph never
 becomes authoritative and an acceptance your human partner gave for this
-amendment is written with it. The acceptances are made durable before the
+amendment is written with it. Every `--accept` must name an overlap the
+candidate has (one the ledger already accepts may be restated); any other
+is refused with `status=error` (exit 2) before the lock, with nothing
+published or recorded, so an acceptance never pre-authorizes an overlap a
+later amendment brings in. The acceptances are made durable before the
 ref moves: the command writes an amendment record
 `plans/<ws>/amends/<candidate blob sha>` (write beside and rename) holding
 `base=`, `blob=`, `commit=<the commit it is about to publish>` and one
@@ -287,7 +303,10 @@ ref moves: the command writes an amendment record
 accepted-overlap ledger lines and `plan: amended ...` and removes the
 record. A retry after a crash finds the record: when the plan ref carries
 `commit=`, it completes the ledger lines and removes the record
-(`status=amended already=1`); when it does not, it recomputes from the
+(`status=amended already=1`), except that a plan back at the record's base
+(the amendment was undone) goes on as a fresh amendment and publishes
+again, and a ref that no longer carries the plan is `status=error`; when
+it does not, it recomputes from the
 record's base and candidate as if freshly called. Only a record whose
 `base=` is this call's base counts as the retry; another base finishes the
 record and continues as a fresh amendment. `deps --check --ledger`
@@ -304,7 +323,9 @@ attempts, then `status=error`; a changed blob is `stale`. It then prints
 <subject>` to the ledger. A worktree that has the plan ref checked out is
 refreshed to the new blob after the swap, and an amendment is refused with
 `status=checked-out worktree=<path>` (exit 13) while such a worktree's
-copy of the plan is not the base, so the controller writes its edited copy
+copy of the plan is not the base or git would refuse its refresh (an
+unmerged entry on any path, a held index lock; the refresh is tried as a
+dry run before the swap), so the controller writes its edited copy
 outside that worktree's plan path; any other worktree keeps its own copy,
 and the controller takes the amended copy and its blob from the plan ref
 before editing again. An amendment refused with `conflicts` goes to your human partner as the

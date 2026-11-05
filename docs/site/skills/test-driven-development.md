@@ -68,7 +68,7 @@ The skill lists throwaway prototypes, generated code, and configuration files as
 
 - {doc}`subagent-driven-development` tells its implementer subagents to follow this skill for the task's tests.
 - {doc}`systematic-debugging` sends the agent here in its implementation phase, to write the failing test that reproduces the bug.
-- `writing-skills` names this skill as required background, because it adapts the red-green-refactor cycle to documentation.
+- {doc}`writing-skills` names this skill as required background, because it adapts the red-green-refactor cycle to documentation.
 
 ## Under the hood
 

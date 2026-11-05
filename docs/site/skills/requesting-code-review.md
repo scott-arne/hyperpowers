@@ -76,7 +76,7 @@ The skill's red flags say never to skip review because "it's simple" and never t
 - {doc}`writing-plans` runs the same gate over the written plan before presenting it to you.
 - {doc}`receiving-code-review` is the required sub-skill for acting on the findings.
 - {doc}`communication` is the required sub-skill for reporting findings or a gate hand-back to you.
-- `optimizing-performance` names this skill and the Codex gate as required parts of its workflow.
+- {doc}`optimizing-performance` names this skill and the Codex gate as required parts of its workflow.
 
 ## Under the hood
 

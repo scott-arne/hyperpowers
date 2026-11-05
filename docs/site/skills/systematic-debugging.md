@@ -12,7 +12,7 @@ source-digest: 6373f72d49a9
 
 ## When it triggers
 
-The skill's description says to use it when the agent meets any bug, test failure, or unexpected behavior, before it proposes a fix. Its "When to Use" list is broad: test failures, bugs in production, unexpected behavior, performance problems, build failures, and integration issues. It adds that the skill matters most under time pressure, when a quick fix looks obvious, and after a fix has already failed. The `using-hyperpowers` entry skill points "fix this bug" requests here first.
+The skill's description says to use it when the agent meets any bug, test failure, or unexpected behavior, before it proposes a fix. Its "When to Use" list is broad: test failures, bugs in production, unexpected behavior, performance problems, build failures, and integration issues. It adds that the skill matters most under time pressure, when a quick fix looks obvious, and after a fix has already failed. The {doc}`using-hyperpowers` entry skill points "fix this bug" requests here first.
 
 Example requests:
 
@@ -61,7 +61,7 @@ The skill gives no skip option. Its "Don't skip when" list names simple issues, 
 
 - {doc}`test-driven-development` supplies the failing test the agent writes in phase 4.
 - {doc}`communication` is a required sub-skill for reporting a root cause, stating a hypothesis, or bringing a question to you.
-- `using-hyperpowers` names this skill as the first stop for "fix this bug" requests, ahead of domain skills.
+- {doc}`using-hyperpowers` names this skill as the first stop for "fix this bug" requests, ahead of domain skills.
 
 ## Under the hood
 

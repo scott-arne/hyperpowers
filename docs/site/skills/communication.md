@@ -71,7 +71,7 @@ Tell the agent to write in your own style, give it a writing sample, or put a st
 
 - {doc}`brainstorming` requires it for everything you read during design: the questions, the comparison, the design, and the spec.
 - {doc}`writing-plans` requires it for the plan's prose and the handoff message.
-- `using-hyperpowers` routes writing for you (a summary, a finding, a design, a plan, a recommendation, or a reply longer than a few sentences) to this skill before the agent writes it.
+- {doc}`using-hyperpowers` routes writing for you (a summary, a finding, a design, a plan, a recommendation, or a reply longer than a few sentences) to this skill before the agent writes it.
 - {doc}`finishing-a-development-branch` requires it for the test-failure report and the PR description.
 - {doc}`dispatching-parallel-agents` requires it for the report to you after integration.
 - {doc}`executing-plans` requires it for the concerns the agent raises before starting and for the completion report.
@@ -79,8 +79,8 @@ Tell the agent to write in your own style, give it a writing sample, or put a st
 - {doc}`receiving-code-review` requires it for the reply itself, whether it goes to you or into a review thread.
 - {doc}`requesting-code-review` requires it when the agent reports findings or a gate hand-back to you.
 - {doc}`systematic-debugging` requires it when the agent reports a root cause, states a hypothesis, or brings you a question.
-- `profiling-performance` requires it for the deliverable you read.
-- `optimizing-performance` requires it for its report.
+- {doc}`profiling-performance` requires it for the deliverable you read.
+- {doc}`optimizing-performance` requires it for its report.
 
 ## Under the hood
 

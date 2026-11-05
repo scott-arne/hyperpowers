@@ -67,11 +67,17 @@ skills/receiving-code-review
 ```{toctree}
 :caption: Performance skills
 :hidden:
+
+skills/profiling-performance
+skills/optimizing-performance
 ```
 
 ```{toctree}
 :caption: Meta skills
 :hidden:
+
+skills/using-hyperpowers
+skills/writing-skills
 ```
 
 ```{toctree}

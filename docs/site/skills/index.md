@@ -33,3 +33,17 @@ Skills trigger automatically: the agent matches your request against each skill'
 |---|---|---|
 | {doc}`requesting-code-review` | Dispatches a reviewer subagent over an exact commit range, and under Claude Code adds an optional Codex review. | You complete a task or a major feature, or are about to merge. |
 | {doc}`receiving-code-review` | Checks an external reviewer's feedback against the code before acting (yours is implemented once understood), pushes back with evidence, and skips performative agreement. | The agent receives review feedback. |
+
+## Performance
+
+| Skill | What it does | Triggers when |
+|---|---|---|
+| {doc}`profiling-performance` | Captures a correctness baseline, measures the real bottleneck, and ranks candidate fixes by payoff before any rewrite. | Code is slower than expected, or a regression or unexplained memory use appears. |
+| {doc}`optimizing-performance` | Lands ranked candidates one at a time against a shared baseline, keeps only measured wins that pass its gates, and reverts the rest. | You intend to make code faster and land the change. |
+
+## Meta
+
+| Skill | What it does | Triggers when |
+|---|---|---|
+| {doc}`using-hyperpowers` | The bootstrap the session-start hook injects: invoke any skill that might apply before responding, process skills first. | A conversation starts. |
+| {doc}`writing-skills` | Applies test-driven development to skill documents: baseline without the skill, write it, close loopholes. | You create, edit, or verify a skill. |

@@ -219,7 +219,7 @@ assert_contains "$SDD" "then commits the verified fix" \
 # the round-4/5 takeover rule has already replaced.
 assert_contains "$SDD" "revert the edit, spend no round, and go back to the round's own rule" \
   "carve-out failure path reverts, spends no round, and defers to the round's rule"
-assert_contains "$SDD" "resume the implementer at rounds 1-3, dispatch the takeover at rounds 4-5" \
+assert_contains "$SDD" "give it to the implementer at rounds 1-3, dispatch the takeover at rounds 4-5" \
   "carve-out two-strike escape respects the round-4 takeover rule"
 assert_contains "$SDD" "or one controller-applied de-minimis fix" \
   "fix-round definition counts controller-applied fixes"
@@ -493,7 +493,8 @@ assert_contains "$SDD" 'finishing the tasks is never a reason for it' "a hand-ba
 assert_contains "$SDD" "\"Complete the task (scripts/sdd-state complete); any status but complete stops\" -> \"Mark the task's todo complete (where kept)\";" "the graph completes the task before the todo node"
 assert_contains "$SDD" "\"Mark the task's todo complete (where kept)\" -> \"More tasks remain?\";" "the todo node leads back to the loop"
 assert_not_contains "$SDD" "Append completion to ledger" "the hand-written completion node is gone"
-assert_contains "$SDD" 'the stop guard treats it as live work, and your turn may end while it runs' "SendMessage resumes are named as live work"
+assert_contains "$SDD" 'a fix round on Claude Code dispatches a fresh foreground implementer; a SendMessage resume is for harnesses without the option' "fix rounds dispatch a fresh foreground implementer on Claude Code"
+assert_not_contains "$SDD" 'the stop guard treats it as live work, and your turn may end while it runs' "the resumed-agent-is-live-work sentence is gone"
 assert_contains "$SDD" 'where it does not (fork mode in an interactive terminal), dispatches run in the background and the stop guard treats them as live work' "the fork-mode sentence"
 assert_contains "$SDD" 'receipt=<path>' "finish records the receipt"
 assert_not_contains "$SDD" '<out>.exit' "the hand-written exit-file protocol is gone"

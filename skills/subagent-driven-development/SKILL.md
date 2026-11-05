@@ -558,14 +558,19 @@ loop with ONE shared cap of **five rounds per task**: the gate does not run
 a count of its own. A fix round is one fix dispatch — or one
 controller-applied de-minimis fix — plus one scoped re-review.
 
-**Rounds 1-3 — resume the original implementer.** Send it the open findings
-verbatim. Its context is intact: it knows the task, the code, and its own
-choices. If your harness cannot send another message to a live subagent,
-dispatch a fresh implementer carrying the brief path, the report-file path,
-and the findings — the report file is the persistent memory either way.
-On Claude Code the resumed agent runs in the background, the stop guard
-treats it as live work, and your turn may end while it runs; its completion
-notice resumes you.
+**Rounds 1-3 — the original implementer's context carries the fix.** On
+Claude Code, dispatch a fresh implementer in the foreground
+(`run_in_background: false`) carrying the brief path, the report-file path,
+and the open findings verbatim, on the same model as the original; tell it a
+prior implementer did the task and that the report file records what it did
+and tried. Your turn then holds until the fix returns, which a background
+resume would not:
+a fix round on Claude Code dispatches a fresh foreground implementer; a SendMessage resume is for harnesses without the option.
+On a harness without that option, resume the original implementer with the
+findings sent verbatim — its context is intact, it knows the task, the code,
+and its own choices. If that harness cannot send another message to a live
+subagent, dispatch a fresh implementer as above — the report file is the
+persistent memory either way.
 
 **Rounds 4-5 — dispatch a fresh takeover implementer on a more capable
 model** (per Model Selection), with the brief path, the report-file path,
@@ -582,7 +587,7 @@ output; dispatch the re-review once all three are present. That
 precondition covers the findings the round fixed; a round that declines
 every finding is defined below. Name the covering test files in the fix
 message — a one-line fix does not need the whole suite. The per-task loop
-resumes an implementer rather than dispatching a fixer, so it never uses
+gives a fix round to an implementer rather than a fixer, so it never uses
 [fix-subagent-prompt.md](fix-subagent-prompt.md) — that template belongs to
 the final review's one fix wave.
 
@@ -630,7 +635,7 @@ itself, exactly as an implementer would. Its ledger line keeps the
 fix-round schema with the marker inside it:
 `Task <N>: fix round <R>/5 controller-applied (de minimis) (<X> addressed, <Y> declined, <Z> open — <finding one-liners>; commits <a7>..<b7>)`.
 Reaching for it twice in the same task means the findings are not de
-minimis — go back to the round's own rule: resume the implementer at
+minimis — go back to the round's own rule: give it to the implementer at
 rounds 1-3, dispatch the takeover at rounds 4-5.
 
 **Codex Review Gate (Claude Code only).** When running under Claude Code, add

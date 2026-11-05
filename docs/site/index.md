@@ -24,6 +24,7 @@ why
 install
 first-session
 workflow
+recommended-settings
 ```
 
 ```{toctree}

@@ -46,7 +46,7 @@ The compiler regenerates `README.md` in the records directory at each compile. I
 
 ## Supersession
 
-A reversal is a new record. A decision item with a `Supersedes:` line gets a `Supersedes` field in its record, and the compiler changes the older record's status from `accepted` to `superseded by` the new record. It rewrites that status line and nothing else in the older record. The compiler refuses a `Supersedes:` path that is not a record in the same records directory, and a target already superseded by a record from another spec. The index then lists the older record under Superseded.
+A reversal is a new record. A decision item with a `Supersedes:` line gets a `Supersedes` field in its record, and the compiler changes the older record's status from `accepted` to `superseded by` the new record. It rewrites that status line and nothing else in the older record. Among the cases the compiler refuses are a `Supersedes:` path that is not a record in the same records directory, a symbolic link, a path that does not exist, a record of the same spec, a target whose status is neither `accepted` nor `superseded by`, and a target already superseded by an unrelated record. The index then lists the older record under Superseded.
 
 ## What happens to the plan and the spec
 

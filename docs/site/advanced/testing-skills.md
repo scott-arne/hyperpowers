@@ -24,10 +24,10 @@ Live eval runs consume API credit and run agents in dangerous mode, so the testi
 The `writing-skills` skill treats a skill as documentation that is tested the way code is, in a red, green, refactor cycle. Its supporting file `testing-skills-with-subagents.md` gives the format of the test. A pressure scenario is a realistic task given to a subagent that tempts it to break the rule under test.
 
 - Time, sunk cost, authority, economic, exhaustion, social, and pragmatic pressures are the types the file lists. For a skill that enforces discipline, the best scenarios combine three or more.
-- A good scenario offers concrete options (A, B, or C), states real constraints, uses real file paths, and asks what the agent does and not what it should do. It leaves no easy way out through "I would ask my human partner".
-- The test setup tells the agent the scenario is real work and not a quiz.
+- A good scenario offers concrete options (A, B, or C), states real constraints, uses real file paths, and asks "What do you do?" It leaves no easy way out through "I would ask my human partner".
+- The test setup tells the agent the scenario is real work.
 
-Which test to use depends on the skill type. A discipline skill gets pressure scenarios and academic questions about the rules. A technique skill gets application, variation, and missing-information scenarios. A pattern skill gets recognition and counter-example scenarios. A reference skill gets retrieval and gap scenarios. The skill's rationalizations table says to test a pure reference skill's retrieval too, and the testing file's "When to Use" lists pure reference skills among those that need no pressure test.
+Which test to use depends on the skill type. A discipline skill gets pressure scenarios and academic questions about the rules. A technique skill gets application, variation, and missing-information scenarios. A pattern skill gets recognition and counter-example scenarios. A reference skill gets retrieval and gap scenarios. For reference skills the two files differ. `SKILL.md` lists "It's just a reference" among the excuses for skipping tests and answers "Test retrieval", and its iron law has no exception for documentation. The "When to Use" list in `testing-skills-with-subagents.md` names pure reference skills (API docs, syntax guides) among the skills not to test with its pressure-scenario method.
 
 ## Baseline versus treatment
 

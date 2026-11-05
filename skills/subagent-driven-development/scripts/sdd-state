@@ -1878,7 +1878,11 @@ amend_refresh() {
 # own idempotent steps.
 cmd_merge_back() {
   local plan="" n="" sid="" sha="" code="" rc out line integ ref owner_f owner full approved approved_full
-  local pair blob tmp graph title deps d waiting c lease lowner wt record H new mt mrc tree paths published t uerr cur
+  local pair blob tmp graph title deps d waiting c lease lowner wt record H new mt mrc tree paths published t uerr cur o nc
+  # A replace ref would have git read another commit's parents and tree under
+  # the approved id, and merge content nobody reviewed: every git call here,
+  # and in the helpers it calls, reads the objects as they were written.
+  local -x GIT_NO_REPLACE_OBJECTS=1
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
@@ -1890,8 +1894,8 @@ cmd_merge_back() {
   done
   [ -n "$plan" ] && [ -n "$n" ] && [ -n "$sid" ] && [ -n "$sha" ] || usage
   case "$n" in *[!0-9]*) usage ;; esac
-  # The value goes to git as a revision and is compared by its prefix with
-  # the approval line's abbreviation, so anything but hex is no commit id.
+  # The value goes to git as a revision and its full id is compared with the
+  # approved commit's, so anything but hex is no commit id.
   case "$sha" in *[!0-9a-f]*) usage ;; esac
   resolve_plan "$plan"
   hp_git_version_at_least 2 38 || { echo "sdd-state: git 2.38 or newer is required to merge a task back (found $(git --version))" >&2; echo "status=error"; return 2; }
@@ -1924,11 +1928,17 @@ cmd_merge_back() {
   [ -n "$approved" ] || { hp_unlock; echo "status=not-approved approved=none"; return 12; }
   # The token is resolved to one commit here and the full ids compared: a
   # prefix comparison would pass any commit that shares the approved one's
-  # seven characters. git refuses an ambiguous prefix, and the resolved id
-  # must begin with the token, since git peels a tag object's id to the
-  # commit it tags. An approval that cannot be resolved is an error, never
-  # read as no approval.
-  { approved_full=$(git -C "$code" rev-parse -q --verify "$approved^{commit}" 2>/dev/null) && [ "${approved_full:0:7}" = "$approved" ]; } || { hp_unlock; echo "sdd-state: the approval line's token $approved for task $n does not name exactly one commit in $code" >&2; echo "status=error"; return 2; }
+  # seven characters. It is looked up among objects only, never as a
+  # revision, where a ref named like the token wins over an ambiguous object
+  # prefix and a tag object's id is peeled to the commit it tags. Exactly one
+  # commit must carry it; an approval that cannot be resolved is an error,
+  # never read as no approval.
+  approved_full=""; nc=0
+  for o in $(git -C "$code" rev-parse --disambiguate="$approved" 2>/dev/null); do
+    [ "$(git -C "$code" cat-file -t "$o" 2>/dev/null)" = commit ] || continue
+    approved_full=$o; nc=$((nc + 1))
+  done
+  [ "$nc" -eq 1 ] || { hp_unlock; echo "sdd-state: the approval line's token $approved for task $n does not name exactly one commit in $code" >&2; echo "status=error"; return 2; }
   [ "$sha" = "$approved_full" ] || { hp_unlock; echo "status=not-approved approved=$approved"; return 12; }
   # The predecessors come from the authoritative plan, never a worktree copy:
   # an amendment may have added an edge to a task claimed before it.

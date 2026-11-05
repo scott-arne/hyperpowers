@@ -4145,11 +4145,20 @@ printf 'Task 7: approved %s\n' "${ztag:0:7}" >> "$wsmb2/progress.md"
 out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>"$TEST_ROOT/mb.tag.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "${ztag:0:7}" "$TEST_ROOT/mb.tag.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "an approval token naming a tag object rather than the commit is an error"; else fail "tag-object approval token (rc=$rc: $out)"; fi
 git -C "$mb_a" tag -d mb-z >/dev/null
-# A seven-character collision cannot be built here. Once a second commit shares the approved prefix, git finds the token ambiguous; a git wrapper gives that answer for the token, and the commit sharing the prefix is refused, not merged.
+# A real seven-character collision: node searches commit messages for a benign commit and one with other content, both on the integration head, whose ids share a prefix (a birthday search, about 2^14 candidates each). With the approval naming that prefix, the token is ambiguous: an error, and neither commit is merged.
+mbt=$(git -C "$mb_a" rev-parse "$z1^{tree}")
+mbm=$( { git -C "$mb_a" ls-tree "$z1"; printf '100644 blob %s\tmal.txt\n' "$(printf 'malicious\n' | git -C "$mb_a" hash-object -w --stdin)"; } | git -C "$mb_a" mktree)
+node -e 'const c=require("crypto"),fs=require("fs");const [tb,tm,p,out]=process.argv.slice(1);const id="Test <test@example.com> 1700000000 +0000";const body=(t,m)=>"tree "+t+"\nparent "+p+"\nauthor "+id+"\ncommitter "+id+"\n\n"+m+"\n";const pre=s=>c.createHash("sha1").update("commit "+Buffer.byteLength(s)+"\0"+s).digest("hex").slice(0,7);const seen={b:new Map(),m:new Map()};for(let i=0;i<1048576;i++){for(const [k,t,o] of [["b",tb,"m"],["m",tm,"b"]]){const s=body(t,k+" "+i);const x=pre(s);if(seen[o].has(x)){fs.writeFileSync(out+"."+k,s);fs.writeFileSync(out+"."+o,body(o==="b"?tb:tm,o+" "+seen[o].get(x)));process.exit(0);}seen[k].set(x,i);}}process.exit(1);' "$mbt" "$mbm" "$h7" "$TEST_ROOT/mb.coll"
+zb=$(git -C "$mb_a" hash-object -t commit -w "$TEST_ROOT/mb.coll.b"); zm=$(git -C "$mb_a" hash-object -t commit -w "$TEST_ROOT/mb.coll.m"); zp=${zb:0:7}
+printf 'Task 7: approved %s\n' "$zp" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$zb" 2>"$TEST_ROOT/mb.amb.err"); rc=$?
+if [ "${zm:0:7}" = "$zp" ] && [ "$zm" != "$zb" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "$zp" "$TEST_ROOT/mb.amb.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ] && ! grep -q '^Task 7: merged' "$wsmb2/progress.md"; then pass "an approval token two commits share is an error, and neither is merged"; else fail "ambiguous approval token (rc=$rc: $out zb=$zb zm=$zm)"; fi
+# A ref named after the prefix shadows the ambiguous object prefix in git's revision lookup; the token is resolved among objects only, so the commit the ref names is not taken for the approved one.
+git -C "$mb_a" update-ref "refs/heads/$zp" "$zm"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$zm" 2>"$TEST_ROOT/mb.shadow.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "$zp" "$TEST_ROOT/mb.shadow.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ] && ! git -C "$mb_a" merge-base --is-ancestor "$zm" feat && ! grep -q '^Task 7: merged' "$wsmb2/progress.md"; then pass "an ambiguous approval token shadowed by a hex-named ref is an error, and the ref's commit is not merged"; else fail "ref-shadowed approval token (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.shadow.err"))"; fi
+git -C "$mb_a" update-ref -d "refs/heads/$zp"
 printf 'Task 7: approved %s\n' "${z1:0:7}" >> "$wsmb2/progress.md"
-mkdir -p "$TEST_ROOT/ambgit"; printf '#!/bin/sh\nfor a in "$@"; do if [ "$a" = "%s^{commit}" ]; then echo "error: short object ID %s is ambiguous" >&2; exit 128; fi; done\nexec "%s" "$@"\n' "${z1:0:7}" "${z1:0:7}" "$(command -v git)" > "$TEST_ROOT/ambgit/git"; chmod 755 "$TEST_ROOT/ambgit/git"
-out=$(cd "$mb_a" && PATH="$TEST_ROOT/ambgit:$PATH" bash "$SDD_STATE" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>"$TEST_ROOT/mb.amb.err"); rc=$?
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "${z1:0:7}" "$TEST_ROOT/mb.amb.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ] && ! grep -q '^Task 7: merged' "$wsmb2/progress.md"; then pass "an approval token git finds ambiguous is an error, and the commit sharing its prefix is not merged"; else fail "ambiguous approval token (rc=$rc: $out)"; fi
 # Three lost swaps: a git wrapper moves the integration ref ahead before each swap. The merge-back gives up after three attempts naming the head it expected and the one it found, and publishes nothing.
 mkdir -p "$TEST_ROOT/racegit"; : > "$TEST_ROOT/race.log"
 printf '#!/bin/sh\nreal="%s"\nif [ "$3" = update-ref ] && [ "$4" = -m ]; then case "$5" in "sdd merge-back task "*) tip=$("$real" -C "$2" rev-parse "$6") && adv=$("$real" -C "$2" commit-tree "$tip^{tree}" -p "$tip" -m race) && "$real" -C "$2" update-ref "$6" "$adv" "$tip" && echo "$adv" >> "%s" ;; esac; fi\nexec "$real" "$@"\n' "$(command -v git)" "$TEST_ROOT/race.log" > "$TEST_ROOT/racegit/git"; chmod 755 "$TEST_ROOT/racegit/git"
@@ -4162,6 +4171,17 @@ printf 'session=s3\ntask=7\nkind=merge\nsince=2026-01-01T00:00:00Z\nnote=merge-b
 if [ "$rc" -eq 99 ] && [ "$(grep -c '^Task 7: merged' "$wsmb2/progress.md")" = 1 ] && git -C "$mb_a" merge-base --is-ancestor "$z1" feat && [ "$(sed -n 's/^task=//p' "$wsmb2/waiting/s3")" = 7 ] && [ "$(cat "$wsmb2/activity/s3")" = "2026-01-01T00:00:00Z" ]; then pass "a crash after the ledger line leaves one line, the merge waiting record and the stale activity"; else fail "crash after ledger, first pass (rc=$rc: $(grep -c '^Task 7: merged' "$wsmb2/progress.md") lines)"; fi
 out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% head=*}" = "status=merged task=7" ] && [ "${out##* }" = "already=1" ] && [ "$(grep -c '^Task 7: merged' "$wsmb2/progress.md")" = 1 ] && [ ! -f "$wsmb2/waiting/s3" ] && [ "$(cat "$wsmb2/activity/s3")" != "2026-01-01T00:00:00Z" ]; then pass "the retry after the ledger line clears the record and stamps activity without a second line"; else fail "retry after ledger, owed bookkeeping (rc=$rc: $out)"; fi
+# A replacement of the approved commit: after the approval, refs/replace swaps in a commit whose tree adds unreviewed content, and the integration head has moved, so the merge is computed. Merge-back reads the original objects: the published tree carries what was approved.
+printf '\n### Task 8: R\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 8"; git -C "$mb_a" switch -q --detach feat
+run_state "$mb_a" claim docs/plan2.md 8 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-8"; printf 'r\n' > "$mb_a/src/r.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm r; r1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+adv8=$(git -C "$mb_a" commit-tree "$(git -C "$mb_a" rev-parse "feat^{tree}")" -p "$(git -C "$mb_a" rev-parse feat)" -m "advance 8"); git -C "$mb_a" update-ref refs/heads/feat "$adv8"
+printf 'Task 8: approved %s\n' "${r1:0:7}" >> "$wsmb2/progress.md"
+rt=$( { git -C "$mb_a" ls-tree "$r1"; printf '100644 blob %s\tunreviewed.txt\n' "$(printf 'unreviewed\n' | git -C "$mb_a" hash-object -w --stdin)"; } | git -C "$mb_a" mktree)
+git -C "$mb_a" replace "$r1" "$(git -C "$mb_a" commit-tree "$rt" -p "$(git -C "$mb_a" rev-parse "$r1^")" -m r)"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 8 --session s3 --commit "$r1" 2>"$TEST_ROOT/mb.rep.err"); rc=$?
+hr=$(git -C "$mb_a" rev-parse feat)
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=8 head=${hr:0:7}" ] && [ "$(git -C "$mb_a" --no-replace-objects rev-parse "$hr^2")" = "$r1" ] && [ "$(git -C "$mb_a" --no-replace-objects show "$hr:src/r.txt")" = r ] && ! git -C "$mb_a" --no-replace-objects cat-file -e "$hr:unreviewed.txt" 2>/dev/null; then pass "a replace ref on the approved commit does not change the published tree"; else fail "replaced approved commit (rc=$rc: $out: $(git -C "$mb_a" --no-replace-objects ls-tree --name-only "$hr" | tr '\n' ' '))"; fi
+git -C "$mb_a" replace -d "$r1" >/dev/null
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

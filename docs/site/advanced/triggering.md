@@ -9,6 +9,7 @@ Skills fire because the `using-hyperpowers` bootstrap is in the agent's context 
 ## How the bootstrap gets into a session
 
 Each harness uses its own mechanism. The session-start hooks, the OpenCode plugin, and the Pi extension read {source}`skills/using-hyperpowers/SKILL.md`. The Claude Desktop and claude.ai bundle uses a router document instead, and this repository does not show how Kimi reads its declaration.
+
 **Claude Code.** {source}`hooks/hooks.json` registers a `SessionStart` hook that runs `hooks/run-hook.cmd session-start` for the sources `startup`, `clear`, and `compact`. {source}`hooks/session-start` wraps the skill text in an `<EXTREMELY_IMPORTANT>` block that begins "You have superpowers" and returns it as `hookSpecificOutput.additionalContext`.
 
 **Codex.** {source}`hooks/hooks-codex.json` registers the same three sources and runs {source}`hooks/session-start-codex`, which injects the same skill text with a different wrapper sentence about loading other skills. It adds none of the one-line notices described below. {source}`.codex-plugin/plugin.json` points at that hooks file.

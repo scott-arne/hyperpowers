@@ -4088,6 +4088,8 @@ if [ "$rc" -eq 99 ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$hbefore" ] && [ 
 pub=$(sed -n 's/^proposed=//p' "$wsmb2/merges/task-1")
 if [ "$rc" -eq 99 ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$pub" ] && ! grep -q '^Task 1: merged' "$wsmb2/progress.md"; then pass "a crash after the swap leaves the ref moved and the ledger line owed"; else fail "crash after swap (rc=$rc)"; fi
 out=$(run_state "$mb_a" merge-back docs/plan2.md 2 --session s3 --commit "$y1" 2>/dev/null); rc=$?
+hadv=$(git -C "$mb_a" rev-parse feat)
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=2 head=${hadv:0:7}" ] && [ "$hadv" != "$pub" ] && [ "$(git -C "$mb_a" rev-parse "$hadv^1")" = "$pub" ]; then pass "another task's merge-back advances the head past the published commit"; else fail "advance by task 2 (rc=$rc: $out)"; fi
 out=$(run_state "$mb_a" merge-back docs/plan2.md 1 --session s3 --commit "$x1" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=1 head=${pub:0:7} already=1" ] && grep -q "^Task 1: merged ${pub:0:7} into feat" "$wsmb2/progress.md"; then pass "the retry names the record's commit after another task advanced the head"; else fail "retry after advance (rc=$rc: $out)"; fi
 ( cd "$mb_a" && HYPERPOWERS_TEST_CRASH_AT=merge-back-after-ledger bash "$SDD_STATE" merge-back docs/plan2.md 1 --session s3 --commit "$x1" >/dev/null 2>&1 ); rc=$?
@@ -4103,6 +4105,25 @@ mkdir -p "$wsmb2/waiting"; printf 'session=s3\ntask=2\nkind=merge\nsince=2026-01
 out=$(cd "$mb_a" && HYPERPOWERS_TEST_WRITER_AT="merge-back-before-swap:$adv2" bash "$SDD_STATE" merge-back docs/plan2.md 5 --session s3 --commit "$v1" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$(sed -n 's/^base=//p' "$wsmb2/merges/task-5")" = "$adv2" ] && [ "$(git -C "$mb_a" rev-parse feat^1)" = "$adv2" ]; then pass "a lost swap is recomputed against the moved head"; else fail "lost swap recomputed (rc=$rc: $out base=$(sed -n 's/^base=//p' "$wsmb2/merges/task-5" 2>/dev/null))"; fi
 if [ "$(sed -n 's/^kind=//p' "$wsmb2/waiting/s3" 2>/dev/null)" = merge ] && [ "$(sed -n 's/^task=//p' "$wsmb2/waiting/s3" 2>/dev/null)" = 2 ]; then pass "a merge-back keeps the session's merge waiting record for another task"; else fail "waiting record for another task ($(tr '\n' ' ' < "$wsmb2/waiting/s3" 2>/dev/null))"; fi
+# A dependency amended onto a claimed task: task 6 is claimed with no predecessor, then an amendment on the plan ref makes it depend on task 2 and retitles it, while the worktree's copy keeps the old graph and title.
+printf '\n### Task 6: W\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 6"; git -C "$mb_a" switch -q --detach feat
+run_state "$mb_a" claim docs/plan2.md 6 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-6"; printf 'w\n' > "$mb_a/src/w.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm w; w1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 6: approved %s\n' "${w1:0:7}" >> "$wsmb2/progress.md"
+base6=$(git -C "$mb_a" rev-parse feat:docs/plan2.md); h6=$(git -C "$mb_a" rev-parse feat)
+git -C "$mb_a" show feat:docs/plan2.md | sed -e 's/^### Task 6: W$/### Task 6: W-renamed/' -e '/^### Task 6:/,$ s/^\*\*Depends on:\*\* none$/**Depends on:** Task 2/' > "$TEST_ROOT/mb.cand6"
+# The git floor: merge-back and amend need merge-tree --write-tree (2.38) and refuse an older git by name, before anything moves. The fake git is the sync section's, made here too when this section runs alone.
+if [ ! -x "$TEST_ROOT/fakegit/git" ]; then real_git=$(command -v git); mkdir -p "$TEST_ROOT/fakegit"; printf '#!/bin/sh\nif [ "$1" = --version ]; then echo "git version 2.30.2"; exit 0; fi\nexec "%s" "$@"\n' "$real_git" > "$TEST_ROOT/fakegit/git"; chmod 755 "$TEST_ROOT/fakegit/git"; fi
+out=$(cd "$mb_a" && PATH="$TEST_ROOT/fakegit:$PATH" bash "$SDD_STATE" amend docs/plan2.md --from "$TEST_ROOT/mb.cand6" --base "$base6" 2>"$TEST_ROOT/mb.floor-amend.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'git 2\.38 or newer' "$TEST_ROOT/mb.floor-amend.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h6" ]; then pass "amend refuses a git older than 2.38 by name"; else fail "amend git floor (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.floor-amend.err"))"; fi
+out=$(cd "$mb_a" && PATH="$TEST_ROOT/fakegit:$PATH" bash "$SDD_STATE" merge-back docs/plan2.md 6 --session s3 --commit "$w1" 2>"$TEST_ROOT/mb.floor-merge.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'git 2\.38 or newer' "$TEST_ROOT/mb.floor-merge.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h6" ] && ! grep -q '^Task 6: merged' "$wsmb2/progress.md"; then pass "merge-back refuses a git older than 2.38 by name"; else fail "merge-back git floor (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.floor-merge.err"))"; fi
+run_state "$mb_a" amend docs/plan2.md --from "$TEST_ROOT/mb.cand6" --base "$base6" --message "task 6 after task 2" >/dev/null 2>&1
+out=$(run_state "$mb_a" merge-back docs/plan2.md 6 --session s3 --commit "$w1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "$out" = "status=blocked waiting=2" ] && git -C "$mb_a" show feat:docs/plan2.md | grep -qx '\*\*Depends on:\*\* Task 2' && ! grep -qx '\*\*Depends on:\*\* Task 2' "$mb_a/docs/plan2.md" && [ "$(git -C "$mb_a" rev-parse feat)" != "$h6" ]; then pass "merge-back is blocked by a predecessor amended onto the plan ref while the worktree's copy keeps the old graph"; else fail "blocked by an amended edge (rc=$rc: $out)"; fi
+printf 'Task 2: complete (commits 1111111..%s, review clean)\n' "${y1:0:7}" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 6 --session s3 --commit "$w1" 2>/dev/null); rc=$?
+hw=$(git -C "$mb_a" rev-parse feat)
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=6 head=${hw:0:7}" ] && [ "$(git -C "$mb_a" log -1 --format=%s "$hw")" = "Merge task 6: W-renamed" ] && grep -qx '### Task 6: W' "$mb_a/docs/plan2.md"; then pass "the merge commit takes the task's title from the plan ref, not the worktree's copy"; else fail "title from the plan ref (rc=$rc: $out: $(git -C "$mb_a" log -1 --format=%s "$hw"))"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

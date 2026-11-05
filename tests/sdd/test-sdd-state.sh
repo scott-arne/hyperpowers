@@ -3787,6 +3787,8 @@ adv_am=$(git -C "$am_a" commit-tree "$(git -C "$am_a" rev-parse "feat^{tree}")" 
 sed 's/^### Task 1: A$/### Task 1: A1/' "$TEST_ROOT/am.cand3" > "$TEST_ROOT/am.cand4"
 out=$(cd "$am_a" && HYPERPOWERS_TEST_WRITER_AT="amend-before-swap:$adv_am" bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/am.cand4" --base "$base3" --accept 'tasks=1,2 path=src/x.sh' --message "a1" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$am_a" rev-parse "feat^")" = "$adv_am" ] && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; then pass "a lost swap is recomputed on the moved head"; else fail "amend lost swap (rc=$rc: $out parent=$(git -C "$am_a" rev-parse "feat^" 2>/dev/null))"; fi
+# That call restated an acceptance the ledger already held: allowed, since the overlap is the candidate's, and written once.
+if [ "$(grep -c '^scan: accepted-overlap tasks=1,2 path=src/x.sh$' "$wsam/progress.md")" = 1 ]; then pass "an acceptance the ledger already holds is allowed and not written twice"; else fail "restated acceptance ($(grep -c 'path=src/x.sh$' "$wsam/progress.md"))"; fi
 base4=$(git -C "$am_a" rev-parse feat:docs/plan.md)
 sed 's/^### Task 2: B$/### Task 2: B3/' "$TEST_ROOT/am.cand4" > "$TEST_ROOT/am.cand5"
 sed 's/^### Task 2: B$/### Task 2: B9/' "$TEST_ROOT/am.cand4" > "$TEST_ROOT/am.other"
@@ -3825,10 +3827,11 @@ mkdir -p "$TEST_ROOT/ad-rel"; cp "$TEST_ROOT/ad.c1" "$TEST_ROOT/ad-rel/c1.md"
 out=$(cd "$TEST_ROOT/ad-rel" && bash "$SDD_STATE" amend "$ad_a/docs/plan.md" --from c1.md --base "$b_ad" --code-repo "$ad_a" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c1")" ]; then pass "a relative --from is read from the caller's directory"; else fail "relative --from (rc=$rc: $out)"; fi
 b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
-# An acceptance matches a whole conflict line: a path that only begins with the accepted one still conflicts.
-sed 's/^- Modify: `src\/x.sh`$/- Modify: `src\/x.shell`/; s/^- Modify: `src\/y.sh`$/- Modify: `src\/x.shell`/' "$TEST_ROOT/ad.c1" > "$TEST_ROOT/ad.prefix"
+# An acceptance matches a whole conflict line: with src/x.sh and src/x.shell both shared, accepting the first leaves the second.
+sed 's/^- Modify: `src\/y.sh`$/- Modify: `src\/x.sh`/' "$TEST_ROOT/ad.c1" | awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/x.shell`" }' > "$TEST_ROOT/ad.prefix"
 out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.prefix" --base "$b_ad" --accept 'tasks=1,2 path=src/x.sh' 2>/dev/null); rc=$?
-if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=src/x.shell' && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$b_ad" ]; then pass "an acceptance suppresses only the whole conflict line it names"; else fail "whole-line accept (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+if [ "$rc" -eq 1 ] && [ "$out" = "status=conflicts plan=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.prefix" | cut -c1-7) count=1
+conflict tasks=1,2 shares=src/x.shell" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$b_ad" ]; then pass "an acceptance suppresses only the whole conflict line it names"; else fail "whole-line accept (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
 # An abbreviation two objects share cannot be compared: node finds a blob whose id begins like the base's.
 pre_ad=${b_ad:0:4}
 node -e 'const c=require("crypto");const p=process.argv[1];for(let i=0;;i++){const s="x"+i+"\n";if(c.createHash("sha1").update("blob "+Buffer.byteLength(s)+"\0"+s).digest("hex").startsWith(p)){process.stdout.write(s);break;}}' "$pre_ad" > "$TEST_ROOT/ad.collide"
@@ -3858,7 +3861,7 @@ b_ad=$n_ad; sed 's/^### Task 2: B1$/### Task 2: B2/' "$TEST_ROOT/ad.c2" > "$TEST
 : > "$ad_a/.git/index.lock"
 out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c3" --base "$b_ad" --message c3 2>"$TEST_ROOT/ad.refresh.err"); rc=$?
 rm -f "$ad_a/.git/index.lock"
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "$ad_a" "$TEST_ROOT/ad.refresh.err" && grep -q 'run the same amend again' "$TEST_ROOT/ad.refresh.err" && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ -f "$wsad/amends/$n_ad" ]; then pass "a failed refresh after the swap is an error that keeps the record"; else fail "failed refresh (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.refresh.err"))"; fi
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "but the worktree $ad_a could not be refreshed" "$TEST_ROOT/ad.refresh.err" && grep -q 'run the same amend again' "$TEST_ROOT/ad.refresh.err" && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ -f "$wsad/amends/$n_ad" ]; then pass "a failed refresh after the swap is an error that keeps the record"; else fail "failed refresh (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.refresh.err"))"; fi
 out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c3" --base "$b_ad" --message c3 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && grep -q ': c3$' "$wsad/progress.md" && [ -z "$(ls -A "$wsad/amends")" ]; then pass "the retry after a failed refresh finishes it"; else fail "retry after failed refresh (rc=$rc: $out)"; fi
 # An update-ref that fails with the ref where it was is no lost race, and says so.
@@ -3881,6 +3884,33 @@ if [ "$rc" -eq 0 ] && [ "$rcb" -eq 0 ] && [ "${out%% *}" = "status=amended" ] &&
 awk '/^### Task 1:/ { t = 1 } /^### Task 2:/ { t = 2 } { print } /^\*\*Depends on:\*\*/ { if (t == 1) print "\n**Interfaces:**\n- Produces: `my api`"; if (t == 2) print "\n**Interfaces:**\n- Consumes: `my api`" }' "$TEST_ROOT/ad.B" > "$TEST_ROOT/ad.iface"
 out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.iface" --base "$bB_ad" --accept 'tasks=1,2 interface=my api' --message iface 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && grep -q '^scan: accepted-overlap tasks=1,2 interface=my api$' "$wsad/progress.md" && run_state "$ad_a" deps docs/plan.md --check >/dev/null 2>&1; then pass "an interface acceptance whose name holds a space is accepted as written"; else fail "interface acceptance (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# An acceptance must name an overlap the candidate has: one for an overlap that does not exist yet would reach the ledger and clear that overlap, unasked, when a later amendment introduced it.
+h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+sed 's/^### Task 1: A1$/### Task 1: A2/' "$TEST_ROOT/ad.iface" > "$TEST_ROOT/ad.clean"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.clean" --base "$b_ad" --accept 'tasks=1,2 path=src/q.sh' 2>"$TEST_ROOT/ad.surplus.err"); rc=$?
+out2=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.clean" --base "$b_ad" --accept 'tasks=1,2 interface=no such api' 2>"$TEST_ROOT/ad.surplus2.err"); rc2=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "'tasks=1,2 path=src/q.sh' names no overlap" "$TEST_ROOT/ad.surplus.err" && [ "$rc2" -eq 2 ] && [ "$out2" = "status=error" ] && grep -qF "'tasks=1,2 interface=no such api' names no overlap" "$TEST_ROOT/ad.surplus2.err" && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && ! grep -q 'q.sh\|no such api' "$wsad/progress.md" && [ -z "$(ls -A "$wsad/amends")" ]; then pass "an acceptance, path or interface, that names no overlap of the candidate is refused with nothing published or recorded"; else fail "surplus acceptance (rc=$rc/$rc2: $out/$out2)"; fi
+# One surplus value refuses the whole call: the matched acceptance beside it is not recorded either.
+h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/m.sh`" }' "$TEST_ROOT/ad.iface" > "$TEST_ROOT/ad.mixed"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.mixed" --base "$b_ad" --accept 'tasks=1,2 path=src/m.sh' --accept 'tasks=1,2 path=src/q.sh' 2>"$TEST_ROOT/ad.mixed.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "'tasks=1,2 path=src/q.sh' names no overlap" "$TEST_ROOT/ad.mixed.err" && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && ! grep -q 'm.sh\|q.sh' "$wsad/progress.md" && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a matched acceptance beside a surplus one is refused whole"; else fail "mixed acceptances (rc=$rc: $out)"; fi
+h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/q.sh`" }' "$TEST_ROOT/ad.iface" > "$TEST_ROOT/ad.q"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.q" --base "$b_ad" 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=src/q.sh' && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ]; then pass "a later amendment that introduces the refused acceptance's overlap is reported as a conflict"; else fail "pre-accepted overlap (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# An edit to the checked-out plan between the check and the refresh, made by a reference-transaction hook when the swap commits: the refresh refuses instead of overwriting it, keeps the record and names the worktree.
+h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+sed 's/^### Task 1: A1$/### Task 1: A3/' "$TEST_ROOT/ad.iface" > "$TEST_ROOT/ad.c5"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c5")
+hook_ad="$ad_a/.git/hooks/reference-transaction"; mark_ad="$TEST_ROOT/ad.hook-fired"
+printf '#!/bin/sh\nlines=$(cat)\n[ "$1" = committed ] || exit 0\ncase "$lines" in *" refs/heads/feat") ;; *) exit 0 ;; esac\n[ -e "%s" ] && exit 0\n: > "%s"\nprintf "edit in the interval\\n" >> "%s"\n' "$mark_ad" "$mark_ad" "$ad_a/docs/plan.md" > "$hook_ad"; chmod 755 "$hook_ad"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c5" --base "$b_ad" --message c5 2>"$TEST_ROOT/ad.interval.err"); rc=$?
+rm -f "$hook_ad"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -e "$mark_ad" ] && grep -qF "but the worktree $ad_a could not be refreshed" "$TEST_ROOT/ad.interval.err" && grep -q '^edit in the interval$' "$ad_a/docs/plan.md" && [ "$(git -C "$ad_a" rev-parse :docs/plan.md)" = "$b_ad" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ -f "$wsad/amends/$n_ad" ]; then pass "an edit made between the check and the refresh is kept, and the call is an error that keeps the record"; else fail "edit in the interval (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.interval.err"))"; fi
+# Once the edit is settled (here, dropped), the same amend run again refreshes the worktree and finishes.
+git -C "$ad_a" show :docs/plan.md > "$ad_a/docs/plan.md"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c5" --base "$b_ad" --message c5 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "after the edit is settled the retry refreshes the worktree and finishes"; else fail "retry after the interval edit (rc=$rc: $out: $(git -C "$ad_a" status --porcelain | tr '\n' '|'))"; fi
 # The plan in one repository and the code in another: the amendment moves the plan repository's ref, refreshes its checkout and leaves the code repository alone.
 make_repo "$TEST_ROOT/asp"; make_repo "$TEST_ROOT/asc"; asp="$TEST_ROOT/asp"; asc="$TEST_ROOT/asc"
 git -C "$asc" commit -q --amend --allow-empty -m "code root"

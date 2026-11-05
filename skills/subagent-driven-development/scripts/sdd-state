@@ -1582,7 +1582,7 @@ cmd_lease() {
 # reverted.
 cmd_amend() {
   local plan="" from="" base="" msg="" code="" accepts="" rel ref P cur mode blob out rc tree commit n record t idx
-  local lease lowner line integ c sid full base_unknown="" errf rbase uerr wb
+  local lease lowner line integ c sid full base_unknown="" errf rbase uerr wb a all
   # The spelling hp_plan_overlaps keys acceptances by: any other would
   # suppress a conflict here that every later check reports again. Paths
   # arrive %20-encoded; an interface name is keyed as written, spaces and all.
@@ -1628,6 +1628,20 @@ $2"; shift 2 ;;
   else base_unknown=1; fi
   rm -f "$errf"
   hp_plan_graph "$from" >/dev/null || { echo "status=invalid plan=${blob:0:7}"; return 2; }
+  # Every acceptance must name an overlap the candidate has. One that names
+  # nothing yet would reach the ledger and silently clear that overlap when a
+  # later amendment introduced it, without the decision it needs. An overlap
+  # the ledger already accepts is still an overlap of the candidate, so
+  # restating its acceptance is allowed; the ledger gets the line once.
+  if [ -n "$accepts" ]; then
+    all=$(hp_plan_overlaps "$from"); rc=$?
+    [ "$rc" -ne 2 ] || { echo "status=error"; return 2; }
+    while IFS= read -r a; do
+      [ -n "$a" ] || continue
+      grep -qxF "$(printf '%s\n' "$a" | amend_accept_lines)" <<< "$all" && continue
+      echo "sdd-state: --accept '$a' names no overlap in the candidate plan; nothing was published or recorded" >&2; echo "status=error"; return 2
+    done <<< "$accepts"
+  fi
   hp_lock "$PLAN_DIR" || { echo "status=error"; return 2; }
   # Recovery first: an interrupted sync may be what brings in this plan's
   # ledger or settles its plan line, so the workspace check, the code
@@ -1658,13 +1672,14 @@ $2"; shift 2 ;;
   record="$WSDIR/amends/$blob"
   # A worktree on the plan ref that a crash or a failed refresh left at the
   # base of the published amendment is brought to it first. The record named
-  # by the ref's current blob says which base that is, while its commit is
-  # on the ref. The same amend run again is finished this way, and so is any
-  # other amendment made in that window, whose own check below would
-  # otherwise find the worktree at the old base.
+  # by the ref's current blob gives that amendment's commit while it is on
+  # the ref, and the commit and its parent differ in the plan alone. The same
+  # amend run again is finished this way, and so is any other amendment made
+  # in that window, whose own check below would otherwise find the worktree
+  # at the old base.
   cur=$(git -C "$REPO" rev-parse -q --verify "refs/heads/$ref:$rel" 2>/dev/null) || cur=""
   if [ -n "$cur" ] && [ -f "$WSDIR/amends/$cur" ] && commit=$(sed -n 's/^commit=//p' "$WSDIR/amends/$cur" | head -n 1) && [ -n "$commit" ] && git -C "$REPO" merge-base --is-ancestor "$commit" "refs/heads/$ref" 2>/dev/null; then
-    amend_refresh "$(sed -n 's/^base=//p' "$WSDIR/amends/$cur" | head -n 1)" "$cur" || { hp_unlock; echo "status=error"; return 2; }
+    amend_refresh "$commit^" "$commit" || { hp_unlock; echo "status=error"; return 2; }
   fi
   # A record whose commit is on the plan ref was published by a call that
   # crashed before its ledger lines; they are completed here. The same base
@@ -1681,7 +1696,7 @@ $2"; shift 2 ;;
   # An --accept names a conflict the way hp_plan_overlaps keys it in the
   # ledger; whole-line matching keeps an accepted path from suppressing a
   # longer path it happens to prefix.
-  out=$(printf '%s\n' "$out" | grep -v -x -F -f <(printf '%s\n' "$accepts" | sed '/^$/d' | sed 's/^tasks=\([0-9,]*\) path=\(.*\)$/conflict tasks=\1 shares=\2/; s/^tasks=\([0-9,]*\) interface=\(.*\)$/conflict tasks=\1 interface=\2 direction=consumer-first/'))
+  out=$(printf '%s\n' "$out" | grep -v -x -F -f <(printf '%s\n' "$accepts" | amend_accept_lines))
   if [ -n "$out" ]; then hp_unlock; n=$(printf '%s\n' "$out" | grep -c .); echo "status=conflicts plan=${blob:0:7} count=$n"; printf '%s\n' "$out"; return 1; fi
   # The object is written once, and only if it is still the text validated
   # above, so the published blob is the one the record and the output name.
@@ -1725,7 +1740,7 @@ $2"; shift 2 ;;
       if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = amend-after-swap ]; then hp_unlock; exit 99; fi
       # The refresh comes before the bookkeeping, which removes the record:
       # a refresh that fails keeps it, for the same amend run again.
-      amend_refresh "$base" "$blob" || { hp_unlock; echo "status=error"; return 2; }
+      amend_refresh "$P" "$commit" || { hp_unlock; echo "status=error"; return 2; }
       amend_bookkeeping || { hp_unlock; echo "sdd-state: the plan ref carries ${commit:0:7}, but its ledger lines could not be written; run the same amend again to finish them" >&2; echo "status=error"; return 2; }
       hp_unlock; echo "status=amended head=${commit:0:7} plan=${blob:0:7}"; return 0
     fi
@@ -1755,6 +1770,11 @@ amend_bookkeeping() {
   done <<< "$acc"
   grep -q "^plan: amended ${blob:0:7} by " "$WSDIR/progress.md" || printf 'plan: amended %s by %s: %s\n' "${blob:0:7}" "$sid" "$msg" >> "$WSDIR/progress.md" || return 1
   rm -f "$record"
+}
+# The conflict line each --accept value on stdin names, as hp_plan_overlaps
+# prints it.
+amend_accept_lines() {
+  sed '/^$/d' | sed 's/^tasks=\([0-9,]*\) path=\(.*\)$/conflict tasks=\1 shares=\2/; s/^tasks=\([0-9,]*\) interface=\(.*\)$/conflict tasks=\1 interface=\2 direction=consumer-first/'
 }
 # Fills AMEND_WT with the worktrees of the plan repository that have the plan
 # ref checked out, as git worktree list names them. A worktree whose
@@ -1792,23 +1812,24 @@ amend_wt_blocker() {
     if [ -z "$e" ] || [ "${e#* }" != "$1" ] || [ "$(git -C "$w" hash-object -- "$rel" 2>/dev/null)" != "$1" ]; then printf '%s\n' "$w"; return 0; fi
   done
 }
-# <from blob> <to blob>: brings each worktree on the plan ref whose index entry
-# and file both hold one of the two blobs, and not both the second, to the
-# second. The index entry keeps its mode, and the file is written from it by
-# checkout-index, plumbing that runs no hooks. A worktree holding anything
-# else has an edit of its own, made since the check, and is left as it is.
+# <old commit> <new commit>: brings every worktree on the plan ref from the
+# old commit's plan to the new one's through git's own two-way update,
+# read-tree -m -u. It touches only the paths the two commits differ in, the
+# plan alone here, keeps the worktree's other changes, and refuses rather
+# than overwrites a copy that is neither clean at the old blob nor already
+# the new one, so an edit made since the check survives. The index's stat
+# data is refreshed first, or a file rewritten with the same content would
+# be taken for an edit. A worktree that cannot be brought over is an error,
+# never skipped: its index would keep the old plan staged against the new
+# head.
 amend_refresh() {
-  local i=0 w e ib fb
-  amend_ref_worktrees || { echo "sdd-state: the plan ref carries the amendment, but the worktrees of $REPO could not be listed; run the same amend again to refresh them" >&2; return 1; }
+  local i=0 w
+  amend_ref_worktrees || { echo "sdd-state: the plan ref $ref carries the amendment, but the worktrees of $REPO could not be listed; run the same amend again" >&2; return 1; }
   while [ "$i" -lt "${#AMEND_WT[@]}" ]; do
     w=${AMEND_WT[$i]}; i=$((i + 1))
-    e=$(amend_wt_index "$w"); ib=${e#* }
-    fb=$(git -C "$w" hash-object -- "$rel" 2>/dev/null) || fb=""
-    [ -n "$e" ] && [ -n "$fb" ] || continue
-    { [ "$ib" = "$1" ] || [ "$ib" = "$2" ]; } && { [ "$fb" = "$1" ] || [ "$fb" = "$2" ]; } || continue
-    [ "$ib" != "$2" ] || [ "$fb" != "$2" ] || continue
-    if ! { git -C "$w" update-index --cacheinfo "${e%% *},$2,$rel" && git -C "$w" checkout-index -f -u -- "$rel"; }; then
-      echo "sdd-state: the plan ref carries the amendment, but $rel in the worktree $w could not be brought to it; run the same amend again to finish" >&2
+    git -C "$w" update-index -q --refresh >/dev/null 2>&1
+    if ! git -C "$w" read-tree -m -u "$1" "$2"; then
+      echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it; settle that worktree's copy of $rel, then run the same amend again" >&2
       return 1
     fi
   done

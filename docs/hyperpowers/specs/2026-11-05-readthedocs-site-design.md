@@ -102,10 +102,15 @@ All sources live in `docs/site/`. The local plugin install is a sparse
 checkout without `docs/`, so nothing here reaches agent sessions.
 
 `index.md` is the root document (the home page: what hyperpowers is, the
-problem it addresses, where to start). It holds four captioned toctrees,
-one per group below, and never lists itself; a self-reference is a Sphinx
-warning that `-W` turns into a failed build. `skills/index.md` is listed in
-the Skills toctree and holds its own toctree of the skill pages.
+problem it addresses, where to start). It holds the captioned toctrees for
+the four groups below, with the Skills group split into a `Skills` toctree
+listing `skills/index.md` and one toctree per skill category (`Process
+skills` through `Meta skills`), and never lists itself; a self-reference is
+a Sphinx warning that `-W` turns into a failed build. The category
+toctrees live in the root document because the sidebar renders captions
+only from the root document's toctrees (found by a probe build while
+planning, 2026-11-05); `skills/index.md` links each skill page from its
+category table and holds no toctree.
 
 | Group | Page | Content |
 |---|---|---|

@@ -1,6 +1,6 @@
 ---
-sources: skills/using-hyperpowers hooks .opencode/plugins .pi/extensions .kimi-plugin/plugin.json skills/writing-skills/SKILL.md .cursor-plugin/plugin.json .codex-plugin/plugin.json scripts/claude-skill-root.md
-source-digest: 29d223c063ab
+sources: skills/using-hyperpowers hooks .opencode/plugins .pi/extensions .kimi-plugin/plugin.json skills/writing-skills/SKILL.md .cursor-plugin/plugin.json .codex-plugin/plugin.json scripts/claude-skill-root.md skills/subagent-driven-development/SKILL.md README.md tests/antigravity/test-antigravity-tools.sh RELEASE-NOTES.md docs/porting-to-a-new-harness.md
+source-digest: a1ed065a112e
 ---
 # How skills trigger
 
@@ -8,8 +8,7 @@ Skills fire because the `using-hyperpowers` bootstrap is in the agent's context 
 
 ## How the bootstrap gets into a session
 
-Each harness uses its own mechanism. The session-start hooks, the OpenCode plugin, and the Pi extension read {source}`skills/using-hyperpowers/SKILL.md`. The Claude Desktop and claude.ai bundle uses a router document instead, and this repository does not show how Kimi reads its declaration. For a harness not listed below, no file in this repository registers a bootstrap.
-
+Each harness uses its own mechanism. The session-start hooks, the OpenCode plugin, and the Pi extension read {source}`skills/using-hyperpowers/SKILL.md`. The Claude Desktop and claude.ai bundle uses a router document instead, and this repository does not show how Kimi reads its declaration.
 **Claude Code.** {source}`hooks/hooks.json` registers a `SessionStart` hook that runs `hooks/run-hook.cmd session-start` for the sources `startup`, `clear`, and `compact`. {source}`hooks/session-start` wraps the skill text in an `<EXTREMELY_IMPORTANT>` block that begins "You have superpowers" and returns it as `hookSpecificOutput.additionalContext`.
 
 **Codex.** {source}`hooks/hooks-codex.json` registers the same three sources and runs {source}`hooks/session-start-codex`, which injects the same skill text with a different wrapper sentence about loading other skills. It adds none of the one-line notices described below. {source}`.codex-plugin/plugin.json` points at that hooks file.
@@ -22,7 +21,11 @@ Each harness uses its own mechanism. The session-start hooks, the OpenCode plugi
 
 **Kimi.** {source}`.kimi-plugin/plugin.json` declares `sessionStart.skill` as `using-hyperpowers`, along with a `skillInstructions` text that maps skill actions to Kimi Code's tools. The manifest holds no code, and no file here describes how Kimi acts on the declaration. The manifest also carries the plugin version, so every release changes a file this page lists and flags the page for a re-read.
 
-**GitHub Copilot CLI and Factory Droid.** No file here registers a bootstrap for either. The `hooks/session-start` script has an output branch for Copilot CLI, but no configuration in the repository sets an event for it.
+**Antigravity.** The {source}`README.md` says Antigravity runs the plugin's session-start hook, so the skills are active from the first message. The header comment of {source}`tests/antigravity/test-antigravity-tools.sh` says `agy` installs the existing plugin from the repository, loads the bundled skills, and runs the `SessionStart` hook, with no Antigravity-specific scaffold.
+
+**GitHub Copilot CLI.** The upstream release notes in {source}`RELEASE-NOTES.md` say that Copilot CLI v1.0.11 added `additionalContext` support in `sessionStart` hook output, that `hooks/session-start` detects the `COPILOT_CLI` variable and emits the top-level `additionalContext` form, and that this gives Copilot CLI users the bootstrap at session start. {source}`docs/porting-to-a-new-harness.md` lists Copilot CLI among the harnesses whose hook system runs a shell command at session start and reads its output. No hooks file in the repository names Copilot CLI, so the repository does not say which configuration Copilot CLI reads.
+
+**Factory Droid.** No file here describes how Factory Droid loads the bootstrap.
 
 **Claude Desktop and claude.ai.** {source}`scripts/claude-skill-root.md` is the router document for the bundled package. It lists the bundled skills with their descriptions and says that `using-hyperpowers` is the router document itself in that environment.
 
@@ -59,5 +62,6 @@ What each mechanism does when the context is compacted:
 - Cursor: the configuration sets only `sessionStart`, so no file here re-injects the bootstrap at compaction.
 - OpenCode: the transform runs on each agent step and inserts the bootstrap into the first user message when it is absent. No file there mentions compaction.
 - Kimi: the manifest declares a session-start skill and nothing else. No file here describes re-injection.
+- Antigravity and Copilot CLI: no file here says whether the hook runs again at compaction.
 
 The subagent-driven-development skill separately tells the controller to re-read the skill after each compaction. {doc}`sdd-internals` covers that instruction.

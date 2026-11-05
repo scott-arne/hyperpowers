@@ -86,12 +86,12 @@ The bootstrap column says how the repository's files load the `using-hyperpowers
 | Cursor | Local plugin checkout | `sessionStart` hook in {source}`hooks/hooks-cursor.json` | Skipped |
 | Antigravity | `agy plugin install` | The README says the plugin's session-start hook runs | Skipped |
 | Factory Droid | Marketplace commands | Not stated | Skipped |
-| GitHub Copilot CLI | Marketplace commands | Not stated. {source}`hooks/session-start` formats its output for Copilot CLI, but no file here registers its events | Skipped |
+| GitHub Copilot CLI | Marketplace commands | Upstream's release notes ({source}`RELEASE-NOTES.md`) say {source}`hooks/session-start` gives Copilot CLI the bootstrap at session start. No hooks file here names Copilot CLI | Skipped |
 | Kimi Code | `/plugins install` | The manifest's `sessionStart.skill` loads `using-hyperpowers` | Skipped |
 | OpenCode | `opencode.json` package spec | {source}`.opencode/plugins/hyperpowers.js` injects it through a message transform | Skipped |
 | Pi | `pi install` | A Pi extension injects it at session start and after compaction | Skipped |
 | Claude Desktop, claude.ai | Uploaded skill bundle | No hook. A router `SKILL.md` stands in for `using-hyperpowers` | Not run. The router prints a one-time notice |
 
-Skills trigger automatically only when the bootstrap loads at session start, as {source}`CLAUDE.md` describes under New Harness Support. For the harnesses marked "Not stated", no file here shows the bootstrap loading, so this site cannot confirm that skills trigger automatically there.
+Skills trigger automatically only when the bootstrap loads at session start, as {source}`CLAUDE.md` describes under New Harness Support. For Factory Droid, marked "Not stated", no file here shows the bootstrap loading, so this site cannot confirm that skills trigger automatically there.
 
 Next, read {doc}`first-session`.

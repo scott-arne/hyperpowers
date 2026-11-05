@@ -105,4 +105,4 @@ The skill also covers a decision extractor, a background subagent that drafts no
 
 ## Finish
 
-At the end the controller removes the plan's directory from the checkout with `sdd-state finish PLAN_FILE`. The branch history keeps the workspace, so an evidence note can cite it with `git show <sha>:plans/<ws>/<file>`. Nothing inside the checkout is reclaimed automatically, and `sdd-state prune --repo <dir>` lists and removes idle plan directories only when asked.
+At the end the controller removes the plan's directory from the checkout with `sdd-state finish PLAN_FILE`. The skill says the branch history keeps the workspace, so an evidence note can cite it with `git show <sha>:plans/<ws>/<file>`. That citation resolves only in a clone that has the state branch, and the controller pushes the branch only on a hand-off. Nothing inside the checkout is reclaimed automatically, and `sdd-state prune --repo <dir>` lists and removes idle plan directories only when asked.

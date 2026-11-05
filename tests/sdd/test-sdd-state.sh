@@ -3678,7 +3678,7 @@ if [ "$rc" -eq 0 ] && [ "$out" = "status=no-lease" ]; then pass "the dead holder
 out=$(run_state "$ft" claim docs/plan.md final --session s3 --takeover 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace task=final" ] && [ ! -d "$wsft" ]; then pass "a takeover with neither workspace nor lease is no-workspace"; else fail "takeover without lease (rc=$rc: $out)"; fi
 # Workspace names in the plan= field are encoded: a plan file name with a space.
-sp="$TEST_ROOT/sp"; make_repo "$sp"; git -C "$sp" switch -q -c feat
+sp="$TEST_ROOT/sp-enc"; make_repo "$sp"; git -C "$sp" switch -q -c feat
 mkdir -p "$sp/docs"; : > "$sp/docs/spec.md"
 printf '# A\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$sp/docs/a plan.md"
 printf '# B\n\n**Spec:** docs/spec.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$sp/docs/b.md"

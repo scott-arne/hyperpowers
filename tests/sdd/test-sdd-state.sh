@@ -3991,5 +3991,118 @@ sed 's/^### Task 2: B$/### Task 2: B-split/' "$asp/docs/plan.md" > "$TEST_ROOT/a
 out=$(run_state "$asp" amend docs/plan.md --from "$TEST_ROOT/asp.c1" --base "$b_sp" --code-repo "$asc" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$asp" rev-parse plans^)" = "$h_sp" ] && [ "$(git -C "$asp" rev-parse plans:docs/plan.md)" = "$n_sp" ] && [ "$(git -C "$asc" for-each-ref; git -C "$asc" rev-parse HEAD)" = "$refs_sc" ] && [ -z "$(git -C "$asc" status --porcelain)" ] && [ -z "$(git -C "$asp" status --porcelain)" ] && [ "$(git -C "$asp" rev-parse :docs/plan.md)" = "$n_sp" ] && [ "$(git -C "$asp" hash-object docs/plan.md)" = "$n_sp" ]; then pass "a split amendment publishes on the plan repository's ref, refreshes its checkout and leaves the code repository alone"; else fail "split amend (rc=$rc: $out)"; fi
 
+echo "merge-back: the integration ref's writer"
+make_pair mb; mb_a=$PAIR_A
+mkdir -p "$mb_a/docs" "$mb_a/src"; : > "$mb_a/docs/spec.md"; printf 'base\n' > "$mb_a/src/a.txt"; printf 'base\n' > "$mb_a/src/b.txt"
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 2: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 3: C\n\n**Risk tier:** standard\n\n**Depends on:** Task 1\n' > "$mb_a/docs/plan.md"
+git -C "$mb_a" add .; git -C "$mb_a" commit -qm base; git -C "$mb_a" push -q origin main 2>/dev/null; git -C "$mb_a" switch -q -c feat
+run_state "$mb_a" sync docs/plan.md >/dev/null 2>&1; wsmb=$(run_sdd_dir "$mb_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsmb/progress.md"; run_state "$mb_a" register docs/plan.md --session s1 --integration feat >/dev/null
+ws8mb=$(basename "$wsmb" | sed 's/.*-//')
+make_repo "$TEST_ROOT/foreign-mb"
+run_state "$mb_a" claim docs/plan.md 1 --session s1 >/dev/null; run_state "$mb_a" claim docs/plan.md 2 --session s2 >/dev/null
+# Session 1 works task 1 on its branch (fast-forward case).
+git -C "$mb_a" switch -q "feat.$ws8mb.task-1"; printf 'one\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "task 1"; t1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ]; then pass "merge-back refuses a commit no approval line names"; else fail "not-approved (rc=$rc: $out)"; fi
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" --code-repo "$TEST_ROOT/foreign-mb" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "merge-back refuses a foreign --code-repo"; else fail "merge-back wrong-repo (rc=$rc: $out)"; fi
+printf 'Task 1: approved %s\n' "${t1:0:7}" >> "$wsmb/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s2 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "$out" = "status=not-holder owner=s1" ]; then pass "merge-back refuses a session that does not hold the claim"; else fail "not-holder (rc=$rc: $out)"; fi
+git -C "$mb_a" switch -q feat
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "${out%% worktree=*}" = "status=checked-out" ]; then pass "merge-back refuses while the integration branch is checked out"; else fail "checked-out (rc=$rc: $out)"; fi
+git -C "$mb_a" switch -q --detach feat
+lease_mb="$STATE_ROOT/$(state_key "$mb_a").final-$(printf 'refs/heads/feat' | git -C "$mb_a" hash-object --stdin | cut -c1-12)"
+printf 'session=s9\nhost=h\nplan=other\nbranch=feat\ntime=2026-01-01T00:00:00Z\nclosing=0\n' > "$lease_mb"
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=lease:s9" ]; then pass "merge-back refuses while a final train holds the branch lease"; else fail "merge-back under lease (rc=$rc: $out)"; fi
+rm -f "$lease_mb"
+# A lease that names no holder is an error, never a free branch.
+printf 'host=h\nplan=other\nbranch=feat\n' > "$lease_mb"
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>"$TEST_ROOT/mb.lease.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "$(basename "$lease_mb")" "$TEST_ROOT/mb.lease.err" && [ "$(git -C "$mb_a" rev-parse feat)" != "$t1" ]; then pass "merge-back reads a lease without session= as an error naming the file"; else fail "merge-back sessionless lease (rc=$rc: $out)"; fi
+rm -f "$lease_mb"
+# A claim record without its session is an error, not an unclaimed task.
+cp "$wsmb/claims/task-1/owner" "$TEST_ROOT/mb.owner"; sed '/^session=/d' "$TEST_ROOT/mb.owner" > "$wsmb/claims/task-1/owner"
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>"$TEST_ROOT/mb.owner.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'claims/task-1/owner' "$TEST_ROOT/mb.owner.err"; then pass "merge-back reads a claim owner without session= as an error naming the file"; else fail "merge-back sessionless owner (rc=$rc: $out)"; fi
+cp "$TEST_ROOT/mb.owner" "$wsmb/claims/task-1/owner"
+# The integration branch checked out in a worktree whose path holds a space: named whole, encoded.
+git -C "$mb_a" worktree add -q "$TEST_ROOT/mb wt" feat 2>/dev/null
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$TEST_ROOT/mb%20wt" ]; then pass "merge-back names a checked-out worktree whose path holds a space whole and encoded"; else fail "checked-out spaced worktree (rc=$rc: $out)"; fi
+git -C "$mb_a" worktree remove --force "$TEST_ROOT/mb wt" 2>/dev/null
+printf '2026-01-01T00:00:00Z\n' > "$wsmb/activity/s1"
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=1 head=${t1:0:7}" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$t1" ] && grep -q "^Task 1: merged ${t1:0:7} into feat (from ${t1:0:7})$" "$wsmb/progress.md" && [ "$(sed -n 's/^proposed=//p' "$wsmb/merges/task-1")" = "$t1" ] && [ "$(cat "$wsmb/activity/s1")" != "2026-01-01T00:00:00Z" ]; then pass "a fast-forward merge-back moves the ref to the approved commit, records it and stamps activity"; else fail "fast-forward (rc=$rc: $out)"; fi
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=1 head=${t1:0:7} already=1" ] && [ "$(grep -c '^Task 1: merged' "$wsmb/progress.md")" = 1 ]; then pass "a repeated merge-back is idempotent"; else fail "already (rc=$rc: $out)"; fi
+# Session 2's task 2 branched before task 1 merged: a merge commit.
+git -C "$mb_a" switch -q "feat.$ws8mb.task-2"; printf 'two\n' > "$mb_a/src/b.txt"; git -C "$mb_a" commit -qam "task 2"; t2=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 2: approved %s\n' "${t2:0:7}" >> "$wsmb/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan.md 2 --session s2 --commit "$t2" 2>/dev/null); rc=$?
+hm=$(git -C "$mb_a" rev-parse feat)
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=2 head=${hm:0:7}" ] && [ "$(git -C "$mb_a" rev-parse "$hm^1")" = "$t1" ] && [ "$(git -C "$mb_a" rev-parse "$hm^2")" = "$t2" ] && [ "$(git -C "$mb_a" log -1 --format=%s "$hm")" = "Merge task 2: B" ] && [ "$(git -C "$mb_a" show feat:src/a.txt)" = one ] && [ "$(git -C "$mb_a" show feat:src/b.txt)" = two ]; then pass "a divergent merge-back makes one merge commit titled with the task"; else fail "merge commit (rc=$rc: $out)"; fi
+# Without its merge record, a retry names the first-parent commit whose second parent is the approved commit.
+mv "$wsmb/merges/task-2" "$TEST_ROOT/mb.rec2"
+out=$(run_state "$mb_a" merge-back docs/plan.md 2 --session s2 --commit "$t2" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=2 head=${hm:0:7} already=1" ] && [ "$(grep -c '^Task 2: merged' "$wsmb/progress.md")" = 1 ]; then pass "a retry without its merge record names the merge commit that published the approved one"; else fail "reconstructed merge (rc=$rc: $out)"; fi
+mv "$TEST_ROOT/mb.rec2" "$wsmb/merges/task-2"
+# A dependent whose predecessor is not complete is blocked even when approved.
+run_state "$mb_a" claim docs/plan.md 3 --session s1 >/dev/null 2>&1
+printf 'Task 1: complete (commits 1111111..%s, review clean)\n' "${t1:0:7}" >> "$wsmb/progress.md"
+run_state "$mb_a" claim docs/plan.md 3 --session s1 >/dev/null
+git -C "$mb_a" switch -q "feat.$ws8mb.task-3"; printf 'three\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "task 3"; t3=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 3: approved %s\n' "${t3:0:7}" >> "$wsmb/progress.md"
+sed -i '' 's/^Task 1: complete .*$/Task 1: pending/' "$wsmb/progress.md" 2>/dev/null || sed -i 's/^Task 1: complete .*$/Task 1: pending/' "$wsmb/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "$out" = "status=blocked waiting=1" ]; then pass "merge-back rechecks the predecessors against the authoritative graph"; else fail "blocked at merge-back (rc=$rc: $out)"; fi
+sed -i '' "s/^Task 1: pending$/Task 1: complete (commits 1111111..${t1:0:7}, review clean)/" "$wsmb/progress.md" 2>/dev/null || sed -i "s/^Task 1: pending$/Task 1: complete (commits 1111111..${t1:0:7}, review clean)/" "$wsmb/progress.md"
+# A conflict: a commit on the integration branch touches a.txt after task 3 branched and task 3 also edits it.
+git -C "$mb_a" switch -q feat; printf 'other\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "stranger edit"; git -C "$mb_a" switch -q --detach feat
+out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>/dev/null); rc=$?
+if [ "$rc" -eq 8 ] && [ "$out" = "status=conflict task=3 paths=src/a.txt" ] && [ "$(git -C "$mb_a" log -1 --format=%s feat)" = "stranger edit" ] && [ "$(sed -n 's/^kind=//p' "$wsmb/waiting/s1")" = merge ]; then pass "a conflict moves no ref and posts a merge waiting record"; else fail "conflict (rc=$rc: $out)"; fi
+# Resolve on the task branch, re-approve, retry: the record is cleared.
+git -C "$mb_a" switch -q "feat.$ws8mb.task-3"; git -C "$mb_a" merge -q feat >/dev/null 2>&1; printf 'three\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "resolve" ; t3b=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 3: approved %s\n' "${t3b:0:7}" >> "$wsmb/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=${t3b:0:7}" ]; then pass "only the newest approved commit may merge"; else fail "newest approved (rc=$rc: $out)"; fi
+out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3b" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$wsmb/waiting/s1" ] && [ "$(git -C "$mb_a" show feat:src/a.txt)" = three ]; then pass "the retry after resolution merges and clears the waiting record"; else fail "resolved merge (rc=$rc: $out)"; fi
+# Crash seams: after the record (nothing published), after the swap (bookkeeping on retry, after another task advanced), after the ledger line.
+run_state "$mb_a" claim docs/plan.md 2 --session s2 >/dev/null 2>&1
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: X\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 2: Y\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$mb_a/docs/plan2.md"
+# A first registration takes the plan ref from the current branch, so plan2 registers on feat before the worktree detaches.
+git -C "$mb_a" switch -q feat; git -C "$mb_a" add docs; git -C "$mb_a" commit -qm plan2
+wsmb2=$(run_sdd_dir "$mb_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsmb2/progress.md"; run_state "$mb_a" register docs/plan2.md --session s3 --integration feat >/dev/null; git -C "$mb_a" switch -q --detach feat
+ws8mb2=$(printf '%s' "$(basename "$wsmb2")" | sed 's/.*-//')
+run_state "$mb_a" claim docs/plan2.md 1 --session s3 >/dev/null; run_state "$mb_a" claim docs/plan2.md 2 --session s3 >/dev/null
+git -C "$mb_a" switch -q "feat.$ws8mb2.task-1"; printf 'x\n' > "$mb_a/src/x.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm x; x1=$(git -C "$mb_a" rev-parse HEAD)
+git -C "$mb_a" switch -q "feat.$ws8mb2.task-2"; printf 'y\n' > "$mb_a/src/y.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm y; y1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 1: approved %s\nTask 2: approved %s\n' "${x1:0:7}" "${y1:0:7}" >> "$wsmb2/progress.md"
+hbefore=$(git -C "$mb_a" rev-parse feat)
+( cd "$mb_a" && HYPERPOWERS_TEST_CRASH_AT=merge-back-after-record bash "$SDD_STATE" merge-back docs/plan2.md 1 --session s3 --commit "$x1" >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$hbefore" ] && [ -f "$wsmb2/merges/task-1" ]; then pass "a crash after the record publishes nothing"; else fail "crash after record (rc=$rc)"; fi
+( cd "$mb_a" && HYPERPOWERS_TEST_CRASH_AT=merge-back-after-swap bash "$SDD_STATE" merge-back docs/plan2.md 1 --session s3 --commit "$x1" >/dev/null 2>&1 ); rc=$?
+pub=$(sed -n 's/^proposed=//p' "$wsmb2/merges/task-1")
+if [ "$rc" -eq 99 ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$pub" ] && ! grep -q '^Task 1: merged' "$wsmb2/progress.md"; then pass "a crash after the swap leaves the ref moved and the ledger line owed"; else fail "crash after swap (rc=$rc)"; fi
+out=$(run_state "$mb_a" merge-back docs/plan2.md 2 --session s3 --commit "$y1" 2>/dev/null); rc=$?
+out=$(run_state "$mb_a" merge-back docs/plan2.md 1 --session s3 --commit "$x1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=1 head=${pub:0:7} already=1" ] && grep -q "^Task 1: merged ${pub:0:7} into feat" "$wsmb2/progress.md"; then pass "the retry names the record's commit after another task advanced the head"; else fail "retry after advance (rc=$rc: $out)"; fi
+( cd "$mb_a" && HYPERPOWERS_TEST_CRASH_AT=merge-back-after-ledger bash "$SDD_STATE" merge-back docs/plan2.md 1 --session s3 --commit "$x1" >/dev/null 2>&1 ); rc=$?
+out=$(run_state "$mb_a" merge-back docs/plan2.md 1 --session s3 --commit "$x1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(grep -c '^Task 1: merged' "$wsmb2/progress.md")" = 1 ]; then pass "a retry after the ledger line appends nothing twice"; else fail "retry after ledger (rc=$rc: $out)"; fi
+# The lost compare-and-swap: a writer seam moves the integration ref between the merge record and the swap; the command recomputes against the moved head.
+printf '### Task 5: V\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 5"; git -C "$mb_a" switch -q --detach feat
+run_state "$mb_a" claim docs/plan2.md 5 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-5"; printf 'v\n' > "$mb_a/src/v.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm v; v1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 5: approved %s\n' "${v1:0:7}" >> "$wsmb2/progress.md"
+adv2=$(git -C "$mb_a" commit-tree "$(git -C "$mb_a" rev-parse "feat^{tree}")" -p "$(git -C "$mb_a" rev-parse feat)" -m "advance" 2>/dev/null)
+# The same session still owes the resolve route for task 2: its merge waiting record must outlive task 5's merge-back.
+mkdir -p "$wsmb2/waiting"; printf 'session=s3\ntask=2\nkind=merge\nsince=2026-01-01T00:00:00Z\nnote=merge-back conflict in src/y.txt\nworktree=%s\nbranch=feat\nhost=h\n' "$mb_a" > "$wsmb2/waiting/s3"
+out=$(cd "$mb_a" && HYPERPOWERS_TEST_WRITER_AT="merge-back-before-swap:$adv2" bash "$SDD_STATE" merge-back docs/plan2.md 5 --session s3 --commit "$v1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(sed -n 's/^base=//p' "$wsmb2/merges/task-5")" = "$adv2" ] && [ "$(git -C "$mb_a" rev-parse feat^1)" = "$adv2" ]; then pass "a lost swap is recomputed against the moved head"; else fail "lost swap recomputed (rc=$rc: $out base=$(sed -n 's/^base=//p' "$wsmb2/merges/task-5" 2>/dev/null))"; fi
+if [ "$(sed -n 's/^kind=//p' "$wsmb2/waiting/s3" 2>/dev/null)" = merge ] && [ "$(sed -n 's/^task=//p' "$wsmb2/waiting/s3" 2>/dev/null)" = 2 ]; then pass "a merge-back keeps the session's merge waiting record for another task"; else fail "waiting record for another task ($(tr '\n' ' ' < "$wsmb2/waiting/s3" 2>/dev/null))"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

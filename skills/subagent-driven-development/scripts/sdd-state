@@ -17,6 +17,7 @@
 #   sdd-state next PLAN_FILE --session SID [--code-repo DIR]
 #   sdd-state lease PLAN_FILE (--release|--closing) --session SID [--code-repo DIR]
 #   sdd-state amend PLAN_FILE --from FILE --base BLOB [--accept SPEC ...] [--message SUBJECT] [--code-repo DIR]
+#   sdd-state merge-back PLAN_FILE N --session SID --commit SHA [--code-repo DIR]
 #
 # stdout: one line of space-separated key=value pairs, status= first; sync
 # adds a second line "merge=<command>" on diverged.
@@ -57,7 +58,8 @@ usage() {
     '  register PLAN_FILE --session SID --integration BRANCH [--code-repo DIR]' \
     '  next PLAN_FILE --session SID [--code-repo DIR]' \
     '  lease PLAN_FILE (--release|--closing) --session SID [--code-repo DIR]' \
-    '  amend PLAN_FILE --from FILE --base BLOB [--accept SPEC ...] [--message SUBJECT] [--code-repo DIR]' >&2
+    '  amend PLAN_FILE --from FILE --base BLOB [--accept SPEC ...] [--message SUBJECT] [--code-repo DIR]' \
+    '  merge-back PLAN_FILE N --session SID --commit SHA [--code-repo DIR]' >&2
   exit 2
 }
 
@@ -1863,6 +1865,227 @@ amend_refresh() {
   done
 }
 
+# --- merge-back --------------------------------------------------------------
+# The integration ref's only writer while a plan is open. It merges exactly
+# the commit the reviewers approved, under both repositories' locks, by the
+# plumbing sync uses for the state branch, so no worktree is touched. The
+# merge record is written before the swap and names the published commit
+# after it, so a retry after any crash recognizes its state: before the
+# record nothing changed; a record whose commit the ref does not carry was
+# left before the swap, and the retry recomputes and rewrites it; once the
+# approved commit is on the ref only the bookkeeping is left. The
+# controller's detach and branch deletion follow this command and are its
+# own idempotent steps.
+cmd_merge_back() {
+  local plan="" n="" sid="" sha="" code="" rc out line integ ref owner_f owner full approved
+  local pair blob tmp graph title deps d waiting c lease lowner wt record H new mt mrc tree paths published t uerr cur
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --commit) [ $# -ge 2 ] || usage; sha=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) if [ -z "$plan" ]; then plan=$1; elif [ -z "$n" ]; then n=$1; else usage; fi; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$n" ] && [ -n "$sid" ] && [ -n "$sha" ] || usage
+  case "$n" in *[!0-9]*) usage ;; esac
+  # The value goes to git as a revision and is compared by its prefix with
+  # the approval line's abbreviation, so anything but hex is no commit id.
+  case "$sha" in *[!0-9a-f]*) usage ;; esac
+  resolve_plan "$plan"
+  hp_git_version_at_least 2 38 || { echo "sdd-state: git 2.38 or newer is required to merge a task back (found $(git --version))" >&2; echo "status=error"; return 2; }
+  # The lock pair needs the code repository's path; its comparison with the
+  # plan line waits for the recovery under the locks.
+  code=$(code_repo_arg "$code") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+  hp_lock_pair "$PLAN_DIR" "$code" || { echo "status=error"; return 2; }
+  # Recovery first: an interrupted sync may be what brings in this plan's
+  # ledger, its plan line, a claim or an approval line.
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace"; return 2; fi
+  out=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; hp_unlock; [ -z "$out" ] || printf '%s\n' "$out"; return "$rc"; }
+  line=$(plan_line_of "$WSDIR/progress.md")
+  [ -n "$line" ] || { hp_unlock; echo "sdd-state: the ledger has no plan line; register the plan first" >&2; echo "status=error"; return 2; }
+  integ=$(plan_field "$line" integration); ref="refs/heads/$integ"
+  # The preconditions, in the spec's order. An owner record that exists but
+  # names no session has no holder to compare; it is an error, never an
+  # unclaimed task.
+  owner_f="$WSDIR/claims/task-$n/owner"; owner=""
+  if [ -e "$owner_f" ]; then
+    owner=$(sed -n 's/^session=//p' "$owner_f" 2>/dev/null | head -n 1)
+    [ -n "$owner" ] || { hp_unlock; echo "sdd-state: claim owner unreadable or without a session: $owner_f" >&2; echo "status=error"; return 2; }
+  fi
+  [ "$owner" = "$sid" ] || { hp_unlock; echo "status=not-holder owner=${owner:-none}"; return 4; }
+  full=$(git -C "$code" rev-parse -q --verify "$sha^{commit}" 2>/dev/null) || { hp_unlock; echo "sdd-state: no such commit in $code: $sha" >&2; echo "status=error"; return 2; }
+  sha=$full
+  # The newest approval line names the approved commit; a longer hex run is
+  # some other token, not a seven-character abbreviation.
+  approved=$(grep -E "^Task $n: approved [0-9a-f]{7}([^0-9a-f]|\$)" "$WSDIR/progress.md" | tail -n 1 | cut -d' ' -f4 | cut -c1-7)
+  [ "${sha:0:7}" = "$approved" ] || { hp_unlock; echo "status=not-approved approved=${approved:-none}"; return 12; }
+  # The predecessors come from the authoritative plan, never a worktree copy:
+  # an amendment may have added an edge to a task claimed before it.
+  pair=$(authoritative_plan_blob) || { hp_unlock; echo "status=error"; return 2; }
+  blob=${pair%% *}; tmp=${pair#* }
+  graph=$(hp_plan_graph "$tmp"); rc=$?
+  title=$(merge_back_title "$tmp")
+  rm -f "$tmp"
+  [ "$rc" -eq 0 ] || { hp_unlock; echo "status=invalid plan=${blob:0:7}"; return 2; }
+  deps=$(printf '%s\n' "$graph" | sed -n "s/^task=$n depends=//p")
+  [ -n "$deps" ] || { hp_unlock; echo "sdd-state: task $n is not in the plan" >&2; echo "status=error"; return 2; }
+  waiting=""
+  if [ "$deps" != none ]; then
+    for d in $(printf '%s' "$deps" | tr ',' ' '); do
+      ledger_task_complete "$WSDIR/progress.md" "$d"; rc=$?
+      if [ "$rc" -eq 1 ]; then waiting="$waiting,$d"; elif [ "$rc" -ne 0 ]; then hp_unlock; echo "status=error"; return 2; fi
+    done
+  fi
+  [ -z "$waiting" ] || { hp_unlock; echo "status=blocked waiting=${waiting#,}"; return 7; }
+  # A held lease refuses whether or not it is closing: the merge-back waits
+  # for the final train to end. A lease without session= has no holder to
+  # name; it is an error, never a free lease.
+  c=$(hp_checkout_path "$PLAN_DIR") || { hp_unlock; echo "status=error"; return 2; }
+  { lease=$(hp_lease_key "$PLAN_DIR" "$integ") && lease_path_ok "$c" "$lease"; } || { hp_unlock; echo "status=error"; return 2; }
+  if [ -f "$lease" ]; then
+    lowner=$(sed -n 's/^session=//p' "$lease" | head -n 1)
+    if [ -z "$lowner" ]; then hp_unlock; echo "sdd-state: lease unreadable or without session=: $lease" >&2; echo "status=error"; return 2; fi
+    hp_unlock; echo "status=checked-out worktree=lease:$lowner"; return 13
+  fi
+  # A worktree with the integration branch checked out would keep its index
+  # and files when the ref moved under it, and its status would read the
+  # merge as reverted.
+  wt=$(merge_back_checked_out "$code" "$ref") || { hp_unlock; echo "sdd-state: the worktrees of $code could not be listed" >&2; echo "status=error"; return 2; }
+  [ -z "$wt" ] || { hp_unlock; echo "status=checked-out worktree=$(enc "$wt")"; return 13; }
+  record="$WSDIR/merges/task-$n"
+  hp_contained "$ROOT" "plans/$WS/merges/task-$n" || { hp_unlock; echo "status=error"; return 2; }
+  mkdir -p "$WSDIR/merges" || { hp_unlock; echo "status=error"; return 2; }
+  for _ in 1 2 3; do
+    H=$(git -C "$code" rev-parse -q --verify "$ref^{commit}" 2>/dev/null) || { hp_unlock; echo "sdd-state: the integration branch $integ does not exist in $code" >&2; echo "status=error"; return 2; }
+    # Already published: only the bookkeeping is owed, and it names the
+    # commit that published the approved one, whatever has merged since.
+    if git -C "$code" merge-base --is-ancestor "$sha" "$H" 2>/dev/null; then
+      published=$(merge_back_published) || published=""
+      [ -n "$published" ] || { hp_unlock; echo "sdd-state: ${sha:0:7} is on $integ but neither on its first-parent history nor the second parent of a commit there, so the commit that published it cannot be named" >&2; echo "status=error"; return 2; }
+      merge_back_bookkeeping || { hp_unlock; echo "sdd-state: $integ carries ${published:0:7}, but the merge-back's bookkeeping could not be written; run the same merge-back again to finish it" >&2; echo "status=error"; return 2; }
+      hp_unlock; echo "status=merged task=$n head=${published:0:7} already=1"; return 0
+    fi
+    if git -C "$code" merge-base --is-ancestor "$H" "$sha" 2>/dev/null; then
+      new=$sha
+    else
+      # One call answers both questions: exit 1 is a conflict, and with
+      # --name-only the conflicted paths follow the tree id up to a blank
+      # line; any other non-zero exit is no merge at all.
+      mt=$(git -C "$code" merge-tree --write-tree --name-only "$H" "$sha" 2>/dev/null); mrc=$?
+      if [ "$mrc" -eq 1 ]; then
+        paths=$(enc "$(printf '%s\n' "$mt" | awk 'NR == 1 { next } $0 == "" { stop = 1 } !stop { print }' | paste -sd, -)")
+        merge_back_wait "$paths" || { hp_unlock; echo "sdd-state: merging ${sha:0:7} into $integ conflicts in $paths, but the waiting record could not be written" >&2; echo "status=error"; return 2; }
+        hp_unlock; echo "status=conflict task=$n paths=$paths"; return 8
+      fi
+      [ "$mrc" -eq 0 ] || { hp_unlock; echo "sdd-state: git merge-tree could not merge ${sha:0:7} into $integ at ${H:0:7}" >&2; echo "status=error"; return 2; }
+      tree=$(printf '%s\n' "$mt" | head -n 1)
+      new=$(printf 'Merge task %s%s\n' "$n" "${title:+: $title}" | hp_git_id "$code" commit-tree "$tree" -p "$H" -p "$sha") || { hp_unlock; echo "status=error"; return 2; }
+    fi
+    # Written beside and renamed, through an exclusively created dotted name.
+    t=$(mktemp "$WSDIR/merges/.task-$n.XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
+    if ! { printf 'approved=%s\nproposed=%s\nbase=%s\n' "$sha" "$new" "$H" > "$t" && mv -f "$t" "$record"; }; then
+      rm -f "$t"; hp_unlock; echo "status=error"; return 2
+    fi
+    if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = merge-back-after-record ]; then hp_unlock; exit 99; fi
+    # Test seam: HYPERPOWERS_TEST_WRITER_AT=merge-back-before-swap:<sha> moves
+    # the integration ref to <sha> after the record and before the swap, once.
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in merge-back-before-swap:*) git -C "$code" update-ref "$ref" "${HYPERPOWERS_TEST_WRITER_AT#merge-back-before-swap:}" 2>/dev/null; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
+    if uerr=$(git -C "$code" update-ref -m "sdd merge-back task $n" "$ref" "$new" "$H" 2>&1); then
+      if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = merge-back-after-swap ]; then hp_unlock; exit 99; fi
+      published=$new
+      merge_back_bookkeeping || { hp_unlock; echo "sdd-state: $integ carries ${published:0:7}, but the merge-back's bookkeeping could not be written; run the same merge-back again to finish it" >&2; echo "status=error"; return 2; }
+      hp_unlock; echo "status=merged task=$n head=${new:0:7}"; return 0
+    fi
+    # A ref still at H was not moved by another writer: the update itself
+    # failed (a leftover lock, for one), and another attempt would only
+    # repeat the failure.
+    if [ "$(git -C "$code" rev-parse -q --verify "$ref^{commit}" 2>/dev/null)" = "$H" ]; then
+      hp_unlock; echo "sdd-state: update-ref failed and the integration branch $integ is unchanged at ${H:0:7}: $uerr" >&2; echo "status=error"; return 2
+    fi
+  done
+  cur=$(git -C "$code" rev-parse -q --verify "$ref^{commit}" 2>/dev/null) || cur=""
+  hp_unlock; echo "sdd-state: the integration branch $integ moved during each of three attempts (expected ${H:0:7}, found $(short "$cur"))" >&2; echo "status=error"; return 2
+}
+# <plan text> -> the title of task n's heading, read outside fenced blocks as
+# hp_plan_graph reads headings, for the merge commit's subject. Reads n from
+# cmd_merge_back.
+merge_back_title() {
+  awk -v h="### Task $n:" '
+    /^(```|~~~)/ { match($0, /^(`+|~+)/); run = substr($0, 1, RLENGTH); if (fence == "") fence = run; else if (substr(run, 1, 1) == substr(fence, 1, 1) && RLENGTH >= length(fence)) fence = ""; next }
+    fence != "" { next }
+    index($0, h) == 1 { t = substr($0, length(h) + 1); sub(/^[ \t]+/, "", t); sub(/[ \t\r]+$/, "", t); print t; exit }' "$1"
+}
+# <repo> <full ref> -> the first worktree of the repository with the ref
+# checked out, whole, or nothing. A registration whose directory is gone
+# still counts: its index is kept and would read the merge as reverted once
+# the directory is back. Fails when the list cannot be read.
+merge_back_checked_out() {
+  local f wt="" all
+  all=$(mktemp "${TMPDIR:-/tmp}/sdd-merge-wt.XXXXXX") || return 1
+  # -z, since a worktree path may hold a newline or a space.
+  if ! git -C "$1" worktree list --porcelain -z > "$all"; then rm -f "$all"; return 1; fi
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      "worktree "*) wt=${f#worktree } ;;
+      "branch $2") printf '%s\n' "$wt"; break ;;
+    esac
+  done < "$all"
+  rm -f "$all"
+}
+# The commit that published sha on the integration branch at H, for a call
+# that found sha already there. The merge record names it when the record is
+# for this approved commit and the ref carries its proposed commit; a record
+# left by a crash before the swap names a commit the ref does not carry and
+# is passed over. Otherwise it is sha itself on the branch's first-parent
+# history (a fast-forward), or else the oldest first-parent commit whose
+# second parent is sha (the merge that brought it in). Reads sha, record,
+# code and H from cmd_merge_back.
+merge_back_published() {
+  local p
+  if [ "$(sed -n 's/^approved=//p' "$record" 2>/dev/null | head -n 1)" = "$sha" ]; then
+    p=$(sed -n 's/^proposed=//p' "$record" | head -n 1)
+    if [ -n "$p" ] && git -C "$code" merge-base --is-ancestor "$p" "$H" 2>/dev/null; then printf '%s\n' "$p"; return 0; fi
+  fi
+  # awk reads the whole list rather than exiting at the first match: a
+  # producer cut off mid-write would fail the pipeline under pipefail.
+  git -C "$code" rev-list --first-parent --parents "$H" | awk -v s="$sha" '$1 == s { on = 1 } NF >= 3 && $3 == s { m = $1 } END { if (on) print s; else if (m != "") print m }'
+}
+# The bookkeeping a published merge owes, each step idempotent and each
+# naming the published commit: the ledger line, the cleared merge waiting
+# record and the activity stamp. A step that fails stops here, and the same
+# merge-back run again finds the commit on the ref and finishes. Only a merge
+# record for this task is cleared: a session holding several claims may
+# still owe the resolve route for another. Reads n, sha, sid, integ and
+# published from cmd_merge_back.
+merge_back_bookkeeping() {
+  local w="$WSDIR/waiting/$sid" mline
+  mline="Task $n: merged ${published:0:7} into $integ (from ${sha:0:7})"
+  hp_contained "$ROOT" "plans/$WS/progress.md" || return 1
+  grep -qxF "$mline" "$WSDIR/progress.md" || printf '%s\n' "$mline" >> "$WSDIR/progress.md" || return 1
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = merge-back-after-ledger ]; then hp_unlock; exit 99; fi
+  hp_contained "$ROOT" "plans/$WS/waiting/$sid" || return 1
+  if [ -f "$w" ] && [ "$(sed -n 's/^kind=//p' "$w" | head -n 1)" = merge ] && [ "$(sed -n 's/^task=//p' "$w" | head -n 1)" = "$n" ]; then rm -f "$w" || return 1; fi
+  write_activity "$sid"
+}
+# <paths>: this session's waiting record of kind merge, in the record format
+# the board reads, written to an exclusively created temporary file beside
+# it and renamed, so no reader sees half a record. The worktree and branch
+# are the session's own, as a claim's owner record names them. Reads n and
+# sid from cmd_merge_back.
+merge_back_wait() {
+  local d="$WSDIR/waiting" top b t
+  hp_contained "$ROOT" "plans/$WS/waiting/$sid" || return 1
+  mkdir -p "$d" || return 1
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
+  b=$(git branch --show-current 2>/dev/null)
+  [ -n "$b" ] || b="detached@$(git rev-parse --short=7 HEAD 2>/dev/null || echo none)"
+  t=$(mktemp "$d/.$sid.XXXXXX") || return 1
+  { printf 'session=%s\ntask=%s\nkind=merge\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s\n' "$sid" "$n" "$(hp_utc_now)" "merge-back conflict in $1" "$(enc "$top")" "$b" "$(hostname)" > "$t" && mv -f "$t" "$d/$sid"; } || { rm -f "$t"; return 1; }
+}
+
 # --- prune -------------------------------------------------------------------
 # Lists, and with --apply removes, plan directories idle for N days (last
 # commit and newest file both older) and checkouts whose clone is gone. Never
@@ -3187,6 +3410,7 @@ case "$sub" in
   finish) cmd_finish "$@" ;;
   lease) cmd_lease "$@" ;;
   amend) cmd_amend "$@" ;;
+  merge-back) cmd_merge_back "$@" ;;
   prune) cmd_prune "$@" ;;
   sync) cmd_sync "$@" ;;
   verify) cmd_verify "$@" ;;

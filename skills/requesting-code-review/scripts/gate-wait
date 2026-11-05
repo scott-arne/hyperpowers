@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# gate-wait [--budget SECONDS] JOB_ID...
+# Watch one or more codex-plugin-cc companion jobs in a single shell call.
+# Each pass re-reads every pending job without blocking, then blocks on the
+# first job still pending for at most 30 s, so a stalled job cannot hide
+# others that finished. Every exit follows a full pass, so every status
+# printed is current. Requires CODEX_PATH (the install the recipes use).
+# Stdout: one "<id> <status>" line per job, then "all-terminal" or
+# "running: <id> ...". Exit 0 = every job terminal; 2 = budget spent with jobs
+# still running; 1 = usage error, or a job whose status could not be read
+# (stderr "gate-wait: <id>: <cause>"; the other jobs are still listed, then a
+# "running:" line if any still run, then "unreadable: <id> ...").
+# SECONDS is an integer from 1 to 570 (default 480: one call fits the
+# 600000 ms shell timeout, two match the 16-minute watch cap). Like every
+# companion command, run it outside the shell sandbox.
+set -uo pipefail
+
+budget=480
+ids=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --budget) [ $# -ge 2 ] || { echo "gate-wait: --budget needs a value" >&2; exit 1; }; budget="$2"; shift 2 ;;
+    --) shift; ids+=("$@"); break ;;
+    -*) echo "gate-wait: unknown arg $1" >&2; exit 1 ;;
+    *) ids+=("$1"); shift ;;
+  esac
+done
+
+raw_budget="$budget"
+case "$budget" in
+  ''|*[!0-9]*) echo "gate-wait: --budget must be an integer from 1 to 570 (got '$raw_budget')" >&2; exit 1 ;;
+esac
+# Strip leading zeros so "008" reads as decimal 8 (bash arithmetic would take
+# it as octal and fail) and "0570" as 570. Length next: an overlong number
+# would make the integer tests error out (status 2), which reads as false and
+# would accept it.
+budget="${budget#"${budget%%[!0]*}"}"
+if [ -z "$budget" ] || [ "${#budget}" -gt 3 ] || [ "$budget" -lt 1 ] || [ "$budget" -gt 570 ]; then
+  echo "gate-wait: --budget must be an integer from 1 to 570 (got '$raw_budget')" >&2; exit 1
+fi
+[ "${#ids[@]}" -gt 0 ] || { echo "usage: gate-wait [--budget SECONDS] JOB_ID..." >&2; exit 1; }
+[ -n "${CODEX_PATH:-}" ] || { echo "gate-wait: CODEX_PATH is not set" >&2; exit 1; }
+companion="$CODEX_PATH/scripts/codex-companion.mjs"
+[ -f "$companion" ] || { echo "gate-wait: no companion at $companion" >&2; exit 1; }
+command -v node >/dev/null 2>&1 || { echo "gate-wait: node not found" >&2; exit 1; }
+
+job_status() {
+  node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const s=JSON.parse(d).job.status;if(typeof s==="string"&&s)process.stdout.write(s)}catch(e){}})'
+}
+
+n=${#ids[@]}
+st=(); pend=()
+for ((i = 0; i < n; i++)); do st[i]="unknown"; pend[i]=1; done
+err=0
+
+# query INDEX [WAIT_SECONDS]: refresh one job's status; non-zero when unreadable.
+query() {
+  local i="$1" w="${2:-}" out rc s
+  if [ -n "$w" ]; then
+    out="$(node "$companion" status "${ids[i]}" --wait --timeout-ms "$((w * 1000))" --json)"; rc=$?
+  else
+    out="$(node "$companion" status "${ids[i]}" --json)"; rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then echo "gate-wait: ${ids[i]}: companion exited $rc" >&2; return 1; fi
+  s="$(printf '%s' "$out" | job_status)"
+  if [ -z "$s" ]; then echo "gate-wait: ${ids[i]}: no .job.status in companion output" >&2; return 1; fi
+  st[i]="$s"
+  case "$s" in completed|failed|cancelled) pend[i]=0 ;; esac
+  return 0
+}
+
+deadline=$(( $(date +%s) + budget ))
+while :; do
+  for ((i = 0; i < n; i++)); do
+    [ "${pend[i]}" -eq 1 ] || continue
+    query "$i" || { pend[i]=0; st[i]="unreadable"; err=1; }
+  done
+  [ "$err" -eq 0 ] || break
+  first=-1
+  for ((i = 0; i < n; i++)); do
+    if [ "${pend[i]}" -eq 1 ]; then first=$i; break; fi
+  done
+  [ "$first" -ge 0 ] || break
+  remaining=$(( deadline - $(date +%s) ))
+  [ "$remaining" -gt 0 ] || break
+  slice=$(( remaining < 30 ? remaining : 30 ))
+  # A failed blocking read sets err; the loop's next pass still sweeps the
+  # other jobs before exiting, so their printed statuses stay current.
+  query "$first" "$slice" || { pend[first]=0; st[first]="unreadable"; err=1; }
+done
+
+running=(); unreadable=()
+for ((i = 0; i < n; i++)); do
+  echo "${ids[i]} ${st[i]}"
+  if [ "${pend[i]}" -eq 1 ]; then running+=("${ids[i]}"); fi
+  if [ "${st[i]}" = "unreadable" ]; then unreadable+=("${ids[i]}"); fi
+done
+if [ "$err" -ne 0 ]; then
+  if [ "${#running[@]}" -gt 0 ]; then echo "running: ${running[*]}"; fi
+  echo "unreadable: ${unreadable[*]}"
+  exit 1
+fi
+if [ "${#running[@]}" -eq 0 ]; then echo "all-terminal"; exit 0; fi
+echo "running: ${running[*]}"
+exit 2

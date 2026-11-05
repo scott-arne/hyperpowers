@@ -175,6 +175,28 @@ The bundle includes all skills with a router `SKILL.md` that guides skill select
 
 **The agent checks for relevant skills before any task.** Mandatory workflows, not suggestions.
 
+## Cost and Context
+
+Long hyperpowers sessions cost more than their tasks suggest, because every model call re-sends the whole conversation. Over a month of heavy use, nine tenths of the cost was reading and writing cached context, and main sessions averaged over 400K tokens of context per call. On models with a 1M-token window, Claude Code compacts only near 968K tokens, so a session that runs brainstorming, planning and subagent-driven development for days spends most of its cost on calls between 500K and 968K (about two thirds of main-session cost in that month).
+
+Recommended setting in `~/.claude/settings.json` (the environment variable `CLAUDE_CODE_AUTO_COMPACT_WINDOW` does the same):
+
+```json
+{
+  "autoCompactWindow": 400000
+}
+```
+
+Replaying that month of sessions, a 400K window cut cost by about 28%. A 300K or 200K window saved only 4 or 7 points more, while adding 1.5 or 2.6 times as many extra compactions as the 400K window, and each compaction drops detail.
+
+Do not set the window below about 200K. The skills re-read their full text after each compaction (about 10K tokens for subagent-driven-development), and at very small windows (the eval used 100K) a session can re-compact right after that re-read and loop.
+
+If you set `ENABLE_PROMPT_CACHING_1H=1`, keep it. With a five-minute cache the same replay cost about 56% more: long sessions pause for five to sixty minutes while subagents, reviews or you are busy, and every pause past five minutes rewrites the whole context.
+
+When a plan is written, run `/clear` before starting subagent-driven development. The spec and plan are on disk, so the execution session starts small.
+
+After a compaction, Claude Code re-attaches each skill the session used, cut to its first 20,000 characters. The subagent-driven-development and brainstorming skills tell the agent to Read their full text after every compaction, so a lower window does not leave them running from a cut copy. The writing-skills skill is also longer than 20,000 characters and does not yet carry that re-read paragraph.
+
 ## What's Inside
 
 ### Skills Library

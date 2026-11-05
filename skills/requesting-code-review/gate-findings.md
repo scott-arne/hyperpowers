@@ -81,7 +81,7 @@ hitting it is not a review failure, just the cue to issue the next watch call.
 1. Do not interpret an incomplete result as approval, and do not interpret it as findings — `verdict-normalize` returns `incomplete` for exactly this case, and only `approved` exits the gate.
 2. Recover best-effort, bounded:
    - **Code gates:** the recipe-code.md watch loop *is* the recovery path — the job id is
-     known from launch, and `status <job-id> --wait --json` / `result <job-id>
+     known from launch, and `gate-wait <job-id>` / `result <job-id>
      --json` return the verdict whenever the detached worker finishes, no matter
      how many individual watch calls timed out along the way. If the watch cap
      passes with `.job.status` still `queued`/`running`, the worker is stalled
@@ -96,7 +96,7 @@ hitting it is not a review failure, just the cue to issue the next watch call.
      (`result <job-id> --json`); if none, re-run the document review once with
      the explicit 600000 ms (10 minutes) timeout from gate-setup.md if the failure looked
      transient, otherwise surface it.
-   - The authoritative signals everywhere are `.job.status` (`queued`/`running` = not done; `completed`/`failed`/`cancelled` = terminal) for job lifecycle, and the captured result file + `verdict-normalize` for the review outcome. The raw review text for reading findings remains at `.storedJob.result.rawOutput` or `.storedJob.result.codex.stdout`. Do not hand-roll a `sleep`-then-re-query loop; `status <job-id> --wait --json` is the condition-based primitive (2 s interval, 240 s deadline) and returns as soon as Codex is done. A wait cycle is not a review round — it does not consume the §5 convergence/backstop budget.
+   - The authoritative signals everywhere are `.job.status` (`queued`/`running` = not done; `completed`/`failed`/`cancelled` = terminal) for job lifecycle, and the captured result file + `verdict-normalize` for the review outcome. The raw review text for reading findings remains at `.storedJob.result.rawOutput` or `.storedJob.result.codex.stdout`. Do not hand-roll a `sleep`-then-re-query loop; `status <job-id> --wait --json` is the condition-based primitive (2 s interval, 240 s deadline by default) and returns as soon as Codex is done; agents reach it through `gate-wait`, which applies it to every job of a gate in one call. A wait cycle is not a review round — it does not consume the §5 convergence/backstop budget.
 3. If still incomplete after the bounded recovery, hand back to the user as
    "Codex review did not complete (still running / aborted before verdict)" —
    never silently pass. Like every other gate failure this degrades to "no Codex
@@ -120,7 +120,7 @@ verdict inline. Do not add
 `--background` and do not poll — backgrounding a document review only replaces a
 clean blocking call with a detached worker you then have to chase through
 `status`/`result`. If you ever do need a job's terminal state, use
-`status <job-id> --wait`, never a blind `sleep`.
+`bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-wait" <job-id>` with `CODEX_PATH` exported (outside the shell sandbox), never a blind `sleep`.
 
 > **Red Flag — Never** treat an unfinished, timed-out, or "still verifying"
 > Codex result as "no findings" / approval. Incomplete is not a pass. Recover via
@@ -128,12 +128,12 @@ clean blocking call with a detached worker you then have to chase through
 
 > **Red Flag — Never** background a document review, and never `sleep`-then-poll
 > for any Codex result. Foreground `task` returns the verdict inline; when a job
-> genuinely needs awaiting, `status <job-id> --wait` returns the instant it is
+> genuinely needs awaiting, `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-wait" <job-id>` returns the instant it is
 > done. A blind wait-then-poll burns wall-clock and risks reading a verdict
 > before it exists.
 
 > **Red Flag — Never** launch a code review and move on (or fall idle) while it
-> runs. The recipe-code.md watch loop keeps a blocking `status <job-id> --wait` call in the
+> runs. The recipe-code.md watch loop keeps a blocking `gate-wait` call in the
 > foreground for the whole review — launch-and-forget hides that work is in
 > flight and risks acting before the verdict exists.
 

@@ -15,11 +15,11 @@ unrecoverable except by a full re-run. Instead:
    foreground and take the `id` of the newest `.running[]` entry with
    `jobClass: "review"`; if the job has not registered yet, re-run the status
    call after a couple of seconds.
-3. **Watch in the foreground — never idle.** Block on
-   `node "$CODEX_PATH/scripts/codex-companion.mjs" status <job-id> --wait --json`;
-   each call returns the moment the job goes terminal, or after its 240 s
-   deadline with `waitTimedOut: true`. If `.job.status` is still
-   `queued`/`running`, immediately issue the next `status <job-id> --wait --json`.
+3. **Watch in the foreground — never idle.** Block on one shell call (timeout 600000 ms) that watches every job id at once:
+   `bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/gate-wait" <job-id>...` with `CODEX_PATH` exported, outside the shell sandbox like every companion command;
+   it re-reads every job without blocking, waits on one at a time in slices of at most 30 s, and returns when all are terminal (exit 0, last line `all-terminal`) or after its 480 s budget (exit 2, last line `running: <ids>`).
+   On exit 2, immediately issue the next `gate-wait` over the ids still running. On exit 1 from a usage error, fix the call and re-run; on exit 1 for a job it could not read (last line `unreadable: <ids>`; the `running:` line before it, when present, lists the ids still running; stderr names the cause), first check that lens's captured launch output for its `--json` payload, then run one `status <job-id> --json` for that job: if it is still unreadable, that review is incomplete per §4b, with at most one relaunch if the failure looked transient; keep watching the ids still running with `gate-wait`.
+   Never call `status <job-id> --wait` yourself; it is the primitive `gate-wait` runs for you.
    While the review runs, the session must always be inside one of these
    blocking watch calls — never `sleep`, never fire-and-forget and move on.
    This keeps the session visibly working in harness UIs and the wait
@@ -27,7 +27,7 @@ unrecoverable except by a full re-run. Instead:
    killed.
 4. **Read the verdict.** Once `.job.status` is terminal, run `node "$CODEX_PATH/scripts/codex-companion.mjs" result <job-id> --json`: write the full `result <job-id> --json` output to a file inside `GATE_DIR` and run `verdict-normalize` on it; the raw review text for reading findings remains at `.storedJob.result.rawOutput`.
 
-Cap the watch at **4 consecutive wait cycles** (~16 minutes). If the job is
+Cap the watch at **2 consecutive `gate-wait` calls** (~16 minutes). If the job is
 still not terminal, treat the result as incomplete per §4b — optionally
 `cancel <job-id>` to stop a stalled worker — and never read the absence of a
 verdict as approval.

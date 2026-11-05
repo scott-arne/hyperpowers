@@ -88,6 +88,10 @@ skills/writing-skills
 ```{toctree}
 :caption: Advanced
 :hidden:
+
+advanced/triggering
+advanced/codex-gates
+advanced/sdd-internals
 ```
 
 ```{toctree}

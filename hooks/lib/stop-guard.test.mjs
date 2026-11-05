@@ -256,6 +256,26 @@ test('discover: a plain-cache workspace imported into the state cache is one led
   const d = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache });
   assert.equal(d.kind, 'ledger'); assert.equal(d.workspace, ws);
 });
+test('discover: plain files beside the keys and the workspaces are not candidates', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e);
+  const key = guard.cloneKey(e.repo);
+  const state = join(e.cache, 'hyperpowers', 'state');
+  writeFileSync(join(state, `${key}.backend`), 'x');
+  writeFileSync(join(state, `${key}.fetched`), 'x');
+  mkdirSync(join(e.cache, 'hyperpowers', 'sdd'), { recursive: true });
+  writeFileSync(join(e.cache, 'hyperpowers', 'sdd', 'stray.py'), 'x');
+  writeFileSync(join(state, key, 'plans', 'notes.txt'), 'x');
+  for (const cwd of [tmpdir(), e.repo]) {
+    const d = guard.discover({ sessionId: SID, cwd, cacheRoot: e.cache });
+    assert.equal(d.kind, 'ledger'); assert.equal(d.workspace, ws);
+  }
+});
+test('discover: a plain file in the receipts directory is not a receipt', () => {
+  const e = env(); const r = receipt(e, 'plan-abcdef12-20261023T000000Z');
+  writeFileSync(join(e.cache, 'hyperpowers', 'receipts', 'stray.txt'), 'x');
+  const d = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache });
+  assert.equal(d.kind, 'receipt'); assert.equal(d.receipt, r);
+});
 test('discover: a candidate that cannot be read is an ambiguity, not an absence', () => {
   const e = env(); const ws = workspaceFor(e); ledger(ws, e);
   chmodSync(join(ws, 'progress.md'), 0o000);

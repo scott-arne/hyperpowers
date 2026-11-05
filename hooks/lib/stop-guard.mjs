@@ -56,8 +56,10 @@ export function ledgerRecords(text) {
 const LIFECYCLE_COPY = /\.import(ing)?-[0-9]+$/;
 // Absent or uncertain, never "no": a path the hook is not allowed to look at
 // is recorded rather than dropped, because the plan it hides may be this
-// session's. Only ENOENT is absence.
-const absent = (err) => err?.code === 'ENOENT';
+// session's. Only ENOENT and ENOTDIR are absence: ENOTDIR means a component of
+// the path is a plain file (sdd-state's `<key>.backend`, a stray file in the
+// cache), so no ledger can live beneath it.
+const absent = (err) => err?.code === 'ENOENT' || err?.code === 'ENOTDIR';
 function ledgersUnder(plansDir, unreadable) {
   const out = [];
   let names;
@@ -74,14 +76,14 @@ function ledgersUnder(plansDir, unreadable) {
 // the caller reports.
 function newestFirst(paths, unreadable) {
   return paths
-    .map((p, i) => { try { return { p, i, m: statSync(p).mtimeMs }; } catch (err) { if (unreadable && err?.code !== 'ENOENT') unreadable.push(p); return null; } })
+    .map((p, i) => { try { return { p, i, m: statSync(p).mtimeMs }; } catch (err) { if (unreadable && !absent(err)) unreadable.push(p); return null; } })
     .filter(Boolean).sort((a, b) => b.m - a.m || a.i - b.i).map((x) => x.p);
 }
 // A candidate that cannot be read is uncertainty, not absence: it is recorded
 // so discovery can say so instead of answering "no ledger" for a plan this
 // session may well own.
 function carriesSession(path, sessionId, unreadable) {
-  try { return ledgerRecords(readFileSync(path, 'utf8')).some((l) => l.startsWith(`session ${sessionId}:`)); } catch (err) { if (unreadable && err?.code !== 'ENOENT') unreadable.push(path); return false; }
+  try { return ledgerRecords(readFileSync(path, 'utf8')).some((l) => l.startsWith(`session ${sessionId}:`)); } catch (err) { if (unreadable && !absent(err)) unreadable.push(path); return false; }
 }
 // Step A. Candidates are the ledgers under this clone's key (every key when
 // cwd is outside a repository), newest first; more than the cap is ambiguous

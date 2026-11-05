@@ -68,7 +68,7 @@ The skill's core principle is that code review needs technical evaluation, with 
 
 ## Skipping or overriding
 
-The skill has no skip option, and its forbidden-response rules apply to feedback from you as well. What it does vary is trust. Your own feedback is implemented after the agent understands it, while an external reviewer's feedback is checked first, so telling the agent that a comment comes from you changes how much verification it does. If the agent pushes back and you still want the change, say so: the skill says the agent involves you when a suggestion conflicts with your decisions.
+The skill has no skip option, and its forbidden-response rules apply to feedback from you as well. What it does vary is trust. Your own feedback is implemented after the agent understands it, while an external reviewer's feedback is checked first. If the agent pushes back and you still want the change, say so: the skill says the agent involves you when a suggestion conflicts with your decisions.
 
 ## Works with
 

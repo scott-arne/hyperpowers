@@ -46,7 +46,7 @@ When Codex is absent, the agent tells you once with a notice that names a status
 
 ## Why it exists
 
-The skill's core principle is to review early and review often, so that issues are caught before they cascade into later work. Its rationalizations table gives two reasons for the shape of the review. An agent that reviews the diff inline spends the context window it needs to keep working, so the diff and the evaluation live in a subagent and only the findings return. And a reviewer that reads the agent's whole session reviews the thought process, so it receives crafted context and not history. The Codex gate adds a second reviewer from a different system after the first pass. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`; none of them concerns this skill's own files.
+The skill's core principle is to review early and review often, so that issues are caught before they cascade into later work. Its rationalizations table gives two reasons for the shape of the review. An agent that reviews the diff inline spends the context window it needs to keep working, so the diff and the evaluation live in a subagent and only the findings return. And a reviewer that reads the agent's whole session reviews the thought process, so it receives crafted context and not history. The Codex gate adds a second reviewer from a different system after the first pass. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`.
 
 ## Pros
 
@@ -66,7 +66,7 @@ The skill's core principle is to review early and review often, so that issues a
 
 ## Skipping or overriding
 
-The skill's red flags say never to skip review because "it's simple" and never to ignore Critical issues. The skill does give you two ways to steer the result. An absent Codex ends the gate with a notice, because the skill states the gate never blocks completion. And if you disagree with a finding, the skill tells the agent to push back with reasoning and with code or tests that show it works, so name the finding you dispute and say why.
+The skill's red flags say never to skip review because "it's simple" and never to ignore Critical issues. The skill gives you no option to switch review off. The Codex gate is skipped only when Codex is absent, and then the agent tells you with a notice and finishes the review without it. When a finding is wrong, the agent pushes back with technical reasoning, shows code or tests that prove the work, or asks the reviewer for clarification.
 
 ## Works with
 

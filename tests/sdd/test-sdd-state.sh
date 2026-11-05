@@ -2892,6 +2892,13 @@ if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares
 printf 'scan: accepted-overlap tasks=1,2 path=docs/design%%20notes.md\n' > "$TEST_ROOT/dp-space.ledger"
 out=$(run_state "$dp" deps --from docs/spaced.md docs/plan.md --check --ledger "$TEST_ROOT/dp-space.ledger" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=clean" ]; then pass "an accepted overlap carrying the encoded path is suppressed"; else fail "encoded accepted overlap (rc=$rc: $out)"; fi
+# A literal percent is escaped before a space is, so a path holding %20 keeps a key of its own: docs/a b.md and docs/a%20b.md never share one, and an acceptance of the first leaves the second's conflict.
+sed 's/design notes\.md/a b.md/' "$dp/docs/spaced.md" > "$dp/docs/ab-space.md"; sed 's/design notes\.md/a%20b.md/' "$dp/docs/spaced.md" > "$dp/docs/ab-pct.md"
+out=$(run_state "$dp" deps --from docs/ab-space.md docs/plan.md --check 2>/dev/null); rc=$?
+out2=$(run_state "$dp" deps --from docs/ab-pct.md docs/plan.md --check 2>/dev/null); rc2=$?
+printf 'scan: accepted-overlap tasks=1,2 path=docs/a%%20b.md\n' > "$TEST_ROOT/dp-ab.ledger"
+out3=$(run_state "$dp" deps --from docs/ab-pct.md docs/plan.md --check --ledger "$TEST_ROOT/dp-ab.ledger" 2>/dev/null); rc3=$?
+if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=docs/a%20b.md' && [ "$rc2" -eq 1 ] && printf '%s\n' "$out2" | grep -qx 'conflict tasks=1,2 shares=docs/a%2520b.md' && [ "$rc3" -eq 1 ] && printf '%s\n' "$out3" | grep -qx 'conflict tasks=1,2 shares=docs/a%2520b.md'; then pass "paths docs/a b.md and docs/a%20b.md print distinct conflict keys, and one's acceptance leaves the other"; else fail "percent-encoded keys (rc=$rc/$rc2/$rc3: $(printf '%s' "$out" | tr '\n' '|') / $(printf '%s' "$out2" | tr '\n' '|') / $(printf '%s' "$out3" | tr '\n' '|'))"; fi
 
 # A malformed dependency line is an error, never a normalized guess: a typo must not erase a prerequisite.
 dep_bad() { # <name> <awk program rewriting plan.md> <expected stderr fragment>
@@ -3937,6 +3944,33 @@ git -C "$ad_a" show feat:docs/plan.md | sed 's/^### Task 2: \(.*\)$/### Task 2: 
 out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c6" --base "$b_ad" --message c6 2>/dev/null); rc=$?
 if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$ad_a" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && [ -n "$unm_ad" ] && [ -f "$ad_a/.git/MERGE_HEAD" ] && [ "$(git -C "$ad_a" ls-files -u)" = "$unm_ad" ] && [ "$(git -C "$ad_a" rev-parse :docs/plan.md)" = "$b_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a worktree on the plan ref mid conflicted merge on another file is refused before the swap, the merge untouched"; else fail "mid-merge worktree (rc=$rc: $out)"; fi
 git -C "$ad_a" merge --abort
+# A plan file deleted in the worktree on the plan ref before the call is refused before the swap, with nothing moved. The call comes from a session's own worktree on another branch, as a task's would: through the deleted copy it could not name the plan at all.
+h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+git -C "$ad_a" worktree add -q -b ad-other "$TEST_ROOT/ad-other" feat >/dev/null 2>&1
+git -C "$ad_a" show feat:docs/plan.md | sed 's/^### Task 2: \(.*\)$/### Task 2: \1 kept/' > "$TEST_ROOT/ad.c9"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c9")
+rm -f "$ad_a/docs/plan.md"
+out=$(run_state "$TEST_ROOT/ad-other" amend docs/plan.md --from "$TEST_ROOT/ad.c9" --base "$b_ad" --message c9 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$ad_a" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && [ ! -e "$ad_a/docs/plan.md" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a plan file deleted before the call is refused before the swap"; else fail "deleted before the call (rc=$rc: $out)"; fi
+git -C "$ad_a" show :docs/plan.md > "$ad_a/docs/plan.md"
+# The same deletion made once the swap commits, by a reference-transaction hook: git's update would recreate the file, so the refresh refuses instead, keeps the record and names the worktree; the file stays deleted.
+hook_ad="$ad_a/.git/hooks/reference-transaction"; mark_ad="$TEST_ROOT/ad.del-fired"
+printf '#!/bin/sh\nlines=$(cat)\n[ "$1" = committed ] || exit 0\ncase "$lines" in *" refs/heads/feat") ;; *) exit 0 ;; esac\n[ -e "%s" ] && exit 0\n: > "%s"\nrm -f "%s"\n' "$mark_ad" "$mark_ad" "$ad_a/docs/plan.md" > "$hook_ad"; chmod 755 "$hook_ad"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c9" --base "$b_ad" --message c9 2>"$TEST_ROOT/ad.del.err"); rc=$?
+rm -f "$hook_ad"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -e "$mark_ad" ] && grep -qF "but the worktree $ad_a could not be refreshed" "$TEST_ROOT/ad.del.err" && [ ! -e "$ad_a/docs/plan.md" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ -f "$wsad/amends/$n_ad" ]; then pass "a deletion made between the check and the refresh stays deleted, and the call is an error that keeps the record"; else fail "deleted in the interval (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.del.err"))"; fi
+# Once the file is restored, the same amend run again refreshes the worktree and finishes.
+git -C "$ad_a" show :docs/plan.md > "$ad_a/docs/plan.md"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c9" --base "$b_ad" --message c9 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "after the deleted file is restored the retry refreshes the worktree and finishes"; else fail "retry after the interval deletion (rc=$rc: $out: $(git -C "$ad_a" status --porcelain | tr '\n' '|'))"; fi
+# Path keys escape a literal percent first: an acceptance of src/a b, keyed src/a%20b, does not cover a later overlap on the distinct path src/a%20b, keyed src/a%2520b.
+h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+git -C "$ad_a" show feat:docs/plan.md | awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/a b`" }' > "$TEST_ROOT/ad.ab1"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.ab1" --base "$b_ad" --accept 'tasks=1,2 path=src/a%20b' --message ab1 2>/dev/null); rc=$?
+b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md); h_ad=$(git -C "$ad_a" rev-parse feat)
+awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/a%20b`" }' "$TEST_ROOT/ad.ab1" > "$TEST_ROOT/ad.ab2"
+out2=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.ab2" --base "$b_ad" --message ab2 2>/dev/null); rc2=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && grep -q '^scan: accepted-overlap tasks=1,2 path=src/a%20b$' "$wsad/progress.md" && [ "$rc2" -eq 1 ] && [ "$out2" = "status=conflicts plan=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.ab2" | cut -c1-7) count=1
+conflict tasks=1,2 shares=src/a%2520b" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ]; then pass "an acceptance of src/a b does not suppress a later overlap on src/a%20b"; else fail "percent-encoded acceptance (rc=$rc/$rc2: $out / $(printf '%s' "$out2" | tr '\n' '|'))"; fi
 # A retry whose plan a later commit deleted from the plan ref: a ref without the plan is never already=1. The call finishes the record's ledger lines, then refuses as the fresh path does, with the ref left where it is. Last in this repository, which it leaves without a plan on feat.
 b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
 git -C "$ad_a" show feat:docs/plan.md | sed 's/^### Task 1: \(.*\)$/### Task 1: \1 gone/' > "$TEST_ROOT/ad.c8"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c8")

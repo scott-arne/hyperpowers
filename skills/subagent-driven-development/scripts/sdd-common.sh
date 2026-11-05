@@ -253,7 +253,10 @@ hp_plan_graph() {
 # one depending on the other directly or through a chain; a consumer must
 # follow its producer, so the reverse edge does not clear an interface pair.
 # Only the first backticked span of a Files line is the path; later spans
-# are annotations. Paths are printed with spaces as %20, the form the ledger and amend carry.
+# are annotations. Paths are printed with a percent as %25 and then a space
+# as %20, enc_spec's order in sdd-state, the form the ledger and amend carry.
+# Escaping the percent first keeps the key reversible: src/a b and src/a%20b
+# are two paths, and an acceptance of one must never cover the other.
 # Paths under "**Merge-expected files:**" in Global Constraints never conflict.
 # Accepted pairs are read from "scan: accepted-overlap" ledger lines and from
 # "accept=" lines in amendment records whose commit is on the plan ref (a
@@ -294,7 +297,7 @@ $(sed -n 's/^accept=//p' "$rec")"
     /^\*\*Files:\*\*/ { mode = "files"; next }
     /^\*\*Interfaces:\*\*/ { mode = "ifaces"; next }
     /^\*\*/ && !/^\*\*Files:\*\*/ && !/^\*\*Interfaces:\*\*/ { mode = "" }
-    mode == "files" && /^- (Create|Modify|Test):/ { s = $0; if (match(s, /`[^`]+`/)) { p = substr(s, RSTART + 1, RLENGTH - 2); sub(/:[0-9-]+$/, "", p); if (!(p in me)) { gsub(/ /, "%20", p); paths[cur, p] = 1 } } next }
+    mode == "files" && /^- (Create|Modify|Test):/ { s = $0; if (match(s, /`[^`]+`/)) { p = substr(s, RSTART + 1, RLENGTH - 2); sub(/:[0-9-]+$/, "", p); if (!(p in me)) { gsub(/%/, "%25", p); gsub(/ /, "%20", p); paths[cur, p] = 1 } } next }
     mode == "ifaces" && /^- Produces:/ { s = $0; while (match(s, /`[^`]+`/)) { prod[cur, substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } next }
     mode == "ifaces" && /^- Consumes:/ { s = $0; while (match(s, /`[^`]+`/)) { cons[cur, substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } next }
     END {

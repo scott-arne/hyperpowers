@@ -1585,7 +1585,8 @@ cmd_amend() {
   local lease lowner line integ c sid full base_unknown="" errf rbase uerr wb a all
   # The spelling hp_plan_overlaps keys acceptances by: any other would
   # suppress a conflict here that every later check reports again. Paths
-  # arrive %20-encoded; an interface name is keyed as written, spaces and all.
+  # arrive encoded as conflict lines print them, a percent as %25 and then a
+  # space as %20; an interface name is keyed as written, spaces and all.
   local accept_re='^tasks=[0-9]+,[0-9]+ (path=[^[:space:]]+|interface=[^[:cntrl:]]+)$'
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -1823,15 +1824,24 @@ amend_wt_blocker() {
     e=$(amend_wt_index "$w")
     if [ -z "$e" ] || [ "${e#* }" != "$1" ] || [ "$(git -C "$w" hash-object -- "$rel" 2>/dev/null)" != "$1" ]; then printf '%s\n' "$w"; return 0; fi
     git -C "$w" update-index -q --refresh >/dev/null 2>&1
-    git -C "$w" read-tree -m -u -n "$2" "$3" >/dev/null 2>&1 || { printf '%s\n' "$w"; return 0; }
+    { amend_wt_plan_clean "$w" && git -C "$w" read-tree -m -u -n "$2" "$3" >/dev/null 2>&1; } || { printf '%s\n' "$w"; return 0; }
   done
+}
+# <worktree>: succeeds when the plan file there exists and matches its index
+# entry, once the stat data is refreshed. read-tree -m -u takes a missing
+# file for an unchanged one and writes it back, so without this a deletion
+# would be undone without a word.
+amend_wt_plan_clean() {
+  { [ -e "$1/$rel" ] || [ -L "$1/$rel" ]; } && git -C "$1" diff-files --quiet -- ":(top,literal)$rel" 2>/dev/null
 }
 # <old commit> <new commit>: brings every worktree on the plan ref from the
 # old commit's plan to the new one's through git's own two-way update,
 # read-tree -m -u. It touches only the paths the two commits differ in, the
 # plan alone here, keeps the worktree's other changes, and refuses rather
 # than overwrites a copy that is neither clean at the old blob nor already
-# the new one, so an edit made since the check survives. The index's stat
+# the new one. A copy that is missing or differs from its index entry is
+# refused before git is asked, since git would write a deleted file back,
+# so an edit or a deletion made since the check survives. The index's stat
 # data is refreshed first, or a file rewritten with the same content would
 # be taken for an edit. A worktree that cannot be brought over is an error,
 # never skipped: its index would keep the old plan staged against the new
@@ -1842,6 +1852,10 @@ amend_refresh() {
   while [ "$i" -lt "${#AMEND_WT[@]}" ]; do
     w=${AMEND_WT[$i]}; i=$((i + 1))
     git -C "$w" update-index -q --refresh >/dev/null 2>&1
+    if ! amend_wt_plan_clean "$w"; then
+      echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it: its copy of $rel is missing or differs from its index entry; settle that copy, then run the same amend again" >&2
+      return 1
+    fi
     if ! git -C "$w" read-tree -m -u "$1" "$2"; then
       echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it; settle what git names above in that worktree, then run the same amend again" >&2
       return 1

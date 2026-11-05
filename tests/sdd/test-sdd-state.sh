@@ -3736,17 +3736,27 @@ if [ "$rc" -eq 1 ] && [ "${out%% plan=*}" = "status=conflicts" ] && printf '%s\n
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand1" --base "$base_am" --accept 'tasks=1,2 path=src/x.sh' --message "x twice" 2>/dev/null); rc=$?
 new_head=$(git -C "$am_a" rev-parse feat)
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$new_head" != "$head_am" ] && [ "$(git -C "$am_a" rev-parse "$new_head^")" = "$head_am" ] && [ "$(git -C "$am_a" show feat:docs/plan.md | grep -c 'src/x.sh')" = 2 ] && [ "$(git -C "$am_a" diff --name-only "$head_am" "$new_head")" = "docs/plan.md" ] && grep -q '^scan: accepted-overlap tasks=1,2 path=src/x.sh$' "$wsam/progress.md" && grep -q '^plan: amended [0-9a-f]\{7\} by .*: x twice$' "$wsam/progress.md" && { [ ! -d "$wsam/amends" ] || [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; }; then pass "an accepted amendment publishes one plan-only commit and its acceptance line"; else fail "amend accepted (rc=$rc: $out)"; fi
+# The first session's worktree has the plan ref checked out: the amendment is written into its index and file too, so git status there does not read it as reverted.
+nb_am=$(git -C "$am_a" rev-parse feat:docs/plan.md)
+if [ -z "$(git -C "$am_a" status --porcelain)" ] && [ "$(git -C "$am_a" rev-parse :docs/plan.md)" = "$nb_am" ] && [ "$(git -C "$am_a" hash-object docs/plan.md)" = "$nb_am" ]; then pass "the worktree on the plan ref holds the amended plan in its index and file"; else fail "worktree refreshed ($(git -C "$am_a" status --porcelain | tr '\n' '|'))"; fi
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand1" --base "$base_am" 2>/dev/null); rc=$?
 if [ "$rc" -eq 14 ] && [ "${out%% current=*}" = "status=stale base=${base_am:0:7}" ]; then pass "an amendment from an old base is stale"; else fail "stale (rc=$rc: $out)"; fi
 base2=$(git -C "$am_a" rev-parse feat:docs/plan.md)
 sed 's/^\*\*Depends on:\*\* none$/**Depends on:** Task 2/' "$TEST_ROOT/am.cand1" > "$TEST_ROOT/am.cycle"
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cycle" --base "$base2" 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ "${out%% *}" = "status=invalid" ] && [ "$(git -C "$am_a" rev-parse feat)" = "$new_head" ]; then pass "an invalid graph is refused before anything moves"; else fail "invalid (rc=$rc: $out)"; fi
+# A worktree on the plan ref whose copy is not the base would carry a revert of the amendment forward: refused, nothing moves, and the edit stays.
+sed 's/^### Task 1: A$/### Task 1: A0/' "$TEST_ROOT/am.cand1" > "$TEST_ROOT/am.edit"
+printf 'local edit\n' >> "$am_a/docs/plan.md"; edited_am=$(git -C "$am_a" hash-object docs/plan.md)
+out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.edit" --base "$base2" 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$am_a" ] && [ "$(git -C "$am_a" rev-parse feat)" = "$new_head" ] && [ "$(git -C "$am_a" hash-object docs/plan.md)" = "$edited_am" ] && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; then pass "a worktree on the plan ref with an edit to the plan refuses the amendment as checked-out"; else fail "edited worktree (rc=$rc: $out)"; fi
+git -C "$am_a" show feat:docs/plan.md > "$am_a/docs/plan.md"
 # A crash after the swap: the record carries a new acceptance the ledger lacks; deps --check and a fresh amendment in that window honour it; the retry finishes the lines.
 awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/w.sh`" }' "$TEST_ROOT/am.cand1" > "$TEST_ROOT/am.cand3"
 ( cd "$am_a" && HYPERPOWERS_TEST_CRASH_AT=amend-after-swap bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/am.cand3" --base "$base2" --accept 'tasks=1,2 path=src/w.sh' --message "w twice" >/dev/null 2>&1 ); rc=$?
 rec=$(ls "$wsam/amends/" 2>/dev/null | head -n 1)
 if [ "$rc" -eq 99 ] && [ -n "$rec" ] && grep -q '^accept=tasks=1,2 path=src/w.sh$' "$wsam/amends/$rec" && [ "$(git -C "$am_a" show feat:docs/plan.md | grep -c 'src/w.sh')" = 2 ] && ! grep -q 'path=src/w.sh' "$wsam/progress.md"; then pass "the crash seam stops after the swap with the record in place"; else fail "crash after swap (rc=$rc rec=$rec)"; fi
+if [ "$(git -C "$am_a" rev-parse :docs/plan.md)" = "$base2" ] && [ "$(git -C "$am_a" hash-object docs/plan.md)" = "$base2" ]; then pass "a crash after the swap leaves the worktree on the plan ref at the base"; else fail "worktree after the crash ($(git -C "$am_a" status --porcelain | tr '\n' '|'))"; fi
 out=$(run_state "$am_a" deps docs/plan.md --check 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ]; then pass "deps --check honours an acceptance that only the amendment record holds"; else fail "record acceptance honoured (rc=$rc: $out)"; fi
 # The base is the seven-character plan= token deps prints, as the skill text passes it.
@@ -3754,6 +3764,7 @@ base2b=$(run_state "$am_a" deps docs/plan.md 2>/dev/null | sed -n 's/^status=dep
 sed 's/^### Task 2: B$/### Task 2: B2/' "$TEST_ROOT/am.cand3" > "$TEST_ROOT/am.cand3b"
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3b" --base "$base2b" --message "rename" 2>/dev/null); rc=$?
 if [ "${#base2b}" = 7 ] && [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$am_a" show feat:docs/plan.md | grep -c 'Task 2: B2')" = 1 ]; then pass "a fresh amendment inside the crash window, from the seven-character plan= token, honours the surviving record's acceptance"; else fail "fresh amendment in the window (rc=$rc base=$base2b: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+if [ -z "$(git -C "$am_a" status --porcelain)" ] && [ "$(git -C "$am_a" rev-parse :docs/plan.md)" = "$(git -C "$am_a" rev-parse feat:docs/plan.md)" ]; then pass "an amendment in the crash window first brings the worktree to the published plan, then to its own"; else fail "worktree in the window ($(git -C "$am_a" status --porcelain | tr '\n' '|'))"; fi
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3b" --base 0000000 2>/dev/null); rc=$?
 if [ "$rc" -eq 14 ] && [ "${out%% current=*}" = "status=stale base=0000000" ]; then pass "a base no object matches is stale"; else fail "unknown base (rc=$rc: $out)"; fi
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3" --base "$base2" --accept 'tasks=1,2 path=src/w.sh' --message "w twice" 2>/dev/null); rc=$?
@@ -3791,6 +3802,96 @@ mkdir -p "$wsam/amends"; printf 'base=%s\nblob=%s\ncommit=%s\naccept=tasks=1,2 p
 out=$(run_state "$am_a" deps --from "$TEST_ROOT/am.cand6" docs/plan.md --check 2>/dev/null); rc=$?
 if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=src/z.sh'; then pass "an amendment record whose commit is not on the plan ref suppresses nothing"; else fail "unpublished record (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
 rm -f "$wsam/amends/unpublished"
+# The refusals and recoveries around the plain flow, in a repository of their own.
+make_pair ad; ad_a=$PAIR_A
+mkdir -p "$ad_a/docs"; : > "$ad_a/docs/spec.md"
+git -C "$am_a" show "$head_am:docs/plan.md" > "$ad_a/docs/plan.md"
+git -C "$ad_a" add docs; git -C "$ad_a" commit -qm plan; git -C "$ad_a" push -q origin main 2>/dev/null; git -C "$ad_a" switch -q -c feat
+run_state "$ad_a" sync docs/plan.md >/dev/null 2>&1; wsad=$(run_sdd_dir "$ad_a" docs/plan.md 2>/dev/null)
+b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md); h_ad=$(git -C "$ad_a" rev-parse feat)
+sed 's/^### Task 1: A$/### Task 1: A1/' "$ad_a/docs/plan.md" > "$TEST_ROOT/ad.c1"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c1" --base "$b_ad" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace" ] && [ ! -e "$wsad/progress.md" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ]; then pass "an amendment without a ledger is no-workspace and creates none"; else fail "amend no-workspace (rc=$rc: $out)"; fi
+printf '# SDD ledger — plan: docs/plan.md\n' > "$wsad/progress.md"; run_state "$ad_a" register docs/plan.md --session s1 --integration feat >/dev/null
+# An acceptance in any spelling but the ledger's would suppress a conflict now that every later check reports again.
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c1" --base "$b_ad" --accept 'conflict tasks=1,2 shares=src/x.sh' 2>/dev/null); rc=$?
+out2=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c1" --base "$b_ad" --accept "$(printf 'tasks=1,2 path=src/x.sh\nplan: amended')" 2>/dev/null); rc2=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$rc2" -eq 2 ] && [ -z "$out2" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ]; then pass "an --accept not spelled tasks=A,B path=P or interface=I is a usage error"; else fail "accept spelling (rc=$rc/$rc2: $out$out2)"; fi
+# The subject is written as a ledger line; a newline in it would write a second one.
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c1" --base "$b_ad" --message "$(printf 'x\nTask 1: complete')" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && ! grep -q '^Task 1: complete' "$wsad/progress.md" && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ]; then pass "a --message with a newline is a usage error"; else fail "newline message (rc=$rc: $out)"; fi
+# A relative --from is read from the caller's directory, for the hash and the parse alike.
+mkdir -p "$TEST_ROOT/ad-rel"; cp "$TEST_ROOT/ad.c1" "$TEST_ROOT/ad-rel/c1.md"
+out=$(cd "$TEST_ROOT/ad-rel" && bash "$SDD_STATE" amend "$ad_a/docs/plan.md" --from c1.md --base "$b_ad" --code-repo "$ad_a" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c1")" ]; then pass "a relative --from is read from the caller's directory"; else fail "relative --from (rc=$rc: $out)"; fi
+b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+# An acceptance matches a whole conflict line: a path that only begins with the accepted one still conflicts.
+sed 's/^- Modify: `src\/x.sh`$/- Modify: `src\/x.shell`/; s/^- Modify: `src\/y.sh`$/- Modify: `src\/x.shell`/' "$TEST_ROOT/ad.c1" > "$TEST_ROOT/ad.prefix"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.prefix" --base "$b_ad" --accept 'tasks=1,2 path=src/x.sh' 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=src/x.shell' && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$b_ad" ]; then pass "an acceptance suppresses only the whole conflict line it names"; else fail "whole-line accept (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# An abbreviation two objects share cannot be compared: node finds a blob whose id begins like the base's.
+pre_ad=${b_ad:0:4}
+node -e 'const c=require("crypto");const p=process.argv[1];for(let i=0;;i++){const s="x"+i+"\n";if(c.createHash("sha1").update("blob "+Buffer.byteLength(s)+"\0"+s).digest("hex").startsWith(p)){process.stdout.write(s);break;}}' "$pre_ad" > "$TEST_ROOT/ad.collide"
+git -C "$ad_a" hash-object -w "$TEST_ROOT/ad.collide" >/dev/null
+sed 's/^### Task 2: B$/### Task 2: B1/' "$TEST_ROOT/ad.c1" > "$TEST_ROOT/ad.c2"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c2" --base "$pre_ad" 2>"$TEST_ROOT/ad.amb.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'is ambiguous; pass the full blob id' "$TEST_ROOT/ad.amb.err" && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$b_ad" ]; then pass "an ambiguous --base is an error with the full-id command"; else fail "ambiguous base (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.amb.err"))"; fi
+# A lease without session= names no holder: an error naming the file, never a free branch.
+lease_ad="$STATE_ROOT/$(state_key "$ad_a").final-$(printf 'refs/heads/feat' | git -C "$ad_a" hash-object --stdin | cut -c1-12)"
+printf 'host=h\nplan=%s\nbranch=feat\ntime=t\nclosing=0\n' "$(basename "$wsad")" > "$lease_ad"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c2" --base "$b_ad" 2>"$TEST_ROOT/ad.lease.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "$lease_ad" "$TEST_ROOT/ad.lease.err" && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$b_ad" ]; then pass "a lease without session= refuses the amendment as an error naming the file"; else fail "sessionless lease (rc=$rc: $out)"; fi
+rm -f "$lease_ad"
+# A plan ref that does not carry the plan file is an error, not a stale base.
+h_ad=$(git -C "$ad_a" rev-parse feat); git -C "$ad_a" update-ref refs/heads/feat "$(git -C "$ad_a" rev-list --max-parents=0 feat)"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c2" --base "$b_ad" 2>"$TEST_ROOT/ad.carry.err"); rc=$?
+git -C "$ad_a" update-ref refs/heads/feat "$h_ad"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'does not carry docs/plan.md' "$TEST_ROOT/ad.carry.err" && [ -z "$(ls -A "$wsad/amends" 2>/dev/null)" ]; then pass "a plan ref without the plan file is an error"; else fail "plan ref without the plan (rc=$rc: $out)"; fi
+# A crash between the swap and the worktree refresh is finished by the same amend run again.
+( cd "$ad_a" && HYPERPOWERS_TEST_CRASH_AT=amend-after-swap bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/ad.c2" --base "$b_ad" --message c2 >/dev/null 2>&1 ); rc=$?
+n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c2")
+if [ "$rc" -eq 99 ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ "$(git -C "$ad_a" rev-parse :docs/plan.md)" = "$b_ad" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$b_ad" ]; then pass "after the crash the worktree still holds the base"; else fail "crash leaves the base (rc=$rc)"; fi
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c2" --base "$b_ad" --message c2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" rev-parse :docs/plan.md)" = "$n_ad" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "the retry refreshes the worktree and finishes the record"; else fail "retry refreshes (rc=$rc: $out: $(git -C "$ad_a" status --porcelain | tr '\n' '|'))"; fi
+# A refresh that fails after the swap keeps the record, so the same amend run again finishes it.
+b_ad=$n_ad; sed 's/^### Task 2: B1$/### Task 2: B2/' "$TEST_ROOT/ad.c2" > "$TEST_ROOT/ad.c3"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c3")
+: > "$ad_a/.git/index.lock"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c3" --base "$b_ad" --message c3 2>"$TEST_ROOT/ad.refresh.err"); rc=$?
+rm -f "$ad_a/.git/index.lock"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "$ad_a" "$TEST_ROOT/ad.refresh.err" && grep -q 'run the same amend again' "$TEST_ROOT/ad.refresh.err" && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ -f "$wsad/amends/$n_ad" ]; then pass "a failed refresh after the swap is an error that keeps the record"; else fail "failed refresh (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.refresh.err"))"; fi
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c3" --base "$b_ad" --message c3 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && grep -q ': c3$' "$wsad/progress.md" && [ -z "$(ls -A "$wsad/amends")" ]; then pass "the retry after a failed refresh finishes it"; else fail "retry after failed refresh (rc=$rc: $out)"; fi
+# An update-ref that fails with the ref where it was is no lost race, and says so.
+b_ad=$n_ad; sed 's/^### Task 2: B2$/### Task 2: B3/' "$TEST_ROOT/ad.c3" > "$TEST_ROOT/ad.c4"; h_ad=$(git -C "$ad_a" rev-parse feat)
+: > "$ad_a/.git/refs/heads/feat.lock"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c4" --base "$b_ad" 2>"$TEST_ROOT/ad.ref.err"); rc=$?
+rm -f "$ad_a/.git/refs/heads/feat.lock"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "update-ref failed and the plan ref feat is unchanged at ${h_ad:0:7}" "$TEST_ROOT/ad.ref.err" && ! grep -q 'three attempts' "$TEST_ROOT/ad.ref.err" && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a failed update-ref on an unmoved ref is reported as such"; else fail "update-ref failure (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.ref.err"))"; fi
+# The same text amended again from another base is a new amendment, never a retry: it publishes, and the crashed record's acceptance reaches the ledger.
+b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+sed 's/^- Modify: `src\/y.sh`$/- Modify: `src\/x.sh`/' "$TEST_ROOT/ad.c3" > "$TEST_ROOT/ad.B"
+( cd "$ad_a" && HYPERPOWERS_TEST_CRASH_AT=amend-after-swap bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/ad.B" --base "$b_ad" --accept 'tasks=1,2 path=src/x.sh' --message B >/dev/null 2>&1 )
+bB_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+sed 's/^### Task 2: B2$/### Task 2: C/' "$TEST_ROOT/ad.B" > "$TEST_ROOT/ad.C"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.C" --base "$bB_ad" --message C 2>/dev/null); rc=$?
+bC_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.B" --base "$bC_ad" --message B-again 2>/dev/null); rcb=$?
+if [ "$rc" -eq 0 ] && [ "$rcb" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$out" = "${out% already=1}" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$bB_ad" ] && grep -q '^scan: accepted-overlap tasks=1,2 path=src/x.sh$' "$wsad/progress.md" && [ -z "$(ls -A "$wsad/amends")" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && run_state "$ad_a" deps docs/plan.md --check >/dev/null 2>&1; then pass "the same text from another base publishes as a new amendment and keeps the earlier acceptance"; else fail "same blob, other base (rc=$rc/$rcb: $out)"; fi
+# An interface name is keyed as written, spaces included, so its acceptance keeps them.
+awk '/^### Task 1:/ { t = 1 } /^### Task 2:/ { t = 2 } { print } /^\*\*Depends on:\*\*/ { if (t == 1) print "\n**Interfaces:**\n- Produces: `my api`"; if (t == 2) print "\n**Interfaces:**\n- Consumes: `my api`" }' "$TEST_ROOT/ad.B" > "$TEST_ROOT/ad.iface"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.iface" --base "$bB_ad" --accept 'tasks=1,2 interface=my api' --message iface 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && grep -q '^scan: accepted-overlap tasks=1,2 interface=my api$' "$wsad/progress.md" && run_state "$ad_a" deps docs/plan.md --check >/dev/null 2>&1; then pass "an interface acceptance whose name holds a space is accepted as written"; else fail "interface acceptance (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# The plan in one repository and the code in another: the amendment moves the plan repository's ref, refreshes its checkout and leaves the code repository alone.
+make_repo "$TEST_ROOT/asp"; make_repo "$TEST_ROOT/asc"; asp="$TEST_ROOT/asp"; asc="$TEST_ROOT/asc"
+git -C "$asc" commit -q --amend --allow-empty -m "code root"
+mkdir -p "$asp/docs"; cp "$ad_a/docs/spec.md" "$asp/docs/spec.md"; git -C "$am_a" show "$head_am:docs/plan.md" > "$asp/docs/plan.md"
+git -C "$asp" add docs; git -C "$asp" commit -qm plan; git -C "$asp" switch -q -c plans; git -C "$asc" switch -q -c feat
+wsasp=$(run_sdd_dir "$asp" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsasp/progress.md"
+run_state "$asp" register docs/plan.md --session s1 --integration feat --code-repo "$asc" >/dev/null
+b_sp=$(git -C "$asp" rev-parse plans:docs/plan.md); h_sp=$(git -C "$asp" rev-parse plans); refs_sc=$(git -C "$asc" for-each-ref; git -C "$asc" rev-parse HEAD)
+sed 's/^### Task 2: B$/### Task 2: B-split/' "$asp/docs/plan.md" > "$TEST_ROOT/asp.c1"; n_sp=$(git -C "$asp" hash-object "$TEST_ROOT/asp.c1")
+out=$(run_state "$asp" amend docs/plan.md --from "$TEST_ROOT/asp.c1" --base "$b_sp" --code-repo "$asc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$asp" rev-parse plans^)" = "$h_sp" ] && [ "$(git -C "$asp" rev-parse plans:docs/plan.md)" = "$n_sp" ] && [ "$(git -C "$asc" for-each-ref; git -C "$asc" rev-parse HEAD)" = "$refs_sc" ] && [ -z "$(git -C "$asc" status --porcelain)" ] && [ -z "$(git -C "$asp" status --porcelain)" ] && [ "$(git -C "$asp" rev-parse :docs/plan.md)" = "$n_sp" ] && [ "$(git -C "$asp" hash-object docs/plan.md)" = "$n_sp" ]; then pass "a split amendment publishes on the plan repository's ref, refreshes its checkout and leaves the code repository alone"; else fail "split amend (rc=$rc: $out)"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

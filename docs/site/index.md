@@ -19,6 +19,11 @@ Full installation commands are in the {source}`README.md`.
 ```{toctree}
 :caption: Guide
 :hidden:
+
+why
+install
+first-session
+workflow
 ```
 
 ```{toctree}
@@ -88,4 +93,6 @@ skills/writing-skills
 ```{toctree}
 :caption: About
 :hidden:
+
+superpowers
 ```

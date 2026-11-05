@@ -1,12 +1,12 @@
 ---
-sources: skills/requesting-code-review skills/brainstorming/codex-approach-gate.md skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/subagent-driven-development/risk-tiers.md hooks/session-start
-source-digest: bb53968f7e65
+sources: skills/requesting-code-review skills/brainstorming/codex-approach-gate.md skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/subagent-driven-development/risk-tiers.md hooks/session-start scripts/claude-skill-root.md
+source-digest: dd958a8fc902
 ---
 # Codex reviews
 
 Hyperpowers can ask Codex for an independent review at five points: when brainstorming weighs approaches, over the written spec, over the written plan, after each task during subagent-driven development, and over the whole branch at the end. This page covers how those reviews run, how a result counts as an approval, and what happens when Codex is not available. The skill-level summary is in {doc}`../skills/requesting-code-review`.
 
-The reviews use the `codex-plugin-cc` plugin. They run under Claude Code only. In any other harness the gate is skipped silently, with no preflight and no notice. Every skill that uses a gate keeps working without Codex, so the gate is optional everywhere.
+The reviews use the `codex-plugin-cc` plugin. They run under Claude Code only. The gate document says to skip the gate silently in any other harness, with no preflight and no notice. The Claude Desktop and claude.ai bundle is the exception: its router document, {source}`scripts/claude-skill-root.md`, tells the agent to print one notice ("Codex review gate unavailable in this environment; proceeding per skill's no-Codex path") the first time it reaches a gate, and then to follow the skill's fallback. Every skill that uses a gate keeps working without Codex, so the gate is optional everywhere.
 
 The shared gate text is {source}`skills/requesting-code-review/codex-review-gate.md`. It lists the section files and a route for each caller: the approach gate reads one file, and each spec, plan, task, final, and ad-hoc review reads the preflight, setup, output schema, lens, recipe, findings, and fix-loop files.
 
@@ -49,7 +49,7 @@ Findings that cite the same file and offending code and describe the same failur
 
 **Severity mapping.** Codex `critical` maps to Critical and `high` to Important, and both block. `medium` and `low` map to Minor, which is noted and not fixed in the loop.
 
-**Incomplete is not approval.** A result is incomplete when, for example, a launch exits non-zero or its job never appears, the watch cap is reached with the job still running, a foreground call is aborted by its timeout, the payload has no terminal verdict, or the text reads as in progress. The agent recovers within a bound (a final `status`, at most one relaunch if the failure looked transient, and `cancel` for a stalled worker). If it is still incomplete, the agent reports "Codex review did not complete" and does not pass it. The unrecovered event is recorded in the ledger of ungated work.
+**Incomplete is not approval.** A result is incomplete when, for example, a launch exits non-zero or its job never appears, the watch cap is reached with the job still running, a foreground call is aborted by its timeout, the payload has no terminal verdict, or the text reads as in progress. The agent recovers within a bound (a final `status`, at most one relaunch if the failure looked transient, and, optionally, `cancel` for a stalled worker). If it is still incomplete, the agent reports "Codex review did not complete" and does not pass it. The unrecovered event is recorded in the ledger of ungated work.
 
 ## The fix loop and its ceilings
 
@@ -87,7 +87,7 @@ The preflight, {source}`skills/requesting-code-review/scripts/codex-preflight`, 
 
 | Status | Meaning in the gate text | Notice |
 |---|---|---|
-| `ok` | A Codex review can run | none |
+| `ok` | A Codex review can run | none, except a one-time line per skill run when ungated items are pending ("N ungated review item(s) pending sweep in this repo") |
 | `not-installed` | The plugin is absent | A note with the four install commands |
 | `not-ready` | The plugin is installed but Codex is not ready, with a reason | A note naming the reason |
 | `stale-broker` | The companion broker for the repository is dead | A note quoting a recovery command to run in a terminal |

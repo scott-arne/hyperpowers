@@ -33,7 +33,7 @@ The controller pushes the state branch only when you ask for a hand-off to anoth
 
 ## The ledger
 
-The ledger is `progress.md` in the workspace. Its first line records the plan's repo-relative path (`# SDD ledger — plan: <path>`), written with a no-clobber write so two sessions that both saw no ledger cannot overwrite each other. A ledger whose first line resolves to a different plan means the workspace is corrupt, and the controller stops and tells you instead of starting fresh.
+The ledger is `progress.md` in the workspace. Its first line records the plan's repo-relative path (`# SDD ledger — plan: <path>`), written with a no-clobber write so two sessions that both saw no ledger cannot overwrite each other. A ledger whose first line resolves to a different plan means the workspace is corrupt, and the controller stops and tells you.
 
 The ledger is the recovery map. The skill says that after compaction the controller trusts the ledger and `git log` over its own recollection, because the commits the ledger names exist in git even when the context no longer remembers them. These are the lines it holds:
 

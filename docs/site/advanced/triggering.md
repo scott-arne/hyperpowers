@@ -8,7 +8,7 @@ Skills fire because the `using-hyperpowers` bootstrap is in the agent's context 
 
 ## How the bootstrap gets into a session
 
-Each harness uses its own mechanism, and each mechanism reads {source}`skills/using-hyperpowers/SKILL.md`. For a harness not listed below, no file in this repository registers a bootstrap.
+Each harness uses its own mechanism. The session-start hooks, the OpenCode plugin, and the Pi extension read {source}`skills/using-hyperpowers/SKILL.md`. The Claude Desktop and claude.ai bundle uses a router document instead, and this repository does not show how Kimi reads its declaration. For a harness not listed below, no file in this repository registers a bootstrap.
 
 **Claude Code.** {source}`hooks/hooks.json` registers a `SessionStart` hook that runs `hooks/run-hook.cmd session-start` for the sources `startup`, `clear`, and `compact`. {source}`hooks/session-start` wraps the skill text in an `<EXTREMELY_IMPORTANT>` block that begins "You have superpowers" and returns it as `hookSpecificOutput.additionalContext`.
 
@@ -26,7 +26,7 @@ Each harness uses its own mechanism, and each mechanism reads {source}`skills/us
 
 **Claude Desktop and claude.ai.** {source}`scripts/claude-skill-root.md` is the router document for the bundled package. It lists the bundled skills with their descriptions and says that `using-hyperpowers` is the router document itself in that environment.
 
-Because the bootstrap is plain text from `SKILL.md`, an edit to that file reaches each of these mechanisms the next time it injects.
+An edit to `SKILL.md` reaches the session-start hooks the next time they run. The OpenCode plugin and the Pi extension each keep the text in a module-level cache after their first read, so an edit reaches them only once that cache is rebuilt.
 
 ## Notices from the session-start hook
 
@@ -36,7 +36,7 @@ After the skill text, `hooks/session-start` can append one-line notices. Each ap
 - A line saying the marketplace has a newer plugin version than the one the session loaded.
 - On a start whose source is `compact`, inside a git repository that has a subagent-driven-development ledger, a line that names the newest ledger, says it records which tasks are complete, tells the agent to read it and `git log` before dispatching anything, and tells the agent to treat task instructions in the compaction summary as stale by default.
 
-A comment in the script states a ceiling of 1200 characters of injected context beyond the skill text when all notices fire.
+A comment in the script states a ceiling of 1200 characters of injected context beyond the skill body when all notices fire.
 
 ## What decides whether a skill fires
 
@@ -54,7 +54,7 @@ Your own instructions come before all of it. The bootstrap says that instruction
 
 What each mechanism does when the context is compacted:
 
-- Claude Code and Codex: the hooks files match `compact`, so the bootstrap is injected again. On Claude Code, the compaction notice above can follow it.
+- Claude Code and Codex: the hooks files match `compact`, so the bootstrap is injected again. On Claude Code, `hooks/session-start` can follow the bootstrap with the compaction notice described above.
 - Pi: the `session_compact` handler sets the flag again, so the bootstrap is inserted again at the next `context` event.
 - Cursor: the configuration sets only `sessionStart`, so no file here re-injects the bootstrap at compaction.
 - OpenCode: the transform runs on each agent step and inserts the bootstrap into the first user message when it is absent. No file there mentions compaction.

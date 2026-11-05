@@ -3937,6 +3937,14 @@ git -C "$ad_a" show feat:docs/plan.md | sed 's/^### Task 2: \(.*\)$/### Task 2: 
 out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c6" --base "$b_ad" --message c6 2>/dev/null); rc=$?
 if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$ad_a" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && [ -n "$unm_ad" ] && [ -f "$ad_a/.git/MERGE_HEAD" ] && [ "$(git -C "$ad_a" ls-files -u)" = "$unm_ad" ] && [ "$(git -C "$ad_a" rev-parse :docs/plan.md)" = "$b_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a worktree on the plan ref mid conflicted merge on another file is refused before the swap, the merge untouched"; else fail "mid-merge worktree (rc=$rc: $out)"; fi
 git -C "$ad_a" merge --abort
+# A retry whose plan a later commit deleted from the plan ref: a ref without the plan is never already=1. The call finishes the record's ledger lines, then refuses as the fresh path does, with the ref left where it is. Last in this repository, which it leaves without a plan on feat.
+b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+git -C "$ad_a" show feat:docs/plan.md | sed 's/^### Task 1: \(.*\)$/### Task 1: \1 gone/' > "$TEST_ROOT/ad.c8"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c8")
+( cd "$ad_a" && HYPERPOWERS_TEST_CRASH_AT=amend-after-swap bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/ad.c8" --base "$b_ad" --message c8 >/dev/null 2>&1 ); rcc=$?
+del_ad=$(GIT_INDEX_FILE="$TEST_ROOT/ad.del.index" sh -c 'git -C "$1" read-tree feat && git -C "$1" update-index --force-remove docs/plan.md && git -C "$1" write-tree' _ "$ad_a")
+del_ad=$(git -C "$ad_a" commit-tree "$del_ad" -p feat -m "delete the plan"); git -C "$ad_a" update-ref refs/heads/feat "$del_ad"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c8" --base "$b_ad" --message c8 2>"$TEST_ROOT/ad.gone.err"); rc=$?
+if [ "$rcc" -eq 99 ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'does not carry docs/plan.md' "$TEST_ROOT/ad.gone.err" && grep -q "^plan: amended ${n_ad:0:7} by .*: c8\$" "$wsad/progress.md" && [ "$(git -C "$ad_a" rev-parse feat)" = "$del_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a retry whose plan a later commit deleted is no already=1: its ledger lines are finished and it refuses, the ref unmoved"; else fail "retry after the plan was deleted (rc=$rcc/$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.gone.err"))"; fi
 # The plan in one repository and the code in another: the amendment moves the plan repository's ref, refreshes its checkout and leaves the code repository alone.
 make_repo "$TEST_ROOT/asp"; make_repo "$TEST_ROOT/asc"; asp="$TEST_ROOT/asp"; asc="$TEST_ROOT/asc"
 git -C "$asc" commit -q --amend --allow-empty -m "code root"

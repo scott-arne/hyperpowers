@@ -1682,18 +1682,18 @@ $2"; shift 2 ;;
     amend_refresh "$commit^" "$commit" || { hp_unlock; echo "status=error"; return 2; }
   fi
   # A record whose commit is on the plan ref was published by a call that
-  # crashed before its ledger lines; they are completed here. The same base,
-  # with the plan on the ref still the record's blob, makes this call that
-  # call's retry, answered already=1. Anything else goes on as a fresh
-  # amendment with the earlier acceptances safely in the ledger: another
-  # base is a new amendment to the same text, and a plan changed since, by
-  # a later amendment or by a commit that undid this one, is stale or is
-  # published again on the usual rules. An already=1 over a plan that is no
-  # longer the candidate would report an amendment that is not in force.
+  # crashed before its ledger lines; they are completed here. The same base
+  # makes this call that call's retry, answered already=1, unless the plan
+  # on the ref is back at exactly that base: the amendment was undone, and
+  # the call goes on as a fresh one, which publishes it again. A later
+  # amendment's plan still answers already=1, and so, an accepted gap, does
+  # an undo that also edits the plan. Another base is a new amendment to the
+  # same text, which goes on as a fresh one with the earlier acceptances
+  # safely in the ledger.
   if [ -f "$record" ] && commit=$(sed -n 's/^commit=//p' "$record" | head -n 1) && [ -n "$commit" ] && git -C "$REPO" merge-base --is-ancestor "$commit" "refs/heads/$ref" 2>/dev/null; then
     rbase=$(sed -n 's/^base=//p' "$record" | head -n 1)
     amend_bookkeeping || { hp_unlock; echo "sdd-state: the plan ref carries ${commit:0:7}, but its ledger lines could not be written; run the same amend again to finish them" >&2; echo "status=error"; return 2; }
-    if [ -z "$base_unknown" ] && [ "$rbase" = "$base" ] && [ "$cur" = "$blob" ]; then hp_unlock; echo "status=amended head=${commit:0:7} plan=${blob:0:7} already=1"; return 0; fi
+    if [ -z "$base_unknown" ] && [ "$rbase" = "$base" ] && [ "$cur" != "$rbase" ]; then hp_unlock; echo "status=amended head=${commit:0:7} plan=${blob:0:7} already=1"; return 0; fi
   fi
   out=$(hp_plan_overlaps "$from" "$WSDIR/progress.md" "$WSDIR/amends" "$REPO" "$ref"); rc=$?
   [ "$rc" -ne 2 ] || { hp_unlock; echo "status=error"; return 2; }

@@ -3768,8 +3768,7 @@ if [ -z "$(git -C "$am_a" status --porcelain)" ] && [ "$(git -C "$am_a" rev-pars
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3b" --base 0000000 2>/dev/null); rc=$?
 if [ "$rc" -eq 14 ] && [ "${out%% current=*}" = "status=stale base=0000000" ]; then pass "a base no object matches is stale"; else fail "unknown base (rc=$rc: $out)"; fi
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3" --base "$base2" --accept 'tasks=1,2 path=src/w.sh' --message "w twice" 2>/dev/null); rc=$?
-# The plan has moved on to the rename since, so the retry is no already=1: it completes the ledger lines, removes the record, and is stale.
-if [ "$rc" -eq 14 ] && [ "${out%% current=*}" = "status=stale base=${base2:0:7}" ] && grep -q '^scan: accepted-overlap tasks=1,2 path=src/w.sh$' "$wsam/progress.md" && grep -q ': w twice$' "$wsam/progress.md" && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; then pass "the retry completes the ledger lines and removes the record, and is stale once the plan has moved on"; else fail "retry completes (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && grep -q '^scan: accepted-overlap tasks=1,2 path=src/w.sh$' "$wsam/progress.md" && grep -q ': w twice$' "$wsam/progress.md" && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; then pass "the retry completes the ledger lines and removes the record"; else fail "retry completes (rc=$rc: $out)"; fi
 # Refused under a held lease.
 printf 'Task 1: complete (commits 1111111..2222222, review clean)\nTask 2: complete (commits 3333333..4444444, review clean)\n' >> "$wsam/progress.md"
 run_state "$am_a" claim docs/plan.md final --session s1 >/dev/null
@@ -3919,7 +3918,7 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -e "$mark_ad" ] && grep -
 git -C "$ad_a" show :docs/plan.md > "$ad_a/docs/plan.md"
 out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c5" --base "$b_ad" --message c5 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "after the edit is settled the retry refreshes the worktree and finishes"; else fail "retry after the interval edit (rc=$rc: $out: $(git -C "$ad_a" status --porcelain | tr '\n' '|'))"; fi
-# A retry whose published commit a later commit has undone: a commit from the worktree a crash left at the base puts the base back on the plan ref. The plan is not the candidate, so the retry is no already=1; it finishes the record's ledger lines and goes on as a fresh amendment, which publishes, the base being current again.
+# A retry whose published commit a later commit has undone: a commit from the worktree a crash left at the base puts the base back on the plan ref. The plan is back at exactly the base, so the retry is no already=1; it finishes the record's ledger lines and goes on as a fresh amendment, which publishes again.
 b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
 git -C "$ad_a" show feat:docs/plan.md | sed 's/^### Task 1: \(.*\)$/### Task 1: \1 again/' > "$TEST_ROOT/ad.c7"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c7")
 ( cd "$ad_a" && HYPERPOWERS_TEST_CRASH_AT=amend-after-swap bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/ad.c7" --base "$b_ad" --message c7 >/dev/null 2>&1 ); rcc=$?

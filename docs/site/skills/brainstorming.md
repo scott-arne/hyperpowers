@@ -1,6 +1,6 @@
 ---
-sources: skills/brainstorming skills/requesting-code-review/codex-review-gate.md skills/using-hyperpowers/SKILL.md
-source-digest: ad72f3d9e9f2
+sources: skills/brainstorming skills/requesting-code-review/codex-review-gate.md skills/using-hyperpowers/SKILL.md docs/hyperpowers/specs/2026-07-10-codex-design-collaboration-design.md
+source-digest: 8fb99095c88f
 ---
 # brainstorming
 

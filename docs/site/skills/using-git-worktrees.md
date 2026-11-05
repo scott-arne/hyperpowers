@@ -56,7 +56,7 @@ Working directly in your current checkout mixes the agent's changes with whateve
 
 ## Skipping or overriding
 
-Tell the agent where to work in an instruction file or in your request ("work on the current branch", "create a new branch `feature-x`"), and it honors that without asking. Choosing the current branch is a legitimate override when you want no isolation; the skill treats it as consent. Skipping the baseline test run is your call: when tests fail, the skill asks whether to proceed.
+Tell the agent where to work in an instruction file or in your request ("work on the current branch", "create a new branch `feature-x`"), and it honors that without asking. Choosing the current branch is a legitimate override when you want no isolation; the skill treats it as consent. The baseline run itself always happens. What stays with you is the decision after a failure: the skill reports the failing tests and asks whether to proceed or investigate.
 
 ## Works with
 

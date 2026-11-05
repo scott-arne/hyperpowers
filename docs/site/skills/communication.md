@@ -1,6 +1,6 @@
 ---
-sources: skills/communication skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/using-hyperpowers/SKILL.md skills/finishing-a-development-branch/SKILL.md skills/dispatching-parallel-agents/SKILL.md
-source-digest: 257697f1214b
+sources: skills/communication skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/using-hyperpowers/SKILL.md skills/finishing-a-development-branch/SKILL.md skills/dispatching-parallel-agents/SKILL.md skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/receiving-code-review/SKILL.md skills/requesting-code-review/SKILL.md skills/systematic-debugging/SKILL.md skills/profiling-performance/SKILL.md skills/optimizing-performance/SKILL.md
+source-digest: 4f3ef52196d2
 ---
 # communication
 
@@ -61,7 +61,7 @@ A model's default sentence fits the widest range of readers. It stages a point i
 - Replacing a metaphor with the fact it stood for makes some sentences longer. If the agent lacks the fact, it has to ask or write a simpler sentence, and the skill warns against inventing a detail so that a rewrite flows.
 - The rules are fixed by lists. A phrase outside the lists passes even if it reads badly, and a flagged word in a passage that needs it can still be changed by an agent that applies the lists too literally.
 - The rule against dashes, bold labels, and closing questions can clash with a house style you already use. The skill yields to explicit instructions about your voice, but you have to give them.
-- It does not make an answer correct. It changes how a finding is written. It does not check that the finding is true.
+- It governs how a finding is written. The accuracy of the finding depends on the investigation behind it.
 
 ## Skipping or overriding
 
@@ -74,6 +74,13 @@ Tell the agent to write in your own style, give it a writing sample, or put a st
 - `using-hyperpowers` routes writing for you (a summary, a finding, a design, a plan, a recommendation, or a reply longer than a few sentences) to this skill before the agent writes it.
 - {doc}`finishing-a-development-branch` requires it for the test-failure report and the PR description.
 - {doc}`dispatching-parallel-agents` requires it for the report to you after integration.
+- {doc}`executing-plans` requires it for the concerns the agent raises before starting and for the completion report.
+- {doc}`subagent-driven-development` requires it for anything written to you: the pre-flight question, an escalation, a BLOCKED hand-back.
+- `receiving-code-review` requires it for the reply itself, whether it goes to you or into a review thread.
+- `requesting-code-review` requires it when the agent reports findings or a gate hand-back to you.
+- `systematic-debugging` requires it when the agent reports a root cause, states a hypothesis, or brings you a question.
+- `profiling-performance` requires it for the deliverable you read.
+- `optimizing-performance` requires it for its report.
 
 ## Under the hood
 

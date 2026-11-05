@@ -1,6 +1,6 @@
 ---
-sources: skills/subagent-driven-development skills/writing-plans/SKILL.md
-source-digest: 6d24e25368c2
+sources: skills/subagent-driven-development skills/writing-plans/SKILL.md docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md
+source-digest: 6b63b30bdc2b
 ---
 # subagent-driven-development
 

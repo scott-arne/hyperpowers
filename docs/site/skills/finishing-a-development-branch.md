@@ -1,10 +1,10 @@
 ---
-sources: skills/finishing-a-development-branch skills/requesting-code-review/scripts/codex-review-dir skills/subagent-driven-development/SKILL.md skills/executing-plans/SKILL.md skills/using-git-worktrees/SKILL.md
-source-digest: 77674af17bb2
+sources: skills/finishing-a-development-branch skills/requesting-code-review/scripts/codex-review-dir skills/subagent-driven-development/SKILL.md skills/executing-plans/SKILL.md skills/using-git-worktrees/SKILL.md docs/hyperpowers/specs/2026-10-21-decision-records-design.md
+source-digest: efc6eed870f3
 ---
 # finishing-a-development-branch
 
-`finishing-a-development-branch` closes out finished work: it records the branch's design decisions, runs the tests, shows you a short menu (merge, pull request, or keep), carries out your choice, and cleans up the worktree.
+`finishing-a-development-branch` closes out finished work: it records the branch's design decisions, runs the tests, shows you a short menu (merge, pull request, or keep), carries out your choice, and removes the worktree after a local merge or a confirmed discard (a pull request or keep leaves it in place).
 
 :::{card} At a glance
 **Category:** Process · **Triggers on:** implementation is complete, all tests pass, and you need to decide how to integrate the work · **Hands off to:** none; it ends the workflow · **Harness notes:** the decision extractor needs a tracked background subagent; without one the skill compiles records without notes and says so
@@ -26,7 +26,7 @@ The agent announces the skill. The core sequence is: record decisions and verify
 
 **1. Record decisions and verify tests.** If the branch implements a spec, the skill leaves one record per decision in the `decisions/` directory beside the spec's directory. The compiler, `scripts/decisions-compile`, builds them from the spec's `## Decisions` list and removes the plan in the same commit. The agent first finds the plan and the spec, and confirms the branch's fork point with you if it is not already known. It dry-runs the compiler. Where a spec predates the decisions list, the agent drafts the list from the spec's text, shows it to you, and writes it in only after you approve. It then starts a background subagent, the extractor, that reads what shipped and notes where each decision's implementation differed from the spec. While that runs, it runs the full test suite in the foreground. If tests fail, it stops the extractor, reports the failures, compiles nothing, and shows no menu. If they pass, it collects the extractor's notes without waiting for them (an unfinished extractor is stopped and the compile runs without notes), compiles the records, and stages them. Work with no spec has no records, and this step is only the test run.
 
-**2. Detect the environment.** The agent compares the git directory with the common git directory and works out the repository's default branch. The mode the calling skill passes (`current-branch`, `new-branch`, or `worktree`) and the environment pick the menu and the cleanup. A detached HEAD in a linked worktree gets a reduced menu with no local merge. The current branch when it is the default branch gets push or keep.
+**2. Detect the environment.** The agent compares the git directory with the common git directory and works out the repository's default branch. The mode the calling skill passes (`current-branch`, `new-branch`, or `worktree`) and the environment pick the menu and the cleanup. A detached HEAD in a linked worktree gets a reduced menu with no local merge. A caller-passed mode `current-branch` on the default branch gets push or keep.
 
 **3. Determine the base branch.** It confirms the branch this work forked from before any merge, because merging into the wrong base is expensive to undo.
 

@@ -33,7 +33,7 @@ The language packs hold profilers and idioms for C++, Python, and JavaScript or 
 
 ## Why it exists
 
-The skill names two failures. Effort spent away from the real bottleneck is wasted, and a faster version that computes different answers can invalidate everything downstream. Its red-flags list and rationalizations table cover the thoughts that skip measurement, such as "this looks slow, let me optimize it", "no time to profile", and claiming a speedup without re-benchmarking. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`; none of them concerns this skill.
+The skill names two failures. Effort spent away from the real bottleneck is wasted, and a faster version that computes different answers can invalidate everything downstream. Its red-flags list and rationalizations table cover the thoughts that skip measurement, such as "this looks slow, let me optimize it", "no time to profile", and claiming a speedup without re-benchmarking. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`.
 
 ## Pros
 
@@ -53,7 +53,7 @@ The skill names two failures. Effort spent away from the real bottleneck is wast
 
 ## Skipping or overriding
 
-The skill gives no skip option. Its red-flags list says every shortcut thought means stop and measure first. You still shape the work through the comparison rule it asks you to agree on, and by telling the agent whether you want diagnosis only or the fix as well. For the fix, the agent moves to {doc}`optimizing-performance`.
+The skill gives no skip option. Its red-flags list says every shortcut thought means stop and measure first. You still shape the work through the comparison rule it asks you to agree on. The skill diagnoses only, and landing changes is the job of {doc}`optimizing-performance`.
 
 ## Works with
 

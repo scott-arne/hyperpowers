@@ -4,10 +4,10 @@ source-digest: 113146df236e
 ---
 # optimizing-performance
 
-`optimizing-performance` lands speedups one measured candidate at a time, keeps only the changes that clear its correctness, noise, and materiality checks, and reverts the rest.
+`optimizing-performance` lands speedups one measured candidate at a time, keeps only the changes that pass its correctness, noise, and representative-workload checks (plus an improvement bar for changes that add complexity), and reverts the rest.
 
 :::{card} At a glance
-**Category:** Performance · **Triggers on:** you intend to make code faster and land the change (a confirmed hot path, a regression, or a concrete speed, memory, or throughput target) · **Hands off to:** {doc}`writing-plans`, {doc}`subagent-driven-development`, {doc}`requesting-code-review`, and {doc}`communication` · **Harness notes:** the Codex code-review gate it relies on runs under Claude Code only and is skipped when Codex is absent
+**Category:** Performance · **Triggers on:** you intend to make code faster and land the change (a confirmed hot path, a regression, or a concrete speed, memory, or throughput target) · **Hands off to:** {doc}`profiling-performance` (invoked first for the baseline and candidates), {doc}`writing-plans`, {doc}`subagent-driven-development`, {doc}`requesting-code-review`, and {doc}`communication` · **Harness notes:** the Codex code-review gate it relies on runs under Claude Code only and is skipped when Codex is absent
 :::
 
 ## When it triggers
@@ -47,7 +47,7 @@ The final report has six parts, in order: the headline result on the named workl
 
 ## Why it exists
 
-The skill's core principle is that a speedup exists only when it has been measured, and it calls an unrun number a guess wearing a result's clothes. It adds that violating the letter of the rules violates their spirit, which closes the "I followed the intent" route. The rationalizations table and red-flags list cover estimating a speedup from the diff, a single benchmark run, caching repeated benchmark inputs, and applying a change when no baseline could be measured. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`; none of them concerns this skill.
+The skill's core principle is that a speedup exists only when it has been measured, and it calls an unrun number a guess wearing a result's clothes. It adds that violating the letter of the rules violates their spirit, which closes the "I followed the intent" route. The rationalizations table and red-flags list cover estimating a speedup from the diff, a single benchmark run, caching repeated benchmark inputs, and applying a change when no baseline could be measured. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`.
 
 ## Pros
 

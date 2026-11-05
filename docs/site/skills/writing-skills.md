@@ -43,7 +43,7 @@ After writing any skill, the agent stops and completes the deployment checklist 
 
 ## Why it exists
 
-The core principle is that if you did not watch an agent fail without the skill, you do not know whether the skill teaches the right thing. The skill treats skills as behavior-shaping documents that need tests like code does. Its rationalizations table covers excuses such as "skill is obviously clear", "it's just a reference", and "no time to test". The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`. One record, {source}`docs/hyperpowers/decisions/2026-11-03-defer-writing-skills-until-a-compaction-pressure-scenario.md`, defers a change to this skill until a compaction pressure scenario exists for it.
+The core principle is that if you did not watch an agent fail without the skill, you do not know whether the skill teaches the right thing. The skill treats skills as behavior-shaping documents that need tests like code does. Its rationalizations table covers excuses such as "skill is obviously clear", "it's just a reference", and "no time to test". The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`.
 
 ## Pros
 

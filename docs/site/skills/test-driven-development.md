@@ -43,7 +43,7 @@ For a bug, the skill says to write a failing test that reproduces it and follow 
 
 ## Why it exists
 
-The skill's core principle is that a test you never watched fail does not prove it tests the right thing. A test written after the code passes immediately, so it cannot show that it would catch the bug, and it tends to verify the cases the agent already remembered. The skill's rationalizations table answers the usual excuses for skipping the cycle ("I'll test after", "already manually tested", "deleting hours of work is wasteful"), and its red-flags list tells the agent to stop and start over when it catches itself thinking them. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`; none of them concerns this skill.
+The skill's core principle is that a test you never watched fail does not prove it tests the right thing. A test written after the code passes immediately, so it cannot show that it would catch the bug, and it tends to verify the cases the agent already remembered. The skill's rationalizations table answers the usual excuses for skipping the cycle ("I'll test after", "already manually tested", "deleting hours of work is wasteful"), and its red-flags list tells the agent to stop and start over when it catches itself thinking them. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`.
 
 ## Pros
 

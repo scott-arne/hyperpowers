@@ -1,18 +1,18 @@
 ---
-sources: skills/using-hyperpowers hooks/session-start skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/writing-skills/SKILL.md skills/requesting-code-review/scripts/ungated-ledger skills/subagent-driven-development/scripts/sdd-common.sh .claude-plugin/plugin.json
-source-digest: e41009703293
+sources: skills/using-hyperpowers hooks/session-start hooks/session-start-codex hooks/hooks.json hooks/hooks-codex.json skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/writing-skills/SKILL.md skills/requesting-code-review/scripts/ungated-ledger skills/subagent-driven-development/scripts/sdd-common.sh .claude-plugin/plugin.json
+source-digest: 0637fd1d6413
 ---
 # using-hyperpowers
 
-`using-hyperpowers` is the bootstrap skill: the session-start hook injects its text into every session, and it tells the agent to invoke any skill that might apply before it responds or acts.
+`using-hyperpowers` is the bootstrap skill: a session-start hook injects its text when a session starts, after `/clear`, and after compaction, and it tells the agent to invoke any skill that might apply before it responds or acts.
 
 :::{card} At a glance
-**Category:** Meta · **Triggers on:** the start of every conversation, through the session-start hook · **Hands off to:** {doc}`brainstorming` (build requests), {doc}`systematic-debugging` (bug reports), and {doc}`communication` (prose you will read) · **Harness notes:** Codex, Pi, and Antigravity have reference files with harness-specific instructions
+**Category:** Meta · **Triggers on:** session start, `/clear`, and compaction, through a session-start hook · **Hands off to:** {doc}`brainstorming` (build requests), {doc}`systematic-debugging` (bug reports), and {doc}`communication` (prose you will read) · **Harness notes:** Codex runs its own hook, which injects the skill without the notices; Codex, Pi, and Antigravity have reference files with harness-specific instructions
 :::
 
 ## When it triggers
 
-The skill's description says to use it when starting any conversation. It establishes how to find and use skills, and requires skill invocation before any response, including clarifying questions. You do not invoke it. The hook injects it at the start of the session.
+The skill's description says to use it when starting any conversation. It establishes how to find and use skills, and requires skill invocation before any response, including clarifying questions. You do not invoke it. A session-start hook injects it when a session starts, after `/clear`, and after compaction.
 
 A subagent that was dispatched to execute a specific task ignores it. The skill opens with a short block saying so.
 
@@ -24,7 +24,7 @@ Example situations:
 
 ## What it does
 
-**The injection.** The hook `hooks/session-start` reads this skill's `SKILL.md`, wraps it in a short "You have superpowers" message, and returns it to the harness as session context. The JSON field it uses depends on the harness: one for Cursor, one nested for Claude Code, and a top-level one for Copilot CLI and others. After the skill text, the hook can add one-line notices, each only when it applies. One says that ungated review items are pending in the repository, one says that a newer marketplace version of the plugin is available than the one the session loaded, and one appears when a session resumes after compaction and points the agent to the subagent-driven-development ledger so it does not replay finished tasks.
+**The injection.** The hook `hooks/session-start` serves Claude Code, Cursor, and Copilot CLI. It runs at session start, after `/clear`, and after compaction (the Claude Code configuration matches `startup|clear|compact`). It reads this skill's `SKILL.md`, wraps it in a short "You have superpowers" message, and returns it to the harness as session context. The JSON field it uses depends on the harness: one for Cursor, one nested for Claude Code, and a top-level one for Copilot CLI and others. After the skill text, this hook can add one-line notices, each only when it applies. One says that ungated review items are pending in the repository, and one says that a newer marketplace version of the plugin is available than the one the session loaded. The third appears when a session resumes after compaction and the repository has a subagent-driven-development ledger, and it points the agent to that ledger so it does not replay finished tasks. Codex runs `hooks/session-start-codex` on the same three events. It injects the same skill text with a different wrapper sentence and adds no notices.
 
 **The rule.** The agent invokes relevant or requested skills before any response or action, including clarifying questions, codebase exploration, and file checks. The skill states the bar as a 1% chance that a skill applies, and says that if the skill turns out wrong for the situation, the agent does not have to use it. Before entering plan mode, if the agent has not brainstormed yet, it invokes {doc}`brainstorming` first. Then the agent announces "Using [skill] to [purpose]", follows the skill exactly, and creates a todo for each checklist item.
 
@@ -38,7 +38,7 @@ Example situations:
 
 ## Why it exists
 
-The skill exists to make skill use automatic. Its table answers each excuse the agent might use to skip a skill, and the answer to "this feels productive" is that undisciplined action wastes time. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`; none of them concerns this skill.
+The skill exists to make skill use automatic. Its table answers each excuse the agent might use to skip a skill, and the answer to "this feels productive" is that undisciplined action wastes time. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`.
 
 ## Pros
 
@@ -50,7 +50,7 @@ The skill exists to make skill use automatic. Its table answers each excuse the 
 
 ## Cons and costs
 
-- The full skill text is injected into every session, whether or not a skill ends up applying.
+- The full skill text is injected each time the hook runs, whether or not a skill ends up applying.
 - The 1% bar means the agent invokes skills in cases where one turns out not to fit. The skill accepts this and tells the agent it need not follow a skill that does not apply.
 - Even a quick question can pick up a skill check before the agent answers.
 - The injected text uses forceful wording ("YOU MUST", "not negotiable") that sets a strict tone from the first message.
@@ -58,18 +58,19 @@ The skill exists to make skill use automatic. Its table answers each excuse the 
 ## Skipping or overriding
 
 You can tell the agent to skip a skill. The skill says user instructions take precedence over skills, and that the agent skips skill workflows only when you have explicitly told it to. Instructions in CLAUDE.md, AGENTS.md, or GEMINI.md also take precedence over skills.
+
 ## Works with
 
 - {doc}`brainstorming` is the first stop for "let's build X" and before entering plan mode.
 - {doc}`systematic-debugging` is the first stop for "fix this bug".
 - {doc}`communication` is invoked before writing a summary, finding, design, plan, recommendation, or any reply longer than a few sentences.
-- {doc}`executing-plans`, {doc}`subagent-driven-development`, and {doc}`writing-skills` each point to the per-harness reference files that live in this skill's directory.
+- {doc}`executing-plans` points to this skill's references directory for per-platform tool notes. {doc}`subagent-driven-development` and {doc}`writing-skills` each point to its `codex-tools.md` file.
 
 This skill is the entry point for the rest: it names three skills, and its rule applies to all of them.
 
 ## Under the hood
 
-{source}`hooks/session-start` is the hook that injects the skill and adds the notices. The skill is {source}`skills/using-hyperpowers/SKILL.md`. Its three harness reference files are:
+{source}`hooks/session-start` is the hook that injects the skill and adds the notices. {source}`hooks/session-start-codex` is the Codex hook, and {source}`hooks/hooks.json` and {source}`hooks/hooks-codex.json` set the events each one runs on. The skill is {source}`skills/using-hyperpowers/SKILL.md`. Its three harness reference files are:
 
 - {source}`skills/using-hyperpowers/references/codex-tools.md`
 - {source}`skills/using-hyperpowers/references/pi-tools.md`

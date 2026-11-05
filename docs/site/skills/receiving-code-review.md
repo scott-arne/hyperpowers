@@ -49,7 +49,7 @@ For GitHub review comments, the skill says to reply in the comment's thread and 
 
 ## Why it exists
 
-The skill's core principle is that code review needs technical evaluation, with no emotional performance: verify before implementing, ask before assuming, and put technical correctness ahead of social comfort. Its common-mistakes table lists the failures it targets: performative agreement, blind implementation, batching fixes without testing, assuming the reviewer is right, avoiding pushback, partial implementation, and proceeding on something the agent cannot verify. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`; none of them concerns this skill.
+The skill's core principle is that code review needs technical evaluation, with no emotional performance: verify before implementing, ask before assuming, and put technical correctness ahead of social comfort. Its common-mistakes table lists the failures it targets: performative agreement, blind implementation, batching fixes without testing, assuming the reviewer is right, avoiding pushback, partial implementation, and proceeding on something the agent cannot verify. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`.
 
 ## Pros
 

@@ -1,5 +1,7 @@
 # Cost reduction: hyperpowers 6.16.2
 
+**Outcome:** implemented 2026-11-04; 11 decisions under docs/hyperpowers/decisions/.
+
 **Date:** 2026-11-03
 **Status:** design approved in chat on 2026-11-03 (base, scope, and the
 design with the opus-alias advice removed); spec self-reviewed; Codex spec
@@ -302,6 +304,8 @@ With the human partner's standing approval from 2026-11-03:
   autoCompactWindow, recording the SDD outcome of 9 of 10 (one compaction and
   re-read loop at the eval's forced 100K window) as a tiny-window artifact
   (human partner, 2026-11-04).
+- `gate-wait` caps the budget at 570 seconds so one call fits the 600000 ms
+  shell timeout, and it must run outside the shell sandbox.
 
 ## Assumptions
 

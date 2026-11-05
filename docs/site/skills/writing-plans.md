@@ -1,6 +1,6 @@
 ---
-sources: skills/writing-plans
-source-digest: 0bde8c4362be
+sources: skills/writing-plans skills/brainstorming/SKILL.md skills/subagent-driven-development/SKILL.md
+source-digest: 49aa8340ca8f
 ---
 # writing-plans
 

@@ -1,6 +1,6 @@
 ---
-sources: skills/brainstorming skills/requesting-code-review/codex-review-gate.md
-source-digest: 93105c67298b
+sources: skills/brainstorming skills/requesting-code-review/codex-review-gate.md skills/using-hyperpowers/SKILL.md
+source-digest: ad72f3d9e9f2
 ---
 # brainstorming
 

@@ -1,6 +1,6 @@
 ---
-sources: skills/executing-plans
-source-digest: 71455eda9620
+sources: skills/executing-plans skills/writing-plans/SKILL.md skills/subagent-driven-development/SKILL.md
+source-digest: 14df16bdb414
 ---
 # executing-plans
 

@@ -1,6 +1,6 @@
 ---
-sources: skills/subagent-driven-development
-source-digest: dbebf50b8ad4
+sources: skills/subagent-driven-development skills/writing-plans/SKILL.md
+source-digest: 6d24e25368c2
 ---
 # subagent-driven-development
 
@@ -61,7 +61,7 @@ Controllers that lost their place after a compaction have re-dispatched whole co
 ## Cons and costs
 
 - A run is many subagent dispatches: an implementer, a task reviewer, and often fix rounds and a Codex gate per task. It costs more tokens and wall-clock time than doing the work in one session.
-- The skill is long, and the controller re-reads it in full after every compaction. The README puts that at about 10K tokens each time.
+- The skill is long, and the controller re-reads it in full after every compaction.
 - Tasks run one at a time. The skill forbids dispatching several implementers in parallel, to avoid conflicts.
 - The plan must be good. A vague task produces an implementer that guesses, and the review loop then spends rounds on it.
 - Setup has moving parts: the workspace, the state branch, and sync outcomes that can stop the run until you answer a question.

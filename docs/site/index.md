@@ -92,6 +92,9 @@ skills/writing-skills
 advanced/triggering
 advanced/codex-gates
 advanced/sdd-internals
+advanced/decision-records
+advanced/testing-skills
+advanced/customizing
 ```
 
 ```{toctree}

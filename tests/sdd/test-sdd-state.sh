@@ -4183,5 +4183,105 @@ hr=$(git -C "$mb_a" rev-parse feat)
 if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=8 head=${hr:0:7}" ] && [ "$(git -C "$mb_a" --no-replace-objects rev-parse "$hr^2")" = "$r1" ] && [ "$(git -C "$mb_a" --no-replace-objects show "$hr:src/r.txt")" = r ] && ! git -C "$mb_a" --no-replace-objects cat-file -e "$hr:unreviewed.txt" 2>/dev/null; then pass "a replace ref on the approved commit does not change the published tree"; else fail "replaced approved commit (rc=$rc: $out: $(git -C "$mb_a" --no-replace-objects ls-tree --name-only "$hr" | tr '\n' ' '))"; fi
 git -C "$mb_a" replace -d "$r1" >/dev/null
 
+echo "board: waiting records, activity and the board"
+make_pair bd; bd_a=$PAIR_A; bd_b=$PAIR_B
+mkdir -p "$bd_a/docs"; : > "$bd_a/docs/spec.md"
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 2: B\n\n**Risk tier:** standard\n\n**Depends on:** Task 1\n' > "$bd_a/docs/plan.md"
+git -C "$bd_a" add docs; git -C "$bd_a" commit -qm plan; git -C "$bd_a" push -q origin main 2>/dev/null; git -C "$bd_a" switch -q -c feat; git -C "$bd_a" push -q -u origin feat 2>/dev/null
+run_state "$bd_a" sync docs/plan.md >/dev/null 2>&1; wsbd=$(run_sdd_dir "$bd_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsbd/progress.md"; run_state "$bd_a" register docs/plan.md --session s1 --integration feat >/dev/null
+make_repo "$TEST_ROOT/foreign-bd"
+out=$(run_state "$bd_a" board docs/plan.md --code-repo "$TEST_ROOT/foreign-bd" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "board refuses a foreign --code-repo"; else fail "board wrong-repo (rc=$rc: $out)"; fi
+out=$(cd "$TEST_ROOT" && bash "$SDD_STATE" board "$bd_a/docs/plan.md" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q ' frontier=1$' && ! printf '%s\n' "$out" | grep -q '^leftover '; then pass "a board run outside any repository still computes the frontier and prints no leftovers"; else fail "board outside a repository (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --kind question --task 1 --note "which parser?" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=waiting kind=question" ] && [ "$(sed -n 's/^note=//p' "$wsbd/waiting/s1")" = "which parser?" ] && [ -f "$wsbd/activity/s1" ]; then pass "wait writes the record and the activity stamp"; else fail "wait writes (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --kind tasks --note "held: 1@s2" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(sed -n 's/^kind=//p' "$wsbd/waiting/s1")" = tasks ]; then pass "a second wait replaces the record"; else fail "wait replaces (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --kind question --note "$(printf 'two\nlines')" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(sed -n 's/^kind=//p' "$wsbd/waiting/s1")" = tasks ]; then pass "a note with a newline is refused and the record kept"; else fail "newline refused (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --clear 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=cleared" ] && [ ! -f "$wsbd/waiting/s1" ]; then pass "clear removes the record"; else fail "clear (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --clear 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=cleared" ]; then pass "clearing nothing is cleared"; else fail "clear nothing (rc=$rc: $out)"; fi
+# Records travel with snapshot and appear after sync on the other host.
+run_state "$bd_a" wait docs/plan.md --session s1 --kind gate --note "BLOCKED on round 3" >/dev/null
+run_state "$bd_a" claim docs/plan.md 1 --session s1 >/dev/null
+printf '2026-01-01T00:00:00Z\n' > "$wsbd/activity/s1"
+run_state "$bd_a" snapshot docs/plan.md --session s1 >/dev/null; git -C "$bd_a" push -q origin hyperpowers/state 2>/dev/null
+if [ "$(cat "$wsbd/activity/s1")" != "2026-01-01T00:00:00Z" ]; then pass "snapshot --session stamps activity"; else fail "snapshot --session stamps activity"; fi
+git -C "$bd_b" fetch -q origin 2>/dev/null; git -C "$bd_b" switch -q -c feat origin/feat 2>/dev/null
+run_state "$bd_b" sync docs/plan.md >/dev/null 2>&1; wsbdb=$(run_sdd_dir "$bd_b" docs/plan.md 2>/dev/null)
+if [ "$(sed -n 's/^kind=//p' "$wsbdb/waiting/s1" 2>/dev/null)" = gate ] && [ -f "$wsbdb/activity/s1" ]; then pass "waiting and activity records travel with the snapshot"; else fail "records travel ($(ls "$wsbdb" 2>/dev/null | tr '\n' ' '))"; fi
+# The board on host B: one session, one waiting record, the frontier, the held task.
+out=$(run_state "$bd_b" board docs/plan.md 2>/dev/null); rc=$?
+first=$(printf '%s\n' "$out" | sed -n 1p)
+if [ "$rc" -eq 0 ] && [ "${first%% sync=*}" = "status=board" ] && printf '%s' "$first" | grep -q ' sessions=1 waiting=1 frontier=none$' && printf '%s\n' "$out" | grep -q '^session s1 task=1 since=.* host=[^ ]* waiting=gate waiting-since=.* note=BLOCKED%20on%20round%203 silence=[0-9]* quiet-since=none$' && printf '%s\n' "$out" | grep -q '^held task=1 owner=s1 since='; then pass "the board lists the session with its host and silence, its wait, the held task and an empty frontier"; else fail "board lines (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# diverged: both hosts edit the same report and snapshot; B's board still prints, with sync=diverged.
+printf 'A\n' > "$wsbd/task-1-report.md"; run_state "$bd_a" snapshot docs/plan.md >/dev/null; git -C "$bd_a" push -q origin hyperpowers/state 2>/dev/null
+printf 'B\n' > "$wsbdb/task-1-report.md"; run_state "$bd_b" snapshot docs/plan.md >/dev/null
+out=$(run_state "$bd_b" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=diverged' && printf '%s\n' "$out" | grep -q '^session s1 '; then pass "a diverged state branch prints the local board with sync=diverged"; else fail "board diverged (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+# quiet: a held claim, no waiting record, old activity.
+run_state "$bd_a" wait docs/plan.md --session s1 --clear >/dev/null; printf '2026-01-01T00:00:00Z\n' > "$wsbd/activity/s1"
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null)
+if printf '%s\n' "$out" | grep -q '^session s1 task=1 .* waiting=none .* silence=[0-9]\{6,\} quiet-since=2026-01-01T00:00:00Z$'; then pass "a silent holder is quiet since its last activity, with the silence in seconds"; else fail "quiet ($(printf '%s' "$out" | tr '\n' '|'))"; fi
+# Every sync outcome prints the local board with exit 0: offline (dead remote), plain, no-remote.
+git -C "$bd_a" remote set-url origin "$TEST_ROOT/does-not-exist.git"
+out=$(run_state "$bd_a" board docs/plan.md 2>"$TEST_ROOT/bd.err"); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=offline' && printf '%s\n' "$out" | grep -q '^session s1 '; then pass "a failed fetch prints the local board with sync=offline"; else fail "board offline (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+git -C "$bd_a" remote set-url origin "$PAIR_REMOTE"
+make_repo "$TEST_ROOT/bd0"; mkdir -p "$TEST_ROOT/bd0/docs"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$TEST_ROOT/bd0/docs/plan.md"; git -C "$TEST_ROOT/bd0" add docs; git -C "$TEST_ROOT/bd0" commit -qm plan
+run_sdd_dir "$TEST_ROOT/bd0" docs/plan.md >/dev/null 2>&1
+out=$(run_state "$TEST_ROOT/bd0" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=no-remote'; then pass "a repository without a remote prints its board with sync=no-remote"; else fail "board no-remote (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+# plain: a repository with a remote whose state fell back to the plain backend.
+make_pair bdp; bdp_a=$PAIR_A
+# A clone with a remote and no fetch stamp is refused as needs-sync before the worktree add the test hook fails, so the stamp comes first.
+printf 'origin hyperpowers/state %s\n' "$(fp "$bdp_a")" > "$STATE_ROOT/$(state_key "$bdp_a").fetched"
+ensure "$bdp_a" HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 >/dev/null 2>&1
+mkdir -p "$bdp_a/docs"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$bdp_a/docs/plan.md"; git -C "$bdp_a" add docs; git -C "$bdp_a" commit -qm plan
+wsbdp=$(run_sdd_dir "$bdp_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsbdp/progress.md"
+out=$(run_state "$bdp_a" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=plain'; then pass "a plain-backend repository prints its board with sync=plain"; else fail "board plain (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+out=$(run_state "$bdp_a" snapshot docs/plan.md --session sp 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=plain" ] && [ -f "$wsbdp/activity/sp" ]; then pass "snapshot --session on the plain backend still stamps activity"; else fail "plain snapshot --session (rc=$rc: $out)"; fi
+# Leftover branches and siblings.
+git -C "$bd_a" branch "feat.$(basename "$wsbd" | sed 's/.*-//').task-9" feat
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: Z\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$bd_a/docs/plan2.md"; git -C "$bd_a" add docs; git -C "$bd_a" commit -qm plan2
+wsbd2=$(run_sdd_dir "$bd_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsbd2/progress.md"; run_state "$bd_a" register docs/plan2.md --session s2 --integration feat >/dev/null
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null)
+if printf '%s\n' "$out" | grep -q "^leftover branch=feat\..*\.task-9$" && printf '%s\n' "$out" | grep -q "^sibling plan=$(basename "$wsbd2") spec=docs/spec.md integration=feat$"; then pass "the board lists leftover task branches and sibling plans"; else fail "leftovers and siblings ($(printf '%s' "$out" | tr '\n' '|'))"; fi
+out=$(run_state "$bd_a" board --repo "$bd_a" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=board plans=2" ] && [ "$(printf '%s\n' "$out" | grep -c '^plan ws=.* spec=docs/spec.md integration=feat ')" = 2 ]; then pass "board --repo groups the repository's open plans"; else fail "board --repo (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\nTask 2: complete (commits 3333333..4444444, review clean)\n' >> "$wsbd/progress.md"
+run_state "$bd_a" claim docs/plan.md final --session s1 >/dev/null
+printf '2026-01-01T00:00:00Z\n' > "$wsbd/activity/s1"
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q "^session s1 task=final since=[^ ]* .* host=$(hostname) waiting=none .* silence=[0-9]\{6,\} quiet-since=2026-01-01T00:00:00Z$"; then pass "the board shows the final holder with its host and silence age"; else fail "final holder row (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+out=$(run_state "$bd_a" board --repo "$bd_a" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q "^lease branch=feat session=s1 plan=$(basename "$wsbd") closing=0$"; then pass "board --repo lists the branch leases with their holders"; else fail "board --repo leases (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# The lease's history beside it is no lease; a holder whose activity file is gone is quiet since its claim, the last activity the dossier records.
+bdl=$(ls -d "$STATE_ROOT/$(state_key "$bd_a")".final-*); cp "$bdl" "$bdl.history"
+out=$(run_state "$bd_a" board --repo "$bd_a" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | grep -c '^lease ')" = 1 ]; then pass "board --repo reads the lease and not its history"; else fail "board --repo lease history (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+rm -f "$bdl.history" "$wsbd/activity/s1"
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q "^session s1 task=final .* silence=none quiet-since=$(sed -n 's/^time=//p' "$wsbd/claims/final/owner")$"; then pass "a holder without an activity file is quiet since its claim"; else fail "quiet without activity (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+run_state "$bd_a" claim docs/plan.md final --session s1 --release >/dev/null
+# The record's fields: --task takes a number or final, a detached head is detached@<sha7>, the worktree is encoded; a session id never leaves waiting/.
+git -C "$bd_a" worktree add -q --detach "$TEST_ROOT/wt at bd" feat 2>/dev/null
+out=$(run_state "$TEST_ROOT/wt at bd" wait "$bd_a/docs/plan.md" --session s9 --kind handoff --task final --note "handed back" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=waiting kind=handoff" ] && [ "$(sed -n 's/^task=//p' "$wsbd/waiting/s9")" = final ] && [ "$(sed -n 's/^worktree=//p' "$wsbd/waiting/s9")" = "$(printf '%s' "$TEST_ROOT/wt at bd" | sed 's/ /%20/g')" ] && [ "$(sed -n 's/^branch=//p' "$wsbd/waiting/s9")" = "detached@$(git -C "$bd_a" rev-parse --short=7 feat)" ]; then pass "wait takes --task final and records a detached head and an encoded worktree"; else fail "wait from a detached worktree (rc=$rc: $out: $(tr '\n' '|' < "$wsbd/waiting/s9" 2>/dev/null))"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s9 --kind question --task 2x --note "x" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(sed -n 's/^kind=//p' "$wsbd/waiting/s9")" = handoff ]; then pass "a --task that is neither a number nor final is refused and the record kept"; else fail "wait --task refused (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session ../progress.md --clear 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$wsbd/progress.md" ]; then pass "a session id that leaves waiting/ is refused"; else fail "wait containment (rc=$rc: $out)"; fi
+# The session row takes its worktree from the session line even when the path holds " at ", and a session id is never expanded as a glob (the board runs where docs/ matches d*).
+printf 'session s9: mode worktree on side at %s started 2026-01-01T00:00:00Z\n' "$TEST_ROOT/wt at bd" >> "$wsbd/progress.md"
+run_state "$bd_a" wait docs/plan.md --session 'd*' --kind question --note "glob" >/dev/null 2>&1
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qF "session s9 task=none since=none worktree=$(printf '%s' "$TEST_ROOT/wt at bd" | sed 's/ /%20/g') branch=side host=$(hostname) waiting=handoff " && printf '%s\n' "$out" | grep -q '^session d\* task=none ' && ! printf '%s\n' "$out" | grep -q '^session docs '; then pass "the board parses a worktree holding \" at \" and never expands a session id"; else fail "board session ids (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

@@ -113,6 +113,14 @@ hp_write_backend() { # <repo-dir> <line>
 
 hp_session_id() { printf '%s\n' "${HYPERPOWERS_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"; }
 hp_utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+# <UTC timestamp as hp_utc_now prints> -> seconds since the epoch; GNU date
+# reads -d, BSD date needs -j -f. The shape is checked first because GNU -d
+# also takes "yesterday" and BSD -f ignores trailing characters, and a value
+# either would accept is not one hp_utc_now wrote.
+hp_utc_epoch() {
+  case "$1" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;; *) return 1 ;; esac
+  date -u -d "$1" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null
+}
 
 # <pid> -> 0 when the process is gone. kill(2) answers ESRCH for a pid that
 # is gone and EPERM for one that exists but may not be signalled (another

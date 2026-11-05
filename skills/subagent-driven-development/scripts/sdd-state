@@ -6,7 +6,7 @@
 # Usage:
 #   sdd-state sync PLAN_FILE [--assume-absent]      (or: sync --repo DIR [--assume-absent])
 #   sdd-state verify PLAN_FILE [--code-repo DIR]
-#   sdd-state snapshot PLAN_FILE [-m MSG]
+#   sdd-state snapshot PLAN_FILE [-m MSG] [--session SID]
 #   sdd-state handoff PLAN_FILE [--push] [--plan-untracked-ok] [--code-dirty-ok] [--code-repo DIR]
 #   sdd-state finish PLAN_FILE --session SID [--force] [--code-repo DIR]
 #   sdd-state import PLAN_FILE
@@ -18,9 +18,12 @@
 #   sdd-state lease PLAN_FILE (--release|--closing) --session SID [--code-repo DIR]
 #   sdd-state amend PLAN_FILE --from FILE --base BLOB [--accept SPEC ...] [--message SUBJECT] [--code-repo DIR]
 #   sdd-state merge-back PLAN_FILE N --session SID --commit SHA [--code-repo DIR]
+#   sdd-state wait PLAN_FILE --session SID (--kind KIND [--task N|final] --note TEXT | --clear)
+#   sdd-state board PLAN_FILE [--code-repo DIR]      (or: board --repo DIR)
 #
 # stdout: one line of space-separated key=value pairs, status= first; sync
-# adds a second line "merge=<command>" on diverged.
+# adds a second line "merge=<command>" on diverged, and board prints its
+# table below the status line.
 # exit: 0 ok | 1 offline, offline-no-state, push-failed | 2 usage or internal
 #       (needs-sync, foreign branch, no-workspace, import-failed) |
 #       3 diverged, busy, remote-finished |
@@ -48,7 +51,7 @@ usage() {
     'usage: sdd-state <subcommand> ...' \
     '  sync PLAN_FILE [--assume-absent]   |   sync --repo DIR [--assume-absent]' \
     '  verify PLAN_FILE [--code-repo DIR]' \
-    '  snapshot PLAN_FILE [-m MSG]' \
+    '  snapshot PLAN_FILE [-m MSG] [--session SID]' \
     '  handoff PLAN_FILE [--push] [--plan-untracked-ok] [--code-dirty-ok] [--code-repo DIR]' \
     '  finish PLAN_FILE --session SID [--force] [--code-repo DIR]' \
     '  import PLAN_FILE' \
@@ -59,7 +62,9 @@ usage() {
     '  next PLAN_FILE --session SID [--code-repo DIR]' \
     '  lease PLAN_FILE (--release|--closing) --session SID [--code-repo DIR]' \
     '  amend PLAN_FILE --from FILE --base BLOB [--accept SPEC ...] [--message SUBJECT] [--code-repo DIR]' \
-    '  merge-back PLAN_FILE N --session SID --commit SHA [--code-repo DIR]' >&2
+    '  merge-back PLAN_FILE N --session SID --commit SHA [--code-repo DIR]' \
+    '  wait PLAN_FILE --session SID (--kind KIND [--task N|final] --note TEXT | --clear)' \
+    '  board PLAN_FILE [--code-repo DIR]   |   board --repo DIR' >&2
   exit 2
 }
 
@@ -329,22 +334,33 @@ cmd_register() {
 
 # --- snapshot ----------------------------------------------------------------
 cmd_snapshot() {
-  local plan="" msg="" out rc n
+  local plan="" msg="" sid="" out rc n
   while [ $# -gt 0 ]; do
     case "$1" in
       -m) [ $# -ge 2 ] || usage; msg=$2; shift 2 ;;
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
       -*) usage ;;
       *) plan=$1; shift ;;
     esac
   done
   [ -n "$plan" ] || usage
   resolve_plan "$plan"
-  if [ "$BACKEND" != branch ]; then echo "status=plain"; return 0; fi
+  # The plain backend commits nothing, but the board still reads the
+  # activity stamp from the local workspace.
+  if [ "$BACKEND" != branch ]; then
+    if [ -n "$sid" ] && [ -f "$WSDIR/progress.md" ]; then write_activity "$sid" || { echo "status=error"; return 2; }; fi
+    echo "status=plain"; return 0
+  fi
   [ -d "$WSDIR" ] || { echo "status=none"; return 0; }
   [ -n "$msg" ] || msg="sdd $SLUG: snapshot $(hp_utc_now)"
   hp_lock "$PLAN_DIR" || return 2
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   hp_contained "$CO" "plans/$WS" || { hp_unlock; echo "status=error"; return 2; }
+  # Stamped under the lock and before the commit, so the stamp travels with
+  # this snapshot. The ledger is checked again here: a finish that removed
+  # the workspace while this call waited for the lock must not have it
+  # recreated by the stamp's mkdir.
+  if [ -n "$sid" ] && [ -f "$WSDIR/progress.md" ]; then write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }; fi
   out=$(hp_commit_paths "$CO" "$BRANCH" "$msg" "plans/$WS"); rc=$?
   hp_unlock
   [ "$rc" -eq 0 ] || { echo "status=error"; return 2; }
@@ -2106,6 +2122,246 @@ merge_back_wait() {
   { printf 'session=%s\ntask=%s\nkind=merge\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s\n' "$sid" "$n" "$(hp_utc_now)" "merge-back conflict in $1" "$(enc "$owt")" "$ob" "$(hostname)" > "$t" && mv -f "$t" "$d/$sid"; } || { rm -f "$t"; return 1; }
 }
 
+# --- wait --------------------------------------------------------------------
+# One record per session, written by its session only, so no lock: the write
+# is beside-and-rename, in merge_back_wait's format. The note is one line
+# because the board prints it on one line and a human reads it there.
+cmd_wait() {
+  local plan="" sid="" kind="" task="" task_given=0 note="" clear=0 d t top b
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --kind) [ $# -ge 2 ] || usage; kind=$2; shift 2 ;;
+      --task) [ $# -ge 2 ] || usage; task=$2; task_given=1; shift 2 ;;
+      --note) [ $# -ge 2 ] || usage; note=$2; shift 2 ;;
+      --clear) clear=1; shift ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$sid" ] || usage
+  resolve_plan "$plan"
+  d="$WSDIR/waiting"
+  [ -f "$WSDIR/progress.md" ] || { echo "status=no-workspace"; return 2; }
+  # The session id is caller input and the waiting directory arrives with a
+  # fetched state branch: an id such as ../progress.md, or a planted link,
+  # would otherwise aim the removal or the rename at another file.
+  hp_contained "$ROOT" "plans/$WS/waiting/$sid" || { echo "sdd-state: the session id does not name a record under $d: $sid" >&2; echo "status=error"; return 2; }
+  if [ "$clear" -eq 1 ]; then
+    rm -f "$d/$sid" || { echo "status=error"; return 2; }
+    write_activity "$sid" || { echo "status=error"; return 2; }
+    echo "status=cleared"; return 0
+  fi
+  case "$kind" in question|tasks|merge|gate|handoff) ;; *) echo "sdd-state: --kind must be question, tasks, merge, gate or handoff" >&2; echo "status=error"; return 2 ;; esac
+  [ -n "$note" ] || { echo "sdd-state: --note is required" >&2; echo "status=error"; return 2; }
+  case "$note" in *$'\n'*) echo "sdd-state: the note must be one line" >&2; echo "status=error"; return 2 ;; esac
+  if [ "$task_given" -eq 0 ]; then
+    task=none
+  else
+    case "$task" in final) ;; ''|*[!0-9]*) echo "sdd-state: --task must be a task number or final" >&2; echo "status=error"; return 2 ;; esac
+  fi
+  # The caller's own place, by owner_record's rule: git branch --show-current
+  # prints nothing on a detached head, so that case is named by its commit.
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
+  b=$(git branch --show-current 2>/dev/null)
+  [ -n "$b" ] || b="detached@$(git rev-parse --short=7 HEAD 2>/dev/null || echo none)"
+  mkdir -p "$d" || { echo "status=error"; return 2; }
+  t=$(mktemp "$d/.$sid.XXXXXX") || { echo "status=error"; return 2; }
+  { printf 'session=%s\ntask=%s\nkind=%s\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s\n' "$sid" "$task" "$kind" "$(hp_utc_now)" "$note" "$(enc "$top")" "$b" "$(hostname)" > "$t" && mv -f "$t" "$d/$sid"; } || { rm -f "$t"; echo "status=error"; return 2; }
+  write_activity "$sid" || { echo "status=error"; return 2; }
+  echo "status=waiting kind=$kind"
+}
+
+# --- board -------------------------------------------------------------------
+# For a human reader: who holds what, who waits on what, and what is
+# claimable. It syncs first when there is a remote and prints from local
+# state whatever sync said, because an unreachable remote is no reason to
+# hide the local board. It takes no lock and writes nothing of its own.
+board_field() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1; }
+# <workspace dir> -> every session that left a trace, one per line: a claim,
+# a waiting record, an activity file or a session line. The per-plan board
+# and board --repo count the same set.
+board_sessions() {
+  local d f
+  {
+    for d in "$1"/claims/task-* "$1"/claims/final; do [ -f "$d/owner" ] && board_field "$d/owner" session; done
+    for f in "$1"/waiting/* "$1"/activity/*; do [ -e "$f" ] && printf '%s\n' "${f##*/}"; done
+    awk 'index($0, "session ") == 1 { i = index($0, ": mode "); if (i > 9) print substr($0, 9, i - 9) }' "$1/progress.md" 2>/dev/null
+  } | sed '/^$/d' | LC_ALL=C sort -u
+}
+cmd_board() {
+  local plan="" code="" repo="" syncs out err syncerr="" rc ledger line integ spec now frontier sessions count=0 waiting=0 rows=""
+  local sid d n task since host chost l rest wt br rec wkind wsince note act ts silence quiet ws8 b other
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo) [ $# -ge 2 ] || usage; repo=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  if [ -n "$repo" ]; then { [ -z "$plan" ] && [ -z "$code" ]; } || usage; board_repo "$repo"; return $?; fi
+  [ -n "$plan" ] || usage
+  # The sync comes before the checkout is required: on a host that has not
+  # fetched the state branch yet, sync is what creates the checkout. Its
+  # stderr line is held back until the code repository has been checked,
+  # so a refusal is the only output it makes.
+  resolve_plan_basic "$plan"
+  if hp_has_remote "$PLAN_DIR"; then
+    err=$(mktemp "${TMPDIR:-/tmp}/sdd-board-sync.XXXXXX") || err=""
+    out=$(bash "$0" sync "$plan" 2>"${err:-/dev/null}")
+    syncs=${out%%$'\n'*}; syncs=${syncs#status=}; syncs=${syncs%% *}
+    case "$syncs" in up-to-date|fast-forwarded|merged|ahead|created|absent|no-remote|assumed-absent|plain) ;; *) [ -z "$err" ] || syncerr=$(sed -n 1p "$err") ;; esac
+    [ -z "$err" ] || rm -f "$err"
+    [ -n "$syncs" ] || syncs=error
+  else
+    syncs=no-remote
+  fi
+  resolve_plan "$plan"
+  ledger=$(ledger_path)
+  # The code repository, for the leftover branches: a given --code-repo, or
+  # the cwd's repository when the cwd is one, is checked against the plan
+  # line before any output; with neither there are no leftover lines.
+  if [ -n "$code" ] || code=$(git rev-parse --show-toplevel 2>/dev/null); then
+    out=$(code_repo_arg "$code" "$ledger") || { rc=$?; [ -z "$out" ] || printf '%s\n' "$out"; return "$rc"; }
+    code=$out
+  else
+    code=""
+  fi
+  line=$(plan_line_of "$ledger"); integ=$(plan_field "$line" integration); spec=$(plan_field "$line" spec)
+  now=$(date -u +%s)
+  # The frontier as next prints it for a session that holds and is assigned
+  # nothing; no real session uses this id.
+  frontier=$(next_classify board-reader 2>/dev/null | sed -n 's/^status=next tasks=\([^ ]*\) .*/\1/p'); [ -n "$frontier" ] || frontier=none
+  sessions=$(board_sessions "$WSDIR")
+  while IFS= read -r sid; do
+    [ -n "$sid" ] || continue
+    count=$((count + 1))
+    # The session's open claim: a task without a completion line, or final.
+    task=none; since=none; host=""; chost=""
+    for d in "$WSDIR"/claims/task-* "$WSDIR"/claims/final; do
+      [ -f "$d/owner" ] || continue
+      n=${d##*/}; n=${n#task-}
+      case "$n" in final) ;; ''|*[!0-9]*) continue ;; esac
+      [ "$(board_field "$d/owner" session)" = "$sid" ] || continue
+      [ -n "$chost" ] || chost=$(board_field "$d/owner" host)
+      if [ "$n" != final ] && ledger_task_complete "$ledger" "$n"; then continue; fi
+      task=$n; since=$(board_field "$d/owner" time); host=$(board_field "$d/owner" host)
+      [ -n "$since" ] || since=none
+      break
+    done
+    # The session line's worktree may itself hold " at ", so the branch is
+    # cut at the first " at " (branch names hold no spaces) and the worktree
+    # runs to the last " started ".
+    wt=unknown; br=unknown
+    l=$(SID=$sid awk 'BEGIN { p = "session " ENVIRON["SID"] ": mode " } index($0, p) == 1 { l = substr($0, length(p) + 1) } END { print l }' "$ledger" 2>/dev/null)
+    case "$l" in
+      *" on "*" at "*" started "*) rest=${l#* on }; br=${rest%% at *}; wt=${rest#* at }; wt=${wt% started *} ;;
+    esac
+    # A record path is read only for an id that names one entry: an owner
+    # record arriving with the state branch can carry any session= value.
+    rec=""; case "$sid" in */*|.|..) ;; *) rec=$sid ;; esac
+    wkind=none; wsince=none; note=none
+    if [ -n "$rec" ] && [ -f "$WSDIR/waiting/$rec" ]; then
+      waiting=$((waiting + 1))
+      wkind=$(board_field "$WSDIR/waiting/$rec" kind); [ -n "$wkind" ] || wkind=unknown
+      wsince=$(board_field "$WSDIR/waiting/$rec" since); [ -n "$wsince" ] || wsince=none
+      note=$(board_field "$WSDIR/waiting/$rec" note); if [ -n "$note" ]; then note=$(enc "$note"); else note=none; fi
+      [ -n "$host" ] || host=$(board_field "$WSDIR/waiting/$rec" host)
+    fi
+    [ -n "$host" ] || host=$chost
+    [ -n "$host" ] || host=unknown
+    silence=none; act=""; ts=""
+    [ -z "$rec" ] || act=$(head -n 1 "$WSDIR/activity/$rec" 2>/dev/null)
+    [ -z "$act" ] || ts=$(hp_utc_epoch "$act")
+    if [ -n "$ts" ]; then silence=$((now - ts)); [ "$silence" -ge 0 ] || silence=0; fi
+    # Quiet: a live claim, no waiting record, and no activity for thirty
+    # minutes. Without a readable stamp the claim's own time is the last
+    # activity the dossier records.
+    quiet=none
+    if [ "$task" != none ] && [ "$wkind" = none ]; then
+      if [ "$silence" = none ]; then quiet=$since; elif [ "$silence" -gt 1800 ]; then quiet=$act; fi
+    fi
+    rows="${rows}session $sid task=$task since=$since worktree=$(enc "$wt") branch=$br host=$host waiting=$wkind waiting-since=$wsince note=$note silence=$silence quiet-since=$quiet"$'\n'
+  done <<< "$sessions"
+  [ -z "$syncerr" ] || printf '%s\n' "$syncerr" >&2
+  echo "status=board sync=$syncs sessions=$count waiting=$waiting frontier=$frontier"
+  printf '%s' "$rows"
+  for d in "$WSDIR"/claims/task-*; do
+    [ -f "$d/owner" ] || continue
+    n=${d##*/task-}
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    ledger_task_complete "$ledger" "$n" || echo "held task=$n owner=$(board_field "$d/owner" session) since=$(board_field "$d/owner" time)"
+  done
+  # A task branch is a leftover once its task is complete or its claim names
+  # another branch (a takeover's .<k> branch, or no claim at all). Deleting
+  # one is your human partner's call, so the board only lists them.
+  if [ -n "$code" ] && [ -n "$integ" ]; then
+    ws8=$(ws8_of "$WS")
+    while IFS= read -r b; do
+      [ -n "$b" ] || continue
+      b=${b#refs/heads/}
+      n=${b##*.task-}; n=${n%%.*}
+      case "$n" in ''|*[!0-9]*) echo "leftover branch=$b"; continue ;; esac
+      if ledger_task_complete "$ledger" "$n" || [ "$(board_field "$WSDIR/claims/task-$n/owner" branch)" != "$b" ]; then echo "leftover branch=$b"; fi
+    done <<< "$(git -C "$code" for-each-ref --format='%(refname)' "refs/heads/$integ.$ws8.task-*" 2>/dev/null)"
+  fi
+  # The plan line's spec= is already encoded by plan_line_of.
+  if [ -n "$line" ]; then
+    for d in "$ROOT"/plans/*/; do
+      [ -f "$d/progress.md" ] || continue
+      [ "${d%/}" != "$WSDIR" ] || continue
+      other=$(plan_line_of "$d/progress.md"); [ -n "$other" ] || continue
+      if [ "$(plan_field "$other" spec)" = "$spec" ] || [ "$(plan_field "$other" integration)" = "$integ" ]; then
+        echo "sibling plan=$(enc "$(basename "${d%/}")") spec=$(plan_field "$other" spec) integration=$(plan_field "$other" integration)"
+      fi
+    done
+  fi
+  return 0
+}
+# <repo dir>: every open workspace in the repository's state checkout,
+# grouped by spec then integration branch, then the branch leases. It does
+# not sync; the per-plan board does.
+board_repo() {
+  local ensure root c d f s line spec integ n held nw rows="" count=0
+  git -C "$1" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $1" >&2; echo "status=error"; return 2; }
+  ensure=$(hp_ensure_checkout "$1") || { echo "status=error"; return 2; }
+  root=${ensure#* }
+  for d in "$root"/plans/*/; do
+    [ -f "$d/progress.md" ] || continue
+    count=$((count + 1))
+    line=$(plan_line_of "$d/progress.md")
+    spec=$(plan_field "$line" spec); [ -n "$spec" ] || spec=none
+    integ=$(plan_field "$line" integration); [ -n "$integ" ] || integ=none
+    held=""
+    for c in "$d"/claims/task-*; do
+      [ -f "$c/owner" ] || continue
+      n=${c##*/task-}
+      case "$n" in ''|*[!0-9]*) continue ;; esac
+      ledger_task_complete "$d/progress.md" "$n" || held="$held,$n"
+    done
+    held=${held#,}
+    nw=0; for f in "$d"/waiting/*; do [ -f "$f" ] && nw=$((nw + 1)); done
+    # spec= (encoded) and the branch hold no spaces, so they lead each row
+    # as the sort keys and are cut off after the sort.
+    rows="$rows$spec $integ plan ws=$(enc "$(basename "${d%/}")") spec=$spec integration=$integ sessions=$(board_sessions "${d%/}" | grep -c .) waiting=$nw held=${held:-none}"$'\n'
+  done
+  echo "status=board plans=$count"
+  printf '%s' "$rows" | LC_ALL=C sort -k1,1 -k2,2 | cut -d' ' -f3-
+  # Lease files only, filtered as lease_find filters them: <lease>.history
+  # and a crash's temporary file share the prefix and are no leases.
+  c=$(hp_checkout_path "$1") || return 0
+  for f in "$c".final-*; do
+    s=${f#"$c".final-}
+    [ "${#s}" -eq 12 ] || continue
+    case "$s" in *[!0-9a-f]*) continue ;; esac
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    lease_path_ok "$c" "$f" || continue
+    echo "lease branch=$(board_field "$f" branch) session=$(board_field "$f" session) plan=$(enc "$(board_field "$f" plan)") closing=$(board_field "$f" closing)"
+  done
+  return 0
+}
+
 # --- prune -------------------------------------------------------------------
 # Lists, and with --apply removes, plan directories idle for N days (last
 # commit and newest file both older) and checkouts whose clone is gone. Never
@@ -3431,6 +3687,8 @@ case "$sub" in
   lease) cmd_lease "$@" ;;
   amend) cmd_amend "$@" ;;
   merge-back) cmd_merge_back "$@" ;;
+  wait) cmd_wait "$@" ;;
+  board) cmd_board "$@" ;;
   prune) cmd_prune "$@" ;;
   sync) cmd_sync "$@" ;;
   verify) cmd_verify "$@" ;;

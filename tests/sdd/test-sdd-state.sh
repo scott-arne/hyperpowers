@@ -3502,11 +3502,17 @@ if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=claimed task=final" ] && [ 
 printf 'time=2026-01-01T00:00:00Z\n' >> "$lease_fn"
 out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=final owner=s1 own=1 lease=$(basename "$lease_fn")" ] && grep -q '^time=2026-01-01T00:00:00Z$' "$lease_fn"; then pass "the holder's repeated final claim leaves the lease untouched"; else fail "own final re-claim (rc=$rc: $out)"; fi
+rm -f "$wsfn/activity/s1"
+out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=held task=final owner=s1 own=1" ] && [ -f "$wsfn/activity/s1" ] && grep -q '^time=2026-01-01T00:00:00Z$' "$lease_fn"; then pass "the holder's repeat writes its activity again and still leaves the lease untouched"; else fail "own repeat activity (rc=$rc: $out)"; fi
 out=$(run_state "$fn_a" claim docs/plan.md final --session s3 2>/dev/null); rc=$?
 if [ "$rc" -eq 4 ] && [ "${out%% since=*}" = "status=held task=final owner=s1" ]; then pass "a second session of the same plan sees final held"; else fail "final held (rc=$rc: $out)"; fi
 printf 'Task 1: complete (commits 3333333..4444444, review clean)\n' >> "$wsfn2/progress.md"
 out=$(run_state "$fn_a" claim docs/plan2.md final --session s2 2>/dev/null); rc=$?
 if [ "$rc" -eq 4 ] && [ "$out" = "status=held task=final lease=s1 plan=$(basename "$wsfn")" ] && [ -d "$wsfn2/claims/final" ]; then pass "a sibling plan's final waits for the branch lease and keeps its own claim"; else fail "sibling lease held (rc=$rc: $out)"; fi
+if [ -f "$wsfn2/activity/s2" ]; then pass "the claimant waiting for the lease writes its activity"; else fail "lease-waiting activity ($(ls "$wsfn2" 2>/dev/null | tr '\n' ' '))"; fi
+out=$(run_state "$fn_a" finish docs/plan2.md --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 11 ] && [ "$out" = "status=not-holder owner=s1" ] && [ -f "$wsfn2/progress.md" ] && [ -d "$wsfn2/claims/final" ]; then pass "finish refuses the final claimant still waiting for another plan's lease"; else fail "lease-waiting finish (rc=$rc: $out)"; fi
 out=$(run_state "$fn_a" finish docs/plan.md --session s3 2>/dev/null); rc=$?
 if [ "$rc" -eq 11 ] && [ "$out" = "status=not-holder owner=s1" ]; then pass "finish refuses a session that does not hold final"; else fail "finish not-holder (rc=$rc: $out)"; fi
 out=$(run_state "$fn_a" finish docs/plan.md --session s3 --force 2>/dev/null); rc=$?
@@ -3574,6 +3580,9 @@ mkdir -p "$wsfn2/claims/final"; printf 'host=h
 ' > "$wsfn2/claims/final/owner"
 out=$(run_state "$fn_a" finish docs/plan2.md --session s6 2>"$TEST_ROOT/fn.own.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'claims/final/owner' "$TEST_ROOT/fn.own.err" && [ -d "$wsfn2" ]; then pass "finish treats a final claim whose owner names no session as an error"; else fail "sessionless final owner in finish (rc=$rc: $out)"; fi
+printf 'session=s6\nhost=h\n' > "$wsfn2/claims/final/owner"
+out=$(run_state "$fn_a" finish docs/plan2.md --session s6 2>/dev/null); rc=$?
+if [ "$rc" -eq 11 ] && [ "$out" = "status=not-holder owner=none" ] && [ -f "$wsfn2/progress.md" ]; then pass "finish refuses a registered plan's final claim that holds no lease"; else fail "final claim without lease (rc=$rc: $out)"; fi
 rm -rf "$wsfn2/claims/final"
 printf 'session=s1
 host=h
@@ -3616,7 +3625,11 @@ fs_paused=0; [ -e "$co_fs/.lease-before-close-paused" ] && fs_paused=1
 rm -f "$co_fs/.lease-before-close-pause"; wait
 out=$(run_state "$fsp" claim docs/plan2.md 1 --session s2 --code-repo "$fsc" 2>/dev/null); rc=$?
 if [ "$fs_paused" -eq 0 ] && [ "$(cat "$TEST_ROOT/fs.closerc")" = 15 ] && [ "$(cat "$TEST_ROOT/fs.close")" = "status=sibling-open plan=$(basename "$wsfs2")" ] && [ "$rc" -eq 0 ] && [ "${out%% branch=*}" = "status=claimed task=1" ]; then pass "a registered sibling's claim never meets the closing window: the closing refuses first and the claim succeeds"; else fail "sibling claim vs closing (paused=$fs_paused close=$(cat "$TEST_ROOT/fs.closerc" 2>/dev/null) $(cat "$TEST_ROOT/fs.close" 2>/dev/null) / claim rc=$rc: $out)"; fi
-rm -rf "$wsfs2"
+# A sibling's dossier that a crashed finish left renamed aside is still an open plan on the branch.
+tomb_fs="$(dirname "$wsfs2")/.removing-$(basename "$wsfs2")-4242"; mv "$wsfs2" "$tomb_fs"
+out=$(run_state "$fsp" lease docs/plan.md --closing --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=sibling-open plan=$(basename "$wsfs2")" ]; then pass "closing counts a sibling's interrupted-removal copy as open"; else fail "tomb sibling (rc=$rc: $out)"; fi
+rm -rf "$tomb_fs"
 out=$(run_state "$fsp" finish docs/plan.md --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsfs" ]; then pass "the split holder finishes"; else fail "split finish (rc=$rc: $out)"; fi
 out=$(run_state "$fsp" lease docs/plan.md --release --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
@@ -3637,6 +3650,44 @@ lease_lc="$STATE_ROOT/$(state_key "$lc_b").final-$(printf 'refs/heads/main' | gi
 printf 'session=s1\nhost=h\nplan=%s\nbranch=main\ntime=2026-01-01T00:00:00Z\nclosing=0\n' "$(basename "$wslc")" > "$lease_lc"
 out=$(run_state "$lc_b" lease docs/plan.md --closing --session s1 --code-repo "$TEST_ROOT/foreign-fn" 2>/dev/null); rcl=$?
 if [ "$rc" -eq 99 ] && [ "$lc_stale" -eq 1 ] && [ "$rcl" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ "$(sed -n 's/^closing=//p' "$lease_lc")" = 0 ] && grep -q '^plan: ' "$wslc_b/progress.md"; then pass "closing compares --code-repo with a plan line that arrives through recovery and leaves closing= unchanged"; else fail "closing after recovered plan line (rc=$rc/$rcl stale=$lc_stale: $out)"; fi
+# A holder that dies after finish and before releasing the lease: only an explicit takeover, found by the plan's workspace alone, moves the lease on.
+ft="$TEST_ROOT/ft"; make_repo "$ft"; git -C "$ft" switch -q -c feat
+mkdir -p "$ft/docs"; : > "$ft/docs/spec.md"; printf '# T\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$ft/docs/plan.md"; git -C "$ft" add docs; git -C "$ft" commit -qm plan
+wsft=$(run_sdd_dir "$ft" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsft/progress.md"
+run_state "$ft" register docs/plan.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsft/progress.md"
+run_state "$ft" claim docs/plan.md final --session s1 >/dev/null; run_state "$ft" finish docs/plan.md --session s1 >/dev/null
+# Only the lease exists yet: the history file appears with the takeover below.
+lease_ft=""; for ft_f in "$STATE_ROOT/$(state_key "$ft").final-"*; do [ -f "$ft_f" ] && lease_ft=$ft_f; done
+out=$(run_state "$ft" claim docs/plan.md final --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace task=final" ] && [ "$(sed -n 's/^session=//p' "$lease_ft")" = s1 ]; then pass "without --takeover a finished plan's final is no-workspace and the lease stays"; else fail "orphan final without takeover (rc=$rc: $out)"; fi
+out=$(run_state "$ft" claim docs/plan.md final --session s2 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=final lease=$(basename "$lease_ft") takeover=1" ] && [ "$(sed -n 's/^session=//p' "$lease_ft")" = s2 ] && [ "$(sed -n 's/^branch=//p' "$lease_ft")" = feat ] && grep -q '^session=s1$' "$lease_ft.history" && [ ! -d "$wsft" ]; then pass "a takeover after finish moves the lease by workspace alone and keeps the prior record"; else fail "orphan lease takeover (rc=$rc: $out)"; fi
+out=$(run_state "$ft" lease docs/plan.md --closing --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=closing" ] && [ "$(sed -n 's/^closing=//p' "$lease_ft")" = 1 ]; then pass "the new holder closes the branch"; else fail "takeover closing (rc=$rc: $out)"; fi
+out=$(run_state "$ft" lease docs/plan.md --release --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && [ ! -f "$lease_ft" ]; then pass "the new holder releases the lease"; else fail "takeover release (rc=$rc: $out)"; fi
+out=$(run_state "$ft" lease docs/plan.md --release --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=no-lease" ]; then pass "the dead holder's later release is no-lease"; else fail "old holder release (rc=$rc: $out)"; fi
+out=$(run_state "$ft" claim docs/plan.md final --session s3 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace task=final" ] && [ ! -d "$wsft" ]; then pass "a takeover with neither workspace nor lease is no-workspace"; else fail "takeover without lease (rc=$rc: $out)"; fi
+# Workspace names in the plan= field are encoded: a plan file name with a space.
+sp="$TEST_ROOT/sp"; make_repo "$sp"; git -C "$sp" switch -q -c feat
+mkdir -p "$sp/docs"; : > "$sp/docs/spec.md"
+printf '# A\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$sp/docs/a plan.md"
+printf '# B\n\n**Spec:** docs/spec.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$sp/docs/b.md"
+git -C "$sp" add docs; git -C "$sp" commit -qm plans
+wssa=$(run_sdd_dir "$sp" "docs/a plan.md" 2>/dev/null); wssb=$(run_sdd_dir "$sp" docs/b.md 2>/dev/null)
+printf '# SDD ledger — plan: docs/a plan.md\n' > "$wssa/progress.md"; printf '# SDD ledger — plan: docs/b.md\n' > "$wssb/progress.md"
+run_state "$sp" register "docs/a plan.md" --session s1 --integration feat >/dev/null; run_state "$sp" register docs/b.md --session s2 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wssa/progress.md"; printf 'Task 1: complete (commits 3333333..4444444, review clean)\n' >> "$wssb/progress.md"
+run_state "$sp" claim "docs/a plan.md" final --session s1 >/dev/null
+sp_enc=$(basename "$wssa" | sed 's/ /%20/g')
+out=$(run_state "$sp" claim docs/b.md final --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "$out" = "status=held task=final lease=s1 plan=$sp_enc" ] && [ "$sp_enc" != "$(basename "$wssa")" ]; then pass "the lease holder's workspace name is encoded in held"; else fail "encoded held plan (rc=$rc: $out)"; fi
+run_state "$sp" claim "docs/a plan.md" final --session s1 --release >/dev/null; run_state "$sp" claim docs/b.md final --session s2 >/dev/null
+out=$(run_state "$sp" lease docs/b.md --closing --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=sibling-open plan=$sp_enc" ]; then pass "the open sibling's workspace name is encoded in sibling-open"; else fail "encoded sibling-open (rc=$rc: $out)"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

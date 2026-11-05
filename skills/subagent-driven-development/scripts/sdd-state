@@ -459,7 +459,7 @@ cmd_claim() {
   # (a plan that predates registration) there is no branch to lease, and only
   # claims/final is published. Runs under the locks the loop below settled.
   claim_final() {
-    local c lowner="" lplan="" own_lease=0 took=0 missing="" t open lease_out
+    local c lowner="" lplan="" own_lease=0 lease_prev=0 took=0 missing="" t open lease_out rec
     lease=""
     c=$(hp_checkout_path "$PLAN_DIR") || { hp_unlock; echo "status=error"; return 2; }
     if [ "$release" -eq 1 ]; then
@@ -512,11 +512,14 @@ cmd_claim() {
         own_lease=1
       elif [ "$takeover" -eq 0 ]; then
         # This plan's own claim is published first, so the second finisher
-        # keeps its place and retries for the lease.
+        # keeps its place and retries for the lease. Its activity is written
+        # too: a session that waits for the lease is alive, and a board that
+        # read it as idle would invite a takeover of the claim it holds.
         [ -d "$target" ] || publish_final_claim || { hp_unlock; echo "status=error"; return 2; }
-        hp_unlock; echo "status=held task=final lease=$lowner plan=$lplan"; return 4
+        write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }
+        hp_unlock; echo "status=held task=final lease=$lowner plan=$(enc "$lplan")"; return 4
       else
-        took=1
+        took=1; lease_prev=1
       fi
     fi
     lease_out=none; [ -z "$lease" ] || lease_out=$(basename "$lease")
@@ -525,6 +528,7 @@ cmd_claim() {
     # rewriting the lease would reopen a branch its own closing has marked.
     if { [ "$own_lease" -eq 1 ] && { [ ! -d "$target" ] || [ "$owner" = "$sid" ]; }; } || { [ -z "$lease" ] && [ -d "$target" ] && [ "$owner" = "$sid" ]; }; then
       [ -d "$target" ] || publish_final_claim || { hp_unlock; echo "status=error"; return 2; }
+      write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }
       hp_unlock; echo "status=held task=final owner=$sid own=1 lease=$lease_out"; return 0
     fi
     if [ -d "$target" ] && [ "$owner" != "$sid" ]; then
@@ -541,7 +545,12 @@ cmd_claim() {
     fi
     if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null | head -n 1)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
     if [ -n "$lease" ] && [ "$own_lease" -eq 0 ]; then
-      lease_write "$c" "$lease" "$(printf 'session=%s\nhost=%s\nplan=%s\nbranch=%s\ntime=%s\nclosing=0' "$sid" "$(hostname)" "$WS" "$integ" "$(hp_utc_now)")" || { hp_unlock; echo "status=error"; return 2; }
+      rec=$(printf 'session=%s\nhost=%s\nplan=%s\nbranch=%s\ntime=%s\nclosing=0' "$sid" "$(hostname)" "$WS" "$integ" "$(hp_utc_now)")
+      if [ "$lease_prev" -eq 1 ]; then
+        lease_supersede "$c" "$lease" "$rec" || { hp_unlock; echo "status=error"; return 2; }
+      else
+        lease_write "$c" "$lease" "$rec" || { hp_unlock; echo "status=error"; return 2; }
+      fi
     fi
     # The claim stands once published; a failed activity write is reported,
     # and the holder's retry answers held.
@@ -561,6 +570,29 @@ cmd_claim() {
     [ "$prc" -eq 0 ] || rm -rf "$tmpl"
     [ "$prc" -eq 0 ] || [ "$prc" -eq 4 ]
   }
+  # A takeover of final after finish has removed the workspace: the holder
+  # stopped before releasing the branch lease, and every other plan on the
+  # integration branch waits behind it. The lease is found by this plan's
+  # workspace alone, because the stopped session's identity is what the
+  # caller lacks, and moves to the caller with the prior record kept beside
+  # it. Its closing= is kept, so a branch the holder had marked closing is
+  # not reopened to sibling registrations by the takeover. Nothing else is
+  # published: recreating the workspace would undo the finish. Runs under
+  # the plan repository's lock, which every lease operation also holds.
+  claim_final_orphan() {
+    local c lowner lbranch lclosing rec
+    c=$(hp_checkout_path "$PLAN_DIR") || { hp_unlock; echo "status=error"; return 2; }
+    lease=$(lease_find "$WS") || { hp_unlock; echo "status=error"; return 2; }
+    if [ -z "$lease" ]; then hp_unlock; echo "status=no-workspace task=final"; return 2; fi
+    lowner=$(sed -n 's/^session=//p' "$lease" | head -n 1)
+    if [ "$lowner" = "$sid" ]; then hp_unlock; echo "status=held task=final owner=$sid own=1 lease=$(basename "$lease")"; return 0; fi
+    lbranch=$(sed -n 's/^branch=//p' "$lease" | head -n 1)
+    [ -n "$lbranch" ] || { hp_unlock; echo "sdd-state: the lease $lease names no branch" >&2; echo "status=error"; return 2; }
+    lclosing=$(sed -n 's/^closing=//p' "$lease" | head -n 1); [ "$lclosing" = 1 ] || lclosing=0
+    rec=$(printf 'session=%s\nhost=%s\nplan=%s\nbranch=%s\ntime=%s\nclosing=%s' "$sid" "$(hostname)" "$WS" "$lbranch" "$(hp_utc_now)" "$lclosing")
+    lease_supersede "$c" "$lease" "$rec" || { hp_unlock; echo "status=error"; return 2; }
+    hp_unlock; echo "status=claimed task=final lease=$(basename "$lease") takeover=1"
+  }
   line=$(plan_line_of "$WSDIR/progress.md"); ref=""; from=""; pass=0
   while :; do
     pass=$((pass + 1))
@@ -573,7 +605,10 @@ cmd_claim() {
     if [ -n "$line" ]; then echo "sdd-state: the plan line changed while the claim took its locks" >&2; echo "status=error"; return 2; fi
     line=$again
   done
-  if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace task=$n"; return 2; fi
+  if [ ! -f "$WSDIR/progress.md" ]; then
+    if [ "$n" = final ] && [ "$takeover" -eq 1 ]; then claim_final_orphan; return $?; fi
+    hp_unlock; echo "status=no-workspace task=$n"; return 2
+  fi
   # final is no numbered task: none of the checks below apply to it.
   if [ "$n" = final ]; then claim_final; return $?; fi
   ledger_task_complete "$WSDIR/progress.md" "$n"; rc=$?
@@ -1311,7 +1346,7 @@ remove_verified() {
   return 0
 }
 cmd_finish() {
-  local plan="" force=0 sid="" code="" open last commit rc t owner out
+  local plan="" force=0 sid="" code="" open last commit rc t owner out line c lease lowner lplan
   while [ $# -gt 0 ]; do
     case "$1" in
       --force) force=1; shift ;;
@@ -1354,6 +1389,19 @@ cmd_finish() {
   owner=$(sed -n 's/^session=//p' "$WSDIR/claims/final/owner" 2>/dev/null | head -n 1)
   if [ -z "$owner" ]; then hp_unlock; echo "sdd-state: claim owner unreadable or without a session: $WSDIR/claims/final/owner" >&2; echo "status=error"; return 2; fi
   if [ "$owner" != "$sid" ]; then hp_unlock; echo "status=not-holder owner=$owner"; return 11; fi
+  # A registered plan's final train runs under its branch lease, so the
+  # claim alone does not make a holder: a claimant still waiting for another
+  # plan's lease, or one whose lease is gone, has not reached the train, and
+  # removing its dossier would lose the plan it still has to finish.
+  line=$(plan_line_of "$(ledger_path)")
+  if [ -n "$line" ]; then
+    c=$(hp_checkout_path "$PLAN_DIR") || { hp_unlock; echo "status=error"; return 2; }
+    { lease=$(hp_lease_key "$PLAN_DIR" "$(plan_field "$line" integration)") && lease_path_ok "$c" "$lease"; } || { hp_unlock; echo "status=error"; return 2; }
+    if [ ! -f "$lease" ]; then hp_unlock; echo "status=not-holder owner=none"; return 11; fi
+    lowner=$(sed -n 's/^session=//p' "$lease" | head -n 1); lplan=$(sed -n 's/^plan=//p' "$lease" | head -n 1)
+    if [ -z "$lowner" ] || [ -z "$lplan" ]; then hp_unlock; echo "sdd-state: lease unreadable or without session= or plan=: $lease" >&2; echo "status=error"; return 2; fi
+    if [ "$lowner" != "$sid" ] || [ "$lplan" != "$WS" ]; then hp_unlock; echo "status=not-holder owner=$lowner"; return 11; fi
+  fi
   # The claims are read under the lock, so a claim published after a first
   # look, or a takeover in flight, is seen before anything is removed.
   open=$(open_claims)
@@ -1412,26 +1460,41 @@ lease_write() {
   t=$(mktemp "$1.lease-tmp.XXXXXX") || return 1
   { printf '%s\n' "$3" > "$t" && mv -f "$t" "$2"; } || { rm -f "$t"; return 1; }
 }
-# <ws> <sid> -> the lease file whose record names this workspace and session,
-# found without a workspace on disk: a release after finish needs only the
-# plan path's repository key. Two matches is a state nothing produces.
+# <checkout path> <lease path> <record>: a takeover's replacement of another
+# session's lease. The prior record goes to <lease>.history first, as a
+# claim's takeover keeps owner.history, so the session that held the branch
+# stays on record; a history that cannot be written refuses the takeover.
+# The suffix keeps the history outside the names lease_find reads.
+lease_supersede() {
+  local h="$2.history"
+  lease_path_ok "$1" "$2" || return 1
+  if [ -L "$h" ] || { [ -e "$h" ] && [ ! -f "$h" ]; }; then echo "sdd-state: $h is not a regular file; refusing to use it as a lease history" >&2; return 1; fi
+  printf -- '--- superseded at %s\n%s\n' "$(hp_utc_now)" "$(cat "$2" 2>/dev/null)" >> "$h" || return 1
+  lease_write "$1" "$2" "$3"
+}
+# <ws> [<sid>] -> the lease file whose record names this workspace and, when
+# given, this session, found without a workspace on disk: a release after
+# finish needs only the plan path's repository key, and a takeover after
+# finish knows only the workspace. Two matches is a state nothing produces.
 lease_find() {
-  local c f s hit="" n=0 all=""
+  local c f s hit="" n=0 all="" who
   c=$(hp_checkout_path "$PLAN_DIR") || return 1
+  who="workspace $1"; [ -z "${2:-}" ] || who="$who and session $2"
   for f in "$c".final-*; do
     s=${f#"$c".final-}
     [ "${#s}" -eq 12 ] || continue
     case "$s" in *[!0-9a-f]*) continue ;; esac
     [ -e "$f" ] || [ -L "$f" ] || continue
     lease_path_ok "$c" "$f" || return 2
-    [ "$(sed -n 's/^plan=//p' "$f" | head -n 1)" = "$1" ] && [ "$(sed -n 's/^session=//p' "$f" | head -n 1)" = "$2" ] || continue
+    [ "$(sed -n 's/^plan=//p' "$f" | head -n 1)" = "$1" ] || continue
+    [ -z "${2:-}" ] || [ "$(sed -n 's/^session=//p' "$f" | head -n 1)" = "$2" ] || continue
     n=$((n + 1)); hit=$f; all="$all $f"
   done
-  if [ "$n" -gt 1 ]; then echo "sdd-state: more than one lease names workspace $1 and session $2:$all" >&2; return 2; fi
+  if [ "$n" -gt 1 ]; then echo "sdd-state: more than one lease names $who:$all" >&2; return 2; fi
   [ -z "$hit" ] || printf '%s\n' "$hit"
 }
 cmd_lease() {
-  local plan="" sid="" code="" op="" c lease integ d other rc rec out
+  local plan="" sid="" code="" op="" c lease integ d other rc rec out t
   while [ $# -gt 0 ]; do
     case "$1" in
       --release|--closing) [ -z "$op" ] || usage; op=${1#--}; shift ;;
@@ -1474,7 +1537,18 @@ cmd_lease() {
     [ -f "$d/progress.md" ] || continue
     [ "${d%/}" != "$WSDIR" ] || continue
     other=$(plan_line_of "$d/progress.md"); [ -n "$other" ] || continue
-    if [ "$(plan_field "$other" integration)" = "$integ" ]; then hp_unlock; echo "status=sibling-open plan=$(basename "${d%/}")"; return 15; fi
+    if [ "$(plan_field "$other" integration)" = "$integ" ]; then hp_unlock; echo "status=sibling-open plan=$(enc "$(basename "${d%/}")")"; return 15; fi
+  done
+  # A sibling's dossier that an interrupted finish or prune renamed aside to
+  # plans/.removing-<ws>-<pid> is still an open plan: its next finish puts it
+  # back. The glob above skips dotted names, so those copies are read here,
+  # and the branch is never deleted under a plan that may return.
+  for d in "$ROOT"/plans/.removing-*/; do
+    [ -f "$d/progress.md" ] || continue
+    t=$(basename "${d%/}"); t=${t#.removing-}; t=${t%-*}
+    [ "$t" != "$WS" ] || continue
+    other=$(plan_line_of "$d/progress.md"); [ -n "$other" ] || continue
+    if [ "$(plan_field "$other" integration)" = "$integ" ]; then hp_unlock; echo "status=sibling-open plan=$(enc "$t")"; return 15; fi
   done
   # Test seam: a pause between the sibling check and the write, so a fixture
   # can prove the locks keep a sibling's registration out of that window.

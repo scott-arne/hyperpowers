@@ -1,0 +1,9 @@
+# Pinned for the Read the Docs build and the local build command in
+# docs/testing.md (Python 3.13).
+sphinx==9.2.0
+sphinx-lumina-theme==2.19.1
+sphinx-design==0.7.0
+sphinx-sitemap==2.9.0
+myst-parser==5.1.0
+sphinx-copybutton==0.5.2
+sphinxcontrib-mermaid==2.1.1

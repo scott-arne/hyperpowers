@@ -13,3 +13,4 @@ dist/
 # development (see CLAUDE.md / README.md). It is not part of the published
 # plugin, so the whole directory is ignored here.
 evals/
+docs/site/_build/

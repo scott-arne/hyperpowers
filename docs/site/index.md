@@ -1,0 +1,67 @@
+# Hyperpowers
+
+Hyperpowers is a set of skills and a session-start bootstrap that give a coding agent a working method: design before code, tests before implementation, review before "done". It runs in ten agent harnesses, including Claude Code, Codex, and Cursor, plus seven more.
+
+Left alone, a coding agent starts writing code as soon as it sees a request. Hyperpowers has it classify how much process the request needs (a feasibility spike, a bounded change, or architectural work) and ask what you are trying to do first. The ceremony scales with that classification. The approval gate before implementation applies every time. After you sign off on the design, the agent writes a plan and works through it task by task with subagents, reviewing each one.
+
+## Where to start
+
+- If you are new, read the guide pages.
+- To choose skills, use the skills reference.
+- To lower cost, read the recommended settings.
+
+## Credit
+
+Hyperpowers is a fork of [Superpowers](https://github.com/obra/superpowers) by Jesse Vincent and Prime Radiant, who designed the methodology and most of the skills. This fork adds Codex review gates, decision records, and other changes. Scott Johnson maintains it.
+
+Full installation commands are in the {source}`README.md`.
+
+```{toctree}
+:caption: Guide
+:hidden:
+```
+
+```{toctree}
+:caption: Skills
+:hidden:
+```
+
+```{toctree}
+:caption: Process skills
+:hidden:
+```
+
+```{toctree}
+:caption: Testing skills
+:hidden:
+```
+
+```{toctree}
+:caption: Debugging skills
+:hidden:
+```
+
+```{toctree}
+:caption: Review skills
+:hidden:
+```
+
+```{toctree}
+:caption: Performance skills
+:hidden:
+```
+
+```{toctree}
+:caption: Meta skills
+:hidden:
+```
+
+```{toctree}
+:caption: Advanced
+:hidden:
+```
+
+```{toctree}
+:caption: About
+:hidden:
+```

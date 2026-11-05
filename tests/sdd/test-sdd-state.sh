@@ -3768,7 +3768,8 @@ if [ -z "$(git -C "$am_a" status --porcelain)" ] && [ "$(git -C "$am_a" rev-pars
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3b" --base 0000000 2>/dev/null); rc=$?
 if [ "$rc" -eq 14 ] && [ "${out%% current=*}" = "status=stale base=0000000" ]; then pass "a base no object matches is stale"; else fail "unknown base (rc=$rc: $out)"; fi
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3" --base "$base2" --accept 'tasks=1,2 path=src/w.sh' --message "w twice" 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && grep -q '^scan: accepted-overlap tasks=1,2 path=src/w.sh$' "$wsam/progress.md" && grep -q ': w twice$' "$wsam/progress.md" && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; then pass "the retry completes the ledger lines and removes the record"; else fail "retry completes (rc=$rc: $out)"; fi
+# The plan has moved on to the rename since, so the retry is no already=1: it completes the ledger lines, removes the record, and is stale.
+if [ "$rc" -eq 14 ] && [ "${out%% current=*}" = "status=stale base=${base2:0:7}" ] && grep -q '^scan: accepted-overlap tasks=1,2 path=src/w.sh$' "$wsam/progress.md" && grep -q ': w twice$' "$wsam/progress.md" && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; then pass "the retry completes the ledger lines and removes the record, and is stale once the plan has moved on"; else fail "retry completes (rc=$rc: $out)"; fi
 # Refused under a held lease.
 printf 'Task 1: complete (commits 1111111..2222222, review clean)\nTask 2: complete (commits 3333333..4444444, review clean)\n' >> "$wsam/progress.md"
 run_state "$am_a" claim docs/plan.md final --session s1 >/dev/null
@@ -3857,11 +3858,18 @@ if [ "$rc" -eq 99 ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_a
 out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c2" --base "$b_ad" --message c2 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" rev-parse :docs/plan.md)" = "$n_ad" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "the retry refreshes the worktree and finishes the record"; else fail "retry refreshes (rc=$rc: $out: $(git -C "$ad_a" status --porcelain | tr '\n' '|'))"; fi
 # A refresh that fails after the swap keeps the record, so the same amend run again finishes it.
-b_ad=$n_ad; sed 's/^### Task 2: B1$/### Task 2: B2/' "$TEST_ROOT/ad.c2" > "$TEST_ROOT/ad.c3"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c3")
+b_ad=$n_ad; sed 's/^### Task 2: B1$/### Task 2: B2/' "$TEST_ROOT/ad.c2" > "$TEST_ROOT/ad.c3"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c3"); h_ad=$(git -C "$ad_a" rev-parse feat)
+# A lock held before the call is a refusal the refresh would make, so it is predicted before the swap, with nothing moved.
 : > "$ad_a/.git/index.lock"
-out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c3" --base "$b_ad" --message c3 2>"$TEST_ROOT/ad.refresh.err"); rc=$?
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c3" --base "$b_ad" --message c3 2>/dev/null); rc=$?
 rm -f "$ad_a/.git/index.lock"
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "but the worktree $ad_a could not be refreshed" "$TEST_ROOT/ad.refresh.err" && grep -q 'run the same amend again' "$TEST_ROOT/ad.refresh.err" && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ -f "$wsad/amends/$n_ad" ]; then pass "a failed refresh after the swap is an error that keeps the record"; else fail "failed refresh (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.refresh.err"))"; fi
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$ad_a" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a held index lock in the worktree on the plan ref is refused before the swap"; else fail "held index lock (rc=$rc: $out)"; fi
+# The same lock taken once the swap commits, by a reference-transaction hook, fails the refresh itself.
+hook_ad="$ad_a/.git/hooks/reference-transaction"; mark_ad="$TEST_ROOT/ad.lock-fired"
+printf '#!/bin/sh\nlines=$(cat)\n[ "$1" = committed ] || exit 0\ncase "$lines" in *" refs/heads/feat") ;; *) exit 0 ;; esac\n[ -e "%s" ] && exit 0\n: > "%s"\n: > "%s"\n' "$mark_ad" "$mark_ad" "$ad_a/.git/index.lock" > "$hook_ad"; chmod 755 "$hook_ad"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c3" --base "$b_ad" --message c3 2>"$TEST_ROOT/ad.refresh.err"); rc=$?
+rm -f "$hook_ad" "$ad_a/.git/index.lock"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -e "$mark_ad" ] && grep -qF "but the worktree $ad_a could not be refreshed" "$TEST_ROOT/ad.refresh.err" && grep -q 'run the same amend again' "$TEST_ROOT/ad.refresh.err" && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ -f "$wsad/amends/$n_ad" ]; then pass "a failed refresh after the swap is an error that keeps the record"; else fail "failed refresh (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.refresh.err"))"; fi
 out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c3" --base "$b_ad" --message c3 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && grep -q ': c3$' "$wsad/progress.md" && [ -z "$(ls -A "$wsad/amends")" ]; then pass "the retry after a failed refresh finishes it"; else fail "retry after failed refresh (rc=$rc: $out)"; fi
 # An update-ref that fails with the ref where it was is no lost race, and says so.
@@ -3911,6 +3919,25 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -e "$mark_ad" ] && grep -
 git -C "$ad_a" show :docs/plan.md > "$ad_a/docs/plan.md"
 out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c5" --base "$b_ad" --message c5 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "after the edit is settled the retry refreshes the worktree and finishes"; else fail "retry after the interval edit (rc=$rc: $out: $(git -C "$ad_a" status --porcelain | tr '\n' '|'))"; fi
+# A retry whose published commit a later commit has undone: a commit from the worktree a crash left at the base puts the base back on the plan ref. The plan is not the candidate, so the retry is no already=1; it finishes the record's ledger lines and goes on as a fresh amendment, which publishes, the base being current again.
+b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+git -C "$ad_a" show feat:docs/plan.md | sed 's/^### Task 1: \(.*\)$/### Task 1: \1 again/' > "$TEST_ROOT/ad.c7"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c7")
+( cd "$ad_a" && HYPERPOWERS_TEST_CRASH_AT=amend-after-swap bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/ad.c7" --base "$b_ad" --message c7 >/dev/null 2>&1 ); rcc=$?
+git -C "$ad_a" commit -qm "commit from the worktree the crash left at the base"; r_ad=$(git -C "$ad_a" rev-parse feat)
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c7" --base "$b_ad" --message c7 2>/dev/null); rc=$?
+if [ "$rcc" -eq 99 ] && [ "$(git -C "$ad_a" rev-parse "$r_ad:docs/plan.md")" = "$b_ad" ] && [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$out" = "${out% already=1}" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ "$(git -C "$ad_a" rev-parse feat^)" = "$r_ad" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && [ "$(grep -c "^plan: amended ${n_ad:0:7} by .*: c7\$" "$wsad/progress.md")" = 1 ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a retry whose commit a later commit undid is no already=1 and publishes the candidate again"; else fail "retry after an undoing commit (rc=$rcc/$rc: $out)"; fi
+# A conflicted merge on another file in the worktree on the plan ref: git's own update refuses any index with an unmerged entry, so the refusal is predicted before the swap, with the ref and the merge left as they were.
+printf 'one\n' > "$ad_a/conf.txt"; git -C "$ad_a" add conf.txt; git -C "$ad_a" commit -qm conf; git -C "$ad_a" branch ad-side
+printf 'two\n' > "$ad_a/conf.txt"; git -C "$ad_a" commit -qam conf-feat
+side_ad=$(printf 'three\n' | git -C "$ad_a" hash-object -w --stdin)
+side_ad=$(GIT_INDEX_FILE="$TEST_ROOT/ad.side.index" sh -c 'git -C "$1" read-tree "$2" && git -C "$1" update-index --cacheinfo 100644,"$3",conf.txt && git -C "$1" write-tree' _ "$ad_a" ad-side "$side_ad")
+git -C "$ad_a" update-ref refs/heads/ad-side "$(git -C "$ad_a" commit-tree "$side_ad" -p ad-side -m conf-side)"
+git -C "$ad_a" merge -q ad-side >/dev/null 2>&1
+unm_ad=$(git -C "$ad_a" ls-files -u); h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+git -C "$ad_a" show feat:docs/plan.md | sed 's/^### Task 2: \(.*\)$/### Task 2: \1 merged/' > "$TEST_ROOT/ad.c6"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c6" --base "$b_ad" --message c6 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$ad_a" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && [ -n "$unm_ad" ] && [ -f "$ad_a/.git/MERGE_HEAD" ] && [ "$(git -C "$ad_a" ls-files -u)" = "$unm_ad" ] && [ "$(git -C "$ad_a" rev-parse :docs/plan.md)" = "$b_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a worktree on the plan ref mid conflicted merge on another file is refused before the swap, the merge untouched"; else fail "mid-merge worktree (rc=$rc: $out)"; fi
+git -C "$ad_a" merge --abort
 # The plan in one repository and the code in another: the amendment moves the plan repository's ref, refreshes its checkout and leaves the code repository alone.
 make_repo "$TEST_ROOT/asp"; make_repo "$TEST_ROOT/asc"; asp="$TEST_ROOT/asp"; asc="$TEST_ROOT/asc"
 git -C "$asc" commit -q --amend --allow-empty -m "code root"

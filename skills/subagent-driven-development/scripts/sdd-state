@@ -1682,14 +1682,18 @@ $2"; shift 2 ;;
     amend_refresh "$commit^" "$commit" || { hp_unlock; echo "status=error"; return 2; }
   fi
   # A record whose commit is on the plan ref was published by a call that
-  # crashed before its ledger lines; they are completed here. The same base
-  # makes this call that call's retry, answered already=1. Another base is a
-  # new amendment to the same text, which goes on as a fresh one with the
-  # earlier acceptances safely in the ledger.
+  # crashed before its ledger lines; they are completed here. The same base,
+  # with the plan on the ref still the record's blob, makes this call that
+  # call's retry, answered already=1. Anything else goes on as a fresh
+  # amendment with the earlier acceptances safely in the ledger: another
+  # base is a new amendment to the same text, and a plan changed since, by
+  # a later amendment or by a commit that undid this one, is stale or is
+  # published again on the usual rules. An already=1 over a plan that is no
+  # longer the candidate would report an amendment that is not in force.
   if [ -f "$record" ] && commit=$(sed -n 's/^commit=//p' "$record" | head -n 1) && [ -n "$commit" ] && git -C "$REPO" merge-base --is-ancestor "$commit" "refs/heads/$ref" 2>/dev/null; then
     rbase=$(sed -n 's/^base=//p' "$record" | head -n 1)
     amend_bookkeeping || { hp_unlock; echo "sdd-state: the plan ref carries ${commit:0:7}, but its ledger lines could not be written; run the same amend again to finish them" >&2; echo "status=error"; return 2; }
-    if [ -z "$base_unknown" ] && [ "$rbase" = "$base" ]; then hp_unlock; echo "status=amended head=${commit:0:7} plan=${blob:0:7} already=1"; return 0; fi
+    if [ -z "$base_unknown" ] && [ "$rbase" = "$base" ] && [ "$cur" = "$blob" ]; then hp_unlock; echo "status=amended head=${commit:0:7} plan=${blob:0:7} already=1"; return 0; fi
   fi
   out=$(hp_plan_overlaps "$from" "$WSDIR/progress.md" "$WSDIR/amends" "$REPO" "$ref"); rc=$?
   [ "$rc" -ne 2 ] || { hp_unlock; echo "status=error"; return 2; }
@@ -1711,13 +1715,6 @@ $2"; shift 2 ;;
     # Stale leaves no record behind: one a lost attempt wrote would otherwise
     # be read as an acceptance once its commit is nowhere.
     { [ -z "$base_unknown" ] && [ "$cur" = "$base" ]; } || { rm -f "$record"; hp_unlock; echo "status=stale base=${base:0:7} current=${cur:0:7}"; return 14; }
-    # A worktree on the plan ref keeps its index and file when the ref moves
-    # under it, so a copy that is not the base would read as a revert of the
-    # amendment there, and a commit or a switch from it would carry the
-    # revert forward. Each such worktree must hold the base, to be refreshed
-    # after the swap.
-    wb=$(amend_wt_blocker "$base") || { rm -f "$record"; hp_unlock; echo "sdd-state: the worktrees of $REPO could not be listed" >&2; echo "status=error"; return 2; }
-    if [ -n "$wb" ]; then rm -f "$record"; hp_unlock; echo "status=checked-out worktree=$(enc "$wb")"; return 13; fi
     # The tree is P's with the plan's blob replaced, its mode kept, through a
     # private index as hp_commit_paths builds its commits.
     mode=$(git -C "$REPO" ls-tree "$P" -- "$rel"); mode=${mode%% *}
@@ -1727,6 +1724,15 @@ $2"; shift 2 ;;
     fi
     rm -f "$idx"
     commit=$(printf 'docs(hyperpowers): amend %s: %s\n' "$(basename "$PLAN")" "$msg" | hp_git_id "$REPO" commit-tree "$tree" -p "$P") || { hp_unlock; echo "status=error"; return 2; }
+    # A worktree on the plan ref keeps its index and file when the ref moves
+    # under it, so a copy that is not the base would read as a revert of the
+    # amendment there, and a commit or a switch from it would carry the
+    # revert forward. Each such worktree must hold the base and accept the
+    # refresh from P to this commit, tried first as a dry run, so a refresh
+    # that would fail after the swap refuses before it instead. The commit
+    # object left by a refusal is unreachable and harmless.
+    wb=$(amend_wt_blocker "$base" "$P" "$commit") || { rm -f "$record"; hp_unlock; echo "sdd-state: the worktrees of $REPO could not be listed" >&2; echo "status=error"; return 2; }
+    if [ -n "$wb" ]; then rm -f "$record"; hp_unlock; echo "status=checked-out worktree=$(enc "$wb")"; return 13; fi
     # Written beside and renamed, through an exclusively created dotted name
     # that the record readers' glob never lists.
     t=$(mktemp "$WSDIR/amends/.$blob.XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
@@ -1801,8 +1807,13 @@ amend_wt_index() {
   [ "$(printf '%s\n' "$e" | grep -c .)" -eq 1 ] || return 0
   case "$e" in *" 0	"*) printf '%s\n' "${e%% 0	*}" ;; esac
 }
-# <base blob> -> the first worktree on the plan ref whose index entry or file
-# for the plan is not the base, or nothing. Fails when the list cannot be read.
+# <base blob> <old commit> <new commit> -> the first worktree on the plan ref
+# that the refresh after the swap could not bring over, or nothing. Its index
+# entry and file for the plan must be the base, and amend_refresh's own
+# update must succeed as a dry run: git refuses that one for reasons outside
+# the plan too, such as an unmerged entry on any path (a conflicted merge,
+# cherry-pick or am) or a held index lock. The stat refresh before it, as in
+# amend_refresh, rewrites no content. Fails when the list cannot be read.
 amend_wt_blocker() {
   local i=0 w e
   amend_ref_worktrees || return 1
@@ -1810,6 +1821,8 @@ amend_wt_blocker() {
     w=${AMEND_WT[$i]}; i=$((i + 1))
     e=$(amend_wt_index "$w")
     if [ -z "$e" ] || [ "${e#* }" != "$1" ] || [ "$(git -C "$w" hash-object -- "$rel" 2>/dev/null)" != "$1" ]; then printf '%s\n' "$w"; return 0; fi
+    git -C "$w" update-index -q --refresh >/dev/null 2>&1
+    git -C "$w" read-tree -m -u -n "$2" "$3" >/dev/null 2>&1 || { printf '%s\n' "$w"; return 0; }
   done
 }
 # <old commit> <new commit>: brings every worktree on the plan ref from the
@@ -1829,7 +1842,7 @@ amend_refresh() {
     w=${AMEND_WT[$i]}; i=$((i + 1))
     git -C "$w" update-index -q --refresh >/dev/null 2>&1
     if ! git -C "$w" read-tree -m -u "$1" "$2"; then
-      echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it; settle that worktree's copy of $rel, then run the same amend again" >&2
+      echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it; settle what git names above in that worktree, then run the same amend again" >&2
       return 1
     fi
   done

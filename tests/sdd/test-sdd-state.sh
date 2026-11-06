@@ -3740,6 +3740,9 @@ out=$(cd "$TEST_ROOT/foreign-am" && bash "$SDD_STATE" amend "$am_a/docs/plan.md"
 if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ "$(git -C "$am_a" rev-parse feat)" = "$head_am" ]; then pass "amend run from a foreign repository without --code-repo is wrong-repo"; else fail "amend foreign cwd (rc=$rc: $out)"; fi
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand1" --base "$base_am" 2>/dev/null); rc=$?
 if [ "$rc" -eq 1 ] && [ "${out%% plan=*}" = "status=conflicts" ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=src/x.sh' && [ "$(git -C "$am_a" rev-parse feat)" = "$head_am" ]; then pass "an amendment with an undeclared overlap publishes nothing"; else fail "amend conflicts (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# The session id from the environment goes into the amendment's ledger line: one with a newline would write a line of its own, so it is refused before anything moves.
+out=$(cd "$am_a" && HYPERPOWERS_SESSION_ID=$'s1\nTask 9: complete' bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/am.cand1" --base "$base_am" --accept 'tasks=1,2 path=src/x.sh' --message "x twice" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(git -C "$am_a" rev-parse feat)" = "$head_am" ] && ! grep -q '^Task 9: complete' "$wsam/progress.md"; then pass "amend refuses a session id with a newline before anything moves"; else fail "amend with a newline session id (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand1" --base "$base_am" --accept 'tasks=1,2 path=src/x.sh' --message "x twice" 2>/dev/null); rc=$?
 new_head=$(git -C "$am_a" rev-parse feat)
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$new_head" != "$head_am" ] && [ "$(git -C "$am_a" rev-parse "$new_head^")" = "$head_am" ] && [ "$(git -C "$am_a" show feat:docs/plan.md | grep -c 'src/x.sh')" = 2 ] && [ "$(git -C "$am_a" diff --name-only "$head_am" "$new_head")" = "docs/plan.md" ] && grep -q '^scan: accepted-overlap tasks=1,2 path=src/x.sh$' "$wsam/progress.md" && grep -q '^plan: amended [0-9a-f]\{7\} by .*: x twice$' "$wsam/progress.md" && { [ ! -d "$wsam/amends" ] || [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; }; then pass "an accepted amendment publishes one plan-only commit and its acceptance line"; else fail "amend accepted (rc=$rc: $out)"; fi
@@ -4331,6 +4334,15 @@ out=$(run_state "$bd_a" wait docs/plan.md --session a/b --kind question --note "
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd/waiting/a" ] && [ ! -e "$wsbd/activity/a" ]; then pass "wait refuses a session id holding a slash and makes no directory"; else fail "wait with a nested session id (rc=$rc: $out: $(ls -A "$wsbd/waiting" "$wsbd/activity" | tr '\n' ' '))"; fi
 out=$(run_state "$bd_a" snapshot docs/plan.md --session c/d 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd/activity/c" ]; then pass "snapshot --session refuses a session id holding a slash and makes no directory"; else fail "snapshot with a nested session id (rc=$rc: $out: $(ls -A "$wsbd/activity" | tr '\n' ' '))"; fi
+# A session id with a newline is one file name but two lines of the board's listing: wait, snapshot --session and claim refuse it before writing anything, and the board's counts stay.
+counts_bd() { run_state "$1" board docs/plan.md 2>/dev/null | sed -n '1s/.* \(sessions=[0-9]* waiting=[0-9]*\) .*/\1/p'; }
+before_bd=$(counts_bd "$bd_a")
+out=$(run_state "$bd_a" wait docs/plan.md --session $'a\nb' --kind question --note "newline" 2>"$TEST_ROOT/bd.nl.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(grep -c . "$TEST_ROOT/bd.nl.err")" = 1 ] && [ ! -e "$wsbd/waiting/"$'a\nb' ] && [ ! -e "$wsbd/activity/"$'a\nb' ] && [ -n "$before_bd" ] && [ "$(counts_bd "$bd_a")" = "$before_bd" ]; then pass "wait refuses a session id with a newline, writes no record and leaves the board's counts"; else fail "wait with a newline session id (rc=$rc: $out: $before_bd -> $(counts_bd "$bd_a") :: $(tr '\n' '|' < "$TEST_ROOT/bd.nl.err"))"; fi
+out=$(run_state "$bd_a" snapshot docs/plan.md --session $'c\nd' 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd/activity/"$'c\nd' ] && [ "$(counts_bd "$bd_a")" = "$before_bd" ]; then pass "snapshot --session refuses a session id with a newline and stamps nothing"; else fail "snapshot with a newline session id (rc=$rc: $out: $(ls -A "$wsbd/activity" | tr '\n' ' '))"; fi
+out=$(run_state "$TEST_ROOT/bd3" claim docs/plan.md 1 --session $'a\nb' 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd3/claims/task-1" ] && [ ! -e "$wsbd3/activity/"$'a\nb' ]; then pass "claim refuses a session id with a newline and publishes no claim"; else fail "claim with a newline session id (rc=$rc: $out: $(ls -A "$wsbd3/claims" | tr '\n' ' '))"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

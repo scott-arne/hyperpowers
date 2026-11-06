@@ -152,12 +152,23 @@ ledger_task_complete() { grep -Eq "^[[:space:]*_>-]*Task $2: complete([^[:alnum:
 claim_task_branch_name() { # <integration> <ws8> <N> [<k>] -> <integration>.<ws8>.task-<N>[.<k>]
   printf '%s.%s.task-%s%s' "$1" "$2" "$3" "${4:+.$4}"
 }
+# <session id>: 0 when the id can name a record file and sit on one line.
+# One holding a slash would have directories made under waiting/ and
+# activity/ that block another session's records and hold no record the
+# board reads; a control character, a newline above all, splits the board's
+# line-by-line listing of those directories into phantom sessions, and the
+# owner record, the lease and amend's ledger line into lines of their own.
+# Every subcommand that writes the id calls this before its first side
+# effect.
+sid_ok() {
+  case "$1" in
+    ''|.|..|*/*|*[[:cntrl:]]*) printf 'sdd-state: a session id must be one path entry without control characters: %q\n' "$1" >&2; return 1 ;;
+  esac
+}
 # <dir under ROOT> <session id> <content>: publishes one of a session's own
 # records, waiting/<sid> or activity/<sid>. The session id is caller input
-# and both directories arrive with a fetched state branch. The id must be a
-# single path entry: one holding a slash would have directories made under
-# waiting/ and activity/ that block another session's records and hold no
-# record the board reads. Containment is checked at the write point, leaf
+# and both directories arrive with a fetched state branch, so the id is
+# checked here too (sid_ok). Containment is checked at the write point, leaf
 # included, only the record's own directory is made, and an entry there
 # that is not a regular file is refused: a rename onto a directory would
 # move the record inside it and report success. The content goes to an
@@ -167,7 +178,7 @@ claim_task_branch_name() { # <integration> <ws8> <N> [<k>] -> <integration>.<ws8
 # lock) can commit neither a temporary name nor a half-written record.
 record_publish() {
   local dest="$ROOT/$1/$2" t
-  case "$2" in ''|.|..|*/*) echo "sdd-state: the session id is not a single path entry: $2" >&2; return 1 ;; esac
+  sid_ok "$2" || return 1
   hp_contained "$ROOT" "$1/$2" || return 1
   mkdir -p "$ROOT/$1" || return 1
   t=$(mktemp "$(dirname "$ROOT")/.sdd-record.XXXXXX") || return 1
@@ -358,6 +369,7 @@ cmd_snapshot() {
     esac
   done
   [ -n "$plan" ] || usage
+  [ -z "$sid" ] || sid_ok "$sid" || { echo "status=error"; return 2; }
   resolve_plan "$plan"
   # The plain backend commits nothing, but the board still reads the
   # activity stamp from the local workspace.
@@ -408,6 +420,7 @@ cmd_claim() {
   # A release gives up the final claim and the lease; it is no takeover and
   # means nothing for a numbered task.
   [ "$release" -eq 0 ] || { [ "$n" = final ] && [ "$takeover" -eq 0 ]; } || usage
+  sid_ok "$sid" || { echo "status=error"; return 2; }
   command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 2; }
   resolve_plan "$plan"
   claims="$WSDIR/claims"; target="$claims/task-$n"
@@ -1647,6 +1660,9 @@ $2"; shift 2 ;;
   # newline would let the subject write a line of its own, a completion line
   # among them.
   case "$msg" in *$'\n'*) usage ;; esac
+  # The session id goes into the same ledger line, from the environment.
+  sid=$(hp_session_id); [ -n "$sid" ] || sid=unknown
+  sid_ok "$sid" || { echo "status=error"; return 2; }
   [ -f "$from" ] || { echo "sdd-state: no such file: $from" >&2; echo "status=error"; return 2; }
   # One absolute path for the hash and the parse, as deps takes it: git -C
   # "$REPO" would otherwise resolve a relative --from against the plan
@@ -1659,7 +1675,7 @@ $2"; shift 2 ;;
   # Only the path is resolved here; the comparison with the plan line waits
   # for the recovery under the lock.
   code=$(code_repo_arg "$code") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
-  rel=$(hp_plan_rel "$PLAN"); sid=$(hp_session_id); [ -n "$sid" ] || sid=unknown
+  rel=$(hp_plan_rel "$PLAN")
   [ -n "$msg" ] || msg="amendment"
   blob=$(git -C "$REPO" hash-object "$from") || { echo "status=error"; return 2; }
   # --base is the plan= token deps prints, seven characters: resolve it to the
@@ -2161,13 +2177,12 @@ cmd_wait() {
     esac
   done
   [ -n "$plan" ] && [ -n "$sid" ] || usage
+  sid_ok "$sid" || { echo "status=error"; return 2; }
   resolve_plan "$plan"
   d="$WSDIR/waiting"
   [ -f "$WSDIR/progress.md" ] || { echo "status=no-workspace"; return 2; }
-  # The session id is caller input and the waiting directory arrives with a
-  # fetched state branch: an id such as ../progress.md or a/b, or a planted
-  # link, would otherwise aim the removal or the rename at another file.
-  case "$sid" in */*) echo "sdd-state: the session id does not name a record under $d: $sid" >&2; echo "status=error"; return 2 ;; esac
+  # The waiting directory arrives with a fetched state branch: a planted
+  # link would otherwise aim the removal or the rename at another file.
   hp_contained "$ROOT" "plans/$WS/waiting/$sid" || { echo "sdd-state: the session id does not name a record under $d: $sid" >&2; echo "status=error"; return 2; }
   if [ "$clear" -eq 1 ]; then
     rm -f "$d/$sid" || { echo "status=error"; return 2; }

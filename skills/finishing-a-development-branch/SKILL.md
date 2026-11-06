@@ -358,7 +358,7 @@ bash <this skill's directory>/../subagent-driven-development/scripts/sdd-state l
 # Merge first — verify success before removing anything
 git checkout <base-branch>
 git pull
-git rev-parse HEAD   # the base tip before the merge; keep the sha it prints
+git rev-parse HEAD   # the base tip before the merge; on the first run, keep the sha it prints
 git merge <feature-branch>
 
 # Verify tests on merged result
@@ -372,22 +372,26 @@ and recoverable.
 Under SDD, a failed merge or failing tests leave the lease marked closing
 (`closing=1`): until it is released, register and task claims on this
 branch answer `branch-closing`, so say so when you report the failure. Once
-the cause is fixed, run the block above again.
+the cause is fixed, run the block above again, but keep the sha its first
+run printed: after a completed merge, a rerun prints the merged tip.
 
 If your human partner decides against the merge instead, put the base
-branch back first, from the main checkout. A merge stopped on conflicts is
-still in progress: run `git merge --abort`. A merge that completed has
-moved the base branch: ask your human partner "Reset <base-branch> to
-<sha>, its tip before the merge? This discards the merge and any
-uncommitted changes in the main checkout." (`<sha>` is the one the block
-printed). Run `git reset --hard <sha>` only on their explicit yes; without
-one, leave the base as it is and report (under SDD the lease stays
-closing). Then confirm the checkout is settled (`git status` shows no merge
-in progress and a clean tree, and `git rev-parse HEAD` prints the recorded
-sha); if it is not, stop and report. Only then, under SDD, release the
-lease with the release line this option ends with
-(`sdd-state lease <plan> --release --session <sid>`), which reopens the
-branch.
+branch back first, from the main checkout. Below, `<sha>` is the one the
+block's first run printed. If `git branch --show-current` does not print
+`<base-branch>`, run `git switch <base-branch>`; if that fails, stop and
+report. A merge stopped on conflicts is still in progress: run
+`git merge --abort`. Next, if `git rev-parse <base-branch>` does not print
+`<sha>`, ask your human partner "Reset <base-branch> to <sha>, its tip
+before the merge? This discards the merge and any uncommitted changes in
+the main checkout." Run `git reset --hard <sha>` only on their explicit
+yes; without one, leave the base as it is and report (under SDD the lease
+stays closing). Then confirm the checkout is settled
+(`git branch --show-current` prints `<base-branch>`,
+`git rev-parse <base-branch>` prints `<sha>`, and `git status` shows no
+merge in progress and a clean tree); if it is not, stop and report. Only
+then, under SDD, release the lease with the release line this option ends
+with (`sdd-state lease <plan> --release --session <sid>`), which reopens
+the branch.
 
 Once the merged result is green: detach the session's worktree (git
 refuses to delete a branch that is checked out in any worktree, and Step 6

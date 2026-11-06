@@ -87,7 +87,9 @@ include this section.]
 Name here, under **Merge-expected files:**, the files every task touches by
 nature (a changelog, a test index), each in backticks: two independent tasks
 that share only those files are not a conflict, and their merge-back
-conflicts are resolved by hand like any other.
+conflicts are resolved by hand like any other. Put the paths on the label's
+own line, as ``- **Merge-expected files:** `CHANGELOG.md`, `docs/testing.md` ``;
+the dependency check reads the backticked paths on that line only.
 
 ## Grounding
 

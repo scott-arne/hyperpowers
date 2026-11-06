@@ -30,7 +30,7 @@ BRANCH=$(git branch --show-current)
 git rev-parse --show-superproject-working-tree 2>/dev/null
 ```
 
-**If `GIT_DIR != GIT_COMMON` (and not a submodule):** You are already in a linked worktree. Skip to Step 2 (Project Setup). Do NOT create another worktree.
+**If `GIT_DIR != GIT_COMMON` (and not a submodule):** You are already in a linked worktree. Skip to Step 2 (Project Setup), after the detach in Detaching a later session (every path) when this is a later session of a running SDD plan. Do NOT create another worktree.
 The mode is `worktree`; report it with the branch state below.
 
 Report with branch state:
@@ -62,7 +62,7 @@ Step 2; for option 3 continue with Step 1. Report the mode in every case.
 
 ### 1a. Native Worktree Tools (preferred)
 
-Your human partner chose a worktree in Step 0. Do you already have a way to create one? It might be a tool with a name like `EnterWorktree`, `WorktreeCreate`, a `/worktree` command, or a `--worktree` flag. If you do, use it and skip to Step 2. If the tool is denied or fails, do not fall through to `git worktree add` and do not continue in the current checkout on your own: ask the Step 0 question again with options 1 and 2 only, and report that answer as the mode. The mode is `worktree` only once a worktree exists.
+Your human partner chose a worktree in Step 0. Do you already have a way to create one? It might be a tool with a name like `EnterWorktree`, `WorktreeCreate`, a `/worktree` command, or a `--worktree` flag. If you do, use it and skip to Step 2, after the detach in Detaching a later session (every path) when this is a later session of a running SDD plan. If the tool is denied or fails, do not fall through to `git worktree add` and do not continue in the current checkout on your own: ask the Step 0 question again with options 1 and 2 only, and report that answer as the mode. The mode is `worktree` only once a worktree exists.
 
 Native tools handle directory placement, branch creation, and cleanup automatically. Using `git worktree add` when you have a native tool creates phantom state your harness can't see or manage.
 
@@ -122,6 +122,21 @@ The integration branch itself is checked out nowhere while sessions work on
 the plan; the claim creates the task branch and the controller checks it
 out, and after each merge-back the worktree detaches again at the merged
 head.
+
+**Detaching a later session (every path).** An existing linked worktree
+(Step 0), a native tool's worktree (Step 1a) and work in place do not go
+through the block above. A later session of a running SDD plan then detaches
+at the integration head before the plan's first claim:
+
+```bash
+git switch --detach "<integration branch>"
+```
+
+The SDD skill names the integration branch (the plan line of its ledger) and
+runs this once it has read that line, which is after Steps 0-1 here, so a
+branch the native tool created is simply left unused. The Step 0 and Step 1a
+skips above are not exceptions: a later session of a running SDD plan then
+detaches it; see Detaching a later session (every path).
 
 **Sandbox fallback:** If `git worktree add` fails with a permission error (sandbox denial), tell your human partner the sandbox blocked worktree creation and ask the Step 0 question again with options 1 and 2 only. Their answer is the mode you report (`current-branch` or `new-branch`); a denied worktree is never reported as `worktree`. Then run setup and baseline tests in place.
 
@@ -189,6 +204,7 @@ that called you records it, and the finishing skill routes on it.
 | `worktrees/` exists | Use it (verify ignored) |
 | Both exist | Use `.worktrees/` |
 | Later session on a running SDD plan | Detached worktree at the integration head (Step 1b) |
+| Later session with an existing, native or in-place workspace | `git switch --detach "<integration branch>"` before the first claim (Detaching a later session) |
 | Neither exists | Check instruction file, then default `.worktrees/` |
 | Directory not ignored | Add to .gitignore + commit |
 | Permission error on create | Re-ask options 1 and 2; their answer is the mode, never `worktree` (Step 1b) |

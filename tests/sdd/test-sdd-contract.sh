@@ -498,5 +498,11 @@ WT="$REPO_ROOT/skills/using-git-worktrees/SKILL.md"
 assert_contains "$WT" "git worktree add --detach" "using-git-worktrees starts a later SDD session's worktree detached"
 assert_contains "$WT" "the claim creates the task branch and the controller checks it out" "using-git-worktrees defers the task branch to the claim"
 
+assert_contains "$WT" 'git switch --detach "<integration branch>"' "using-git-worktrees detaches an existing, native or in-place session at the integration head"
+assert_contains "$WT" "a later session of a running SDD plan then detaches it; see Detaching a later session (every path)" "using-git-worktrees points Step 0 and Step 1a at the detach paragraph"
+assert_contains "$WT" "Skip to Step 2 (Project Setup), after the detach in Detaching a later session (every path)" "using-git-worktrees Step 0 skip keeps the detach"
+assert_contains "$WT" "use it and skip to Step 2, after the detach in Detaching a later session (every path)" "using-git-worktrees Step 1a skip keeps the detach"
+assert_contains "$WPLANS" '- **Merge-expected files:** `CHANGELOG.md`, `docs/testing.md`' "writing-plans gives the one-line Merge-expected form the parser reads"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

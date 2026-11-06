@@ -114,9 +114,13 @@ so: the plan's ledger has a plan line naming an integration branch) starts
 its worktree detached at that branch's head rather than on a new branch:
 
 ```bash
+path="$LOCATION/<integration branch>-<session id>"
 git worktree add --detach "$path" "<integration branch>"
 cd "$path"
 ```
+
+The path carries the session id (the `<sid>` the SDD skill uses) because the
+first session's worktree normally still exists at `$LOCATION/<integration branch>`.
 
 The integration branch itself is checked out nowhere while sessions work on
 the plan; the claim creates the task branch and the controller checks it

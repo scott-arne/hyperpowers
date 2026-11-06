@@ -503,6 +503,7 @@ assert_contains "$WT" "a later session of a running SDD plan then detaches it; s
 assert_contains "$WT" "Skip to Step 2 (Project Setup), after the detach in Detaching a later session (every path)" "using-git-worktrees Step 0 skip keeps the detach"
 assert_contains "$WT" "use it and skip to Step 2, after the detach in Detaching a later session (every path)" "using-git-worktrees Step 1a skip keeps the detach"
 assert_contains "$WPLANS" '- **Merge-expected files:** `CHANGELOG.md`, `docs/testing.md`' "writing-plans gives the one-line Merge-expected form the parser reads"
+assert_contains "$WT" 'path="$LOCATION/<integration branch>-<session id>"' "using-git-worktrees gives a later session a worktree path of its own"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

@@ -330,6 +330,14 @@ Keep As-Is" below, whose report names no worktree in this mode. Options 1
 and 2 of the standard menu do not apply, and Step 6 does not run: nothing
 was created.
 
+After option 1's push and its report, in this order (option 2's tail is the
+one in Option 3):
+
+```bash
+git -C "$WORKTREE_PATH" switch --detach                                                                                 # SDD only, when the integration branch is checked out there
+bash <this skill's directory>/../subagent-driven-development/scripts/sdd-state lease <plan> --release --session <sid>   # SDD only, the last action; status=no-lease is fine
+```
+
 ### Option 1: Merge Locally
 
 Under SDD the block below first marks the branch closing, under the locks,

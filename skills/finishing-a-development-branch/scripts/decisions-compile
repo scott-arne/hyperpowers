@@ -521,7 +521,7 @@ load_notes() {
   # without --plan; the file's other decisions keep theirs.
   for ((n = 1; n <= count; n++)); do
     [ -f "$tmp/note-$n.txt" ] || continue
-    label=$(awk 'BEGIN { blank = 1 } blank && match($0, /^From [^[:space:]]*\.md: /) { print substr($0, 1, RLENGTH); exit } { blank = ($0 ~ /^[[:space:]]*$/) }' "$tmp/note-$n.txt")
+    label=$(awk 'BEGIN { blank = 1 } blank && match($0, /^From .+\.md: /) { print substr($0, 1, RLENGTH); exit } { blank = ($0 ~ /^[[:space:]]*$/) }' "$tmp/note-$n.txt")
     if [ -n "$label" ]; then
       echo "notes ignored: decision $n: a paragraph opens with \"$label\", which the compiler reserves for plan labels" >&2
       rm -f "$tmp/note-$n.txt"

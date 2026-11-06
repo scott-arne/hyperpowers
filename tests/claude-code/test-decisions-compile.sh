@@ -2189,6 +2189,26 @@ printf '# Decision notes: docs/hyperpowers/specs/noplan-design.md\n\n## Decision
 run_compile "$repo" docs/hyperpowers/specs/noplan-design.md --notes "$TEST_ROOT/label-notes-noplan.md"
 label_rec1=$(ls "$repo"/docs/hyperpowers/decisions/*first-decision*.md); label_rec2=$(ls "$repo"/docs/hyperpowers/decisions/*second-decision*.md)
 if [ "$RC" -eq 0 ] && [ "$ERR" = 'notes ignored: decision 1: a paragraph opens with "From x.md: ", which the compiler reserves for plan labels' ] && [ "$(label_body "$label_rec1")" = "Nothing recorded." ] && [ "$(label_body "$label_rec2")" = "A plain note." ]; then pass "a compile without a plan ignores a label-shaped note the same way"; else fail "label-shaped note without a plan (rc $RC, err: $ERR)"; fi
+# A plan's file name may hold spaces, and its label then does too.
+repo="$TEST_ROOT/labelnote-spaced"
+make_repo "$repo"
+write_spec "$repo" spaced-design.md <<'EOF'
+# Spaced
+
+## Decisions
+
+- First decision. Why it holds.
+- Second decision. Why it holds.
+- Third decision. Why it holds.
+EOF
+printf '# A\n\n**Spec:** docs/hyperpowers/specs/spaced-design.md\n' > "$repo/docs/hyperpowers/plans/a.md"
+printf '# B\n\n**Spec:** docs/hyperpowers/specs/spaced-design.md\n' > "$repo/docs/hyperpowers/plans/b plan.md"
+commit_all "$repo" "spec and plans"
+printf '# Decision notes: docs/hyperpowers/specs/spaced-design.md\n\n## Decision 1\nA changed one.\n\nFrom b plan.md: a paragraph shaped like a spaced label.\n\n## Decision 2\nFrom b plan.md: a first paragraph shaped like a spaced label.\n\n## Decision 3\nA changed three.\n' > "$TEST_ROOT/label-notes-spaced.md"
+run_compile "$repo" docs/hyperpowers/specs/spaced-design.md --plan docs/hyperpowers/plans/a.md --notes "$TEST_ROOT/label-notes-spaced.md"
+expected_err=$(printf '%s\n%s' 'notes ignored: decision 1: a paragraph opens with "From b plan.md: ", which the compiler reserves for plan labels' 'notes ignored: decision 2: a paragraph opens with "From b plan.md: ", which the compiler reserves for plan labels')
+label_rec1=$(ls "$repo"/docs/hyperpowers/decisions/*first-decision*.md); label_rec2=$(ls "$repo"/docs/hyperpowers/decisions/*second-decision*.md); label_rec3=$(ls "$repo"/docs/hyperpowers/decisions/*third-decision*.md)
+if [ "$RC" -eq 0 ] && [ "$ERR" = "$expected_err" ] && [ "$(label_body "$label_rec1")" = "Nothing recorded." ] && [ "$(label_body "$label_rec2")" = "Nothing recorded." ] && [ "$(label_body "$label_rec3")" = "A changed three." ]; then pass "a paragraph shaped like a label with spaces in its file name is ignored the same way"; else fail "spaced label-shaped notes (rc $RC, err: $ERR; 1: $(label_body "$label_rec1" | tr '\n' '|'); 3: $(label_body "$label_rec3" | tr '\n' '|'))"; fi
 
 # >>> later tasks append their checks above this line <<<
 

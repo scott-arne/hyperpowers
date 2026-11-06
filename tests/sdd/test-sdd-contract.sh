@@ -458,6 +458,13 @@ assert_contains "$FIN" "bash <this skill's directory>/../subagent-driven-develop
 assert_contains "$FIN" "bash <this skill's directory>/../subagent-driven-development/scripts/sdd-state lease <plan> --closing --session <sid>" "finishing spells the lease's script path from its own directory"
 assert_not_contains "$FIN" "bash ../subagent-driven-development/scripts/sdd-state" "finishing has no sdd-state call relative to the working directory"
 if [ -x "$REPO_ROOT/skills/finishing-a-development-branch/../subagent-driven-development/scripts/sdd-state" ]; then pass "the sdd-state path the finishing skill names exists and is executable"; else fail "the sdd-state path the finishing skill names exists and is executable"; fi
+# The default-branch push of mode current-branch bypasses the standard
+# options, so its section carries their detach and release itself.
+fin_scratch="$(mktemp -d)"
+sed -n '/^### Mode current-branch on the default branch$/,/^### Option 1: Merge Locally$/p' "$FIN" > "$fin_scratch/default-branch-mode.md"
+assert_contains "$fin_scratch/default-branch-mode.md" "sdd-state lease <plan> --release --session <sid>" "the default-branch push releases the lease"
+assert_contains "$fin_scratch/default-branch-mode.md" "switch --detach" "the default-branch push detaches the integration branch"
+rm -rf "$fin_scratch"
 # Turn liveness (spec 2026-10-19): a status message never ends a turn mid-plan,
 # long work is tracked, and Claude Code waits in the foreground.
 assert_contains "$SDD" "While the plan has tasks left, a turn ends in exactly three cases" \

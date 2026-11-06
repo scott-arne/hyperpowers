@@ -20,7 +20,7 @@ Example requests:
 - "Fix the bug where an empty email is accepted."
 - "Refactor the parser to handle nested lists."
 
-The skill lists three exceptions to ask your human partner about: throwaway prototypes, generated code, and configuration files.
+The skill lists three exceptions to ask you about: throwaway prototypes, generated code, and configuration files.
 
 ## What it does
 
@@ -62,7 +62,7 @@ The skill's core principle is that a test you never watched fail does not prove 
 
 ## Skipping or overriding
 
-The skill lists throwaway prototypes, generated code, and configuration files as exceptions, and says to ask your human partner about them. Its final rule is "no exceptions without your human partner's permission". So you can tell the agent a change is a prototype, or that you accept untested code for a given change, and the skill treats your say-so as the permission it asks for. If you give no such permission, the agent starts over whenever it catches code before its test.
+The skill lists throwaway prototypes, generated code, and configuration files as exceptions, and says to ask you about them. Its final rule is "no exceptions without your human partner's permission". So you can tell the agent a change is a prototype, or that you accept untested code for a given change, and the skill treats your say-so as the permission it asks for. If you give no such permission, the agent starts over whenever it catches code before its test.
 
 ## Works with
 

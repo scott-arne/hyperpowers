@@ -93,7 +93,7 @@ The preflight, {source}`skills/requesting-code-review/scripts/codex-preflight`, 
 | `stale-broker` | The companion broker for the repository is dead | A note quoting a recovery command to run in a terminal |
 | `preflight-error` | The preflight itself failed | A note with the error summary |
 
-The `hooks/session-start` script moves dead broker records aside each time it runs, so the gate text reads a `stale-broker` status as a broker that died after that. Every degraded gate appends an event to a ledger of ungated work, with the gate type, status, and for code gates the range that shipped unreviewed. That ledger feeds the session-start notice that counts pending items, and a review sweep clears the items, but only when you ask for it. The sweep runs a code review over each pending event's exact recorded range. Events from the spec and plan gates are recorded as not sweepable and never appear as pending.
+The `hooks/session-start` script moves dead broker records aside each time it runs, so the gate text reads a `stale-broker` status as a broker that died after that. Every degraded gate except the approach gate appends an event to a ledger of ungated work, with the gate type, status, and for code gates the range that shipped unreviewed. That ledger feeds the session-start notice that counts pending items, and a review sweep clears the items, but only when you ask for it. The sweep runs a code review over each pending event's exact recorded range. Events from the spec and plan gates are recorded as not sweepable and never appear as pending.
 
 ## Why companion commands run outside the Bash sandbox
 

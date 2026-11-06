@@ -1,6 +1,6 @@
 ---
-sources: README.md docs/hyperpowers/2026-11-03-cost-reduction-6-16-2-eval-evidence.md skills/brainstorming/SKILL.md skills/subagent-driven-development/SKILL.md skills/writing-skills/SKILL.md
-source-digest: e39aed4d0076
+sources: skills/writing-plans/SKILL.md README.md docs/hyperpowers/2026-11-03-cost-reduction-6-16-2-eval-evidence.md skills/brainstorming/SKILL.md skills/subagent-driven-development/SKILL.md skills/writing-skills/SKILL.md
+source-digest: b98caead23a1
 ---
 
 # Recommended settings
@@ -25,7 +25,7 @@ The environment variable `CLAUDE_CODE_AUTO_COMPACT_WINDOW` sets the same value.
 
 On models with a 1M-token window, Claude Code otherwise compacts only near 968K tokens. In a replay of a month of long sessions, a 400K window cut cost by about 28%. A 300K or 200K window saved only 4 or 7 points more, while adding 1.5 or 2.6 times as many extra compactions as the 400K window, and each compaction drops detail.
 
-After a compaction, Claude Code re-attaches only the first 20,000 characters of each skill that the session used. {doc}`skills/brainstorming` and {doc}`skills/subagent-driven-development` are long skills, and both tell the agent to read their full text again after every compaction, so a lower window does not leave them running from a cut copy. In testing at a forced 100K window, where compactions come far more often than at 400K, agents re-read after 98% of compactions in subagent-driven-development and after 100% in brainstorming. The 400K window itself was not measured. It leaves about 300K of headroom after each compaction.
+After a compaction, Claude Code re-attaches only the first 20,000 characters of each skill that the session used. {doc}`skills/brainstorming` and {doc}`skills/subagent-driven-development` are long skills, and both tell the agent to read their full text again after every compaction, so that they do not keep running from the cut copy. In testing at a forced 100K window, where compactions come far more often than at 400K, agents re-read after 98% of compactions in subagent-driven-development and after 100% in brainstorming. The 400K window itself was not measured. It leaves about 300K of headroom after each compaction.
 
 {doc}`skills/writing-skills` is also longer than 20,000 characters and does not yet carry the re-read instruction.
 
@@ -37,7 +37,7 @@ If `ENABLE_PROMPT_CACHING_1H=1` is set, leave it set. Sessions pause for five to
 
 ## Tip 3: run `/clear` between planning and execution
 
-When the plan is written, run `/clear` before starting subagent-driven development. The spec and plan are on disk, so the execution session starts from a small context.
+When the plan is written, run `/clear` before starting subagent-driven development. The writing-plans skill starts execution right after it saves the plan, so to clear first, stop the agent at the handoff, run `/clear`, then ask it to execute the plan file. The spec and plan are on disk, so the execution session starts from a small context.
 
 ## What these settings change
 

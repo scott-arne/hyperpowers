@@ -63,7 +63,7 @@ The core principle is that if you did not watch an agent fail without the skill,
 
 ## Skipping or overriding
 
-The skill gives no way to skip the test-first rule. Its rationalizations table says every excuse for skipping testing means testing before deployment, with no exceptions. The skill does vary the kind of test by skill type: a reference skill gets retrieval, application, and gap tests, and a discipline skill gets pressure scenarios.
+The skill gives no way to skip the test-first rule. Its rationalizations table says every excuse for skipping testing means testing before deployment, with no exceptions. The skill does vary the kind of test by skill type: a reference skill gets retrieval, application, and gap scenarios, and a discipline skill gets pressure scenarios.
 
 ## Works with
 

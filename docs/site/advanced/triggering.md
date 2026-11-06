@@ -1,6 +1,6 @@
 ---
-sources: skills/using-hyperpowers hooks .opencode/plugins .pi/extensions .kimi-plugin/plugin.json skills/writing-skills/SKILL.md .cursor-plugin/plugin.json .codex-plugin/plugin.json scripts/claude-skill-root.md skills/subagent-driven-development/SKILL.md README.md tests/antigravity/test-antigravity-tools.sh RELEASE-NOTES.md docs/porting-to-a-new-harness.md
-source-digest: a1ed065a112e
+sources: skills/using-hyperpowers hooks .opencode/plugins .pi/extensions .kimi-plugin/plugin.json skills/writing-skills/SKILL.md .cursor-plugin/plugin.json .codex-plugin/plugin.json scripts/claude-skill-root.md skills/subagent-driven-development/SKILL.md README.md tests/antigravity/test-antigravity-tools.sh RELEASE-NOTES.md docs/porting-to-a-new-harness.md docs/README.kimi.md
+source-digest: 2d2eac22e1df
 ---
 # How skills trigger
 
@@ -8,7 +8,7 @@ Skills fire because the `using-hyperpowers` bootstrap is in the agent's context 
 
 ## How the bootstrap gets into a session
 
-Each harness uses its own mechanism. The session-start hooks, the OpenCode plugin, and the Pi extension read {source}`skills/using-hyperpowers/SKILL.md`. The Claude Desktop and claude.ai bundle uses a router document instead, and this repository does not show how Kimi reads its declaration.
+Each harness uses its own mechanism. The session-start hooks, the OpenCode plugin, and the Pi extension read {source}`skills/using-hyperpowers/SKILL.md`. The Claude Desktop and claude.ai bundle uses a router document instead, and {source}`docs/README.kimi.md` says the Kimi manifest loads the skill at session start through `sessionStart.skill`, though no code here shows the mechanism.
 
 **Claude Code.** {source}`hooks/hooks.json` registers a `SessionStart` hook that runs `hooks/run-hook.cmd session-start` for the sources `startup`, `clear`, and `compact`. {source}`hooks/session-start` wraps the skill text in an `<EXTREMELY_IMPORTANT>` block that begins "You have superpowers" and returns it as `hookSpecificOutput.additionalContext`.
 
@@ -20,7 +20,7 @@ Each harness uses its own mechanism. The session-start hooks, the OpenCode plugi
 
 **Pi.** {source}`.pi/extensions/hyperpowers.ts` registers the skills directory and sets a flag on `session_start` and on `session_compact`. While the flag is set, it inserts the bootstrap, followed by a Pi tool mapping, as a user message in the `context` event, after any compaction summary at the start of the messages. It clears the flag at `agent_end`.
 
-**Kimi.** {source}`.kimi-plugin/plugin.json` declares `sessionStart.skill` as `using-hyperpowers`, along with a `skillInstructions` text that maps skill actions to Kimi Code's tools. The manifest holds no code, and no file here describes how Kimi acts on the declaration. The manifest also carries the plugin version, so every release changes a file this page lists and flags the page for a re-read.
+**Kimi.** {source}`.kimi-plugin/plugin.json` declares `sessionStart.skill` as `using-hyperpowers`, along with a `skillInstructions` text that maps skill actions to Kimi Code's tools. The {source}`docs/README.kimi.md` says the manifest loads `using-hyperpowers` at session start through `sessionStart.skill`. The manifest holds no code, and no code here shows how Kimi acts on the declaration. The manifest also carries the plugin version, so every release changes a file this page lists and flags the page for a re-read.
 
 **Antigravity.** The {source}`README.md` says Antigravity runs the plugin's session-start hook, so the skills are active from the first message. The header comment of {source}`tests/antigravity/test-antigravity-tools.sh` says `agy` installs the existing plugin from the repository, loads the bundled skills, and runs the `SessionStart` hook, with no Antigravity-specific scaffold.
 
@@ -62,7 +62,7 @@ What each mechanism does when the context is compacted:
 - Pi: the `session_compact` handler sets the flag again, so the bootstrap is inserted again at the next `context` event.
 - Cursor: the configuration sets only `sessionStart`, so no file here re-injects the bootstrap at compaction.
 - OpenCode: the transform runs on each agent step and inserts the bootstrap into the first user message when it is absent. No file there mentions compaction.
-- Kimi: the manifest declares a session-start skill and nothing else. No file here describes re-injection.
+- Kimi: the manifest declares a session-start skill and nothing else. No code here shows re-injection after compaction.
 - Antigravity and Copilot CLI: no file here says whether the hook runs again at compaction.
 
 The subagent-driven-development skill separately tells the controller to re-read the skill after each compaction. {doc}`sdd-internals` covers that instruction.

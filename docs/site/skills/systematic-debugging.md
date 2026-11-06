@@ -35,7 +35,7 @@ If the investigation finishes and the cause really is environmental, timing depe
 
 ## Why it exists
 
-The skill opens with its reason: random fixes waste time and create new bugs, and quick patches hide the underlying issue. Its rationalizations table and red-flags list name the thoughts that lead to guessing ("just try changing X", "one more fix attempt" after two failures, "I see the problem, let me fix it") and send the agent back to phase 1. A section on your human partner's signals ("Stop guessing", "Is that not happening?") lists redirections that tell the agent it skipped evidence gathering. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`.
+The skill opens with its reason: random fixes waste time and create new bugs, and quick patches hide the underlying issue. Its rationalizations table and red-flags list name the thoughts that lead to guessing ("just try changing X", "one more fix attempt" after two failures, "I see the problem, let me fix it") and send the agent back to phase 1. A section on your signals ("Stop guessing", "Is that not happening?") lists redirections that tell the agent it skipped evidence gathering. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`.
 
 ## Pros
 

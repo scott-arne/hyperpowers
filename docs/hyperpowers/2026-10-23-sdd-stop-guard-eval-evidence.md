@@ -515,4 +515,44 @@ repositories with a two-task plan and an SDD ledger, with the treatment
 
 ## Release
 
-To be filled in by Task 22.
+The gate was read on 2026-11-06 at the branch head `dd5bf4f`, and every
+criterion holds.
+
+The decision of record is `tally-z4b.txt` in hyperpowers-evals
+(`evidence/2026-10-23-sdd-stop-guard/tally-z4b.txt`), which the campaign
+README's second re-measure addendum names in place of `tally.txt` and
+`tally-z4.txt`. It reads `decision: PASS`, with `H1: True`, `H2: True`,
+`H3: True`, `H4: True` and `R: True`; Scenario results quotes all its lines.
+
+The Zed section records Z1 pass (2026-11-05), Z2 pass (2026-11-05) and Z3
+pass (2026-11-06). Z4 failed on 2026-11-05. Its contingency shipped at
+`36a6255` and was re-measured, first as `tally-z4.txt`, which read FAIL,
+and after Correction 12 as `tally-z4b.txt`, which reads PASS. The criterion
+accepts a contingency shipped and re-measured in place of a Z4 pass.
+
+T1's archived record is under
+`evidence/2026-10-23-sdd-stop-guard/task-19-runs/t1/`. Below it, the
+receipt's plan log
+`workspaces/sdd-turn-liveness-fork-claude-auto-20261028T010948Z-93d7/home/.cache/hyperpowers/receipts/plan-76cc6a12-20261028T014400Z/stop-guard.jsonl`
+holds 12 lines, and all 12 are `live-agent` allows. The session mirror in
+the same home,
+`.cache/hyperpowers/stop-guard/d59b8c82-a7e3-4f0f-a91d-454e17ea6f9a.jsonl`,
+holds the same 12 and the two `no-ledger` allows after Finish. The
+criterion asks for at least one.
+
+At the branch head, `bash tests/sdd/test-sdd-contract.sh` printed
+`STATUS: PASSED` (266 checks passed, none failed or skipped) and
+`bash tests/hooks/test-sdd-stop-guard.sh` printed `STATUS: PASSED` (16
+checks passed, none failed or skipped, with the latency bench inside the
+unit matrix), both inside the command sandbox on the first run. The
+controller ran `bash tests/run-offline.sh` outside the sandbox from
+12:59:34Z to 13:26:11Z. It exited 1 with exactly two lines,
+`FAILED: tests/brainstorm-server npm test (log: <path>)` and
+`offline set: 1 failed (logs: <path>)`, which match the Before Task 1
+record line for line, log paths aside. That is the accepted signature.
+
+The release goes ahead as 6.17.0, dated 2026-11-06. `vrzn -y bump minor`
+moved all six version locations from 6.16.1 to 6.17.0, and `vrzn get`
+reports them consistent. On the bumped tree the contract suite printed
+`STATUS: PASSED` again, with the same 266 checks. The tag is made after
+the merge, at Finish.

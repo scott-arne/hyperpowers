@@ -1,5 +1,7 @@
 # Read the Docs site for hyperpowers
 
+**Outcome:** implemented 2026-11-05; 9 decisions under docs/hyperpowers/decisions/.
+
 **Date:** 2026-11-05
 **Status:** design approved in chat on 2026-11-05, section by section
 (structure, skill page template, recommended settings, build and hosting,

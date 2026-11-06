@@ -1,5 +1,7 @@
 # SDD Stop Guard: Design
 
+**Outcome:** implemented 2026-11-06; 10 decisions under docs/hyperpowers/decisions/.
+
 Date: 2026-10-23. Status: draft for review. This design follows the
 sdd-turn-liveness spec (`2026-10-19-sdd-turn-liveness-design.md`), whose
 campaign failed its P criterion on 2026-10-22; that spec remains the record
@@ -99,6 +101,26 @@ failed. It has.
    context. The hook treats a resumed agent as live work, and whether Zed
    shows that as working is a release check with a written contingency.
    Fork mode is documented, not detected, and gets one terminal smoke run.
+7. **Tracked jobs get their own process group through bash job control.**
+   `tracked-job run` starts the command with `set -m` instead of
+   `setsid`, so the command and its supervisor stay in the controller's
+   session (plan deviation 1, approved 2026-10-24).
+8. **A job is lost only on ESRCH, and an unswept lost job stays live.**
+   `tracked-job wait` declares `lost` only when `kill -0` on the
+   supervisor answers ESRCH and no `exit` appears within the grace;
+   `stop` on a lost job it cannot sweep writes `lost-unswept` (exit 7),
+   which the hook counts as a live tracked shell (plan deviation 2,
+   approved 2026-10-24).
+9. **The lost-job fence matches an open descriptor on the job's log.**
+   The identity fence also matches a process holding an open descriptor
+   on `<jobdir>/out.log`, read through `/proc` or `lsof`, and the `ps -E`
+   reader was removed; the Design section's text stays as written (human
+   partner, 2026-10-25).
+10. **Unlocked concurrent appends stay unserialized.** A machine line
+    glued to another writer's fragment, a hook decision glued in the plan
+    log, and a line appended during Finish's final receipt copy are
+    accepted residuals (human partner, 2026-10-25 and 2026-10-26; Codex
+    final gate disposition, 2026-11-06).
 
 ## Design
 

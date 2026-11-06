@@ -2138,6 +2138,58 @@ run_compile "$repo" docs/hyperpowers/specs/same-design.md --plan docs/hyperpower
 case "$ERR" in *docs/hyperpowers/plans/v2/a.md*"(a.md)"*) same_msg=1 ;; *) same_msg=0 ;; esac
 if [ "$RC" -eq 2 ] && [ "$same_msg" = 1 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "a file name the Outcome line already names is refused for another path"; else fail "Outcome-named file name (rc $RC, err: $ERR)"; fi
 
+# --- 38. a note paragraph shaped like a plan label is never written ---------
+# A later plan's finish reads a paragraph opening "From <name>.md: " as that
+# plan's section, so a note carrying one would be replaced by it. The
+# compiler ignores such a decision's note where the notes are loaded.
+repo="$TEST_ROOT/labelnote"
+make_repo "$repo"
+write_spec "$repo" label-design.md <<'EOF'
+# Label
+
+## Decisions
+
+- First decision. Why it holds.
+- Second decision. Why it holds.
+- Third decision. Why it holds.
+EOF
+printf '# A\n\n**Spec:** docs/hyperpowers/specs/label-design.md\n' > "$repo/docs/hyperpowers/plans/a.md"
+printf '# B\n\n**Spec:** docs/hyperpowers/specs/label-design.md\n' > "$repo/docs/hyperpowers/plans/b.md"
+commit_all "$repo" "spec and plans"
+printf '# Decision notes: docs/hyperpowers/specs/label-design.md\n\n## Decision 1\nA changed one.\n\nFrom b.md: a paragraph shaped like a label.\n\n## Decision 2\nFrom b.md: a first paragraph shaped like a label.\n\n## Decision 3\nFrom the diff: A changed three.\n' > "$TEST_ROOT/label-notes-a.md"
+printf '# Decision notes: docs/hyperpowers/specs/label-design.md\n\n## Decision 1\nB changed one.\n\n## Decision 2\nNo change.\n\n## Decision 3\nB changed three.\n' > "$TEST_ROOT/label-notes-b.md"
+run_compile "$repo" docs/hyperpowers/specs/label-design.md --plan docs/hyperpowers/plans/a.md --notes "$TEST_ROOT/label-notes-a.md"
+expected_err=$(printf '%s\n%s' 'notes ignored: decision 1: a paragraph opens with "From b.md: ", which the compiler reserves for plan labels' 'notes ignored: decision 2: a paragraph opens with "From b.md: ", which the compiler reserves for plan labels')
+if [ "$RC" -eq 0 ] && [ "$ERR" = "$expected_err" ]; then pass "a decision whose note has a paragraph shaped like a plan label is ignored with one line each"; else fail "label-shaped notes (rc $RC, err: $ERR)"; fi
+label_rec1=$(ls "$repo"/docs/hyperpowers/decisions/*first-decision*.md); label_rec2=$(ls "$repo"/docs/hyperpowers/decisions/*second-decision*.md); label_rec3=$(ls "$repo"/docs/hyperpowers/decisions/*third-decision*.md)
+label_body() { sed -n '/^## What implementation changed$/,$p' "$1" | sed 1,2d; }
+if [ "$(label_body "$label_rec1")" = "Nothing recorded." ] && [ "$(label_body "$label_rec2")" = "Nothing recorded." ] && ! grep -q '^- Recorded: .*notes from the branch diff' "$label_rec1" && [ "$(label_body "$label_rec3")" = "From the diff: A changed three." ]; then pass "the ignored decisions compile without notes and another decision keeps its own"; else fail "label-shaped notes bodies (1: $(label_body "$label_rec1" | tr '\n' '|'); 2: $(label_body "$label_rec2" | tr '\n' '|'); 3: $(label_body "$label_rec3" | tr '\n' '|'))"; fi
+commit_all "$repo" "records for a"
+run_compile "$repo" docs/hyperpowers/specs/label-design.md --plan docs/hyperpowers/plans/b.md --notes "$TEST_ROOT/label-notes-b.md"
+if [ "$RC" -eq 0 ] && [ "$(label_body "$label_rec1")" = "From b.md: B changed one." ] && [ "$(label_body "$label_rec3")" = "$(printf 'From a.md: From the diff: A changed three.\n\nFrom b.md: B changed three.')" ]; then pass "the second plan's finish adds its notes and keeps the first plan's"; else fail "second finish after ignored notes (rc $RC, 1: $(label_body "$label_rec1" | tr '\n' '|'); 3: $(label_body "$label_rec3" | tr '\n' '|'))"; fi
+commit_all "$repo" "records for b"
+label_sums=$(cksum "$label_rec1" "$label_rec2" "$label_rec3")
+run_compile "$repo" docs/hyperpowers/specs/label-design.md --plan docs/hyperpowers/plans/b.md --notes "$TEST_ROOT/label-notes-b.md"
+label_rc_b=$RC
+run_compile "$repo" docs/hyperpowers/specs/label-design.md --plan docs/hyperpowers/plans/a.md --notes "$TEST_ROOT/label-notes-a.md"
+if [ "$label_rc_b" -eq 0 ] && [ "$RC" -eq 0 ] && [ "$(cksum "$label_rec1" "$label_rec2" "$label_rec3")" = "$label_sums" ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "re-running both finishes leaves every record byte-identical"; else fail "re-runs after ignored notes (rc $label_rc_b/$RC, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+# Without --plan the same reservation holds.
+repo="$TEST_ROOT/labelnote-noplan"
+make_repo "$repo"
+write_spec "$repo" noplan-design.md <<'EOF'
+# No plan
+
+## Decisions
+
+- First decision. Why it holds.
+- Second decision. Why it holds.
+EOF
+commit_all "$repo" "spec"
+printf '# Decision notes: docs/hyperpowers/specs/noplan-design.md\n\n## Decision 1\nFrom x.md: shaped like a label.\n\n## Decision 2\nA plain note.\n' > "$TEST_ROOT/label-notes-noplan.md"
+run_compile "$repo" docs/hyperpowers/specs/noplan-design.md --notes "$TEST_ROOT/label-notes-noplan.md"
+label_rec1=$(ls "$repo"/docs/hyperpowers/decisions/*first-decision*.md); label_rec2=$(ls "$repo"/docs/hyperpowers/decisions/*second-decision*.md)
+if [ "$RC" -eq 0 ] && [ "$ERR" = 'notes ignored: decision 1: a paragraph opens with "From x.md: ", which the compiler reserves for plan labels' ] && [ "$(label_body "$label_rec1")" = "Nothing recorded." ] && [ "$(label_body "$label_rec2")" = "A plain note." ]; then pass "a compile without a plan ignores a label-shaped note the same way"; else fail "label-shaped note without a plan (rc $RC, err: $ERR)"; fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

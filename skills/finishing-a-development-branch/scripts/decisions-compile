@@ -439,7 +439,7 @@ render_record() {  # N -> the record text
 # been given. A decision the file does not mention keeps its section.
 notes_valid=false
 load_notes() {
-  local f=$1 n reason="" first hdr
+  local f=$1 n reason="" first hdr label
   [ -f "$f" ] || { echo "notes ignored: no such file: $f" >&2; return 0; }
   first=$(head -n 1 "$f" 2>/dev/null) || { echo "notes ignored: cannot read $f" >&2; return 0; }
   case "$first" in
@@ -514,6 +514,19 @@ load_notes() {
     rm -f "$tmp"/note-*.txt
     return 0
   fi
+  # "From <name>.md: " opening a paragraph is the label of a plan's section
+  # in a record that names two plans, and a later finish replaces the section
+  # its label names. A note holding such a paragraph would lose it then, so
+  # that decision's note is ignored here, where the notes enter, with or
+  # without --plan; the file's other decisions keep theirs.
+  for ((n = 1; n <= count; n++)); do
+    [ -f "$tmp/note-$n.txt" ] || continue
+    label=$(awk 'BEGIN { blank = 1 } blank && match($0, /^From [^[:space:]]*\.md: /) { print substr($0, 1, RLENGTH); exit } { blank = ($0 ~ /^[[:space:]]*$/) }' "$tmp/note-$n.txt")
+    if [ -n "$label" ]; then
+      echo "notes ignored: decision $n: a paragraph opens with \"$label\", which the compiler reserves for plan labels" >&2
+      rm -f "$tmp/note-$n.txt"
+    fi
+  done
   notes_valid=true
   read -r proposed undocumented < "$tmp/notes-counts"
   return 0

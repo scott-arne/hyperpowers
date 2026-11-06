@@ -4411,6 +4411,10 @@ out=$(run_state "$bd_a" snapshot docs/plan.md --session $'c\nd' 2>/dev/null); rc
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd/activity/"$'c\nd' ] && [ "$(counts_bd "$bd_a")" = "$before_bd" ]; then pass "snapshot --session refuses a session id with a newline and stamps nothing"; else fail "snapshot with a newline session id (rc=$rc: $out: $(ls -A "$wsbd/activity" | tr '\n' ' '))"; fi
 out=$(run_state "$TEST_ROOT/bd3" claim docs/plan.md 1 --session $'a\nb' 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd3/claims/task-1" ] && [ ! -e "$wsbd3/activity/"$'a\nb' ]; then pass "claim refuses a session id with a newline and publishes no claim"; else fail "claim with a newline session id (rc=$rc: $out: $(ls -A "$wsbd3/claims" | tr '\n' ' '))"; fi
+# A session line of the shape the SDD skill writes names the integration branch after the session's own: the row's branch is the session's alone, and the worktree is unchanged.
+printf 'session s10: mode worktree on detached integrating feat at %s started 2026-01-01T00:00:00Z\n' "$TEST_ROOT/wt at bd" >> "$wsbd/progress.md"
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qF "session s10 task=none since=none worktree=$(printf '%s' "$TEST_ROOT/wt at bd" | sed 's/ /%20/g') branch=detached host="; then pass "the board takes a session's own branch from a session line that names its integration branch"; else fail "board session line with integrating (rc=$rc: $(printf '%s\n' "$out" | grep '^session s10 '))"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

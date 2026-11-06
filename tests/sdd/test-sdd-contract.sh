@@ -451,6 +451,7 @@ assert_contains "$SDD" "scripts/sdd-state merge-back PLAN_FILE N --session <sid>
 assert_contains "$SDD" "git switch --detach <merged head>" "the controller detaches at the merged head"
 assert_contains "$SDD" "scripts/sdd-state wait PLAN_FILE --session <sid> --kind" "the waiting board rule"
 assert_contains "$SDD" "scripts/sdd-state claim PLAN_FILE final --session <sid>" "the final train is claimed"
+assert_contains "$SDD" "\`held\` with your own session id (\`own=1\`, a resume after compaction) means this session already holds the train: continue as its holder" "the final holder's own claim resumes the train"
 assert_contains "$SDD" "scripts/sdd-state finish PLAN_FILE --session <sid>" "finish takes the session"
 assert_not_contains "$SDD" "Never dispatch multiple implementation subagents in parallel (conflicts)." "the old parallel sentence is replaced"
 

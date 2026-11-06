@@ -820,7 +820,9 @@ The final train is claimed. When `next` says `complete`, run
 `scripts/sdd-state claim PLAN_FILE final --session <sid>`: `claimed` means
 this session runs the final review, the final gate and Finish; `blocked`
 names tasks still open (claims without completion lines elsewhere: wait or
-ask); `held` names the session that holds it, or `lease=<sid> plan=<ws>`
+ask); `held` with your own session id (`own=1`, a resume after compaction)
+means this session already holds the train: continue as its holder; `held`
+names the session that holds it, or `lease=<sid> plan=<ws>`
 when a sibling plan's final holds the branch: post a `tasks` record naming
 the holder, print the board, and hand back. The holder checks the
 integration branch out in its own worktree (`git switch <integration>`), the

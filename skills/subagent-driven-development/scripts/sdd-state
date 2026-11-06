@@ -2362,12 +2362,13 @@ cmd_board() {
       break
     done
     # The session line's worktree may itself hold " at ", so the branch is
-    # cut at the first " at " (branch names hold no spaces) and the worktree
-    # runs to the last " started ".
+    # cut at the first " at " (branch names hold no spaces), then before the
+    # " integrating <integration branch>" field when the line has one, and
+    # the worktree runs to the last " started ".
     wt=unknown; br=unknown
     l=$(SID=$sid awk 'BEGIN { p = "session " ENVIRON["SID"] ": mode " } index($0, p) == 1 { l = substr($0, length(p) + 1) } END { print l }' "$ledger" 2>/dev/null)
     case "$l" in
-      *" on "*" at "*" started "*) rest=${l#* on }; br=${rest%% at *}; wt=${rest#* at }; wt=${wt% started *} ;;
+      *" on "*" at "*" started "*) rest=${l#* on }; br=${rest%% at *}; br=${br%% integrating *}; wt=${rest#* at }; wt=${wt% started *} ;;
     esac
     # A record path is read only for an id that names one entry: an owner
     # record arriving with the state branch can carry any session= value.

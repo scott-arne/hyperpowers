@@ -1,10 +1,10 @@
 ---
-sources: skills/subagent-driven-development hooks/session-start docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md
-source-digest: 70cd14a4ba1d
+sources: skills/subagent-driven-development hooks/session-start hooks/hooks.json hooks/sdd-stop-guard hooks/lib/stop-guard.mjs docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md
+source-digest: 46115195f1e4
 ---
 # How subagent-driven development keeps its place
 
-This page covers the files and scripts behind {doc}`../skills/subagent-driven-development`: where a run keeps its state, what the ledger records, how briefs and review packages move work between agents, how risk tiers, model choice, and the fix-loop cap work, and how a run resumes after compaction. The loop itself is in the skill page. This page covers the mechanics that let it survive an interruption.
+This page covers the files and scripts behind {doc}`../skills/subagent-driven-development`: where a run keeps its state, what the ledger records, how briefs and review packages move work between agents, how risk tiers, model choice, and the fix-loop cap work, when a turn may end mid-plan, and how a run resumes after compaction. The loop itself is in the skill page. This page covers the mechanics that let it survive an interruption.
 
 ## The workspace
 
@@ -39,13 +39,15 @@ The ledger is the recovery map. The skill says that after compaction the control
 
 - A session line with the mode, branch, and toplevel, and a `tasks` line if you assigned this session specific tasks.
 - The pre-flight scan table, one row per pair of tasks that share a file or interface and one per task.
-- For each task: the implementer's agent identity, each fix round (`Task N: fix round R/5 (...)`), deferred minor findings (`Task N: minor (deferred): ...`), the task's gate directory when a Codex gate ran, and the completion line (`Task N: complete (commits <base7>..<head7>, review clean)`).
+- For each task: the implementer's agent identity with its model, session, worktree, and branch, each fix round (`Task N: fix round R/5 (...)`), deferred minor findings (`Task N: minor (deferred): ...`), the task's gate directory when a Codex gate ran, and the completion line (`Task N: complete (commits <base7>..<head7>, review clean)`).
+- A `jobdir=` line for each tracked job, written by `tracked-job new`.
+- A hand-back line for each turn ended by a question, a BLOCKED report, or your request to stop, written by `sdd-state handback`.
 - A `Decisions listing:` line and a `Decision extractor:` line when the plan has a spec.
 - Tier lines, described below.
 
 On resume, a task with a completion line is done and is never re-dispatched. A task whose last line is a fix round resumes at the next round. A task whose last line is its implementer identity is a dispatch in flight: the controller reconciles that agent first, resumes it by its recorded id where the harness allows, and dispatches a takeover only if it cannot be recovered. The controller appends to the ledger with a quoted heredoc when another session may be live, because an edit that rewrites the file would drop a line another session appended in between.
 
-After the pre-flight scan and after every completion line, the controller runs `sdd-state snapshot`, so a hand-off or a crash loses at most the task in flight. A snapshot outcome of `none` or `error` stops the run before the next task.
+The controller does not write the completion line by hand. `sdd-state complete PLAN_FILE N --commits <base7>..<head7>` appends it and snapshots the workspace, and the controller repeats the command until it prints `status=complete`. `busy` and `error` are retried. `unknown-task` (the number is not a task heading in the plan), `no-workspace`, and a usage error stop the run. After the pre-flight scan and before the final review, the controller runs `sdd-state snapshot` itself, so a hand-off or a crash loses at most the task in flight. A snapshot outcome of `none` or `error` stops the run until a snapshot succeeds.
 
 Before a task is dispatched, the controller claims it with `sdd-state claim PLAN_FILE N --session <sid>`. A claim held by another session means the controller asks you who holds it and whether to take it over, and it takes over only on your explicit yes.
 
@@ -85,13 +87,28 @@ The file's reason for the mid-tier floor is turn count: the cheapest models rout
 
 A task's blocking findings come from the task reviewer, from the controller's own resolution of the reviewer's "cannot verify" items, and from the per-task Codex review. They share one cap of five rounds per task. A round is one fix dispatch, or one small controller-applied fix that the skill limits to at most three lines in one file with no new logic, plus one scoped re-review.
 
-- Rounds 1 to 3 resume the original implementer, with the open findings verbatim.
+- Rounds 1 to 3 stay on the original implementer's model. On Claude Code outside fork mode, the controller dispatches a fresh implementer in the foreground on the model recorded in the ledger's identity line, with the brief path, the report path, and the open findings verbatim. On a harness without foreground dispatch, including Claude Code's fork mode, it resumes the original implementer with the findings.
 - Rounds 4 and 5 dispatch a fresh implementer on a more capable model, given the brief path, the report path, and the findings.
 - The re-review covers the fix diff only. It returns ADDRESSED, NOT ADDRESSED, or DECLINED for each finding, and a decline counts only when the re-reviewer confirms its file and line evidence.
 - Minor findings never enter the loop. They go to the ledger as deferred, and the final review triages them.
 - A finding that conflicts with the plan's text goes to you before any fix is dispatched.
 
 For a Codex round in this loop, the controller passes `gate-round` the number of non-gate fix rounds the task has used, and the script derives the ceiling from the cap. When round five, or a Codex round at the spent cap, still leaves blocking findings, the controller stops, ledgers `Task N: BLOCKED at cap`, and reports the open findings to you with the rounds spent and the evidence.
+
+## Turn ends and the stop guard
+
+While the plan has tasks left, the skill allows a turn to end in three cases: a BLOCKED status the controller cannot resolve, a question only you can answer, or, on a harness that cannot wait in the foreground, tracked work still running. A question, a BLOCKED report, and your request to stop are each written to the ledger with `sdd-state handback PLAN_FILE --reason "<why>"` in the message that ends the turn. Finishing the last task is not a reason: it opens the final review, and the plan ends at Finish.
+
+On Claude Code the controller waits in the foreground. It dispatches implementers, reviewers, fix rounds, re-reviews, and the final reviewer with `run_in_background: false`, and runs a covering command expected to finish within 10 minutes in the foreground. A command that may run longer is a tracked job, managed by {source}`skills/subagent-driven-development/scripts/tracked-job`:
+
+- `tracked-job new PLAN_FILE <name> --budget-ms <budget>` allocates the job and writes its `jobdir=` line in the ledger.
+- `tracked-job run <jobdir> -- <command>` runs the command in its own process group, launched through the harness's background option.
+- `tracked-job wait <jobdir> --max-ms 600000`, called repeatedly in the foreground, reports `running`, `exited code=<n>`, `lost`, or `lost-unswept`.
+- `tracked-job stop <jobdir>` ends a job and sweeps what is left of its process group.
+
+The watch budget for one job is three times the plan's stated runtime for it, or 60 minutes when the plan states none, capped at 7200000 ms on Claude Code.
+
+{source}`hooks/hooks.json` registers a `Stop` hook, {source}`hooks/sdd-stop-guard`, with its logic in {source}`hooks/lib/stop-guard.mjs`. When a turn is about to end, the hook looks for a ledger that belongs to this session and reads its plan. A turn end on an unfinished plan is allowed when a background subagent launched in the turn has not reported back, when the ledger has a hand-back line from this turn, or when the last message reads as a question or a BLOCKED report. Otherwise the hook refuses it. With a tracked job or a background shell still running, the refusal names it and tells the controller to watch it with `tracked-job wait`. With nothing live, it tells the controller to take its next step in this turn, or to run `sdd-state handback` if it is handing back. The hook refuses at most twice in a row per plan, and the count resets after any allow. Anything it cannot read (the plan, a job record, its own log, or the transcript of a very long turn) makes it allow the turn end. It logs every decision to `stop-guard.jsonl` in the workspace. The design is in {source}`docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md`.
 
 ## Resuming after compaction
 
@@ -105,4 +122,4 @@ The skill also covers a decision extractor, a background subagent that drafts no
 
 ## Finish
 
-At the end the controller removes the plan's directory from the checkout with `sdd-state finish PLAN_FILE`. The skill says the branch history keeps the workspace, so an evidence note can cite it with `git show <sha>:plans/<ws>/<file>`. That citation resolves only in a clone that has the state branch, and the controller pushes the branch only on a hand-off. Nothing inside the checkout is reclaimed automatically, and `sdd-state prune --repo <dir>` lists and removes idle plan directories only when asked.
+At the end the controller removes the plan's directory from the checkout with `sdd-state finish PLAN_FILE`. Finish refuses with `live-jobs`, removing nothing, while a tracked job it names is still live. On success it prints `receipt=<path>`, a copy of the ledger, the stop guard's log, and the job records kept under the user cache, and the controller names that path in its closing message. `sdd-state prune --receipts --days N` lists receipts older than N days, and removes them with `--apply`. The skill says the branch history keeps the workspace, so an evidence note can cite it with `git show <sha>:plans/<ws>/<file>`. That citation resolves only in a clone that has the state branch, and the controller pushes the branch only on a hand-off. Nothing inside the checkout is reclaimed automatically, and `sdd-state prune --repo <dir>` lists and removes idle plan directories only when asked.

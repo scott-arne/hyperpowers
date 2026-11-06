@@ -1,6 +1,6 @@
 ---
 sources: skills/receiving-code-review skills/requesting-code-review/SKILL.md skills/subagent-driven-development/SKILL.md
-source-digest: 5a2cc00dea72
+source-digest: c9d220f19372
 ---
 # receiving-code-review
 
@@ -73,7 +73,7 @@ The skill has no skip option, and its forbidden-response rules apply to feedback
 ## Works with
 
 - {doc}`requesting-code-review` is where this skill comes from: its step 3 names this skill as the required sub-skill for acting on feedback and treats findings as claims to evaluate.
-- {doc}`subagent-driven-development` has the resumed implementer verify each task-reviewer finding with this skill. A finding is declined only as refuted or corrected, with file and line evidence.
+- {doc}`subagent-driven-development` has the fixing implementer verify each task-reviewer finding with this skill. A finding is declined only as refuted or corrected, with file and line evidence.
 - {doc}`communication` is the required sub-skill for the reply, whether it goes to you or into a review thread.
 
 ## Under the hood

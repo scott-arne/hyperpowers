@@ -1,6 +1,6 @@
 ---
 sources: skills/writing-skills CLAUDE.md docs/testing.md
-source-digest: d7312e243549
+source-digest: dff923c02463
 ---
 # Customizing skills in your own fork
 

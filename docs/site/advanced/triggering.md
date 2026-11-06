@@ -1,6 +1,6 @@
 ---
 sources: skills/using-hyperpowers hooks .opencode/plugins .pi/extensions .kimi-plugin/plugin.json skills/writing-skills/SKILL.md .cursor-plugin/plugin.json .codex-plugin/plugin.json scripts/claude-skill-root.md skills/subagent-driven-development/SKILL.md README.md tests/antigravity/test-antigravity-tools.sh RELEASE-NOTES.md docs/porting-to-a-new-harness.md docs/README.kimi.md
-source-digest: 2d2eac22e1df
+source-digest: 1bca126e7b32
 ---
 # How skills trigger
 
@@ -10,7 +10,7 @@ Skills fire because the `using-hyperpowers` bootstrap is in the agent's context 
 
 Each harness uses its own mechanism. The session-start hooks, the OpenCode plugin, and the Pi extension read {source}`skills/using-hyperpowers/SKILL.md`. The Claude Desktop and claude.ai bundle uses a router document instead, and {source}`docs/README.kimi.md` says the Kimi manifest loads the skill at session start through `sessionStart.skill`, though no code here shows the mechanism.
 
-**Claude Code.** {source}`hooks/hooks.json` registers a `SessionStart` hook that runs `hooks/run-hook.cmd session-start` for the sources `startup`, `clear`, and `compact`. {source}`hooks/session-start` wraps the skill text in an `<EXTREMELY_IMPORTANT>` block that begins "You have superpowers" and returns it as `hookSpecificOutput.additionalContext`.
+**Claude Code.** {source}`hooks/hooks.json` registers a `SessionStart` hook that runs `hooks/run-hook.cmd session-start` for the sources `startup`, `clear`, and `compact`. {source}`hooks/session-start` wraps the skill text in an `<EXTREMELY_IMPORTANT>` block that begins "You have superpowers" and returns it as `hookSpecificOutput.additionalContext`. The same file also registers a `Stop` hook, the SDD stop guard, which plays no part in the bootstrap; {doc}`sdd-internals` covers it.
 
 **Codex.** {source}`hooks/hooks-codex.json` registers the same three sources and runs {source}`hooks/session-start-codex`, which injects the same skill text with a different wrapper sentence about loading other skills. It adds none of the one-line notices described below. {source}`.codex-plugin/plugin.json` points at that hooks file.
 

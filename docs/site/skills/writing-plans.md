@@ -1,6 +1,6 @@
 ---
 sources: skills/writing-plans skills/brainstorming/SKILL.md skills/subagent-driven-development/SKILL.md docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md
-source-digest: 536fceb91cb2
+source-digest: 4c0d9223fb82
 ---
 # writing-plans
 

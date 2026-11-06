@@ -1,13 +1,13 @@
 ---
-sources: skills/subagent-driven-development skills/writing-plans/SKILL.md docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md
-source-digest: 6b63b30bdc2b
+sources: skills/subagent-driven-development hooks/sdd-stop-guard hooks/lib/stop-guard.mjs skills/writing-plans/SKILL.md docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md
+source-digest: 0f667014bfed
 ---
 # subagent-driven-development
 
 `subagent-driven-development` (SDD) runs a written plan by dispatching a fresh implementer subagent for each task, or one subagent for a batch of small same-shape tasks, reviewing each task's result, and reviewing the whole branch at the end.
 
 :::{card} At a glance
-**Category:** Process · **Triggers on:** executing an implementation plan with independent tasks in the current session · **Hands off to:** {doc}`finishing-a-development-branch` · **Harness notes:** the Codex task and final gates run on Claude Code only; the skill degrades to its Claude reviewers when Codex is absent
+**Category:** Process · **Triggers on:** executing an implementation plan with independent tasks in the current session · **Hands off to:** {doc}`finishing-a-development-branch` · **Harness notes:** the Codex task and final gates and the stop guard run on Claude Code only; the skill degrades to its Claude reviewers when Codex is absent
 :::
 
 ## When it triggers
@@ -31,15 +31,17 @@ The controller (your main session) coordinates and leaves implementation to suba
 1. The controller claims the task, extracts its text into a brief file with `scripts/task-brief`, and dispatches a fresh implementer subagent with the brief path, the relevant interfaces, the global constraints, and a report-file path. The implementer follows {doc}`test-driven-development`, commits, self-reviews, and returns a short status contract. It never dispatches subagents of its own.
 2. The controller treats the report as a claim. It re-runs the named covering test command itself and compares the output against the report. A misreported result is a failed task.
 3. The controller builds a review package with `scripts/review-package` (commit list, stat, and full diff in one file) and dispatches a task reviewer. The reviewer returns two verdicts: spec compliance and code quality. Both are required.
-4. If either verdict has Critical or Important findings, the fix loop starts. It has a cap of five rounds per task. Rounds one to three resume the original implementer. Rounds four and five dispatch a fresh implementer on a more capable model. Every round ends with a scoped re-review of the fix diff only. Minor findings are written to the ledger as deferred and never enter the loop. A finding that conflicts with the plan's text goes to you to decide which governs. When round five still leaves blocking findings, the controller stops and reports the task BLOCKED to you.
+4. If either verdict has Critical or Important findings, the fix loop starts. It has a cap of five rounds per task. Rounds one to three stay on the original implementer's model: on Claude Code outside fork mode, a fresh implementer on that model, dispatched in the foreground with the brief, the report file, and the findings; elsewhere, the original implementer resumed with the findings. Rounds four and five dispatch a fresh implementer on a more capable model. Every round ends with a scoped re-review of the fix diff only. Minor findings are written to the ledger as deferred and never enter the loop. A finding that conflicts with the plan's text goes to you to decide which governs. When round five still leaves blocking findings, the controller stops and reports the task BLOCKED to you.
 5. On Claude Code, after the task reviewer approves, a per-task Codex code review runs unless the task is effective-low. Its blocking findings join the same five-round cap rather than getting a cap of their own.
-6. The controller appends a completion line to the ledger and snapshots the workspace to the state branch.
+6. The controller runs `scripts/sdd-state complete`, which appends the task's completion line to the ledger and snapshots the workspace to the state branch, and repeats it until it prints `status=complete`.
 
 **Risk tiers.** Each plan task declares a tier. A task declared low skips the per-task Codex review only when the plan's own Codex review actually ran and no escalation trigger fired during execution (a fix cycle, a touched file outside the plan's list, concerns about correctness, or something on the high-risk list surfacing). The skip is recorded. The Claude task reviewer and the final review never tier off.
 
 **Final review.** After the last task, the controller dispatches a whole-branch reviewer on the most capable available model, pointed at the ledger's deferred minors. If it returns findings, one fix subagent gets the complete list and one scoped re-review follows. There is no second fix wave. Whatever remains open goes to you. On Claude Code a final Codex review runs after that, with its own three-round backstop. When the plan has a spec, the controller also dispatches a background extractor that drafts notes for the decision records.
 
-**Finish.** The controller removes the plan's workspace with `scripts/sdd-state finish`, verifies it is gone, and invokes {doc}`finishing-a-development-branch` with the mode, the plan, and the spec.
+**Turn ends.** While the plan has tasks left, the controller ends its turn only for a BLOCKED status it cannot resolve, a question only you can answer, or, on a harness that cannot wait in the foreground, tracked work still running. It records a question, a BLOCKED report, or your request to stop with `scripts/sdd-state handback`. On Claude Code it waits for subagents and commands in the foreground, and it runs a command that may take longer than 10 minutes as a tracked job through `scripts/tracked-job`. A Stop hook, the SDD stop guard, refuses a turn end it can prove is premature, at most twice in a row per plan. {doc}`../advanced/sdd-internals` describes the guard.
+
+**Finish.** The controller removes the plan's workspace with `scripts/sdd-state finish`, verifies it is gone, and invokes {doc}`finishing-a-development-branch` with the mode, the plan, and the spec. Finish refuses while a tracked job is still live. It leaves a receipt under your user cache, a copy of the ledger, the stop guard's log, and the job records, and the controller names its path in the closing message.
 
 **Model selection.** The controller names a model for every dispatch, because an omitted model inherits the session's, usually the most expensive. A mid-tier model is the floor for reviewers and for implementers working from prose. The cheapest tier is for transcription, where the task text carries the complete code. The final review takes the most capable model. {source}`skills/subagent-driven-development/model-selection.md` has the per-role guidance.
 
@@ -90,4 +92,5 @@ If you want one agent to do the work in your session, say "execute inline" and t
 - {source}`skills/subagent-driven-development/common-rationalizations.md` lists the shortcuts that show up mid-run and why they fail.
 - {source}`skills/subagent-driven-development/example-workflow.md` is a worked run from dispatch to finish.
 - {source}`skills/subagent-driven-development/scripts/task-brief` extracts a task's text, and {source}`skills/subagent-driven-development/scripts/review-package` builds the diff file a reviewer reads.
-- {source}`skills/subagent-driven-development/scripts/sdd-dir` prints the plan's workspace path, and {source}`skills/subagent-driven-development/scripts/sdd-state` syncs, claims, snapshots, hands off, and finishes the workspace. `sdd-common.sh` holds their shared code.
+- {source}`skills/subagent-driven-development/scripts/sdd-dir` prints the plan's workspace path, and {source}`skills/subagent-driven-development/scripts/sdd-state` syncs, claims, records completions and hand-backs, snapshots, hands off, and finishes the workspace. {source}`skills/subagent-driven-development/scripts/tracked-job` allocates, runs, watches, and stops tracked jobs. `sdd-common.sh` holds their shared code.
+- {source}`hooks/sdd-stop-guard` is the Claude Code Stop hook, and {source}`hooks/lib/stop-guard.mjs` holds its logic.

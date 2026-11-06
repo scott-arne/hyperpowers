@@ -554,5 +554,10 @@ record line for line, log paths aside. That is the accepted signature.
 The release goes ahead as 6.17.0, dated 2026-11-06. `vrzn -y bump minor`
 moved all six version locations from 6.16.1 to 6.17.0, and `vrzn get`
 reports them consistent. On the bumped tree the contract suite printed
-`STATUS: PASSED` again, with the same 266 checks. The tag is made after
-the merge, at Finish.
+`STATUS: PASSED` again, with the same 266 checks. The controller then ran
+`bash tests/run-offline.sh` on the bumped commit `4993591`, outside the
+sandbox, from 13:33:33Z to 13:56:16Z on 2026-11-06 (tracked job
+`offline-4993591-20261106T133327Z-60bc`). It exited 1 with exactly two
+lines, `FAILED: tests/brainstorm-server npm test (log: <path>)` and
+`offline set: 1 failed (logs: <path>)`, the accepted signature. The tag is
+made after the merge, at Finish.

@@ -380,15 +380,16 @@ branch back first, from the main checkout. Below, `<sha>` is the one the
 block's first run printed. If `git branch --show-current` does not print
 `<base-branch>`, run `git switch <base-branch>`; if that fails, stop and
 report. A merge stopped on conflicts is still in progress: run
-`git merge --abort`. Next, if `git rev-parse <base-branch>` does not print
-`<sha>`, ask your human partner "Reset <base-branch> to <sha>, its tip
+`git merge --abort`. Next, if `git rev-parse refs/heads/<base-branch>` does
+not print `<sha>`, ask your human partner "Reset <base-branch> to <sha>, its tip
 before the merge? This discards the merge and any uncommitted changes in
 the main checkout." Run `git reset --hard <sha>` only on their explicit
 yes; without one, leave the base as it is and report (under SDD the lease
 stays closing). Then confirm the checkout is settled
 (`git branch --show-current` prints `<base-branch>`,
-`git rev-parse <base-branch>` prints `<sha>`, and `git status` shows no
-merge in progress and a clean tree); if it is not, stop and report. Only
+`git rev-parse refs/heads/<base-branch>` prints `<sha>`, and `git status`
+shows no merge in progress and a clean tree); if it is not, stop and
+report. Only
 then, under SDD, release the lease with the release line this option ends
 with (`sdd-state lease <plan> --release --session <sid>`), which reopens
 the branch.

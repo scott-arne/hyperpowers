@@ -2103,6 +2103,41 @@ if [ "$(sed -n '/^## What implementation changed$/,$p' "$legacy_rec")" = "$expec
 run_compile "$repo" docs/hyperpowers/specs/legacy-design.md --plan docs/hyperpowers/plans/c.md --notes "$TEST_ROOT/legacy-notes-c.md"
 if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "re-running the first plan after the second changes nothing"; else fail "first plan re-run (rc $RC, err: $ERR, notes: $(sed -n '/What implementation changed/,$p' "$legacy_rec" | tr '\n' '|'))"; fi
 
+# --- 37. two plans of one spec with one file name are refused ---------------
+# The Outcome line and the notes sections tell sibling plans apart by file
+# name, so a second plan named like a recorded one in another directory is
+# refused before anything is written; the same path again is a re-run.
+repo="$TEST_ROOT/samename"
+make_repo "$repo"
+write_spec "$repo" same-design.md <<'EOF'
+# Same
+
+## Decisions
+
+- Only decision. Why it holds.
+EOF
+mkdir -p "$repo/docs/hyperpowers/plans/v1" "$repo/docs/hyperpowers/plans/v2"
+printf '# V1\n\n**Spec:** docs/hyperpowers/specs/same-design.md\n' > "$repo/docs/hyperpowers/plans/v1/a.md"
+printf '# V2\n\n**Spec:** docs/hyperpowers/specs/same-design.md\n' > "$repo/docs/hyperpowers/plans/v2/a.md"
+commit_all "$repo" "spec and plans"
+run_compile "$repo" docs/hyperpowers/specs/same-design.md --plan docs/hyperpowers/plans/v1/a.md
+commit_all "$repo" "records for v1"
+same_sums=$(cd "$repo" && cksum docs/hyperpowers/specs/same-design.md docs/hyperpowers/decisions/*.md)
+run_compile "$repo" docs/hyperpowers/specs/same-design.md --plan docs/hyperpowers/plans/v2/a.md
+case "$ERR" in *docs/hyperpowers/plans/v2/a.md*docs/hyperpowers/plans/v1/a.md*) same_msg=1 ;; *) same_msg=0 ;; esac
+if [ "$RC" -eq 2 ] && [ "$same_msg" = 1 ] && [ "$(printf '%s\n' "$ERR" | wc -l | tr -d ' ')" = 1 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ] && [ "$(cd "$repo" && cksum docs/hyperpowers/specs/same-design.md docs/hyperpowers/decisions/*.md)" = "$same_sums" ]; then pass "a second plan with a recorded plan's file name exits 2, names both paths and writes nothing"; else fail "same file name (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+run_compile "$repo" docs/hyperpowers/specs/same-design.md --plan docs/hyperpowers/plans/v2/a.md --dry-run
+if [ "$RC" -eq 2 ]; then pass "the dry run refuses the same file name too"; else fail "same file name dry run (rc $RC, out: $OUT)"; fi
+run_compile "$repo" docs/hyperpowers/specs/same-design.md --plan docs/hyperpowers/plans/v1/a.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "the recorded plan's own path is still the idempotent re-run"; else fail "same-path re-run (rc $RC, err: $ERR)"; fi
+# A record that lost its plan part still leaves the name in the Outcome line.
+same_rec=$(ls "$repo"/docs/hyperpowers/decisions/*only-decision*.md)
+sed 's/; plan docs\/hyperpowers\/plans\/v1\/a.md removed at finish$//' "$same_rec" > "$TEST_ROOT/same-rec" && cp "$TEST_ROOT/same-rec" "$same_rec"
+commit_all "$repo" "a record without its plan part"
+run_compile "$repo" docs/hyperpowers/specs/same-design.md --plan docs/hyperpowers/plans/v2/a.md
+case "$ERR" in *docs/hyperpowers/plans/v2/a.md*"(a.md)"*) same_msg=1 ;; *) same_msg=0 ;; esac
+if [ "$RC" -eq 2 ] && [ "$same_msg" = 1 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "a file name the Outcome line already names is refused for another path"; else fail "Outcome-named file name (rc $RC, err: $ERR)"; fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

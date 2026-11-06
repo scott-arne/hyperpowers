@@ -447,8 +447,17 @@ assert_contains "$FIN" "the compiler recompiles it, adding this plan to the Outc
 assert_contains "$FIN" "merge withheld: plan <ws> is still open on this branch" "finishing withholds the merge while a sibling plan is open"
 assert_contains "$FIN" "sdd-state lease <plan> --closing --session <sid>" "finishing marks the branch closing before the merge"
 assert_contains "$FIN" "sdd-state lease <plan> --release --session <sid>" "finishing releases the lease last"
-assert_contains "$FIN" 'PLAN_REPO=$(git -C "$(dirname <plan>)" rev-parse --show-toplevel)' "finishing records the plan repository before the compile removes the plan"
+assert_contains "$FIN" "PLAN_REPO=\$(git -C \"\$dir\" worktree list --porcelain | sed -n '1s/^worktree //p')" "finishing records the plan repository's main checkout before the compile removes the plan"
+assert_contains "$FIN" 'PLAN_REL=$(git -C "$dir" rev-parse --show-prefix)$rest' "finishing records the plan's repository-relative path before the compile removes the plan"
+assert_contains "$FIN" '`<plan>` in the lease commands below is `"$PLAN_REPO/$PLAN_REL"`' "finishing names the lease's plan path once beside the capture"
 assert_contains "$FIN" 'board --repo "$PLAN_REPO"' "finishing reads the board from the plan repository"
+assert_contains "$FIN" "any other status, \`status=no-lease\` among them, stops Option 1 before the merge" "a closing that answers no-lease stops Option 1"
+# The finishing skill runs from the repository root, so a path to another
+# skill's script is spelled from this skill's directory, as its own are.
+assert_contains "$FIN" "bash <this skill's directory>/../subagent-driven-development/scripts/sdd-state board --repo \"\$PLAN_REPO\"" "finishing spells the board's script path from its own directory"
+assert_contains "$FIN" "bash <this skill's directory>/../subagent-driven-development/scripts/sdd-state lease <plan> --closing --session <sid>" "finishing spells the lease's script path from its own directory"
+assert_not_contains "$FIN" "bash ../subagent-driven-development/scripts/sdd-state" "finishing has no sdd-state call relative to the working directory"
+if [ -x "$REPO_ROOT/skills/finishing-a-development-branch/../subagent-driven-development/scripts/sdd-state" ]; then pass "the sdd-state path the finishing skill names exists and is executable"; else fail "the sdd-state path the finishing skill names exists and is executable"; fi
 # Turn liveness (spec 2026-10-19): a status message never ends a turn mid-plan,
 # long work is tracked, and Claude Code waits in the foreground.
 assert_contains "$SDD" "While the plan has tasks left, a turn ends in exactly three cases" \

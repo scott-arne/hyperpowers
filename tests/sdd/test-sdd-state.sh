@@ -3737,6 +3737,38 @@ ln -s nowhere.md "$rq/docs/link.md"
 out=$(run_state "$rq" lease docs/link.md --release --session s1 2>/dev/null); rc=$?
 out2=$(run_state "$rq" lease "$TEST_ROOT/no-repo/plans/p.md" --release --session s1 2>/dev/null); rc2=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$rc2" -eq 2 ] && [ -z "$out2" ]; then pass "lease still refuses a link at the plan path and a path outside any repository"; else fail "lease fallback bounds (link rc=$rc: $out; outside rc=$rc2: $out2)"; fi
+# A plan committed in a linked worktree: the finishing skill hands lease the main checkout joined to the plan's repository-relative path, which outlives the worktree that Step 6 removes; the worktree's own absolute path would then resolve inside the main checkout's .worktrees directory.
+lw="$TEST_ROOT/lw"; make_repo "$lw"
+mkdir -p "$lw/docs/plans"; : > "$lw/docs/spec.md"; : > "$lw/docs/plans/keep.md"; git -C "$lw" add docs; git -C "$lw" commit -qm docs
+lw_w="$lw/.worktrees/w"; git -C "$lw" worktree add -q -b feat "$lw_w" 2>/dev/null
+printf '# W\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$lw_w/docs/plans/w.md"
+git -C "$lw_w" add docs; git -C "$lw_w" commit -qm plan
+wslw=$(run_sdd_dir "$lw_w" docs/plans/w.md 2>/dev/null); printf '# SDD ledger — plan: docs/plans/w.md\n' > "$wslw/progress.md"
+run_state "$lw_w" register docs/plans/w.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wslw/progress.md"
+run_state "$lw_w" claim docs/plans/w.md final --session s1 >/dev/null; run_state "$lw_w" finish docs/plans/w.md --session s1 >/dev/null
+lease_lw=""; for lw_f in "$STATE_ROOT/$(state_key "$lw").final-"*; do [ -f "$lw_f" ] && lease_lw=$lw_f; done
+git -C "$lw_w" rm -q docs/plans/w.md; git -C "$lw_w" commit -qm records
+git -C "$lw" worktree remove "$lw_w"
+out=$(run_state "$lw" lease "$lw/docs/plans/w.md" --closing --session s1 2>"$TEST_ROOT/lw.err"); rc=$?
+if [ ! -d "$lw_w" ] && [ -n "$lease_lw" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=closing" ] && [ "$(sed -n 's/^closing=//p' "$lease_lw")" = 1 ]; then pass "closing through the main checkout finds a removed worktree's lease"; else fail "closing after the worktree's removal (rc=$rc: $out; $(cat "$TEST_ROOT/lw.err"))"; fi
+out=$(run_state "$lw" lease "$lw/docs/plans/w.md" --release --session s1 2>/dev/null); rc=$?
+if [ -n "$lease_lw" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && [ ! -f "$lease_lw" ]; then pass "release through the main checkout deletes a removed worktree's lease"; else fail "release after the worktree's removal (rc=$rc: $out)"; fi
+# A restarted finish: the main checkout never had the plan's directory either.
+lv="$TEST_ROOT/lv"; make_repo "$lv"
+mkdir -p "$lv/docs"; : > "$lv/docs/spec.md"; git -C "$lv" add docs; git -C "$lv" commit -qm docs
+lv_w="$lv/.worktrees/v"; git -C "$lv" worktree add -q -b feat "$lv_w" 2>/dev/null
+mkdir -p "$lv_w/docs/plans"; printf '# V\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$lv_w/docs/plans/v.md"
+git -C "$lv_w" add docs; git -C "$lv_w" commit -qm plan
+wslv=$(run_sdd_dir "$lv_w" docs/plans/v.md 2>/dev/null); printf '# SDD ledger — plan: docs/plans/v.md\n' > "$wslv/progress.md"
+run_state "$lv_w" register docs/plans/v.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wslv/progress.md"
+run_state "$lv_w" claim docs/plans/v.md final --session s1 >/dev/null; run_state "$lv_w" finish docs/plans/v.md --session s1 >/dev/null
+lease_lv=""; for lv_f in "$STATE_ROOT/$(state_key "$lv").final-"*; do [ -f "$lv_f" ] && lease_lv=$lv_f; done
+git -C "$lv_w" rm -q docs/plans/v.md; git -C "$lv_w" commit -qm records
+git -C "$lv" worktree remove "$lv_w"
+out=$(run_state "$lv" lease "$lv/docs/plans/v.md" --release --session s1 2>/dev/null); rc=$?
+if [ ! -d "$lv/docs/plans" ] && [ -n "$lease_lv" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && [ ! -f "$lease_lv" ]; then pass "release through the main checkout works when it never had the plan's directory"; else fail "release without the directory in the main checkout (rc=$rc: $out)"; fi
 
 
 echo "amend: the plan ref's only writer"

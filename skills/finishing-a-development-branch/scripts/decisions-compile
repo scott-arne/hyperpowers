@@ -304,6 +304,13 @@ status_only_change() {
 # body that quotes another record's metadata cannot be mistaken for it.
 existing_field() { awk -v k="- $2: " 'index($0, "## ") == 1 { exit } index($0, k) == 1 { print substr($0, length(k) + 1); exit }' "$1"; }
 
+# Every plan a finish removed stays named in a record's Recorded field, in
+# order, each once. The field is split on "; plan ", the one text a plan path
+# may not hold, so a semicolon elsewhere in a path survives.
+recorded_plans() {  # record -> the paths of the plans it names, one per line
+  existing_field "$1" Recorded | awk '{ k = split($0, a, "; plan "); for (i = 2; i <= k; i++) if (sub(/ removed at finish$/, "", a[i])) print a[i] }'
+}
+
 find_existing() {  # N -> the record carrying decision N's identity, or nothing
   local want f matches=()
   [ -d "$records_dir" ] || return 0
@@ -346,18 +353,14 @@ write_if_changed() {
 }
 
 render_record() {  # N -> the record text
-  local n=$1 target status rec_date recorded notes_body rec_full plans_seen p first_plan existing_body
+  local n=$1 target status rec_date recorded notes_body plans_seen p first_plan existing_body
   target="$records_dir/${files[n]}"
   plans_seen=""
   if [ "${existing[n]}" = 1 ]; then
     status=$(existing_field "$target" Status)
     rec_date=$(existing_field "$target" Recorded | cut -c1-10)
     notes_body=$(existing_notes "$target")
-    # Every plan a finish removed stays named, in order, each once. The line
-    # is split on "; plan ", the one text a plan path may not hold, so a
-    # semicolon elsewhere in a path survives.
-    rec_full=$(existing_field "$target" Recorded)
-    plans_seen=$(printf '%s\n' "$rec_full" | awk '{ k = split($0, a, "; plan "); for (i = 2; i <= k; i++) if (sub(/ removed at finish$/, "", a[i])) print a[i] }')
+    plans_seen=$(recorded_plans "$target")
   fi
   if [ -n "$plan_rel" ]; then
     case $'\n'"$plans_seen"$'\n' in
@@ -559,10 +562,13 @@ render_index() {  # records dir -> the README text
 # Sibling plans of one spec finish one after another, and each finish
 # recompiles. A run without --plan writes a bare date only into a spec that
 # has no line yet; an older line's bare date is kept as its first entry. A
-# plan already named is not named twice, so a re-run changes nothing.
+# plan already named is not named twice, so a re-run changes nothing; a
+# second plan with a recorded plan's file name is refused before any write.
+outcome_current() { head -n 30 "$spec_abs" | grep -m 1 '^\*\*Outcome:\*\*' || true; }  # the spec's Outcome line, or nothing
+outcome_listed() { printf '%s' "$1" | sed -n 's/^\*\*Outcome:\*\* implemented \(.*\); [0-9][0-9]* decisions.*/\1/p'; }  # an Outcome line -> its entries
 outcome_entries() {  # existing line or empty -> its entries with this run's added
   local existing=$1 entries entry
-  entries=$(printf '%s' "$existing" | sed -n 's/^\*\*Outcome:\*\* implemented \(.*\); [0-9][0-9]* decisions.*/\1/p')
+  entries=$(outcome_listed "$existing")
   if [ -n "$plan_rel" ]; then entry="$today ($(basename "$plan_rel"))"; else entry=$today; fi
   if [ -z "$entries" ]; then printf '%s' "$entry"; return; fi
   if [ -z "$plan_rel" ]; then printf '%s' "$entries"; return; fi
@@ -574,7 +580,7 @@ outcome_line() { printf '**Outcome:** implemented %s; %s decisions under %s/.' "
 
 render_spec() {  # the spec text with its Outcome line written or rewritten
   local current line
-  current=$(head -n 30 "$spec_abs" | grep -m 1 '^\*\*Outcome:\*\*' || true)
+  current=$(outcome_current)
   line=$(outcome_line "$(outcome_entries "$current")")
   # The line reaches awk through the environment, not -v, which would read a
   # backslash in a plan's file name as an escape.
@@ -836,6 +842,29 @@ for ((n = 1; n <= count; n++)); do
     esac
   done < <(printf '%s\n' "${sup_of[n]}")
 done
+# Sibling plans of one spec are told apart by file name, in the Outcome line
+# and in the notes' "From <plan>: " sections, so a plan named like one the
+# spec already records, from another directory, would take over that plan's
+# entry and overwrite its notes. It is refused before anything is written;
+# the recorded path itself is the idempotent re-run.
+if [ -n "$plan_rel" ]; then
+  plan_base=$(basename "$plan_rel"); plan_known=false
+  for ((n = 1; n <= count; n++)); do
+    [ "${existing[n]}" = 1 ] || continue
+    while IFS= read -r p; do
+      if [ "$p" = "$plan_rel" ]; then
+        plan_known=true
+      elif [ -n "$p" ] && [ "$(basename "$p")" = "$plan_base" ]; then
+        die2 "$spec_rel: plan $plan_rel has the file name of $p, which this spec already records; rename one of the plans"
+      fi
+    done < <(recorded_plans "$records_dir/${files[n]}")
+  done
+  if ! $plan_known; then
+    case "$(outcome_listed "$(outcome_current)")" in
+      *"($plan_base)"*) die2 "$spec_rel: plan $plan_rel has the file name its Outcome line already names for another plan ($plan_base); rename one of the plans" ;;
+    esac
+  fi
+fi
 [ -z "$notes" ] || load_notes "$notes"
 
 # --- 3. dry run ---------------------------------------------------------------

@@ -480,7 +480,18 @@ assert_contains "$SDD" "Record BASE right after \`git switch <branch>\` and befo
 assert_contains "$SDD" "\"Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back\" [shape=box];" "the graph's final claim continues on the session's own hold"
 assert_not_contains "$SDD" "held means post, print the board, hand back" "no graph edge names the old final-claim node"
 assert_contains "$SDD" "scripts/sdd-state finish PLAN_FILE --session <sid>" "finish takes the session"
+assert_not_contains "$SDD" "\`scripts/sdd-state finish PLAN_FILE\`" "no finish call omits the session"
 assert_not_contains "$SDD" "Never dispatch multiple implementation subagents in parallel (conflicts)." "the old parallel sentence is replaced"
+# Final review wave of parallel development: register's detached outcome, the occupied worktree, a merged task's retry, merge-back's not-holder.
+assert_contains "$SDD" "\`detached-head\` (exit 11) means a first registration found the repository the line names on a detached HEAD" "register names the detached-head outcome"
+assert_contains "$SDD" "create it in place with \`git -C <the repository the line names> switch -c <name>\`, and register again" "a detached first registration creates the branch in place and registers again"
+assert_contains "$SDD" "Any other status stops Setup until \`register\` succeeds; show its stderr line." "register has a catch-all"
+assert_contains "$SDD" "Before that detach, and before any claim, a later session compares \`git rev-parse --show-toplevel\` with the \`at <toplevel>\` of every other session's newest session line" "a later session checks whose worktree it is in before detaching"
+assert_contains "$SDD" "do not detach, switch or claim there. Leave it, create your own worktree with a name that carries your session id" "a later session inside another session's worktree leaves it for one of its own"
+assert_contains "$SDD" "\`held\` with \`own=1\` and \`merged=1\` means the task is already merged and its branch deleted: check nothing out and resume it at its completion line" "the owner's retry of a merged task resumes at the completion line"
+assert_contains "$SDD" "\`not-holder owner=<sid>\` (exit 4) means the claim is no longer yours" "merge-back's not-holder is a lost claim"
+assert_contains "$SDD" "stop and hand back with the line; never repair the ledger or take the claim back" "a not-holder merge-back hands back"
+assert_not_contains "$SDD" "\`not-approved\`, \`not-holder\`, \`blocked\`: your bookkeeping is behind" "not-holder is no bookkeeping repair"
 
 # finishing-a-development-branch — the session mode (portable dossiers, 2026-10-20)
 assert_contains "$FIN" "A passed \`new-branch\` or \`worktree\` changes nothing here" "new-branch and worktree keep the environment rows"
@@ -549,6 +560,9 @@ assert_contains "$WT" "Skip to Step 2 (Project Setup), after the detach in Detac
 assert_contains "$WT" "use it and skip to Step 2, after the detach in Detaching a later session (every path)" "using-git-worktrees Step 1a skip keeps the detach"
 assert_contains "$WPLANS" '- **Merge-expected files:** `CHANGELOG.md`, `docs/testing.md`' "writing-plans gives the one-line Merge-expected form the parser reads"
 assert_contains "$WT" 'path="$LOCATION/<integration branch>-<session id>"' "using-git-worktrees gives a later session a worktree path of its own"
+assert_contains "$WT" "the later session compares \`git rev-parse --show-toplevel\` with the \`at <toplevel>\` of every other session's newest session line in the plan's ledger" "using-git-worktrees checks whose worktree a later session is in"
+assert_contains "$WT" "it must not detach, switch or claim there. It leaves that worktree" "using-git-worktrees keeps a later session out of another session's worktree"
+assert_contains "$WT" "creates its own, with a name that carries its session id" "using-git-worktrees names the later session's own worktree after its session id"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

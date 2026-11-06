@@ -142,6 +142,16 @@ branch the native tool created is simply left unused. The Step 0 and Step 1a
 skips above are not exceptions: a later session of a running SDD plan then
 detaches it; see Detaching a later session (every path).
 
+Before that detach, and before any claim, the later session compares
+`git rev-parse --show-toplevel` with the `at <toplevel>` of every other
+session's newest session line in the plan's ledger. A match means it is
+inside another session's worktree (a native tool can resume one under the
+same name, and work in place shares that session's checkout): it must not
+detach, switch or claim there. It leaves that worktree (your platform's
+workspace-exit tool, where it has one) and creates its own, with a name that
+carries its session id (`<integration branch>-<session id>`, passed to the
+native tool or used as the Step 1b path above), then detaches that one.
+
 **Sandbox fallback:** If `git worktree add` fails with a permission error (sandbox denial), tell your human partner the sandbox blocked worktree creation and ask the Step 0 question again with options 1 and 2 only. Their answer is the mode you report (`current-branch` or `new-branch`); a denied worktree is never reported as `worktree`. Then run setup and baseline tests in place.
 
 ## Step 2: Project Setup
@@ -209,6 +219,7 @@ that called you records it, and the finishing skill routes on it.
 | Both exist | Use `.worktrees/` |
 | Later session on a running SDD plan | Detached worktree at the integration head (Step 1b) |
 | Later session with an existing, native or in-place workspace | `git switch --detach "<integration branch>"` before the first claim (Detaching a later session) |
+| Later session whose toplevel is another session's in the ledger | Do not detach, switch or claim there; leave it, create a worktree named with your session id, detach that one (Detaching a later session) |
 | Neither exists | Check instruction file, then default `.worktrees/` |
 | Directory not ignored | Add to .gitignore + commit |
 | Permission error on create | Re-ask options 1 and 2; their answer is the mode, never `worktree` (Step 1b) |

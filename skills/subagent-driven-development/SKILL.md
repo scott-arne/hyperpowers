@@ -238,7 +238,14 @@ a ledger file, not only in todos.
   already running on another integration branch: switch to it or ask;
   `spec-branch-mismatch` means a sibling plan of this spec runs on another
   branch: use that branch; `branch-closing` means the plan's branch is being
-  merged and deleted: wait for your human partner. A later session of a
+  merged and deleted: wait for your human partner; `detached-head` (exit 11)
+  means a first registration found the repository the line names on a
+  detached HEAD, as a host-managed workspace can be, and the plan ref is
+  named after a branch: ask your human partner for the branch to create
+  (the integration branch itself when plan and code share one repository),
+  create it in place with `git -C <the repository the line names> switch -c <name>`,
+  and register again. Any other status stops Setup until `register`
+  succeeds; show its stderr line. A later session of a
   running plan starts its worktree detached at the integration head
   (using-git-worktrees says how) and never checks the integration branch
   out; a later session (the ledger already has a plan line naming the
@@ -246,7 +253,14 @@ a ledger file, not only in todos.
   runs `git switch --detach <branch>` before `register`, whatever mode
   using-git-worktrees reported (an existing worktree, a native tool's
   worktree, or work in place); a worktree that skill created detached is
-  already there. When the plan file lives in another repository
+  already there. Before that detach, and before any claim, a later session
+  compares `git rev-parse --show-toplevel` with the `at <toplevel>` of every
+  other session's newest session line: a match means you are inside another
+  session's worktree (a native tool can resume one under the same name), so
+  do not detach, switch or claim there. Leave it, create your own worktree
+  with a name that carries your session id (using-git-worktrees, Detaching a
+  later session), append a fresh session line from it, and detach that one.
+  When the plan file lives in another repository
   than the code, pass `--code-repo <code toplevel>` to every `sdd-state`
   call; an omitted option means the current repository, and a wrong one is
   `wrong-repo`.
@@ -265,7 +279,7 @@ a ledger file, not only in todos.
   trust the ledger and `git log` over your own recollection.
 - The workspace is scratch for the working tree and a record on the branch:
   the Finish step removes the plan's directory through
-  `scripts/sdd-state finish PLAN_FILE`, and the branch history keeps it, so
+  `scripts/sdd-state finish PLAN_FILE --session <sid>`, and the branch history keeps it, so
   an evidence note can cite `git show <sha>:plans/<ws>/<file>`. Nothing
   inside the checkout is reclaimed automatically; `scripts/sdd-state prune --repo <dir>`
   lists and removes idle plan directories only when asked. Snapshot the
@@ -769,8 +783,11 @@ resume:
   re-review lens, append the new `approved` line, and retry. `checked-out`
   names a worktree or `lease:<sid>`: a final train holds the branch; post a
   `tasks` record and retry after it ends, or ask your human partner to move
-  the checkout. `not-approved`, `not-holder`, `blocked`: your bookkeeping is
-  behind; read the ledger and repair it before retrying.
+  the checkout. `not-approved`, `blocked`: your bookkeeping is behind; read
+  the ledger and repair it before retrying. `not-holder owner=<sid>` (exit 4)
+  means the claim is no longer yours (after a takeover your human partner
+  granted, that session holds it): stop and hand back with the line; never
+  repair the ledger or take the claim back.
 - Detach at the merged head and drop the task branch:
   `git switch --detach <merged head>` then `git branch -D <task branch>`
   (its commits are on the integration branch now; a missing branch on a

@@ -23,7 +23,8 @@
 #       3 diverged, busy (also complete and handback), remote-finished |
 #       4 claim held by another session | 5 scan-failed | 6 open-claims |
 #       7 plain backend (handoff) | 8 plan-not-committed |
-#       9 wrong-repo, code-missing, plan-stale | 10 code-dirty | 11 detached-head | 12 shallow-source
+#       9 wrong-repo, code-missing, plan-stale | 10 code-dirty | 11 detached-head | 12 shallow-source |
+#       13 live-jobs (finish, while a tracked job is live)
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -822,8 +823,32 @@ receipt_field() {
 receipt_where() {
   if [ "$RECEIPT_PATH" = none ]; then printf 'an unmarked staging at %s' "$RECEIPT_STAGED"; else printf '%s' "$RECEIPT_PATH"; fi
 }
+# live_jobs <wsdir>: the tracked jobs under <wsdir>/jobs that may still be
+# running, comma-separated, read as the stop guard's liveJobs reads them. A
+# state of running or lost-unswept with no exit path is live, and so is a
+# meta.json that exists but cannot be read or parsed: its job may well be
+# running, and finish would delete its records under it. A directory with no
+# meta.json is an allocation in progress, and a dot-prefixed one is
+# tracked-job's staging; neither is a job.
+live_jobs() { # <wsdir>
+  local d name state rc list=""
+  for d in "$1"/jobs/*/; do
+    [ -d "$d" ] || continue
+    d=${d%/}; name=$(basename "$d")
+    case "$name" in .*) continue ;; esac
+    # exit 3 is a meta.json that is absent (liveJobs' absent()), 2 one that
+    # cannot be read or parsed; a missing node lands with the unreadable.
+    state=$(node -e 'const fs=require("fs");let t;try{t=fs.readFileSync(process.argv[1],"utf8")}catch(e){process.exit(e.code==="ENOENT"||e.code==="ENOTDIR"?3:2)}try{const s=JSON.parse(t).state;process.stdout.write(typeof s==="string"?s:"")}catch(e){process.exit(2)}' "$d/meta.json" 2>/dev/null); rc=$?
+    case "$rc" in
+      0) case "$state" in running|lost-unswept) [ ! -e "$d/exit" ] || continue ;; *) continue ;; esac ;;
+      3) continue ;;
+    esac
+    list="$list,$name"
+  done
+  printf '%s' "${list#,}"
+}
 cmd_finish() {
-  local plan="" force=0 open last commit rc t
+  local plan="" force=0 open live last commit rc t
   while [ $# -gt 0 ]; do
     case "$1" in --force) force=1; shift ;; -*) usage ;; *) [ -z "$plan" ] || usage; plan=$1; shift ;; esac
   done
@@ -849,6 +874,11 @@ cmd_finish() {
   # look, or a takeover in flight, is seen before anything is removed.
   open=$(open_claims)
   if [ -n "$open" ] && [ "$force" -eq 0 ]; then hp_unlock; echo "status=open-claims tasks=$open"; return 6; fi
+  # A live job's out.log, meta.json and exit path are under the workspace, so
+  # removing it would delete them under the running process. --force is for
+  # claims and does not reach this: these records are what the refusal keeps.
+  live=$(live_jobs "$WSDIR")
+  if [ -n "$live" ]; then hp_unlock; echo "status=live-jobs jobs=$live"; return 13; fi
   # The receipt is built before anything is removed: a workspace is never
   # destroyed without a durable copy of its record. Every failure before
   # the removal discards the staging; none after it does.

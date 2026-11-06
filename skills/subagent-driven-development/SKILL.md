@@ -835,7 +835,9 @@ When the final whole-branch review is clean and its fixes are merged:
    `busy` (exit 3) when another session is writing the workspace or a copy
    from an interrupted removal sits beside it (report the stderr line, wait
    for the other session or ask your human partner about the copy, then run
-   `finish` again); otherwise it
+   `finish` again); it also refuses with `live-jobs` while a tracked job it
+   names is still live (run `tracked-job wait` on it, or `tracked-job stop`
+   when the job is no longer wanted, then run `finish` again); otherwise it
    removes the plan's directory, commits the removal to the state branch,
    and prints `last=<sha>`, the commit that still holds the dossier,
    `push=<remote>/<branch>` and `receipt=<path>`, the durable copy of the

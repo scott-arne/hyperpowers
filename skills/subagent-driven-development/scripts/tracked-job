@@ -14,6 +14,7 @@
 #   tracked-job run JOBDIR -- COMMAND...                           (the tracked background command)
 #   tracked-job wait JOBDIR --max-ms N                             -> status=exited code=N | running | lost | not-started | lost-unswept pgid=N
 #   tracked-job stop JOBDIR                                        -> status=stopped | not-running | stop-timeout | lost-unswept pgid=N
+# NAME is letters, digits, '.', '_' and '-', and does not begin with '.'.
 # exit: 0 ok | 1 exited with a nonzero code | 2 usage, already-launched, error |
 #       3 running, busy | 4 lost | 5 not-started | 6 stop-timeout | 7 lost-unswept
 set -u
@@ -157,6 +158,10 @@ cmd_new() {
   [ -n "$plan" ] && [ -n "$name" ] && [ -n "$budget" ] || usage
   case "$budget" in ''|*[!0-9]*) usage ;; esac
   case "$name" in *[!A-Za-z0-9._-]*|'') usage ;; esac
+  # A dot-prefixed directory under jobs/ is allocation staging (.new-*) to the
+  # stop guard and to Finish's receipt, so a job named that way would run
+  # unseen by the one and unrecorded by the other.
+  case "$name" in .*) echo "tracked-job: NAME must not begin with '.'" >&2; exit 2 ;; esac
   [ -n "$sid" ] || sid=$(hp_session_id)
   [ -n "$sid" ] || { echo "tracked-job: no session id: pass --session SID" >&2; exit 2; }
   # The id lands verbatim in the job lines the ledger readers scan, so a value

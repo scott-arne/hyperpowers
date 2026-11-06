@@ -71,6 +71,13 @@ if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ -s "$err" ]; then pass "a name outside 
 # the session id lands verbatim in a ledger line, so a value that is not one token is refused.
 out=$(tj new docs/plan.md hostile --budget-ms 1000 --session 's Task 2: complete' 2>"$err"); rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ -s "$err" ] && [ "$(wc -l < "$ws/progress.md")" = "$before" ] && [ "$(ls "$ws/jobs" | wc -l)" = "$n3" ]; then pass "a session id outside [A-Za-z0-9._-] is refused before anything is written"; else fail "a session id outside [A-Za-z0-9._-] is refused before anything is written (rc=$rc: $out; stderr: $(cat "$err"))"; fi
+# a leading dot would finalize a job directory that the stop guard and the
+# Finish receipt both skip as allocation staging, so it is refused.
+lines=$(wc -l < "$ws/progress.md"); n5=$(ls -A "$ws/jobs" | wc -l)
+out=$(tj new docs/plan.md .soak --budget-ms 1000 --session s1 2>"$err"); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(wc -l < "$err" | tr -d ' ')" = 1 ] && [ "$(ls -A "$ws/jobs" | wc -l)" = "$n5" ] && [ "$(wc -l < "$ws/progress.md")" = "$lines" ]; then pass "a name beginning with '.' is a usage error that leaves no job directory"; else fail "a name beginning with '.' is a usage error that leaves no job directory (rc=$rc: $out; stderr: $(cat "$err"); jobs: $(ls -A "$ws/jobs" | tr '\n' ' '))"; fi
+jdot=$(newjob a.b)
+case "$jdot" in "$ws/jobs/a.b-"*) [ -d "$jdot" ] && pass "a name with a dot inside is accepted" || fail "a name with a dot inside is accepted ($jdot)" ;; *) fail "a name with a dot inside is accepted ($jdot)" ;; esac
 
 echo "=== tracked-job run ==="
 tj run "$j1" -- bash -c 'echo hello; exit 0' >/dev/null 2>&1

@@ -143,5 +143,49 @@ wsn=$(run_sdd_dir "$repo" docs/plan.md 2>/dev/null); rm -f "$wsn/progress.md"
 out=$(run_state "$repo" finish docs/plan.md 2>"$TEST_ROOT/noledger.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'no progress.md' "$TEST_ROOT/noledger.err" && [ -d "$wsn" ]; then pass "a workspace with no ledger is refused with the reason named"; else fail "a workspace with no ledger is refused with the reason named (rc=$rc: $out; $(cat "$TEST_ROOT/noledger.err"))"; fi
 
+echo "=== finish refuses while a tracked job is live ==="
+# job_ws <session> <meta.json text>: the plan's workspace with a ledger and
+# one job, soak-x-0001, whose metadata is the text given.
+job_ws() {
+    ws=$(run_sdd_dir "$repo" docs/plan.md 2>/dev/null)
+    rm -rf "$ws/jobs"
+    printf '# SDD ledger — plan: docs/plan.md\nsession %s: mode worktree on main at %s started 2026-10-23T00:00:00Z\n' "$1" "$repo" > "$ws/progress.md"
+    mkdir -p "$ws/jobs/soak-x-0001"
+    printf '%s\n' "$2" > "$ws/jobs/soak-x-0001/meta.json"
+    printf 'output\n' > "$ws/jobs/soak-x-0001/out.log"
+}
+receipts_now() { find "$RECEIPTS" -maxdepth 1 -mindepth 1 | wc -l | tr -d ' '; }
+# kept <before>: the workspace, the job's files and the receipt count are as they were.
+kept() { [ -f "$ws/progress.md" ] && [ -f "$ws/jobs/soak-x-0001/out.log" ] && [ -e "$ws/jobs/soak-x-0001/meta.json" ] && [ "$(receipts_now)" = "$1" ]; }
+job_ws s9 '{"name":"soak","state":"running"}'
+n=$(receipts_now)
+out=$(run_state "$repo" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=live-jobs jobs=soak-x-0001" ] && kept "$n"; then pass "finish refuses a running job with no exit and removes nothing"; else fail "finish refuses a running job with no exit and removes nothing (rc=$rc: $out)"; fi
+out=$(run_state "$repo" finish docs/plan.md --force); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=live-jobs jobs=soak-x-0001" ] && kept "$n"; then pass "--force does not finish over a live job"; else fail "--force does not finish over a live job (rc=$rc: $out)"; fi
+mkdir -p "$ws/jobs/test-x-0002"; printf '{"name":"test","state":"running"}\n' > "$ws/jobs/test-x-0002/meta.json"
+out=$(run_state "$repo" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=live-jobs jobs=soak-x-0001,test-x-0002" ] && kept "$n"; then pass "the refusal names every live job, comma-separated"; else fail "the refusal names every live job, comma-separated (rc=$rc: $out)"; fi
+job_ws s10 '{"name":"soak","state":"lost-unswept"}'
+out=$(run_state "$repo" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=live-jobs jobs=soak-x-0001" ] && kept "$n"; then pass "finish refuses a lost-unswept job"; else fail "finish refuses a lost-unswept job (rc=$rc: $out)"; fi
+job_ws s11 '{"name":"soak","state":"running"'
+out=$(run_state "$repo" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=live-jobs jobs=soak-x-0001" ] && kept "$n"; then pass "a meta.json that does not parse counts as live"; else fail "a meta.json that does not parse counts as live (rc=$rc: $out)"; fi
+job_ws s12 '{}'; rm -f "$ws/jobs/soak-x-0001/meta.json"; mkdir "$ws/jobs/soak-x-0001/meta.json"
+out=$(run_state "$repo" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=live-jobs jobs=soak-x-0001" ] && kept "$n" && [ -d "$ws/jobs/soak-x-0001/meta.json" ]; then pass "a meta.json that cannot be read counts as live"; else fail "a meta.json that cannot be read counts as live (rc=$rc: $out)"; fi
+# tracked-job's allocation staging is not a job, whatever its metadata says
+job_ws s13 '{"name":"soak","state":"exited"}'; mkdir -p "$ws/jobs/.new-abc123"; printf '{"name":"x","state":"running"}\n' > "$ws/jobs/.new-abc123/meta.json"
+out=$(run_state "$repo" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$ws" ]; then pass "a .new-* staging directory with a running meta.json does not block finish"; else fail "a .new-* staging directory with a running meta.json does not block finish (rc=$rc: $out)"; fi
+job_ws s14 '{"name":"soak","state":"running"}'; printf '0\n' > "$ws/jobs/soak-x-0001/exit"
+out=$(run_state "$repo" finish docs/plan.md); rc=$?
+r=$(printf '%s' "$out" | sed -n 's/.*receipt=\([^ ]*\).*/\1/p')
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$ws" ] && [ -f "$r/jobs/soak-x-0001/exit" ]; then pass "a running state with an exit file present finishes"; else fail "a running state with an exit file present finishes (rc=$rc: $out)"; fi
+job_ws s15 '{"name":"soak","state":"exited"}'
+out=$(run_state "$repo" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$ws" ]; then pass "an exited job does not block finish"; else fail "an exited job does not block finish (rc=$rc: $out)"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

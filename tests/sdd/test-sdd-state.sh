@@ -4148,6 +4148,10 @@ mv "$wsmb/merges/task-2" "$TEST_ROOT/mb.rec2"
 out=$(run_state "$mb_a" merge-back docs/plan.md 2 --session s2 --commit "$t2" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=2 head=${hm:0:7} already=1" ] && [ "$(grep -c '^Task 2: merged' "$wsmb/progress.md")" = 1 ]; then pass "a retry without its merge record names the merge commit that published the approved one"; else fail "reconstructed merge (rc=$rc: $out)"; fi
 mv "$TEST_ROOT/mb.rec2" "$wsmb/merges/task-2"
+# The controller deletes a merged task's branch before its completion line: the owner's claim retry in that window recreates no branch and names nothing to check out.
+git -C "$mb_a" branch -D "feat.$ws8mb.task-2" >/dev/null 2>&1
+out=$(run_state "$mb_a" claim docs/plan.md 2 --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=2 owner=s2 own=1 branch=none merged=1" ] && ! git -C "$mb_a" rev-parse -q --verify "feat.$ws8mb.task-2" >/dev/null; then pass "the owner's retry of a merged task recreates no task branch and reports merged=1"; else fail "retry of a merged task (rc=$rc: $out: branch $(git -C "$mb_a" rev-parse -q --verify "feat.$ws8mb.task-2" 2>/dev/null || echo absent))"; fi
 # A dependent whose predecessor is not complete is blocked even when approved.
 run_state "$mb_a" claim docs/plan.md 3 --session s1 >/dev/null 2>&1
 printf 'Task 1: complete (commits 1111111..%s, review clean)\n' "${t1:0:7}" >> "$wsmb/progress.md"

@@ -488,7 +488,14 @@ cmd_claim() {
   # base: records written before task branches existed carry the session's
   # checked-out branch under branch= and no from=, and carry no task branch.
   claim_finish_own() {
+    local mrc
     ref=$(sed -n 's/^branch=//p' "$target/owner" 2>/dev/null); from=$(sed -n 's/^from=//p' "$target/owner" 2>/dev/null)
+    # The controller deletes a merged task's branch before it writes the
+    # completion line: a retry in that window must not recreate the branch at
+    # its old base, and there is nothing left to check out.
+    grep -Eq "^Task $n: merged [0-9a-f]{7} into " "$WSDIR/progress.md" 2>/dev/null; mrc=$?
+    if [ "$mrc" -eq 0 ]; then ref=""; from=""; write_activity "$sid" || return 1; branch_out=" branch=none merged=1"; return 0; fi
+    [ "$mrc" -eq 1 ] || return 1
     if [ -n "$ref" ] && [ -n "$from" ]; then claim_finish_branch; else ref=""; from=""; branch_out=" branch=none"; fi
   }
   # The plan line is only settled once recovery has run: finishing an

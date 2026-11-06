@@ -441,6 +441,9 @@ branch while other sessions merge.
   task branch and its base: check the branch out (`git switch <branch>`) and
   dispatch on it; `held` with your own session id (`own=1`, a resume after
   compaction) prints the same two fields: check the branch out and proceed;
+  `held` with `own=1` and `merged=1` means the task is already merged and its
+  branch deleted: check nothing out and resume it at its completion line
+  (Complete the task, below);
   `held` from `claim` after `next` offered the task is a race lost, run
   `next` again; `blocked` means the plan moved under you, run `next` again.
   A task held by another session is ordinary while next offers another: take

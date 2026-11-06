@@ -3738,7 +3738,7 @@ out=$(run_state "$rq" lease docs/link.md --release --session s1 2>/dev/null); rc
 out2=$(run_state "$rq" lease "$TEST_ROOT/no-repo/plans/p.md" --release --session s1 2>/dev/null); rc2=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$rc2" -eq 2 ] && [ -z "$out2" ]; then pass "lease still refuses a link at the plan path and a path outside any repository"; else fail "lease fallback bounds (link rc=$rc: $out; outside rc=$rc2: $out2)"; fi
 # A plan committed in a linked worktree: the finishing skill hands lease the main checkout joined to the plan's repository-relative path, which outlives the worktree that Step 6 removes; the worktree's own absolute path would then resolve inside the main checkout's .worktrees directory.
-lw="$TEST_ROOT/lw"; make_repo "$lw"
+lw="$TEST_ROOT/lwrm"; make_repo "$lw"
 mkdir -p "$lw/docs/plans"; : > "$lw/docs/spec.md"; : > "$lw/docs/plans/keep.md"; git -C "$lw" add docs; git -C "$lw" commit -qm docs
 lw_w="$lw/.worktrees/w"; git -C "$lw" worktree add -q -b feat "$lw_w" 2>/dev/null
 printf '# W\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$lw_w/docs/plans/w.md"

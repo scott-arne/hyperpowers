@@ -522,7 +522,12 @@ The decision of record is `tally-z4b.txt` in hyperpowers-evals
 (`evidence/2026-10-23-sdd-stop-guard/tally-z4b.txt`), which the campaign
 README's second re-measure addendum names in place of `tally.txt` and
 `tally-z4.txt`. It reads `decision: PASS`, with `H1: True`, `H2: True`,
-`H3: True`, `H4: True` and `R: True`; Scenario results quotes all its lines.
+`H3: True`, `H4: True` and `R: True`; Scenario results quotes the summary
+lines that follow the file's ten per-run rows. No counted run put the guard
+to a decision under a plan (`runs_with_plan_decisions: 0`), so H1 holds as
+Correction 9 restates it, because no hook line fell inside a run's plan
+window, and read as the spec first wrote it (`plan_decisions >= 1`) all ten
+runs would fail it.
 
 The Zed section records Z1 pass (2026-11-05), Z2 pass (2026-11-05) and Z3
 pass (2026-11-06). Z4 failed on 2026-11-05. Its contingency shipped at

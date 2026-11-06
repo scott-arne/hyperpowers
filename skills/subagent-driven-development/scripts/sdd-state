@@ -139,6 +139,9 @@ plan_line_of() {
     "$(printf '%s' "$raw" | sed 's/^plan: integration \([^ ]*\) code-root \([^ ]*\) plan-ref \([^ ]*\) plan-root \([^ ]*\) spec .*$/integration=\1 code-root=\2 plan-ref=\3 plan-root=\4/')" \
     "$(enc_spec "$(printf '%s' "$raw" | sed 's/^plan: integration [^ ]* code-root [^ ]* plan-ref [^ ]* plan-root [^ ]* spec //')")"
 }
+# <ledger>: 0 when it holds a plan line, 1 when it holds none, 2 when it
+# cannot be read (plan_line_of reads an unreadable ledger as no line).
+ledger_has_plan_line() { grep -q '^plan: integration [^ ]* code-root [^ ]* plan-ref [^ ]* plan-root [^ ]* spec ' "$1" 2>/dev/null; }
 plan_field() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -n 1; }
 spec_of_plan() { sed -n 's/^\*\*Spec:\*\*[[:space:]]*//p' "$1" | head -n 1; }
 ws8_of() { printf '%s' "$1" | sed 's/.*-//'; }
@@ -544,6 +547,9 @@ cmd_claim() {
     elif [ -n "$line" ] || [ -e "$PLAN" ]; then
       hp_unlock; echo "status=error"; return 2
     fi
+    # A registered plan with no task headings is one whose headings were not
+    # read, never a finished one: nothing would hold the train back.
+    if [ -z "$graph" ] && [ -n "$line" ]; then hp_unlock; echo "sdd-state: the registered plan has no task headings (### Task N:)" >&2; echo "status=invalid plan=${blob:0:7}"; return 2; fi
     for t in $(printf '%s\n' "$graph" | sed -n 's/^task=\([0-9][0-9]*\) .*/\1/p'); do
       ledger_task_complete "$WSDIR/progress.md" "$t"; rc=$?
       if [ "$rc" -eq 1 ]; then missing="$missing,$t"; elif [ "$rc" -ne 0 ]; then hp_unlock; echo "status=error"; return 2; fi
@@ -830,8 +836,15 @@ next_classify() {
     # match another session's assignment line.
     assigned=$(SID=$sid awk 'BEGIN { p = "session " ENVIRON["SID"] ": tasks " } index($0, p) == 1 { l = substr($0, length(p) + 1); gsub(/ /, "", l); found = l } END { print found }' "$WSDIR/progress.md" 2>/dev/null)
   fi
-  # A plan with no task headings leaves nothing to claim.
-  [ -n "$graph" ] || { echo "status=none reason=complete"; return 0; }
+  # A plan with no task headings leaves nothing to claim while it predates
+  # registration. A registered one is a plan whose headings were not read,
+  # never a finished one: complete would send the session to the final train.
+  if [ -z "$graph" ]; then
+    ledger_has_plan_line "$WSDIR/progress.md"; rc=$?
+    if [ "$rc" -eq 0 ]; then echo "sdd-state: the registered plan has no task headings (### Task N:)" >&2; echo "status=invalid plan=${blob:0:7}"; return 2; fi
+    if [ "$rc" -ne 1 ]; then echo "sdd-state: cannot read $WSDIR/progress.md" >&2; echo "status=error"; return 2; fi
+    echo "status=none reason=complete"; return 0
+  fi
   while IFS= read -r line; do
     t=${line#task=}; t=${t%% *}; deps=${line#*depends=}
     map_set DEP "$t" "$deps" && map_set CLASS "$t" "" && map_set OWNER "$t" "" || { echo "status=invalid plan=${blob:0:7}"; return 2; }

@@ -218,7 +218,10 @@ hp_plan_graph() {
     fence != "" { next }
     # A heading that starts like a task but is not "### Task N:" plus a space or
     # the line end would otherwise drop the task silently, or carry shell text
-    # into the task id.
+    # into the task id. That holds at every heading level and spacing too:
+    # task-brief reads "## Task 1" as a task, and a plan of such headings read
+    # here as having none would report itself complete.
+    /^#+[ \t]+Task[ \t]+[0-9]/ && !/^### Task [0-9]/ { printf "malformed task heading: %s\n", $0 > "/dev/stderr"; bad = 1; exit 2 }
     /^### Task [0-9]/ { if ($0 !~ /^### Task [0-9]+:([ \t]|$)/) { printf "malformed task heading: %s\n", $0 > "/dev/stderr"; bad = 1; exit 2 }
       n = $0; sub(/^### Task /, "", n); sub(/:.*$/, "", n); if (n in seen) { printf "duplicate heading: task %s\n", n > "/dev/stderr"; bad = 1; exit 2 } seen[n] = 1; order[++k] = n; cur = n; next }
     cur != "" && /^\*\*Depends on:\*\*/ {

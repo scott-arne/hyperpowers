@@ -2913,6 +2913,9 @@ dep_bad repeated '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:** Task 1
 # A heading that starts like a task but breaks the grammar is an error: it must not drop the task or carry text into its id.
 dep_bad headtext '/^### Task 2:/ { print "### Task 2:x"; next } { print }' 'malformed task heading: ### Task 2:x'
 dep_bad headsub '/^### Task 2:/ { print "### Task 2:$(true)"; next } { print }' 'malformed task heading: ### Task 2:$(true)'
+# A task heading at another level is an error too: read as no task, it would drop the task, and a plan of them would read as complete.
+dep_bad level2 '{ sub(/^### Task /, "## Task "); print }' 'malformed task heading: ## Task 1: A'
+dep_bad level4 '{ print } END { print ""; print "#### Task 5: E" }' 'malformed task heading: #### Task 5: E'
 dep_bad twice '/^\*\*Depends on:\*\* Task 1$/ { print; print ""; print "**Depends on:** none"; next } { print }' 'malformed dependency line: task 2: none'
 # The Global Constraints scope ends at the first task heading, so a task's prose cannot widen the allowlist.
 cat > "$dp/docs/gcscope.md" <<'GCSCOPE'
@@ -3491,6 +3494,28 @@ out=$(cd "$TEST_ROOT/nogit" && bash "$SDD_STATE" next "$nx_a/docs/plan.md" --ses
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "next outside any repository prints status=error"; else fail "nogit cwd (rc=$rc: $out)"; fi
 out=$(run_state "$nx_a" next docs/plan.md --session s1 --code-repo "$TEST_ROOT/does-not-exist" 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "next with a missing --code-repo prints status=error"; else fail "missing code repo (rc=$rc: $out)"; fi
+# A registered plan whose task headings the parser does not read is never complete: next and the final claim refuse it, and no claim or lease is taken.
+nh_reg() { # <name> <plan text>: a plan repository on branch feat whose plan is registered; sets NH and NH_WS
+  NH="$TEST_ROOT/$1"; make_repo "$NH"; mkdir -p "$NH/docs"; : > "$NH/docs/spec.md"; printf '%s' "$2" > "$NH/docs/plan.md"
+  git -C "$NH" add docs; git -C "$NH" commit -qm plan; git -C "$NH" switch -q -c feat
+  NH_WS=$(run_sdd_dir "$NH" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$NH_WS/progress.md"
+  run_state "$NH" register docs/plan.md --session s1 --integration feat >/dev/null 2>&1
+}
+nh_refused() { # <label> <expected stderr fragment>: next and claim final both refuse, and neither a final claim nor a lease exists
+  out=$(run_state "$NH" next docs/plan.md --session s1 2>"$TEST_ROOT/nh.next.err"); rc=$?
+  if [ "$rc" -eq 2 ] && [ "${out%% plan=*}" = "status=invalid" ] && grep -qF "$2" "$TEST_ROOT/nh.next.err"; then pass "next refuses $1"; else fail "next on $1 (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/nh.next.err"))"; fi
+  out=$(run_state "$NH" claim docs/plan.md final --session s1 2>"$TEST_ROOT/nh.final.err"); rc=$?
+  if [ "$rc" -eq 2 ] && [ "${out%% plan=*}" = "status=invalid" ] && grep -qF "$2" "$TEST_ROOT/nh.final.err" && [ ! -e "$NH_WS/claims/final" ] && [ -z "$(ls "$STATE_ROOT/$(state_key "$NH")".final-* 2>/dev/null)" ]; then pass "claim final refuses $1 and takes no claim or lease"; else fail "claim final on $1 (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/nh.final.err"))"; fi
+}
+nh_reg nh2 $'# P\n\n**Spec:** docs/spec.md\n\n## Task 1: A\n\n**Depends on:** none\n\n## Task 2: B\n\n**Depends on:** Task 1\n'
+grep -q '^plan: integration feat ' "$NH_WS/progress.md" || fail "the level-2 plan registered"
+nh_refused "a registered plan with level-2 task headings" 'malformed task heading: ## Task 1: A'
+nh_reg nh4 $'# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\nThe first task.\n\n#### Task 5: E\n\nA task the parser would drop.\n'
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$NH_WS/progress.md"
+nh_refused "a stray level-4 task heading beside complete tasks" 'malformed task heading: #### Task 5: E'
+nh_reg nh0 $'# P\n\n**Spec:** docs/spec.md\n\nNo task headings here.\n'
+grep -q '^plan: integration feat ' "$NH_WS/progress.md" || fail "the headingless plan registered"
+nh_refused "a registered plan with no task headings" 'no task headings'
 
 
 echo "final: claim, lease, finish"

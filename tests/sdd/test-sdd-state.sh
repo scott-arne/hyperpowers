@@ -4326,6 +4326,11 @@ if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=board sy
 run_state "$TEST_ROOT/bd3" claim docs/plan.md 2 --session board-reader >/dev/null 2>&1
 out=$(run_state "$TEST_ROOT/bd3" board docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=board sync=no-remote sessions=1 waiting=0 frontier=1" ]; then pass "a task claimed by a session named board-reader is held, not claimable"; else fail "frontier beside a board-reader claim (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+# A session id that is not a single path entry names no record: wait and the activity stamp of snapshot --session refuse it and make no directory for it (one would block session a's own records and show a phantom session).
+out=$(run_state "$bd_a" wait docs/plan.md --session a/b --kind question --note "nested" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd/waiting/a" ] && [ ! -e "$wsbd/activity/a" ]; then pass "wait refuses a session id holding a slash and makes no directory"; else fail "wait with a nested session id (rc=$rc: $out: $(ls -A "$wsbd/waiting" "$wsbd/activity" | tr '\n' ' '))"; fi
+out=$(run_state "$bd_a" snapshot docs/plan.md --session c/d 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd/activity/c" ]; then pass "snapshot --session refuses a session id holding a slash and makes no directory"; else fail "snapshot with a nested session id (rc=$rc: $out: $(ls -A "$wsbd/activity" | tr '\n' ' '))"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

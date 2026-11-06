@@ -152,27 +152,31 @@ ledger_task_complete() { grep -Eq "^[[:space:]*_>-]*Task $2: complete([^[:alnum:
 claim_task_branch_name() { # <integration> <ws8> <N> [<k>] -> <integration>.<ws8>.task-<N>[.<k>]
   printf '%s.%s.task-%s%s' "$1" "$2" "$3" "${4:+.$4}"
 }
-# <path under ROOT> <content>: publishes one of a session's own records,
-# waiting/<sid> or activity/<sid>. The session id is caller input and both
-# directories arrive with a fetched state branch, so containment is checked
-# at the write point, leaf included, and an entry there that is not a
-# regular file is refused: a rename onto a directory would move the record
-# inside it and report success. The content goes to an exclusively created
-# temporary file outside the tracked tree, beside the checkout or plain root
-# on the same filesystem, so the rename stays atomic and a snapshot staging
-# the workspace meanwhile (the record writers take no lock) can commit
-# neither a temporary name nor a half-written record.
+# <dir under ROOT> <session id> <content>: publishes one of a session's own
+# records, waiting/<sid> or activity/<sid>. The session id is caller input
+# and both directories arrive with a fetched state branch. The id must be a
+# single path entry: one holding a slash would have directories made under
+# waiting/ and activity/ that block another session's records and hold no
+# record the board reads. Containment is checked at the write point, leaf
+# included, only the record's own directory is made, and an entry there
+# that is not a regular file is refused: a rename onto a directory would
+# move the record inside it and report success. The content goes to an
+# exclusively created temporary file outside the tracked tree, beside the
+# checkout or plain root on the same filesystem, so the rename stays atomic
+# and a snapshot staging the workspace meanwhile (the record writers take no
+# lock) can commit neither a temporary name nor a half-written record.
 record_publish() {
-  local dest="$ROOT/$1" t
-  hp_contained "$ROOT" "$1" || return 1
-  mkdir -p "$(dirname "$dest")" || return 1
+  local dest="$ROOT/$1/$2" t
+  case "$2" in ''|.|..|*/*) echo "sdd-state: the session id is not a single path entry: $2" >&2; return 1 ;; esac
+  hp_contained "$ROOT" "$1/$2" || return 1
+  mkdir -p "$ROOT/$1" || return 1
   t=$(mktemp "$(dirname "$ROOT")/.sdd-record.XXXXXX") || return 1
-  printf '%s\n' "$2" > "$t" || { rm -f "$t"; return 1; }
+  printf '%s\n' "$3" > "$t" || { rm -f "$t"; return 1; }
   if [ -e "$dest" ] && [ ! -f "$dest" ]; then rm -f "$t"; echo "sdd-state: $dest is not a regular file; refusing to replace it" >&2; return 1; fi
   mv -f "$t" "$dest" || { rm -f "$t"; return 1; }
 }
 write_activity() { # <sid>
-  record_publish "plans/$WS/activity/$1" "$(hp_utc_now)"
+  record_publish "plans/$WS/activity" "$1" "$(hp_utc_now)"
 }
 
 # --- deps --------------------------------------------------------------------
@@ -2136,7 +2140,7 @@ merge_back_wait() {
   owt=$(sed -n 's/^worktree=//p' "$owner_f" 2>/dev/null | head -n 1)
   ob=$(sed -n 's/^branch=//p' "$owner_f" 2>/dev/null | head -n 1)
   if [ -z "$owt" ] || [ -z "$ob" ]; then echo "sdd-state: claim owner without worktree= or branch=: $owner_f" >&2; return 1; fi
-  record_publish "plans/$WS/waiting/$sid" "$(printf 'session=%s\ntask=%s\nkind=merge\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s' "$sid" "$n" "$(hp_utc_now)" "merge-back conflict in $1" "$(enc "$owt")" "$ob" "$(hostname)")"
+  record_publish "plans/$WS/waiting" "$sid" "$(printf 'session=%s\ntask=%s\nkind=merge\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s' "$sid" "$n" "$(hp_utc_now)" "merge-back conflict in $1" "$(enc "$owt")" "$ob" "$(hostname)")"
 }
 
 # --- wait --------------------------------------------------------------------
@@ -2161,8 +2165,9 @@ cmd_wait() {
   d="$WSDIR/waiting"
   [ -f "$WSDIR/progress.md" ] || { echo "status=no-workspace"; return 2; }
   # The session id is caller input and the waiting directory arrives with a
-  # fetched state branch: an id such as ../progress.md, or a planted link,
-  # would otherwise aim the removal or the rename at another file.
+  # fetched state branch: an id such as ../progress.md or a/b, or a planted
+  # link, would otherwise aim the removal or the rename at another file.
+  case "$sid" in */*) echo "sdd-state: the session id does not name a record under $d: $sid" >&2; echo "status=error"; return 2 ;; esac
   hp_contained "$ROOT" "plans/$WS/waiting/$sid" || { echo "sdd-state: the session id does not name a record under $d: $sid" >&2; echo "status=error"; return 2; }
   if [ "$clear" -eq 1 ]; then
     rm -f "$d/$sid" || { echo "status=error"; return 2; }
@@ -2182,7 +2187,7 @@ cmd_wait() {
   top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
   b=$(git branch --show-current 2>/dev/null)
   [ -n "$b" ] || b="detached@$(git rev-parse --short=7 HEAD 2>/dev/null || echo none)"
-  record_publish "plans/$WS/waiting/$sid" "$(printf 'session=%s\ntask=%s\nkind=%s\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s' "$sid" "$task" "$kind" "$(hp_utc_now)" "$note" "$(enc "$top")" "$b" "$(hostname)")" || { echo "status=error"; return 2; }
+  record_publish "plans/$WS/waiting" "$sid" "$(printf 'session=%s\ntask=%s\nkind=%s\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s' "$sid" "$task" "$kind" "$(hp_utc_now)" "$note" "$(enc "$top")" "$b" "$(hostname)")" || { echo "status=error"; return 2; }
   write_activity "$sid" || { echo "status=error"; return 2; }
   echo "status=waiting kind=$kind"
 }

@@ -7,7 +7,7 @@ rounds 1 to 4 raised two, one, one and zero critical and sixteen, eight,
 seven and three high findings; every one is resolved in this revision and
 the gate's round ledger records each; the three from round 4, the gate's
 last, were resolved after the ceiling without a confirming Codex pass;
-user review pending.
+approved by the human partner on 2026-10-27.
 **Precondition:** portable SDD dossiers (`2026-10-20-portable-sdd-dossiers-design.md`),
 merged to `main` as 5abc925 on 2026-10-27. This design extends that helper
 and that skill text; where it names a mechanism without describing it, the

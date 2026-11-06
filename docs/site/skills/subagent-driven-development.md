@@ -4,7 +4,7 @@ source-digest: 6b63b30bdc2b
 ---
 # subagent-driven-development
 
-`subagent-driven-development` (SDD) runs a written plan by dispatching a fresh implementer subagent for each task, reviewing each task's result, and reviewing the whole branch at the end.
+`subagent-driven-development` (SDD) runs a written plan by dispatching a fresh implementer subagent for each task, or one subagent for a batch of small same-shape tasks, reviewing each task's result, and reviewing the whole branch at the end.
 
 :::{card} At a glance
 **Category:** Process · **Triggers on:** executing an implementation plan with independent tasks in the current session · **Hands off to:** {doc}`finishing-a-development-branch` · **Harness notes:** the Codex task and final gates run on Claude Code only; the skill degrades to its Claude reviewers when Codex is absent
@@ -22,7 +22,7 @@ Example requests:
 
 ## What it does
 
-The controller (your main session) does coordination and never implements. Each task goes through the same loop.
+The controller (your main session) coordinates and leaves implementation to subagents, apart from one narrow exception: it may apply a fix fully specified by a finding, of at most three lines in one file with no new logic. Each task goes through the same loop.
 
 **Setup.** The controller settles where the work happens through {doc}`using-git-worktrees`, syncs the plan's state with `scripts/sdd-state sync`, and finds the plan's workspace with `scripts/sdd-dir`. The workspace lives in a per-repository state checkout under your user cache, outside the working tree, so nothing in it can be committed with your code. It holds the plan's ledger (`progress.md`), task briefs, reports, and review packages. The ledger is the recovery map: it records each completed task, so a controller that loses its context to compaction resumes at the first task without a completion line instead of redoing finished work. The controller reads the plan and its spec, then scans the plan for conflicts between tasks and asks you about any it finds in one batched question before execution begins.
 

@@ -29,7 +29,7 @@ When the agent is unsure between two paths it takes the heavier one. If hidden c
 | Classify and design | {doc}`skills/brainstorming` | Announces the path, asks questions one at a time, gets your approval. On the architectural path it also writes and commits the spec. |
 | Choose where the work happens | {doc}`skills/using-git-worktrees` | Detects an existing worktree or asks whether to stay on the current branch, use a new branch, or use a worktree. Subagent-driven development invokes it during setup. |
 | Plan | {doc}`skills/writing-plans` | Breaks an approved spec into tasks with exact files and steps, then hands off to execution. |
-| Execute | {doc}`skills/subagent-driven-development` | Dispatches a fresh subagent per task, reviews each task, and reviews the whole branch at the end. {doc}`skills/executing-plans` is the alternative when you ask for inline execution. |
+| Execute | {doc}`skills/subagent-driven-development` | Dispatches a fresh subagent per task (or per batch of small same-shape tasks), reviews each task, and reviews the whole branch at the end. {doc}`skills/executing-plans` is the alternative when you ask for inline execution. |
 | Implement | {doc}`skills/test-driven-development` | Requires a failing test before production code. |
 | Review | {doc}`skills/requesting-code-review` | Holds the code reviewer prompt that the final whole-branch review uses. |
 | Finish | {doc}`skills/finishing-a-development-branch` | Records decisions, runs the tests, offers merge, pull request, or keep (and discard when you ask), and cleans up. |

@@ -22,7 +22,7 @@ After you approve the spec, the agent invokes {doc}`skills/writing-plans`. The p
 
 ## 4. Subagents run the tasks
 
-{doc}`skills/subagent-driven-development` first settles where the work happens through {doc}`skills/using-git-worktrees`, which asks whether to stay on the current branch, start a new branch, or use a worktree. The controller keeps a ledger file of progress. For each task it dispatches a fresh implementer subagent. A task reviewer then returns a spec-compliance verdict and a code-quality verdict, and findings go through a fix loop. The controller does not stop between tasks to check in.
+{doc}`skills/subagent-driven-development` first settles where the work happens through {doc}`skills/using-git-worktrees`, which asks whether to stay on the current branch, start a new branch, or use a worktree. The controller keeps a ledger file of progress. For each task, or batch of small same-shape tasks, it dispatches a fresh implementer subagent. A task reviewer then returns a spec-compliance verdict and a code-quality verdict, and findings go through a fix loop. The controller does not stop between tasks to check in.
 
 When all tasks are done, a whole-branch review runs on the most capable available model, with one fix wave at most.
 

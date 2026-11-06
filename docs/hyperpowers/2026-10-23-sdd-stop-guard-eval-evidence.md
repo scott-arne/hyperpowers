@@ -455,7 +455,8 @@ Correction 10 it is that call's in-turn stop.
 
 The human partner ran the checks in Zed on 2026-11-05, on scratch
 repositories with a two-task plan and an SDD ledger, with the treatment
-`4a4f354` installed.
+`4a4f354` installed. Run 3 ran on 2026-11-06 with the contingency treatment
+`36a6255` installed.
 
 - Z1, pass, 2026-11-05: Zed run 1 (session `9558e8d7`, scratch `zed-scratch`,
   treatment `4a4f354`, 03:05Z to 03:53Z). The Task 1 implementer ran in the
@@ -468,9 +469,30 @@ repositories with a two-task plan and an SDD ledger, with the treatment
   indicator stayed busy throughout, and the ledger was intact. In run 1 both
   Esc presses landed in setup, before the first dispatch, so Z2 was not
   exercised there.
-- Z3, pending (Zed run 3): not yet exercised. In run 2 Zed held the mid-turn
-  stop request until the human partner pressed "Send Now", which interrupted
-  the turn; the controller went on to Task 2 in the same turn with no stop
+- Z3, pass, 2026-11-06: Zed run 3 (session `ef92803c`, scratch
+  `zed-scratch-3`, treatment `36a6255`, Claude Code 2.1.318 with entrypoint
+  `sdk-ts`, 12:24:43Z to 12:51:59Z). The human partner pasted two prompts and
+  watched nothing; the controller read the session transcript and the hook
+  log. Prompt B, sent with "Send Now" at 12:51:42Z, interrupted the Task 2
+  implementer and asked the controller to reply in one line and end its turn.
+  The controller replied and tried to end the turn, and the hook refused it
+  with this line:
+
+  ```
+  {"ts":"2026-11-06T12:51:47.931Z","session":"ef92803c-7b84-4fd0-a17c-e067ff2ba75d","decision":"block","reason":"open-tasks","plan":"plan.md","open":1,"total":2,"live":[],"refusals":1,"stop_hook_active":false,"elapsed_ms":36}
+  ```
+
+  In the same turn the controller ran `sdd-state handback` at 12:51:55Z
+  (reason: the human partner interrupted Task 2 and asked to stop) and
+  closed, and the hook allowed that turn end as `handback-line` at 12:51:59Z
+  with `stop_hook_active` true. The controller handed back instead of
+  resuming the plan because prompt B asked it to end its turn, which the
+  skill treats as a request to stop. The human partner decided on 2026-11-06
+  to record Z3 as pass: the hook fires in a Zed session, and a refusal keeps
+  the turn open and the controller working. No Zed run showed the controller
+  return to the plan after a refusal. In run 2 Zed had held the mid-turn stop
+  request until the human partner pressed "Send Now", which interrupted the
+  turn; the controller went on to Task 2 in the same turn with no stop
   attempt, so the hook made no decision.
 - Z4, fail, 2026-11-05: in run 1 the controller resumed the Task 2
   implementer with `SendMessage` at 03:33:26Z for a Codex fix round, the turn
@@ -481,9 +503,15 @@ repositories with a two-task plan and an SDD ledger, with the treatment
   either resume and decided on the transcript. Z4 failed; contingency shipped
   at `36a6255`; re-measured: `tally-z4.txt`, `decision: FAIL`; F reader
   corrected (Correction 12); re-measured again: `tally-z4b.txt`,
-  `decision: PASS` (Scenario results).
-- The hook fired in Zed: four decisions across runs 1 and 2, two `live-agent`
-  allows and two post-Finish `no-ledger` allows, and no block.
+  `decision: PASS` (Scenario results). In run 3 on the contingency treatment,
+  Task 1's fix round was a fresh foreground dispatch on the recorded model
+  (sonnet) from 12:40:10Z to 12:40:21Z, with no turn end around it. It lasted
+  11 s because it declined a finding that was false, an injected "textkit.py
+  has no module docstring", and it changed no code. No `SendMessage` call
+  appears in the session. This is the first live case of that route.
+- The hook fired in Zed: six decisions across the three runs, namely two
+  `live-agent` allows and two post-Finish `no-ledger` allows in runs 1 and 2,
+  and one `open-tasks` block and one `handback-line` allow in run 3.
 
 ## Release
 

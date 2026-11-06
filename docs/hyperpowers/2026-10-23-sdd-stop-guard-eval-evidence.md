@@ -299,8 +299,9 @@ checks), with ten runs at treatment `36a6255` under `manifest-z4.tsv`, on
 Claude Code 2.1.317, on 2026-11-05. It fails its rule. All ten runs are
 counted, none is void, each passed the archive's post-check with `finish=yes`,
 one receipt, one mirror and the last task's mark, and each has quorum's final
-status and the Gauntlet's status `pass`. `tally-z4.txt` is the decision of
-record for the release; its lines:
+status and the Gauntlet's status `pass`. `tally-z4.txt` was the decision of
+record for the release until the second re-measure addendum named
+`tally-z4b.txt`; its lines:
 
 ```
 runs_h1: 10
@@ -340,7 +341,11 @@ decisions are `no-ledger` allows after Finish), so H2's adjudication half
 and H3 held with no cases, and H1 holds because no line fell in its window.
 No task in any run needed a fix round and no run called `SendMessage`, so the
 contingency's change ran in none of these runs; they neither show nor refute
-that a fix round on Claude Code now keeps the turn open. Neither failure is a
+that a fix round on Claude Code now keeps the turn open. Under Correction 9 a
+PASS would have meant that no stop reached the human partner as a `neither`
+stop and that the mechanism criteria held. This FAIL means the first did not
+hold in one run, at a stop after the guard's scope ends, and the second did
+not hold as the analyzer reads five calls. Neither failure is a
 decision the guard got wrong, and neither passes through the fix-round path.
 The first campaign's PASS (`tally.txt`, Claude Code 2.1.302, `4a4f354`) and
 this FAIL (`tally-z4.txt`, Claude Code 2.1.317, `36a6255`) differ in the
@@ -349,6 +354,66 @@ can be attributed to the treatment alone. The full record is the campaign
 README's "Results (Z4 contingency)" section, `tally-z4.txt` and the runs
 under `evidence/2026-10-23-sdd-stop-guard/task-21-runs/treatment/` in
 hyperpowers-evals, and the experiment entry's second verdict.
+
+The human partner then kept H2 as written and had the F reader corrected
+before any new run. Correction 12 changes `analyze.py` alone: the soak reader
+takes a `time` prefix, and the watch reader takes a closing `date` after the
+wait and a command substitution assigned before it; no other measure moves.
+Read with it, the first contingency campaign's F is 10 of 10 and its decision
+is still FAIL, on H2, a reading that does not replace `tally-z4.txt`. Ten
+fresh runs at the same treatment, `36a6255` on Claude Code 2.1.317, under
+`manifest-z4b.tsv`, re-measured the campaign on 2026-11-06 (UTC). They pass
+the rule. All ten are counted, none is void, each passed the archive's
+post-check with `finish=yes`, one receipt, one mirror and the last task's
+mark, and each has quorum's final status and the Gauntlet's status `pass`.
+`tally-z4b.txt` is the decision of record for the release; its lines:
+
+```
+runs_h1: 10
+runs_with_plan_decisions: 0
+H1: True
+neither_listed_total: 0
+false_handbacks_total: 0
+unadjudicated_allows_total: 0
+H2: True
+false_blocks_total: 0
+unadjudicated_blocks_total: 0
+H3: True
+foreground_share: 1.0
+untracked_total: 0
+f_runs: 10
+live_shell_turn_ends_total: 0
+H4: True
+success_runs: 10
+R: True
+decision: PASS
+```
+
+Under Correction 9 a PASS means that no stop reached the human partner as a
+`neither` stop and that the mechanism criteria held, and these runs show
+both: none of the 25 listed entries is labelled `neither`, 136 of 136
+dispatches ran in the foreground, no launch was untracked, F is 10 of 10, no
+turn ended with only a tracked shell live, and all ten runs succeeded. One F
+reading depended on Correction 12: `68d1` closed its long watch through a
+substitution assigned before the wait, which the analyzer before the
+Correction read as unproven; read that way F is 9 of 10, still at the
+threshold, so the decision does not turn on the Correction. No run used a
+`time` prefix or a closing `date`. The guard again made no decision under a
+plan (`plan_decisions` 0 in 10 of 10; all 20 decisions are `no-ledger` allows
+after Finish), so its refusal and hand-back paths were not exercised live,
+H2's adjudication half and H3 held with no cases, and H1 holds because no
+line fell in its window. No task needed a fix round and no run called
+`SendMessage`, so the contingency's change ran in none of these runs either;
+across both contingency campaigns the fresh foreground fix round has no live
+case. The first campaign's PASS (Claude Code 2.1.302, `4a4f354`) and this
+PASS (Claude Code 2.1.317, `36a6255`) differ in the Claude Code version as
+well as the treatment, so no difference between them can be attributed to
+the treatment alone; the two contingency campaigns share the treatment and
+the Claude Code version but differ in the analyzer and are separate samples
+of ten runs. The full record is the campaign README's "Results (Z4
+contingency, second re-measure)" section, `tally-z4b.txt` and the runs under
+`evidence/2026-10-23-sdd-stop-guard/task-21-runs/z4b/treatment/` in
+hyperpowers-evals, and the experiment entry's third verdict.
 
 ## T1
 
@@ -414,8 +479,9 @@ repositories with a two-task plan and an SDD ledger, with the treatment
   came at 06:06:10Z, the turn ended at 06:06:15Z, and the new turn opened at
   06:06:34Z (19 s). The human partner did not watch the indicator during
   either resume and decided on the transcript. Z4 failed; contingency shipped
-  at `36a6255`; re-measured: `tally-z4.txt`, `decision: FAIL` (Scenario
-  results).
+  at `36a6255`; re-measured: `tally-z4.txt`, `decision: FAIL`; F reader
+  corrected (Correction 12); re-measured again: `tally-z4b.txt`,
+  `decision: PASS` (Scenario results).
 - The hook fired in Zed: four decisions across runs 1 and 2, two `live-agent`
   allows and two post-Finish `no-ledger` allows, and no block.
 

@@ -24,10 +24,13 @@
 # stdout: one line of space-separated key=value pairs, status= first; sync
 # adds a second line "merge=<command>" on diverged, and board, deps and the
 # refusals of amend and deps --check print their status line and then their lines.
-# exit: 0 ok | 1 offline, offline-no-state, push-failed | 2 usage or internal
-#       (needs-sync, foreign branch, no-workspace, import-failed) |
+# exit: 0 ok | 1 offline, offline-no-state, push-failed, conflicts (deps --check,
+#       amend) | 2 usage or internal (error, needs-sync, foreign branch,
+#       no-workspace, import-failed, invalid: a plan graph that does not parse,
+#       or for next and claim final a registered plan with no task headings) |
 #       3 diverged, busy, remote-finished |
-#       4 claim held by another session, merge-back not-holder |
+#       4 claim held by another session, merge-back not-holder,
+#       no-lease (lease --closing) |
 #       5 scan-failed | 6 open-claims |
 #       7 plain backend (handoff), blocked | 8 plan-not-committed, conflict |
 #       9 wrong-repo, code-missing, plan-stale, wrong-branch, spec-branch-mismatch |
@@ -106,7 +109,10 @@ resolve_plan() {
   WSDIR="$ROOT/plans/$WS"
 }
 ledger_path() { printf '%s/progress.md\n' "$WSDIR"; }
-# One encoding for every path-valued stdout field: a space becomes %20.
+# A path-valued stdout field that is read, never compared as a key: a space
+# becomes %20. It is not reversible (a path holding a literal %20 prints the
+# same), so the fields compared as keys, the shares= paths of deps --check
+# and amend and a plan line's spec=, take enc_spec's percent-first order.
 enc() { printf '%s' "$1" | sed 's/ /%20/g'; }
 # --code-repo DIR, or the cwd's toplevel: the repository that owns the
 # integration branch when the plan lives elsewhere. Exits 2 as verify does.
@@ -116,6 +122,7 @@ code_repo_arg() { # <value or empty> [<ledger>] -> physical path; refuses a repo
     code=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "sdd-state: not inside a code repository; pass --code-repo DIR" >&2; echo "status=error"; exit 2; }
   fi
   code=$(hp_physical_dir "$code") || { echo "sdd-state: no such directory: $code" >&2; echo "status=error"; exit 2; }
+  git -C "$code" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $code" >&2; echo "status=error"; exit 2; }
   if [ -n "$ledger" ] && [ -f "$ledger" ]; then
     line=$(plan_line_of "$ledger")
     if [ -n "$line" ]; then
@@ -2011,6 +2018,10 @@ cmd_merge_back() {
   # The value goes to git as a revision and its full id is compared with the
   # approved commit's, so anything but hex is no commit id.
   case "$sha" in *[!0-9a-f]*) usage ;; esac
+  # The id is written by the bookkeeping after the merge, so it is checked
+  # before the first side effect: a planted owner record naming a malformed
+  # id must not let the merge land before a record write refuses it.
+  sid_ok "$sid" || { echo "status=error"; return 2; }
   resolve_plan "$plan"
   hp_git_version_at_least 2 38 || { echo "sdd-state: git 2.38 or newer is required to merge a task back (found $(git --version))" >&2; echo "status=error"; return 2; }
   # The lock pair needs the code repository's path; its comparison with the
@@ -2460,7 +2471,7 @@ cmd_board() {
 # grouped by spec then integration branch, then the branch leases. It does
 # not sync; the per-plan board does.
 board_repo() {
-  local ensure root c d f s line spec integ n held nw rows="" count=0
+  local ensure root c d f s line spec integ n held nw lh lt rows="" count=0
   git -C "$1" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $1" >&2; echo "status=error"; return 2; }
   ensure=$(hp_ensure_checkout "$1") || { echo "status=error"; return 2; }
   root=${ensure#* }
@@ -2494,7 +2505,10 @@ board_repo() {
     case "$s" in *[!0-9a-f]*) continue ;; esac
     [ -e "$f" ] || [ -L "$f" ] || continue
     lease_path_ok "$c" "$f" || continue
-    echo "lease branch=$(board_field "$f" branch) session=$(board_field "$f" session) plan=$(enc "$(board_field "$f" plan)") closing=$(board_field "$f" closing)"
+    # The holder's host and the lease's time are the takeover evidence once
+    # finish has removed the workspace: this row is then all that shows them.
+    lh=$(board_field "$f" host); lt=$(board_field "$f" time)
+    echo "lease branch=$(board_field "$f" branch) session=$(board_field "$f" session) plan=$(enc "$(board_field "$f" plan)") closing=$(board_field "$f" closing) host=${lh:-unknown} time=${lt:-none}"
   done
   return 0
 }

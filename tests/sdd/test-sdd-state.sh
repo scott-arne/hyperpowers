@@ -2961,6 +2961,49 @@ cat > "$dp/docs/annot.md" <<'ANNOT'
 ANNOT
 out=$(run_state "$dp" deps --from docs/annot.md docs/plan.md --check 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=clean" ]; then pass "annotation spans on a Files line are not paths"; else fail "annotated Files lines (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# A declared chain orders a shared path: 3 depends on 1 through 2, so their shared file is no conflict.
+cat > "$dp/docs/chain.md" <<'CHAIN'
+### Task 1: A
+
+**Depends on:** none
+
+**Files:**
+- Modify: `src/shared.sh`
+
+### Task 2: B
+
+**Depends on:** Task 1
+
+**Files:**
+- Modify: `src/b.sh`
+
+### Task 3: C
+
+**Depends on:** Task 2
+
+**Files:**
+- Modify: `src/shared.sh`
+CHAIN
+out=$(run_state "$dp" deps --from docs/chain.md docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=clean" ]; then pass "a 3->2->1 chain suppresses the shared-path pair of 1 and 3"; else fail "chain suppression (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# The reverse edge does not clear an interface pair: a producer that depends on its consumer is still consumer-first.
+cat > "$dp/docs/reverse.md" <<'REVERSE'
+### Task 1: A
+
+**Depends on:** Task 2
+
+**Interfaces:**
+- Produces: `x_fn`
+
+### Task 2: B
+
+**Depends on:** none
+
+**Interfaces:**
+- Consumes: `x_fn`
+REVERSE
+out=$(run_state "$dp" deps --from docs/reverse.md docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f1,3)" = "status=conflicts count=1" ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 interface=x_fn direction=consumer-first'; then pass "a producer that depends on its consumer prints interface=x_fn direction=consumer-first"; else fail "reverse producer edge (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
 # The plan id and the plan text come from one object even when the branch moves between them.
 make_repo "$TEST_ROOT/dr"; dr="$TEST_ROOT/dr"; mkdir -p "$dr/docs"
 printf '### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** none\n' > "$dr/docs/plan.md"
@@ -3089,6 +3132,10 @@ if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-branch expected=feat" ] && ! grep
 mc=$TEST_ROOT/mc; make_repo "$mc"
 out=$(cd "$mc" && bash "$SDD_STATE" register "$ty/docs/plan.md" --session s1 --integration nothere 2>"$TEST_ROOT/ty.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "the integration branch nothere does not exist" "$TEST_ROOT/ty.err" && ! grep -q '^plan:' "$wty/progress.md"; then pass "an integration branch missing from the code repository is an error and writes nothing"; else fail "missing integration branch (rc=$rc: $out)"; fi
+# A --code-repo that exists but is no repository is named, with a status line, like a missing one.
+mkdir -p "$TEST_ROOT/notrepo-rg"
+out=$(run_state "$ty" register docs/plan.md --session s1 --integration feat --code-repo "$TEST_ROOT/notrepo-rg" 2>"$TEST_ROOT/ty.notrepo.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "sdd-state: not a git repository: $TEST_ROOT/notrepo-rg" "$TEST_ROOT/ty.notrepo.err" && ! grep -q '^plan:' "$wty/progress.md"; then pass "a first registration whose --code-repo is no repository says so and writes nothing"; else fail "--code-repo not a repository (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ty.notrepo.err"))"; fi
 # A workspace or a ledger replaced by a link is never written through.
 mkdir -p "$TEST_ROOT/outside"; printf '# SDD ledger — plan: docs/plan.md\n' > "$TEST_ROOT/outside/progress.md"; cp "$TEST_ROOT/outside/progress.md" "$TEST_ROOT/outside/progress.orig"
 rm -rf "$wty"; ln -s "$TEST_ROOT/outside" "$wty"
@@ -4285,6 +4332,14 @@ out=$(run_state "$mb_a" merge-back docs/plan2.md 8 --session s3 --commit "$r1" 2
 hr=$(git -C "$mb_a" rev-parse feat)
 if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=8 head=${hr:0:7}" ] && [ "$(git -C "$mb_a" --no-replace-objects rev-parse "$hr^2")" = "$r1" ] && [ "$(git -C "$mb_a" --no-replace-objects show "$hr:src/r.txt")" = r ] && ! git -C "$mb_a" --no-replace-objects cat-file -e "$hr:unreviewed.txt" 2>/dev/null; then pass "a replace ref on the approved commit does not change the published tree"; else fail "replaced approved commit (rc=$rc: $out: $(git -C "$mb_a" --no-replace-objects ls-tree --name-only "$hr" | tr '\n' ' '))"; fi
 git -C "$mb_a" replace -d "$r1" >/dev/null
+# The session id is validated at merge-back's entry, as at claim's: an owner record planted with a slash-bearing session would otherwise let the merge land before a record write refused the id.
+printf '\n### Task 9: S\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 9"; git -C "$mb_a" switch -q --detach feat
+run_state "$mb_a" claim docs/plan2.md 9 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-9"; printf 's\n' > "$mb_a/src/s.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm s; s9=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 9: approved %s\n' "${s9:0:7}" >> "$wsmb2/progress.md"
+sed 's|^session=s3$|session=s3/x|' "$wsmb2/claims/task-9/owner" > "$TEST_ROOT/mb.owner9"; cp "$TEST_ROOT/mb.owner9" "$wsmb2/claims/task-9/owner"
+h9=$(git -C "$mb_a" rev-parse feat)
+out=$(run_state "$mb_a" merge-back docs/plan2.md 9 --session s3/x --commit "$s9" 2>"$TEST_ROOT/mb.sid.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'a session id must be one path entry' "$TEST_ROOT/mb.sid.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h9" ] && ! grep -q '^Task 9: merged' "$wsmb2/progress.md" && [ ! -e "$wsmb2/merges/task-9" ]; then pass "merge-back refuses a slash-bearing session id at its entry, before the merge"; else fail "merge-back session id at entry (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.sid.err"))"; fi
 
 echo "board: waiting records, activity and the board"
 make_pair bd; bd_a=$PAIR_A; bd_b=$PAIR_B
@@ -4363,7 +4418,7 @@ printf '2026-01-01T00:00:00Z\n' > "$wsbd/activity/s1"
 out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q "^session s1 task=final since=[^ ]* .* host=$(hostname) waiting=none .* silence=[0-9]\{6,\} quiet-since=2026-01-01T00:00:00Z$"; then pass "the board shows the final holder with its host and silence age"; else fail "final holder row (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
 out=$(run_state "$bd_a" board --repo "$bd_a" 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q "^lease branch=feat session=s1 plan=$(basename "$wsbd") closing=0$"; then pass "board --repo lists the branch leases with their holders"; else fail "board --repo leases (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q "^lease branch=feat session=s1 plan=$(basename "$wsbd") closing=0 host=$(hostname) time=$(sed -n 's/^time=//p' "$(ls -d "$STATE_ROOT/$(state_key "$bd_a")".final-*)")$"; then pass "board --repo lists the branch leases with their holders, hosts and times"; else fail "board --repo leases (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
 # The lease's history beside it is no lease; a holder whose activity file is gone is quiet since its claim, the last activity the dossier records.
 bdl=$(ls -d "$STATE_ROOT/$(state_key "$bd_a")".final-*); cp "$bdl" "$bdl.history"
 out=$(run_state "$bd_a" board --repo "$bd_a" 2>/dev/null); rc=$?

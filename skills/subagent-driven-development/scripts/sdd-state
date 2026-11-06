@@ -152,17 +152,27 @@ ledger_task_complete() { grep -Eq "^[[:space:]*_>-]*Task $2: complete([^[:alnum:
 claim_task_branch_name() { # <integration> <ws8> <N> [<k>] -> <integration>.<ws8>.task-<N>[.<k>]
   printf '%s.%s.task-%s%s' "$1" "$2" "$3" "${4:+.$4}"
 }
+# <path under ROOT> <content>: publishes one of a session's own records,
+# waiting/<sid> or activity/<sid>. The session id is caller input and both
+# directories arrive with a fetched state branch, so containment is checked
+# at the write point, leaf included, and an entry there that is not a
+# regular file is refused: a rename onto a directory would move the record
+# inside it and report success. The content goes to an exclusively created
+# temporary file outside the tracked tree, beside the checkout or plain root
+# on the same filesystem, so the rename stays atomic and a snapshot staging
+# the workspace meanwhile (the record writers take no lock) can commit
+# neither a temporary name nor a half-written record.
+record_publish() {
+  local dest="$ROOT/$1" t
+  hp_contained "$ROOT" "$1" || return 1
+  mkdir -p "$(dirname "$dest")" || return 1
+  t=$(mktemp "$(dirname "$ROOT")/.sdd-record.XXXXXX") || return 1
+  printf '%s\n' "$2" > "$t" || { rm -f "$t"; return 1; }
+  if [ -e "$dest" ] && [ ! -f "$dest" ]; then rm -f "$t"; echo "sdd-state: $dest is not a regular file; refusing to replace it" >&2; return 1; fi
+  mv -f "$t" "$dest" || { rm -f "$t"; return 1; }
+}
 write_activity() { # <sid>
-  local dest="$WSDIR/activity/$1" t
-  # The session id is caller input and the activity directory arrives with a
-  # fetched state branch, so containment is checked at the write point, leaf
-  # included. The timestamp goes through an exclusively created temporary
-  # file: a fixed temporary name would follow a planted link or collide with
-  # a session whose id ends in the suffix.
-  hp_contained "$ROOT" "plans/$WS/activity/$1" || return 1
-  mkdir -p "$WSDIR/activity" || return 1
-  t=$(mktemp "$WSDIR/activity/.$1.XXXXXX") || return 1
-  { printf '%s\n' "$(hp_utc_now)" > "$t" && mv -f "$t" "$dest"; } || { rm -f "$t"; return 1; }
+  record_publish "plans/$WS/activity/$1" "$(hp_utc_now)"
 }
 
 # --- deps --------------------------------------------------------------------
@@ -770,18 +780,28 @@ cmd_next() {
   printf '%s\n' "$out"
   return "$rc"
 }
-# <sid> -> the status line, from the resolved plan's state alone. The board
-# calls this directly rather than the subcommand, so a board run from a cwd
-# that is no repository still computes the frontier.
+# <sid> [board] -> the status line, from the resolved plan's state alone. The
+# board calls this directly rather than the subcommand, so a board run from a
+# cwd that is no repository still computes the frontier.
 next_classify() {
   local sid=$1 pair blob tmp graph t deps cls assigned="" line n_list mine_list own_list held_list wait_list excl_list waitown_list remaining held_all open_any=0 p rc owner
   pair=$(authoritative_plan_blob) || { echo "status=error"; return 2; }
   blob=${pair%% *}; tmp=${pair#* }
   graph=$(hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
   [ "$rc" -eq 0 ] || { echo "status=invalid plan=${blob:0:7}"; return 2; }
-  # A fixed-string prefix match: an id with a regex metacharacter must not
-  # match another session's assignment line.
-  assigned=$(SID=$sid awk 'BEGIN { p = "session " ENVIRON["SID"] ": tasks " } index($0, p) == 1 { l = substr($0, length(p) + 1); gsub(/ /, "", l); found = l } END { print found }' "$WSDIR/progress.md" 2>/dev/null)
+  if [ "${2:-}" = board ]; then
+    # The board's frontier is next's answer for a session that is assigned
+    # nothing and holds nothing. Session ids are unrestricted, so any
+    # printable placeholder could be a real session's, with its assignment
+    # line and its claims. An id holding a newline equals no owner (an owner
+    # record's session= is one line), so every claim reads as held by
+    # another session, and no assignment line is read.
+    sid=$'\n'
+  else
+    # A fixed-string prefix match: an id with a regex metacharacter must not
+    # match another session's assignment line.
+    assigned=$(SID=$sid awk 'BEGIN { p = "session " ENVIRON["SID"] ": tasks " } index($0, p) == 1 { l = substr($0, length(p) + 1); gsub(/ /, "", l); found = l } END { print found }' "$WSDIR/progress.md" 2>/dev/null)
+  fi
   # A plan with no task headings leaves nothing to claim.
   [ -n "$graph" ] || { echo "status=none reason=complete"; return 0; }
   while IFS= read -r line; do
@@ -2105,29 +2125,26 @@ merge_back_bookkeeping() {
   write_activity "$sid"
 }
 # <paths>: this session's waiting record of kind merge, in the record format
-# the board reads, written to an exclusively created temporary file beside
-# it and renamed, so no reader sees half a record. The worktree and branch
-# are the claim's, read from its owner record, never the caller's location:
-# merge-back may run detached, or from another repository with --code-repo.
-# An owner record without either names no place to resolve the conflict.
-# Reads n, sid and owner_f from cmd_merge_back.
+# the board reads, published by record_publish, so no reader sees half a
+# record. The worktree and branch are the claim's, read from its owner
+# record, never the caller's location: merge-back may run detached, or from
+# another repository with --code-repo. An owner record without either names
+# no place to resolve the conflict. Reads n, sid and owner_f from
+# cmd_merge_back.
 merge_back_wait() {
-  local d="$WSDIR/waiting" owt ob t
+  local owt ob
   owt=$(sed -n 's/^worktree=//p' "$owner_f" 2>/dev/null | head -n 1)
   ob=$(sed -n 's/^branch=//p' "$owner_f" 2>/dev/null | head -n 1)
   if [ -z "$owt" ] || [ -z "$ob" ]; then echo "sdd-state: claim owner without worktree= or branch=: $owner_f" >&2; return 1; fi
-  hp_contained "$ROOT" "plans/$WS/waiting/$sid" || return 1
-  mkdir -p "$d" || return 1
-  t=$(mktemp "$d/.$sid.XXXXXX") || return 1
-  { printf 'session=%s\ntask=%s\nkind=merge\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s\n' "$sid" "$n" "$(hp_utc_now)" "merge-back conflict in $1" "$(enc "$owt")" "$ob" "$(hostname)" > "$t" && mv -f "$t" "$d/$sid"; } || { rm -f "$t"; return 1; }
+  record_publish "plans/$WS/waiting/$sid" "$(printf 'session=%s\ntask=%s\nkind=merge\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s' "$sid" "$n" "$(hp_utc_now)" "merge-back conflict in $1" "$(enc "$owt")" "$ob" "$(hostname)")"
 }
 
 # --- wait --------------------------------------------------------------------
 # One record per session, written by its session only, so no lock: the write
-# is beside-and-rename, in merge_back_wait's format. The note is one line
-# because the board prints it on one line and a human reads it there.
+# goes through record_publish, in merge_back_wait's format. The note is one
+# line because the board prints it on one line and a human reads it there.
 cmd_wait() {
-  local plan="" sid="" kind="" task="" task_given=0 note="" clear=0 d t top b
+  local plan="" sid="" kind="" task="" task_given=0 note="" clear=0 d top b
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
@@ -2165,9 +2182,7 @@ cmd_wait() {
   top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
   b=$(git branch --show-current 2>/dev/null)
   [ -n "$b" ] || b="detached@$(git rev-parse --short=7 HEAD 2>/dev/null || echo none)"
-  mkdir -p "$d" || { echo "status=error"; return 2; }
-  t=$(mktemp "$d/.$sid.XXXXXX") || { echo "status=error"; return 2; }
-  { printf 'session=%s\ntask=%s\nkind=%s\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s\n' "$sid" "$task" "$kind" "$(hp_utc_now)" "$note" "$(enc "$top")" "$b" "$(hostname)" > "$t" && mv -f "$t" "$d/$sid"; } || { rm -f "$t"; echo "status=error"; return 2; }
+  record_publish "plans/$WS/waiting/$sid" "$(printf 'session=%s\ntask=%s\nkind=%s\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s' "$sid" "$task" "$kind" "$(hp_utc_now)" "$note" "$(enc "$top")" "$b" "$(hostname)")" || { echo "status=error"; return 2; }
   write_activity "$sid" || { echo "status=error"; return 2; }
   echo "status=waiting kind=$kind"
 }
@@ -2178,19 +2193,32 @@ cmd_wait() {
 # state whatever sync said, because an unreachable remote is no reason to
 # hide the local board. It takes no lock and writes nothing of its own.
 board_field() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1; }
+# <dir> [f] -> the name of every entry in it (with f, every regular file),
+# dot names included. record_publish makes its temporary files outside the
+# tracked tree, so every name in waiting/ or activity/ is a session's
+# record, and a session id may begin with a dot.
+board_entries() {
+  local f
+  for f in "$1"/* "$1"/.*; do
+    case "${f##*/}" in .|..) continue ;; esac
+    if [ "${2:-}" = f ]; then [ -f "$f" ] || continue; else [ -e "$f" ] || continue; fi
+    printf '%s\n' "${f##*/}"
+  done
+}
 # <workspace dir> -> every session that left a trace, one per line: a claim,
 # a waiting record, an activity file or a session line. The per-plan board
 # and board --repo count the same set.
 board_sessions() {
-  local d f
+  local d
   {
     for d in "$1"/claims/task-* "$1"/claims/final; do [ -f "$d/owner" ] && board_field "$d/owner" session; done
-    for f in "$1"/waiting/* "$1"/activity/*; do [ -e "$f" ] && printf '%s\n' "${f##*/}"; done
+    board_entries "$1/waiting"
+    board_entries "$1/activity"
     awk 'index($0, "session ") == 1 { i = index($0, ": mode "); if (i > 9) print substr($0, 9, i - 9) }' "$1/progress.md" 2>/dev/null
   } | sed '/^$/d' | LC_ALL=C sort -u
 }
 cmd_board() {
-  local plan="" code="" repo="" syncs out err syncerr="" rc ledger line integ spec now frontier sessions count=0 waiting=0 rows=""
+  local plan="" code="" repo="" syncs out err syncerr="" sync_ok=1 clserr="" rc ensure ledger line integ spec now frontier sessions count=0 waiting=0 rows=""
   local sid d n task since host chost l rest wt br rec wkind wsince note act ts silence quiet ws8 b other
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -2211,14 +2239,27 @@ cmd_board() {
     err=$(mktemp "${TMPDIR:-/tmp}/sdd-board-sync.XXXXXX") || err=""
     out=$(bash "$0" sync "$plan" 2>"${err:-/dev/null}")
     syncs=${out%%$'\n'*}; syncs=${syncs#status=}; syncs=${syncs%% *}
-    case "$syncs" in up-to-date|fast-forwarded|merged|ahead|created|absent|no-remote|assumed-absent|plain) ;; *) [ -z "$err" ] || syncerr=$(sed -n 1p "$err") ;; esac
+    case "$syncs" in up-to-date|fast-forwarded|merged|ahead|created|absent|no-remote|assumed-absent|plain) ;; *) sync_ok=0; [ -z "$err" ] || syncerr=$(sed -n 1p "$err") ;; esac
     [ -z "$err" ] || rm -f "$err"
     [ -n "$syncs" ] || syncs=error
   else
     syncs=no-remote
   fi
-  resolve_plan "$plan"
-  ledger=$(ledger_path)
+  # resolve_plan without its exit. A checkout that cannot be ensured after a
+  # failed sync is the fetch's doing (no state branch arrived, or the one
+  # that did is foreign), and the board never fails because the fetch did:
+  # it prints an empty table below the sync's own line, and the library's
+  # needs-sync line is left out because that line already says why.
+  if [ "$sync_ok" -eq 1 ]; then
+    ensure=$(hp_ensure_checkout "$PLAN_DIR") || { echo "status=error"; return 2; }
+  else
+    ensure=$(hp_ensure_checkout "$PLAN_DIR" 2>/dev/null) || ensure=""
+  fi
+  ledger=""
+  if [ -n "$ensure" ]; then
+    BACKEND=${ensure%% *}; ROOT=${ensure#* }; WSDIR="$ROOT/plans/$WS"
+    ledger=$(ledger_path)
+  fi
   # The code repository, for the leftover branches: a given --code-repo, or
   # the cwd's repository when the cwd is one, is checked against the plan
   # line before any output; with neither there are no leftover lines.
@@ -2228,11 +2269,27 @@ cmd_board() {
   else
     code=""
   fi
+  if [ -z "$ensure" ]; then
+    [ -z "$syncerr" ] || printf '%s\n' "$syncerr" >&2
+    echo "status=board sync=$syncs sessions=0 waiting=0 frontier=none"
+    return 0
+  fi
   line=$(plan_line_of "$ledger"); integ=$(plan_field "$line" integration); spec=$(plan_field "$line" spec)
   now=$(date -u +%s)
-  # The frontier as next prints it for a session that holds and is assigned
-  # nothing; no real session uses this id.
-  frontier=$(next_classify board-reader 2>/dev/null | sed -n 's/^status=next tasks=\([^ ]*\) .*/\1/p'); [ -n "$frontier" ] || frontier=none
+  # The frontier as next prints it for a session that is assigned nothing and
+  # holds nothing. A classifier failure (no authoritative plan, an invalid
+  # graph, an unreadable ledger or claim) still prints the board with
+  # frontier=none, but its status line and its stderr line are repeated on
+  # stderr, so broken state never reads as no claimable work.
+  frontier=none
+  err=$(mktemp "${TMPDIR:-/tmp}/sdd-board-next.XXXXXX") || err=""
+  out=$(next_classify "" board 2>"${err:-/dev/null}"); rc=$?
+  case "$rc:$out" in
+    "0:status=next tasks="*) frontier=$(printf '%s\n' "$out" | sed -n '1s/^status=next tasks=\([^ ]*\) .*/\1/p'); [ -n "$frontier" ] || frontier=none ;;
+    "0:status=none "*) ;;
+    *) clserr=$(printf '%s\n' "${out%%$'\n'*}"; [ -z "$err" ] || sed -n 1p "$err") ;;
+  esac
+  [ -z "$err" ] || rm -f "$err"
   sessions=$(board_sessions "$WSDIR")
   while IFS= read -r sid; do
     [ -n "$sid" ] || continue
@@ -2285,6 +2342,7 @@ cmd_board() {
     rows="${rows}session $sid task=$task since=$since worktree=$(enc "$wt") branch=$br host=$host waiting=$wkind waiting-since=$wsince note=$note silence=$silence quiet-since=$quiet"$'\n'
   done <<< "$sessions"
   [ -z "$syncerr" ] || printf '%s\n' "$syncerr" >&2
+  [ -z "$clserr" ] || printf '%s\n' "$clserr" | sed '/^$/d' >&2
   echo "status=board sync=$syncs sessions=$count waiting=$waiting frontier=$frontier"
   printf '%s' "$rows"
   for d in "$WSDIR"/claims/task-*; do
@@ -2341,7 +2399,7 @@ board_repo() {
       ledger_task_complete "$d/progress.md" "$n" || held="$held,$n"
     done
     held=${held#,}
-    nw=0; for f in "$d"/waiting/*; do [ -f "$f" ] && nw=$((nw + 1)); done
+    nw=$(board_entries "$d/waiting" f | grep -c .)
     # spec= (encoded) and the branch hold no spaces, so they lead each row
     # as the sort keys and are cut off after the sort.
     rows="$rows$spec $integ plan ws=$(enc "$(basename "${d%/}")") spec=$spec integration=$integ sessions=$(board_sessions "${d%/}" | grep -c .) waiting=$nw held=${held:-none}"$'\n'

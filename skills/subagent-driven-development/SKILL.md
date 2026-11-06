@@ -393,11 +393,13 @@ On a harness whose subagents run asynchronously, never poll a wait interface wit
 
 ### 1. Dispatch the implementer
 
-Record BASE from the `from=` commit the successful claim printed, resolved to
-a full id (`git rev-parse --verify <from>^{commit}`), before dispatching; on a
-fresh claim it is also HEAD right after `git switch <branch>`; the review
-package and fix-round diffs need it, and a HEAD read before the claim can lag
-the integration branch while other sessions merge.
+Record BASE right after `git switch <branch>` and before dispatching, as the
+task branch's fork point from the integration branch:
+`git merge-base HEAD <integration branch>`. On a fresh claim that is the
+claim's `from=` commit. On a takeover it is the original claim's base, so the
+previous holder's commits stay in the review package and the fix-round diffs,
+which both need BASE. A HEAD read before the claim can lag the integration
+branch while other sessions merge.
 
 - **Task brief:** before dispatching an implementer, run this skill's
   `scripts/task-brief PLAN_FILE N` — it extracts the task's full text to a

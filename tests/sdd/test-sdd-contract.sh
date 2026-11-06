@@ -50,6 +50,29 @@ assert_not_contains() {
   fi
 }
 
+# Positions are compared in the same whitespace-normalized text the other
+# assertions search, so a line wrap inside either needle cannot hide it.
+assert_before() {
+  local file="$1"
+  local first="$2"
+  local second="$3"
+  local description="$4"
+  local haystack
+
+  haystack="$(tr '\n\t' '  ' <"$file" | sed 's/  */ /g')"
+  case "$haystack" in *"$first"*) ;; *) fail "$description"; echo "    missing: $first"; echo "    in: $file"; return ;; esac
+  case "$haystack" in *"$second"*) ;; *) fail "$description"; echo "    missing: $second"; echo "    in: $file"; return ;; esac
+  local before_first="${haystack%%"$first"*}"
+  local before_second="${haystack%%"$second"*}"
+  if [ "${#before_first}" -lt "${#before_second}" ]; then
+    pass "$description"
+  else
+    fail "$description"
+    echo "    expected \"$first\" before \"$second\""
+    echo "    in: $file"
+  fi
+}
+
 echo "SDD prompt-surface contract tests"
 # SKILL.md — dispatch discipline
 assert_contains "$SDD_MODEL_SELECTION" "Always specify the model explicitly when dispatching a subagent." "explicit model is mandatory"
@@ -452,6 +475,10 @@ assert_contains "$SDD" "git switch --detach <merged head>" "the controller detac
 assert_contains "$SDD" "scripts/sdd-state wait PLAN_FILE --session <sid> --kind" "the waiting board rule"
 assert_contains "$SDD" "scripts/sdd-state claim PLAN_FILE final --session <sid>" "the final train is claimed"
 assert_contains "$SDD" "\`held\` with your own session id (\`own=1\`, a resume after compaction) means this session already holds the train: continue as its holder" "the final holder's own claim resumes the train"
+assert_before "$SDD" "The final train is claimed." "whole-branch review gets a package too" "the final train is claimed before the final review is packaged"
+assert_contains "$SDD" "Record BASE from the \`from=\` commit the successful claim printed, resolved to a full id (\`git rev-parse --verify <from>^{commit}\`), before dispatching" "the task BASE is the claim's from= commit"
+assert_contains "$SDD" "\"Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back\" [shape=box];" "the graph's final claim continues on the session's own hold"
+assert_not_contains "$SDD" "held means post, print the board, hand back" "no graph edge names the old final-claim node"
 assert_contains "$SDD" "scripts/sdd-state finish PLAN_FILE --session <sid>" "finish takes the session"
 assert_not_contains "$SDD" "Never dispatch multiple implementation subagents in parallel (conflicts)." "the old parallel sentence is replaced"
 

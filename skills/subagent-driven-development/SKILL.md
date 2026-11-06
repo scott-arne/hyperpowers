@@ -79,7 +79,7 @@ digraph process {
 
     "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" [shape=box];
     "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)" [shape=diamond];
-    "Claim the final train (scripts/sdd-state claim final): held means post, print the board, hand back" [shape=box];
+    "Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back" [shape=box];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [shape=box];
     "Final findings? ONE fix dispatch, one scoped re-review, surface residuals" [shape=box];
     "Dispatch decision extractor (background)" [shape=box];
@@ -116,8 +116,8 @@ digraph process {
     "Append approved line, merge back (scripts/sdd-state merge-back), detach, delete the task branch" -> "Append completion to ledger, mark todo complete (where kept)" [label="merged"];
     "Append completion to ledger, mark todo complete (where kept)" -> "Snapshot the workspace (scripts/sdd-state snapshot); error or none stops";
     "Snapshot the workspace (scripts/sdd-state snapshot); error or none stops" -> "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)";
-    "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)" -> "Claim the final train (scripts/sdd-state claim final): held means post, print the board, hand back" [label="none - complete"];
-    "Claim the final train (scripts/sdd-state claim final): held means post, print the board, hand back" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="claimed"];
+    "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)" -> "Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back" [label="none - complete"];
+    "Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="claimed"];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, surface residuals";
     "Final findings? ONE fix dispatch, one scoped re-review, surface residuals" -> "Dispatch decision extractor (background)";
     "Dispatch decision extractor (background)" -> "Codex final code gate\n(Claude Code; degrade if absent)";
@@ -393,8 +393,11 @@ On a harness whose subagents run asynchronously, never poll a wait interface wit
 
 ### 1. Dispatch the implementer
 
-Record BASE (`git rev-parse HEAD`) before dispatching — the review package
-and fix-round diffs need it.
+Record BASE from the `from=` commit the successful claim printed, resolved to
+a full id (`git rev-parse --verify <from>^{commit}`), before dispatching; on a
+fresh claim it is also HEAD right after `git switch <branch>`; the review
+package and fix-round diffs need it, and a HEAD read before the claim can lag
+the integration branch while other sessions merge.
 
 - **Task brief:** before dispatching an implementer, run this skill's
   `scripts/task-brief PLAN_FILE N` — it extracts the task's full text to a
@@ -803,19 +806,6 @@ low.
 
 ## Final Review
 
-The final whole-branch review gets a package too: run
-`scripts/review-package PLAN_FILE MERGE_BASE HEAD` (MERGE_BASE = the commit the
-branch started from, e.g. `git merge-base main HEAD`) — take the path from the
-`wrote <path>: ...` line and include it in the final review dispatch, so the
-final reviewer reads one file instead of re-deriving the branch diff with git
-commands. Dispatch
-on the most capable available model (see Model Selection), using
-hyperpowers:requesting-code-review's
-[code-reviewer.md](../requesting-code-review/code-reviewer.md). Point it at
-the ledger's deferred-minor lines — and at `tier-skips.md`, if any task
-skipped its per-task gate — so it can triage which must be fixed before
-merge.
-
 The final train is claimed. When `next` says `complete`, run
 `scripts/sdd-state claim PLAN_FILE final --session <sid>`: `claimed` means
 this session runs the final review, the final gate and Finish; `blocked`
@@ -829,6 +819,20 @@ integration branch out in its own worktree (`git switch <integration>`), the
 one time a session does so, and runs the review package, the final
 reviewer, the fix wave and the final Codex gate on it; its fix commits land
 on the integration branch directly, which the lease makes safe.
+
+Once you hold the train and have checked the integration branch out, the
+final whole-branch review gets a package too: run
+`scripts/review-package PLAN_FILE MERGE_BASE HEAD` (MERGE_BASE = the commit the
+branch started from, e.g. `git merge-base main HEAD`) — take the path from the
+`wrote <path>: ...` line and include it in the final review dispatch, so the
+final reviewer reads one file instead of re-deriving the branch diff with git
+commands. Dispatch
+on the most capable available model (see Model Selection), using
+hyperpowers:requesting-code-review's
+[code-reviewer.md](../requesting-code-review/code-reviewer.md). Point it at
+the ledger's deferred-minor lines — and at `tier-skips.md`, if any task
+skipped its per-task gate — so it can triage which must be fixed before
+merge.
 
 If the final whole-branch review returns findings, dispatch ONE fix subagent
 with the complete findings list — not one fixer per finding. Compose the

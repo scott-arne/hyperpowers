@@ -295,7 +295,7 @@ cmd_deps() {
 # repositories' locks, so two Setups cannot both pass and write conflicting
 # lines.
 cmd_register() {
-  local plan="" sid="" integration="" code="" ledger line spec espec same_repo plan_ref plan_root code_root d other ospec field lease rc mine cur
+  local plan="" sid="" integration="" code="" ledger line spec espec same_repo plan_ref plan_root code_root d other ospec field lease rc mine cur t
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
@@ -364,6 +364,23 @@ cmd_register() {
       case "$field" in integration) mine=$integration ;; plan-ref) mine=$plan_ref ;; plan-root) mine=${plan_root:0:7} ;; esac
       if [ "$(plan_field "$other" "$field")" != "$mine" ]; then
         hp_unlock; echo "status=spec-branch-mismatch expected=$(plan_field "$other" integration) plan=$(enc "$(basename "${d%/}")")"; return 9
+      fi
+    done
+  done
+  # A sibling's dossier that an interrupted finish or prune renamed aside to
+  # plans/.removing-<ws>-<pid> is still an open plan: its next finish puts it
+  # back. The glob above skips dotted names, so those copies are compared
+  # here, as lease --closing reads them.
+  for d in "$ROOT"/plans/.removing-*/; do
+    [ -f "$d/progress.md" ] || continue
+    t=$(basename "${d%/}"); t=${t#.removing-}; t=${t%-*}
+    [ "$t" != "$WS" ] || continue
+    other=$(plan_line_of "$d/progress.md"); [ -n "$other" ] || continue
+    ospec=$(plan_field "$other" spec); [ "$ospec" = "$espec" ] || continue
+    for field in integration plan-ref plan-root; do
+      case "$field" in integration) mine=$integration ;; plan-ref) mine=$plan_ref ;; plan-root) mine=${plan_root:0:7} ;; esac
+      if [ "$(plan_field "$other" "$field")" != "$mine" ]; then
+        hp_unlock; echo "status=spec-branch-mismatch expected=$(plan_field "$other" integration) plan=$(enc "$t")"; return 9
       fi
     done
   done

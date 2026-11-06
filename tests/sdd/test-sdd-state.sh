@@ -3044,6 +3044,24 @@ out=$(run_state "$rg_a" register docs/plan2.md --session s3 --integration feat2 
 if [ "$rc" -eq 9 ] && [ "${out%% plan=*}" = "status=spec-branch-mismatch expected=feat" ] && [ "${out##* plan=}" = "$(basename "$wsr")" ]; then pass "a sibling plan of the same spec must share the integration branch"; else fail "spec-branch-mismatch (rc=$rc: $out)"; fi
 out=$(run_state "$rg_a" register docs/plan2.md --session s3 --integration feat 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ]; then pass "a sibling on the same branch registers"; else fail "sibling registers (rc=$rc: $out)"; fi
+# A removal interrupted after its rename-aside leaves a sibling's dossier at plans/.removing-<ws>-<pid>; that plan is still open, so register compares it too.
+make_pair rgt; rt_a=$PAIR_A
+mkdir -p "$rt_a/docs"; : > "$rt_a/docs/spec.md"
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rt_a/docs/plan.md"
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rt_a/docs/plan2.md"
+git -C "$rt_a" add docs; git -C "$rt_a" commit -qm plans; git -C "$rt_a" switch -q -c feat
+run_state "$rt_a" sync docs/plan.md >/dev/null 2>&1
+wrt=$(run_sdd_dir "$rt_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wrt/progress.md"
+run_state "$rt_a" register docs/plan.md --session s1 --integration feat >/dev/null 2>&1
+wrt2=$(run_sdd_dir "$rt_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wrt2/progress.md"
+tomb_rt="$(dirname "$wrt")/.removing-$(basename "$wrt")-4242"; mv "$wrt" "$tomb_rt"
+git -C "$rt_a" switch -q -c feat2
+out=$(run_state "$rt_a" register docs/plan2.md --session s2 --integration feat2 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=spec-branch-mismatch expected=feat plan=$(basename "$wrt")" ] && ! grep -q '^plan:' "$wrt2/progress.md"; then pass "a sibling left in a removal tomb on another branch is spec-branch-mismatch and nothing is written"; else fail "tombed sibling on another branch (rc=$rc: $out: $(grep '^plan:' "$wrt2/progress.md" 2>/dev/null))"; fi
+git -C "$rt_a" switch -q feat
+out=$(run_state "$rt_a" register docs/plan2.md --session s2 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=feat" ]; then pass "a sibling left in a removal tomb on the same branch does not block registration"; else fail "tombed sibling on the same branch (rc=$rc: $out)"; fi
+rm -rf "$tomb_rt"
 # verify: a named branch that is neither the integration branch nor a task branch.
 git -C "$rg_a" switch -q -c stray
 out=$(run_state "$rg_a" verify docs/plan.md 2>/dev/null); rc=$?

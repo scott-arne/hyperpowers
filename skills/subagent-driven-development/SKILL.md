@@ -786,8 +786,17 @@ resume:
   re-review lens, append the new `approved` line, and retry. `checked-out`
   names a worktree or `lease:<sid>`: a final train holds the branch; post a
   `tasks` record and retry after it ends, or ask your human partner to move
-  the checkout. `not-approved`, `blocked`: your bookkeeping is behind; read
-  the ledger and repair it before retrying. `not-holder owner=<sid>` (exit 4)
+  the checkout. `not-approved approved=<sha7|none>` means your bookkeeping
+  is behind: the commit you passed is not the task's newest `approved` line,
+  so append the `approved` line for the head the reviewers saw (or pass that
+  head) and retry. `blocked waiting=<list>` (exit 7) means an amendment put a
+  prerequisite under your claim after you took it, and merge-back enforces
+  the edge: leave the `approved` line as it is, and never write a completion
+  line for a task this session did not complete. Run `next` and take what it
+  offers; on `own-blocked`, post, print the board and hand back as the
+  `own-blocked` text above says. Retry merge-back once every waiting task has
+  its completion line, or after your human partner removes the edge.
+  `not-holder owner=<sid>` (exit 4)
   means the claim is no longer yours (after a takeover your human partner
   granted, that session holds it): stop and hand back with the line; never
   repair the ledger or take the claim back.

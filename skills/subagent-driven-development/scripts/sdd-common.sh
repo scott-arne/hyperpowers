@@ -113,6 +113,59 @@ hp_write_backend() { # <repo-dir> <line>
 
 hp_session_id() { printf '%s\n' "${HYPERPOWERS_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"; }
 hp_utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+# Millisecond UTC for lines the stop guard compares against transcript
+# timestamps; macOS date has no sub-second field, node is always present.
+hp_utc_now_ms() { node -e 'process.stdout.write(new Date().toISOString())' 2>/dev/null || hp_utc_now; }
+
+# hp_ledger_append LEDGER LINE: the one way a machine-written line reaches a
+# ledger. The ledger is only ever appended to, never truncated or replaced:
+# the controller appends prose to it without the lock, and any shrinking step
+# could delete such an append. A failed write can leave an unterminated
+# fragment. The next append saves it as one line in fragments.log beside the
+# ledger, then ends it with a tab-"#fragment" marker line that the completion
+# readers skip. A controller append that lands on an unended fragment glues to
+# it, which is what an unlocked append always did and loses no data. Success
+# means the tail really is LINE.
+hp_ledger_append() { # <ledger> <line>
+  local ledger=$1 line=$2 last cut
+  if [ -s "$ledger" ]; then
+    last=$(tail -c 1 "$ledger" | od -An -c | tr -d ' ')
+    if [ "$last" != '\n' ]; then
+      # One no-follow open: a symlink planted at fragments.log must not send
+      # ledger text elsewhere, and a failure leaves the ledger untouched.
+      node -e 'const fs=require("fs"),c=fs.constants;const b=fs.readFileSync(process.argv[1]);const f=b.subarray(b.lastIndexOf(10)+1).toString();const fd=fs.openSync(process.argv[2],c.O_WRONLY|c.O_APPEND|c.O_CREAT|c.O_NOFOLLOW,0o644);fs.writeSync(fd,process.argv[3]+" "+f+"\n");fs.closeSync(fd)' "$ledger" "$(dirname "$ledger")/fragments.log" "$(hp_utc_now)" 2>/dev/null || return 1
+      printf '\t#fragment\n' >> "$ledger" || return 1
+    fi
+  fi
+  if [ -n "${HYPERPOWERS_TEST_FAIL_APPEND:-}" ]; then
+    # 1 cuts the last 15 bytes; a larger number cuts that many (inside the sha).
+    case "$HYPERPOWERS_TEST_FAIL_APPEND" in *[!0-9]*|1) cut=15 ;; *) cut=$HYPERPOWERS_TEST_FAIL_APPEND ;; esac
+    cut=$(( ${#line} > cut ? ${#line} - cut : 0 ))
+    printf '%s' "${line:0:$cut}" >> "$ledger"
+  else
+    printf '%s\n' "$line" >> "$ledger" || return 1
+  fi
+  last=$(tail -c 1 "$ledger" | od -An -c | tr -d ' ')
+  [ "$last" = '\n' ] && [ "$(tail -n 1 "$ledger")" = "$line" ]
+}
+
+# hp_ledger_records LEDGER: the ledger's lines that are records. An
+# unterminated last line and any line ending in tab-"#fragment" are remains
+# of an interrupted write, never records, even when their prefix reads like
+# one. Every reader of a ledger line goes through here: sdd-state's
+# completion readers and tracked-job's once-key check. 2 when unreadable.
+hp_ledger_records() { # <ledger>
+  local last tab
+  tab=$(printf '\t')
+  [ -r "$1" ] || return 2
+  last=$(tail -c 1 "$1" | od -An -c | tr -d ' ')
+  if [ "$last" = '\n' ]; then
+    grep -v "${tab}#fragment\$" "$1"
+  else
+    sed '$d' "$1" | grep -v "${tab}#fragment\$"
+  fi
+  return 0
+}
 
 # <pid> -> 0 when the process is gone. kill(2) answers ESRCH for a pid that
 # is gone and EPERM for one that exists but may not be signalled (another
@@ -283,7 +336,7 @@ hp_lock_at() { # <lock-dir>
       waited=$((waited + 1))
       continue
     fi
-    if [ "$waited" -ge 150 ]; then
+    if [ "$waited" -ge "${HYPERPOWERS_LOCK_WAIT_STEPS:-150}" ]; then
       echo "$HP_PROG: lock held: $(hp_lock_owner_text "$lock" | tr '\n' ' ')" >&2
       return 2
     fi
@@ -294,10 +347,17 @@ hp_lock_at() { # <lock-dir>
   if [ "$(sed -n 's/^pid=//p' "$lock/owner" 2>/dev/null)" != "$$" ]; then hp_write_owner "$lock/owner"; fi
   HP_LOCK_DIR=$lock
   # These traps replace the caller's: a script with its own EXIT handler
-  # re-arms it after hp_lock and calls hp_unlock from it.
+  # re-arms it after hp_lock and calls hp_unlock from it. A caller that must
+  # not die under the lock sets HP_LOCK_KEEP_DISPOSITIONS=1 and keeps its own
+  # INT and TERM dispositions, an ignore included — the SDD supervisor does,
+  # because by the time it locks, its command has gone and the terminal
+  # record has to land. The EXIT trap still releases the lock, and re-arming
+  # the two here afterwards would leave the same gap this avoids.
   trap 'hp_unlock' EXIT
-  trap 'hp_unlock; exit 130' INT
-  trap 'hp_unlock; exit 143' TERM
+  if [ "${HP_LOCK_KEEP_DISPOSITIONS:-}" != 1 ]; then
+    trap 'hp_unlock; exit 130' INT
+    trap 'hp_unlock; exit 143' TERM
+  fi
 }
 # Remove the lock only when this pid owns it: a stale takeover may have
 # replaced it with another process's lock.
@@ -469,9 +529,27 @@ hp_refuse_tip() {
   return 2
 }
 
+# <dir>: the state checkout's ignore rules. Everything here is regenerable
+# or local to one host, so the branch carries none of it. A job's scratch is
+# the last group: out.log can be large, go is a FIFO git cannot index at
+# all, and the launch lock and the stop request are live signalling.
+hp_write_ignore() { # <dir>
+  printf '%s\n' '# Regenerable on any host: briefs come from task-brief, packages from review-package.' 'plans/*/task-*-brief.md' 'plans/*/review-*.diff' '# A copy an import left beside an entry it could not install: local to that host, for a human to merge.' 'plans/*/*.from-import' '# Job scratch (tracked-job): the record is meta.json and exit.' 'plans/*/jobs/*/out.log' 'plans/*/jobs/*/go' 'plans/*/jobs/*/launch.lock' 'plans/*/jobs/*/stop-request' > "$1/.gitignore"
+}
+
+# <checkout>: a checkout an older plugin created carries that plugin's
+# ignore rules. They are regenerable, so every call that hands an existing
+# checkout to a writer brings them up to date; the job patterns are the
+# sentinel. The rewrite stays uncommitted on purpose: git reads the working
+# tree's .gitignore, and the branch takes the lines from whichever host
+# creates it.
+hp_refresh_ignore() { # <checkout>
+  grep -q 'plans/\*/jobs/\*/out.log' "$1/.gitignore" 2>/dev/null || hp_write_ignore "$1"
+}
+
 hp_write_root_files() { # <dir>
   printf 'hyperpowers-state 1\n' > "$1/.hyperpowers-state"
-  printf '%s\n' '# Regenerable on any host: briefs come from task-brief, packages from review-package.' 'plans/*/task-*-brief.md' 'plans/*/review-*.diff' '# A copy an import left beside an entry it could not install: local to that host, for a human to merge.' 'plans/*/*.from-import' > "$1/.gitignore"
+  hp_write_ignore "$1"
   printf 'plans/*/progress.md merge=union\n' > "$1/.gitattributes"
   printf '%s\n' '# hyperpowers state' '' 'This branch holds the SDD dossiers of this repository (progress ledgers, implementer reports, claims), one directory per plan under plans/. hyperpowers maintains it through skills/subagent-driven-development/scripts/sdd-state.' 'It shares no history with the code and is never merged into a code branch.' 'Design: docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md in the hyperpowers repository.' > "$1/README.md"
 }
@@ -552,6 +630,7 @@ hp_ensure_checkout() {
   if [ "$backend" = plain ]; then printf 'plain %s\n' "$(hp_plain_root "$repo")"; return 0; fi
   if [ -e "$co/.git" ]; then
     hp_verify_checkout "$repo" "$co" "$br" || return 2
+    hp_refresh_ignore "$co"
     if [ "$backend" != branch ]; then
       # A crash between the move and the backend write left it unrecorded.
       hp_lock "$repo" || return 2
@@ -565,6 +644,7 @@ hp_ensure_checkout() {
   if [ "$(hp_backend "$repo")" = plain ]; then hp_unlock; printf 'plain %s\n' "$(hp_plain_root "$repo")"; return 0; fi
   if [ -e "$co/.git" ]; then
     hp_verify_checkout "$repo" "$co" "$br" || { hp_unlock; return 2; }
+    hp_refresh_ignore "$co"
     hp_write_backend "$repo" branch || { hp_unlock; return 2; }
     hp_unlock; printf 'branch %s\n' "$co"; return 0
   fi

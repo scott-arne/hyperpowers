@@ -163,9 +163,9 @@ fi
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "## Example Workflow" "example workflow carries its section header"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Using hyperpowers:finishing-a-development-branch" \
   "example workflow runs through to the finishing handoff"
-assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes" \
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 (model sonnet, session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix rounds" \
   "example workflow records the implementer identity in the ledger"
-assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes" \
+assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 (model sonnet, session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix rounds" \
   "example workflow records the identity on the task that enters the fix loop"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Re-run the covering command myself: 8/8 — matches the report" \
   "example fix-loop task re-runs the covering command before review"
@@ -219,16 +219,16 @@ assert_contains "$SDD" "then commits the verified fix" \
 # the round-4/5 takeover rule has already replaced.
 assert_contains "$SDD" "revert the edit, spend no round, and go back to the round's own rule" \
   "carve-out failure path reverts, spends no round, and defers to the round's rule"
-assert_contains "$SDD" "resume the implementer at rounds 1-3, dispatch the takeover at rounds 4-5" \
+assert_contains "$SDD" "hand the findings to an implementer at rounds 1-3, dispatch the takeover at rounds 4-5" \
   "carve-out two-strike escape respects the round-4 takeover rule"
 assert_contains "$SDD" "or one controller-applied de-minimis fix" \
   "fix-round definition counts controller-applied fixes"
 assert_contains "$SDD" "where you keep todos" \
   "completion line keeps todos conditional"
-assert_contains "$SDD" "mark todo complete (where kept)" \
+assert_contains "$SDD" "Mark the task's todo complete (where kept)" \
   "digraph todo node stays conditional"
 assert_contains "$SDD_RATIONALIZATIONS" "Outside the de-minimis exception" "rationalization row scoped to the exception"
-assert_contains "$SDD_RATIONALIZATIONS" "Resume the implementer at rounds 1-3; dispatch the takeover at rounds 4-5." "rationalization row defers to the round's own rule"
+assert_contains "$SDD_RATIONALIZATIONS" "Hand the findings to an implementer at rounds 1-3; dispatch the takeover at rounds 4-5." "rationalization row defers to the round's own rule"
 
 # --- durable fences: helper output claims (Important 1 from 2026-09-05 review) -
 # The helpers print `wrote <path>: <N> ...` lines, never a bare path. Stale
@@ -347,8 +347,8 @@ rm -rf "$a1_scratch"
 # --- A3 task-reviewer findings are claims too ----------------------------
 assert_contains "$SDD" "Task-reviewer findings are claims too." \
   "SKILL.md treats task-reviewer findings as claims"
-assert_contains "$SDD" "The resumed implementer verifies each finding against the code before fixing it (hyperpowers:receiving-code-review)" \
-  "SKILL.md routes the resumed implementer through receiving-code-review"
+assert_contains "$SDD" "The fixing implementer verifies each finding against the code before fixing it (hyperpowers:receiving-code-review)" \
+  "SKILL.md routes the fixing implementer through receiving-code-review"
 assert_contains "$SDD" "a finding is declined only as refuted or corrected with file:line evidence, which the controller records in the ledger" \
   "SKILL.md narrows a decline to refuted or corrected"
 assert_contains "$SDD" "a confirmed finding is fixed or carried open" \
@@ -384,7 +384,7 @@ assert_contains "$SDD" "The covering-tests precondition applies only to findings
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "(2 addressed, 0 declined, 0 open; commits d4e5f6a..b7c8d9e)" \
   "the example ledger line carries the declined counter"
 assert_contains "$IMPL" "Every finding is a claim: verify it against the cited code before acting." \
-  "the resumed implementer verifies findings before fixing"
+  "the fixing implementer verifies findings before fixing"
 assert_contains "$IMPL" "A round in which you decline every finding changes no code: report the evidence and return the short contract with no commit." \
   "the implementer knows the all-declined round"
 assert_contains "$REREVW" "An all-declined round has no fix diff: the diff file above is then the previous review's package" \
@@ -405,7 +405,7 @@ assert_contains "$SDD" "\$(date -u +%s)-\$RANDOM\$RANDOM" "session id fallback n
 assert_contains "$SDD" "Then run \`scripts/sdd-state verify PLAN_FILE\`" "verify runs after the session line"
 assert_contains "$SDD" "scripts/sdd-state claim PLAN_FILE N --session <sid>" "claim before dispatch"
 assert_contains "$SDD" "take over (\`--takeover\`) only on their explicit yes" "takeover needs an explicit yes"
-assert_contains "$SDD" "(session <sid>, worktree <path>, branch <name>)" "implementer identity carries session, worktree, branch"
+assert_contains "$SDD" "(model <model>, session <sid>, worktree <path>, branch <name>)" "implementer identity carries model, session, worktree, branch"
 assert_contains "$SDD" "never with the Edit tool" "append discipline when another session may be live"
 assert_contains "$SDD" "scripts/sdd-state snapshot PLAN_FILE" "snapshot cadence named"
 assert_contains "$SDD" "\`remote-finished plans=<ws,...>\` (exit 3)" "the remote-finished outcome stops and asks"
@@ -425,7 +425,7 @@ assert_contains "$SDD" "none of them is a hand-off, so report nothing as ready t
 assert_contains "$SDD" "A workspace in the list that is not this plan's belongs to another plan" "remote-finished routes by the workspace list"
 assert_contains "$SDD" "read its completion line, mark the task done, and never dispatch" "claim done skips the task"
 assert_contains "$SDD" "The scan only reads" "the ledger scan acts only after verify"
-assert_contains "$SDD" "Snapshot the workspace (scripts/sdd-state snapshot)" "the process graph snapshots after completion"
+assert_contains "$SDD" "Complete the task (scripts/sdd-state complete); any status but complete stops" "the process graph completes the task through the helper"
 
 assert_contains "$SDD" "set -o noclobber" "ledger creation is exclusive"
 assert_contains "$SDD" "both stop until the snapshot succeeds" "a failed snapshot stops the loop"
@@ -456,16 +456,51 @@ for template in "$IMPL" "$REVW" "$REREVW" "$FIXP" "$CODEREVW"; do
   assert_contains "$template" 'run_in_background: false # Claude Code: dispatch in the foreground (SKILL.md "Waiting on subagents"); omit on harnesses without the flag' \
     "the $(basename "$template") dispatch block carries the foreground flag"
 done
-assert_contains "$SDD" 'echo "exit=$?" > <out>.exit' \
-  "a long command writes its exit status to its own file whether it succeeds or fails"
 assert_contains "$SDD" "capped at the harness's maximum background lifetime (7200000 ms on Claude Code)" \
   "the watch budget is capped at the background lifetime"
-assert_contains "$SDD" "stop the job through the harness, record the output tail in the ledger, and report BLOCKED" \
-  "an exhausted watch ends in BLOCKED"
 assert_contains "$SDD_RATIONALIZATIONS" "I've said what's next; I'll pick it up on the next turn" \
   "rationalization row for the announced-step stop"
 assert_contains "$SDD_RATIONALIZATIONS" 'A trailing `&` keeps it out of my way' \
   "rationalization row for the detached launch"
+# Stop guard (spec 2026-10-23): helpers write the ledger's machine lines, the
+# guard's refusal is quoted, long commands go through tracked-job.
+assert_contains "$SDD" 'scripts/sdd-state complete PLAN_FILE N --commits <base7>..<head7>' "completion goes through sdd-state complete"
+assert_contains "$SDD" 'repeat it until it prints `status=complete`' "complete is repeated until it succeeds"
+assert_contains "$SDD" '`busy` and `error` are retried' "complete's retryable statuses are named"
+assert_contains "$SDD" 'scripts/sdd-state handback PLAN_FILE --reason "<why>"' "a hand-back is written with sdd-state handback"
+assert_contains "$SDD" 'SDD stop guard: plan' "the refusal message is quoted"
+assert_contains "$SDD" 'two consecutive attempts per plan, the count resetting after any allow' "the cap is stated as consecutive attempts per plan"
+assert_contains "$SDD" 'writing a question you do not need answered to get past it is the stop it exists to prevent' "gaming the heuristic is named"
+assert_contains "$SDD" 'scripts/tracked-job new PLAN_FILE <name> --budget-ms <budget>' "long commands are allocated with tracked-job new"
+assert_contains "$SDD" 'the helper writes the `jobdir=` line in the ledger itself' "the allocation line is the helper's, not the controller's"
+assert_contains "$SDD" 'scripts/tracked-job run <jobdir> -- <command>' "long commands are launched with tracked-job run"
+assert_contains "$SDD" 'scripts/tracked-job wait <jobdir> --max-ms 600000' "long commands are watched with tracked-job wait"
+assert_contains "$SDD" '`exited code=0` is success; any other `exited` code is a failed command' "only code 0 is success"
+assert_contains "$SDD" 'on `lost`, run `tracked-job stop <jobdir>` first' "a lost job is swept before it is handled as failed"
+assert_contains "$SDD" '`lost-unswept pgid=<n>`' "the unswept outcome is reported to the human partner"
+assert_contains "$SDD" 'output never goes in the ledger' "job output stays out of the ledger"
+assert_contains "$SDD" '`stopped` or `not-running` means the job is over, so write the `out.log` tail to `<workspace>/reports/job-<name>.txt` and report BLOCKED naming that path' "an exhausted watch ends in BLOCKED only once the job is over"
+assert_contains "$SDD" '`busy` means the workspace lock was held and nothing changed, so run `stop` again' "a busy stop is retried"
+assert_contains "$SDD" '`stop-timeout` means the supervisor has not concluded the job, so run `stop` again, three calls in all' "a stop that times out is retried a bounded number of times"
+assert_contains "$SDD" '`lost-unswept pgid=<n>` leaves the job live, so report it to your human partner as still live with its pgid, never as stopped' "an unswept job is reported live, never as stopped"
+assert_contains "$SDD" 'on `lost`, run `tracked-job stop <jobdir>` first and read its answer before you go on: only `stopped` or `not-running` means the survivors are swept and the job can be treated as failed' "a lost job counts as swept only on a terminal stop answer"
+assert_contains "$SDD" '`busy` means the lock was held and nothing was swept, so run `stop` again' "a busy stop on the lost path is retried"
+assert_contains "$SDD" '`status=error` means the job directory could not be read, so escalate it to your human partner naming the jobdir and leave the job live' "an errored stop on the lost path escalates and leaves the job live"
+assert_contains "$SDD" 'report a nonzero `survivors` or `skipped`, or a record you cannot read, to your human partner with the jobdir and pgid before you go on, and never call that job stopped' "a stopped job with survivors or unfenced leftovers is reported, never called stopped"
+assert_contains "$SDD" '`status=error` means the job directory could not be read, so escalate it the same way, naming the jobdir' "an errored stop on the budget path escalates too"
+assert_contains "$SDD" 'Completing the last task does not end the plan: it opens the final whole-branch review, and the plan ends only after Finish' "the last task opens the final review instead of ending the plan"
+assert_contains "$SDD" 'finishing the tasks is never a reason for it' "a hand-back is not written for finishing the tasks"
+assert_contains "$SDD" "\"Complete the task (scripts/sdd-state complete); any status but complete stops\" -> \"Mark the task's todo complete (where kept)\";" "the graph completes the task before the todo node"
+assert_contains "$SDD" "\"Mark the task's todo complete (where kept)\" -> \"More tasks remain?\";" "the todo node leads back to the loop"
+assert_not_contains "$SDD" "Append completion to ledger" "the hand-written completion node is gone"
+assert_contains "$SDD" 'a fix round on Claude Code dispatches a fresh foreground implementer; a SendMessage resume is for harnesses without the option' "fix rounds dispatch a fresh foreground implementer on Claude Code"
+assert_not_contains "$SDD" 'the stop guard treats it as live work, and your turn may end while it runs' "the resumed-agent-is-live-work sentence is gone"
+assert_not_contains "$SDD" "rounds 1-3 resumed one agent" "the takeover sentence no longer says rounds 1-3 resumed one agent"
+assert_contains "$SDD" "a SendMessage resume is for harnesses without the option, Claude Code's fork mode among them" "fork mode takes the resume branch, not the foreground one"
+assert_contains "$SDD" 'where it does not (fork mode in an interactive terminal), dispatches run in the background and the stop guard treats them as live work' "the fork-mode sentence"
+assert_contains "$SDD" 'receipt=<path>' "finish records the receipt"
+assert_not_contains "$SDD" '<out>.exit' "the hand-written exit-file protocol is gone"
+assert_contains "$SDD_RATIONALIZATIONS" 'The hook blocked me, so I'"'"'ll ask a question to get out' "rationalization row for gaming the guard"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

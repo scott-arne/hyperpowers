@@ -1,0 +1,656 @@
+#!/usr/bin/env bash
+# tracked-job — long commands for the SDD controller: a job directory per
+# launch, a supervisor that owns the command's process group, an exit file
+# written whatever the status, and ledger lines written once.
+# Design: docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md (Design §2),
+# with plan deviations 1 (bash job control instead of setsid), 2 (loss is the
+# supervisor's death read with kill -0; the sweep of a lost job needs ps),
+# 3 (terminal lines carry jobdir= as their once-key) and 4 (the identity fence
+# has a second half, an open descriptor on the job's out.log, because macOS
+# ps -E prints the environment of the calling process alone).
+#
+# Usage:
+#   tracked-job new PLAN_FILE NAME --budget-ms N [--session SID]   -> jobdir=<path>
+#   tracked-job run JOBDIR -- COMMAND...                           (the tracked background command)
+#   tracked-job wait JOBDIR --max-ms N                             -> status=exited code=N | running | lost | not-started | lost-unswept pgid=N
+#   tracked-job stop JOBDIR                                        -> status=stopped | not-running | stop-timeout | lost-unswept pgid=N
+# NAME is letters, digits, '.', '_' and '-', and does not begin with '.'.
+# exit: 0 ok | 1 exited with a nonzero code | 2 usage, already-launched, error |
+#       3 running, busy | 4 lost | 5 not-started | 6 stop-timeout | 7 lost-unswept
+set -u
+HERE=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=sdd-common.sh
+. "$HERE/sdd-common.sh"
+GRACE=${TRACKED_JOB_GRACE_S:-5}
+STOP_WAIT=${TRACKED_JOB_STOP_WAIT_S:-10}
+# The proc tree the identity fence is read from; a test supplies one on a host
+# that has none. Where it exists it is the only reader used, so a supplied
+# tree is never mixed with readings of the live host.
+PROC_ROOT=${TRACKED_JOB_PROC_ROOT:-/proc}
+
+usage() {
+  printf '%s\n' 'usage: tracked-job new PLAN_FILE NAME --budget-ms N [--session SID]' \
+    '       tracked-job run JOBDIR -- COMMAND...' \
+    '       tracked-job wait JOBDIR --max-ms N' \
+    '       tracked-job stop JOBDIR' >&2
+  exit 2
+}
+command -v node >/dev/null 2>&1 || { echo "tracked-job: node not found" >&2; exit 2; }
+
+# meta_get <jobdir> <key>: one value from meta.json, empty when absent.
+meta_get() {
+  node -e 'try{const m=JSON.parse(require("fs").readFileSync(process.argv[1]+"/meta.json","utf8"));const v=m[process.argv[2]];process.stdout.write(v===undefined||v===null?"":(typeof v==="object"?JSON.stringify(v):String(v)))}catch(e){}' "$1" "$2"
+}
+# meta_set <jobdir> key=value... : atomic rewrite (temporary file, rename); a
+# value given as key:=json is parsed (numbers, arrays).
+meta_set() {
+  local dir=$1; shift
+  node -e '
+    const fs=require("fs"),p=process.argv[1]+"/meta.json";
+    let m={}; try{m=JSON.parse(fs.readFileSync(p,"utf8"))}catch(e){}
+    for(const a of process.argv.slice(2)){const i=a.indexOf("=");let k=a.slice(0,i),v=a.slice(i+1);
+      if(k.endsWith(":")){k=k.slice(0,-1);v=JSON.parse(v)} m[k]=v}
+    fs.writeFileSync(p+".tmp",JSON.stringify(m,null,1)+"\n"); fs.renameSync(p+".tmp",p);' "$dir" "$@"
+}
+utc_ms() { hp_utc_now_ms; }
+# alive <pid>: kill -0 with only "No such process" read as dead (EPERM is alive
+# or unknown, which the sandbox gives for another call's process).
+alive() {
+  local err
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  err=$(LC_ALL=C kill -0 "$1" 2>&1) && return 0
+  case "$err" in *"No such process"*) return 1 ;; *) return 0 ;; esac
+}
+have_ps() { ps -o pid= -p $$ >/dev/null 2>&1; }
+# group_pids <pgid>: the members of a process group. ps -g takes a numeric
+# argument as a *session* under Linux procps and as a process group under BSD
+# ps, so the group is filtered out of the full listing rather than selected.
+# The listing is tri-state, because a caller decides from an empty one that
+# nothing of the job is left: status 1 when the table could not be read, and
+# awk's own status when the filter could not run. have_ps answers for a
+# single-pid query and says nothing about the full table, which a restricted
+# host can refuse on its own.
+group_pids() {
+  local table
+  table=$(ps -eo pid=,pgid= 2>/dev/null) || return 1
+  printf '%s\n' "$table" | awk -v g="$1" '$2==g {print $1}'
+}
+lstart_of() { ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//;s/ *$//'; }
+
+# job_dir_ok <jobdir>: 0 when the directory is a real path under a hyperpowers
+# workspace's jobs/ (no symlink in any component below the cache root) and its
+# meta.json names that workspace's ledger. Every write and every signal is
+# preceded by this check, so a crafted directory cannot steer either.
+job_dir_ok() {
+  local dir=$1 root rel real key
+  [ -d "$dir" ] && [ -f "$dir/meta.json" ] || return 1
+  root=$(hp_cache_root)
+  case "$dir" in "$root"/state/*/plans/*/jobs/*|"$root"/sdd/*/plans/*/jobs/*) ;; *) return 1 ;; esac
+  rel=${dir#"$root"/}
+  hp_contained "$root" "$rel" 2>/dev/null || return 1
+  real=$(cd "$dir" && pwd -P) || return 1
+  [ "$real" = "$dir" ] || return 1
+  [ "$(meta_get "$dir" ledger)" = "$(cd "$dir/../.." && pwd -P)/progress.md" ] || return 1
+  # The workspace lock is taken on meta's plan_dir, so that directory must
+  # belong to the repository whose key the job path carries; forged or stale
+  # metadata cannot lock another repository while writing this ledger.
+  key=${rel#*/}; key=${key%%/*}
+  [ -d "$(meta_get "$dir" plan_dir)" ] || return 1
+  [ "$(hp_key "$(meta_get "$dir" plan_dir)" 2>/dev/null)" = "$key" ] || return 1
+  return 0
+}
+# ledger_line_once <jobdir> <text>: one job line, with the workspace lock
+# already held by the caller. The line's "jobdir=<path>" plus its outcome word
+# is the key checked in the ledger before appending, so repeats and retries
+# append nothing twice. The key is read from the ledger's records, so a write
+# fragment never passes for one. hp_ledger_append does the writing and never
+# shortens the ledger. 0 when the line is there, 1 when it is not.
+ledger_line_once() {
+  local dir=$1 text=$2 ledger sid outcome
+  ledger=$(meta_get "$dir" ledger); sid=$(meta_get "$dir" session)
+  outcome=${text%% *}
+  if grep -Fq -- "$(meta_get "$dir" name) $outcome" < <(hp_ledger_records "$ledger" 2>/dev/null | grep -F -- "jobdir=$dir"); then return 0; fi
+  hp_ledger_append "$ledger" "$(printf 'job %s %s: %s %s jobdir=%s' "$sid" "$(utc_ms)" "$(meta_get "$dir" name)" "$text" "$dir")"
+}
+# ledger_append_once <jobdir> <text>: the same line for a caller that does not
+# hold the workspace lock. conclude writes its line through the body above
+# instead, inside the transaction that writes the state.
+ledger_append_once() {
+  local dir=$1 text=$2 rc
+  job_dir_ok "$dir" || return 1
+  hp_lock "$(meta_get "$dir" plan_dir)" 2>/dev/null || return 1
+  ledger_line_once "$dir" "$text"; rc=$?
+  hp_unlock
+  return "$rc"
+}
+
+# conclude <jobdir> <from> <to> <ledger text or ""> [key=value...]: a terminal
+# transition under the workspace lock, written only while the state is still
+# <from>, so concurrent wait, stop and run calls never overwrite each other's
+# outcome. The caller has already put <jobdir> through job_dir_ok, which is
+# what makes meta's plan_dir safe to lock. Prints the state in force
+# afterwards. Exit 0 when this call wrote it, 2 when another writer got there
+# first, 1 when the lock was not taken or the transition could not be written.
+conclude() {
+  local dir=$1 from=$2 to=$3 text=$4 cur; shift 4
+  hp_lock "$(meta_get "$dir" plan_dir)" 2>/dev/null || return 1
+  cur=$(meta_get "$dir" state)
+  if [ "$cur" != "$from" ]; then hp_unlock; printf '%s' "$cur"; return 2; fi
+  # The ledger line goes first, inside the same lock: a terminal state the
+  # ledger cannot name is invisible to every later reader, and the once-key
+  # check means the caller's retry appends nothing twice.
+  if [ -n "$text" ] && ! ledger_line_once "$dir" "$text"; then hp_unlock; return 1; fi
+  meta_set "$dir" "state=$to" "ended=$(utc_ms)" "$@" || { hp_unlock; return 1; }
+  hp_unlock
+  printf '%s' "$to"
+}
+
+cmd_new() {
+  local plan="" name="" budget="" sid="" ws plan_dir lock jobs tmp final rand n=0 created deadline
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --budget-ms) [ $# -ge 2 ] || usage; budget=$2; shift 2 ;;
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      -*) usage ;;
+      *) if [ -z "$plan" ]; then plan=$1; elif [ -z "$name" ]; then name=$1; else usage; fi; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$name" ] && [ -n "$budget" ] || usage
+  case "$budget" in ''|*[!0-9]*) usage ;; esac
+  case "$name" in *[!A-Za-z0-9._-]*|'') usage ;; esac
+  # A dot-prefixed directory under jobs/ is allocation staging (.new-*) to the
+  # stop guard and to Finish's receipt, so a job named that way would run
+  # unseen by the one and unrecorded by the other.
+  case "$name" in .*) echo "tracked-job: NAME must not begin with '.'" >&2; exit 2 ;; esac
+  [ -n "$sid" ] || sid=$(hp_session_id)
+  [ -n "$sid" ] || { echo "tracked-job: no session id: pass --session SID" >&2; exit 2; }
+  # The id lands verbatim in the job lines the ledger readers scan, so a value
+  # carrying a space or newline could forge a record.
+  case "$sid" in *[!A-Za-z0-9._-]*) echo "tracked-job: --session must be a single token of letters, digits, '.', '_' or '-'" >&2; exit 2 ;; esac
+  plan_dir=$(hp_plan_dir "$plan") || { echo "status=error"; exit 2; }
+  lock=$(hp_checkout_path "$plan_dir" 2>/dev/null) || { echo "status=error"; exit 2; }
+  # sdd-dir takes this same lock whenever it has to materialize the workspace
+  # (always under the plain backend), so contention surfaces here, before the
+  # allocation's own attempt: a held lock is busy, which the caller retries,
+  # never an error, which it does not.
+  if ! ws=$(bash "$HERE/sdd-dir" "$plan" 2>/dev/null); then
+    if [ -d "$lock.lock" ]; then echo "status=busy"; exit 3; fi
+    echo "status=error"; exit 2
+  fi
+  # The whole allocation runs under the workspace lock, which Finish holds
+  # while it removes the workspace: a ledger present under the lock is one
+  # Finish has not removed, and when it is gone nothing is created, so a
+  # removed workspace is never resurrected by a job line.
+  if ! hp_lock "$plan_dir" 2>/dev/null; then echo "status=busy"; exit 3; fi
+  if [ ! -f "$ws/progress.md" ]; then hp_unlock; echo "tracked-job: no ledger at $ws/progress.md" >&2; echo "status=error"; exit 2; fi
+  jobs="$ws/jobs"; mkdir -p "$jobs" || { hp_unlock; echo "status=error"; exit 2; }
+  tmp=$(mktemp -d "$jobs/.new-XXXXXX") || { hp_unlock; echo "status=error"; exit 2; }
+  created=$(utc_ms)
+  deadline=$(node -e 'process.stdout.write(new Date(Date.parse(process.argv[1])+Number(process.argv[2])).toISOString())' "$created" "$budget")
+  if ! meta_set "$tmp" "name=$name" "cwd=$PWD" "created=$created" "budget_ms:=$budget" "deadline=$deadline" "session=$sid" "ledger=$ws/progress.md" "plan_dir=$plan_dir" "state=allocated"; then rm -rf "$tmp"; hp_unlock; echo "status=error"; exit 2; fi
+  while :; do
+    rand=$(printf '%04x' $((RANDOM % 65536)))
+    final="$jobs/$name-$(date -u +%Y%m%dT%H%M%SZ)-$rand"
+    [ -e "$final" ] || break
+    n=$((n + 1)); [ "$n" -lt 20 ] || { rm -rf "$tmp"; hp_unlock; echo "status=error"; exit 2; }
+  done
+  mv "$tmp" "$final" || { rm -rf "$tmp"; hp_unlock; echo "status=error"; exit 2; }
+  if ! hp_ledger_append "$ws/progress.md" "$(printf 'job %s %s: %s jobdir=%s' "$sid" "$(utc_ms)" "$name" "$final")"; then rm -rf "$final"; hp_unlock; echo "status=error"; exit 2; fi
+  hp_unlock
+  echo "jobdir=$final"
+}
+
+# The supervisor. It stays in its own process group; the command gets its own
+# through job control (deviation 1) and starts only after the metadata is
+# durable (the FIFO barrier).
+RUN_DIR=""; RUN_PID=""; RUN_PGID=""; RUN_STOPPED=0; RUN_PENDING_STOP=0
+# group_alive: any member of the command's group, leader or descendant; kill -0
+# on the negative group id asks the kernel, so it needs no ps.
+group_alive() { kill -0 -- "-$RUN_PGID" 2>/dev/null; }
+sweep_group() { # TERM, grace, then KILL while any member survives
+  kill -TERM -- "-$RUN_PGID" 2>/dev/null
+  # Five polls to the second: the grace is still GRACE seconds, but a command
+  # that goes down at once is concluded at once.
+  local i=0; while [ "$i" -lt $((GRACE * 5)) ] && group_alive; do sleep 0.2; i=$((i + 1)); done
+  group_alive && kill -KILL -- "-$RUN_PGID" 2>/dev/null
+}
+stop_group() { RUN_STOPPED=1; sweep_group; } # the same sweep, marking the job stopped
+# publish_exit <code>: the exit file, written to an exact destination. A shell
+# mv would move the file *into* an "exit" directory the command could have
+# made through TRACKED_JOB_DIR and report success; rename(2) refuses that, and
+# the result is read back before it counts as published.
+publish_exit() {
+  printf '%s\n' "$1" > "$RUN_DIR/exit.tmp" 2>/dev/null || return 1
+  node -e 'require("fs").renameSync(process.argv[1],process.argv[2])' "$RUN_DIR/exit.tmp" "$RUN_DIR/exit" 2>/dev/null || return 1
+  [ -f "$RUN_DIR/exit" ] && [ "$(cat "$RUN_DIR/exit" 2>/dev/null)" = "$1" ]
+}
+finish_run() { # <code>
+  local code=$1 state=exited survivors=-1 i=0 j=0 rc members
+  # The command has gone and the record has to land, so the locks this takes
+  # must leave the supervisor's ignored signals ignored rather than arming
+  # their own handlers, which exit.
+  HP_LOCK_KEEP_DISPOSITIONS=1
+  [ "$RUN_STOPPED" -eq 1 ] && state=stopped
+  # A terminal record has to mean that nothing of the job still runs, which is
+  # what the stop guard reads from it. A leader can exit with backgrounded
+  # descendants still in its group, so the group is swept here as a stop
+  # sweeps it, and the count below records what outlived the KILL. The state
+  # stays the leader's: this is not a stop.
+  if group_alive; then
+    printf "tracked-job: the command's group outlived its leader (exit %s); sweeping\n" "$code" >> "$RUN_DIR/out.log"
+    sweep_group
+  fi
+  # A listing that cannot be read leaves the count at -1, the unreadable
+  # marker, exactly as a host without ps does: a zero there would say the
+  # sweep left nothing behind when nobody looked.
+  if have_ps && members=$(group_pids "$RUN_PGID"); then survivors=$(printf '%s\n' "$members" | grep -c .)
+  elif ! group_alive; then survivors=0; fi
+  # The terminal state goes first, under the lock and only from running, and
+  # the exit file second: a reader that sees exit also sees the state, and a
+  # concurrent wait or stop never races this writer. A lock that stays held
+  # through five attempts is noted in out.log and the exit file is written
+  # anyway, so the job never reads as lost; wait repairs the state from the
+  # exit file once the lock is free.
+  while :; do
+    conclude "$RUN_DIR" running "$state" "" "code:=$code" "survivors:=$survivors" >/dev/null; rc=$?
+    [ "$rc" -eq 1 ] || break
+    i=$((i + 1))
+    if [ "$i" -ge 5 ]; then printf 'tracked-job: terminal state %s not recorded (lock held); exit=%s\n' "$state" "$code" >> "$RUN_DIR/out.log"; break; fi
+    sleep 1
+  done
+  # The exit file is published last, so a reader that sees it also sees the
+  # state. A write that will not land is retried and then noted in out.log:
+  # the code is in meta.json either way, which is where wait falls back to.
+  while :; do
+    if publish_exit "$code"; then break; fi
+    j=$((j + 1))
+    if [ "$j" -ge 3 ]; then
+      rm -f "$RUN_DIR/exit.tmp" 2>/dev/null
+      printf 'tracked-job: exit file not written; the code is in meta.json (code=%s)\n' "$code" >> "$RUN_DIR/out.log"
+      break
+    fi
+    sleep 0.2
+  done
+}
+abort_launch() { # <reason>
+  # The launch has failed, so a late signal has nothing left to stop; armed, its
+  # handler would write a stop-request back after the cleanup below removed one.
+  trap '' TERM INT HUP
+  [ -z "$RUN_PID" ] || { kill -KILL -- "-$RUN_PGID" 2>/dev/null; wait "$RUN_PID" 2>/dev/null; }
+  # The job goes back to allocated for a retry, so a stop-request the trap
+  # wrote during this failed launch must not cancel that retry on sight. The
+  # metadata goes first and the launch lock last, so a retry that races this
+  # abort never finds a directory that is only half cleaned.
+  meta_set "$RUN_DIR" "state=allocated" "launch_error=$1 at $(utc_ms)" >/dev/null 2>&1
+  rm -f "$RUN_DIR/go" "$RUN_DIR/stop-request" 2>/dev/null
+  rmdir "$RUN_DIR/launch.lock" 2>/dev/null
+  echo "status=error"; exit 2
+}
+cmd_run() {
+  local dir cmd_json i t code
+  [ $# -ge 3 ] && [ "$2" = "--" ] || usage
+  dir=$1; shift 2
+  job_dir_ok "$dir" || { echo "status=error"; exit 2; }
+  [ "$(meta_get "$dir" state)" = allocated ] || { echo "status=already-launched"; exit 2; }
+  RUN_DIR=$dir
+  # From here on a signal must not kill the supervisor under its default
+  # disposition. launch.lock below outlives the process: dying between taking
+  # it and this trap would leave every later run reporting already-launched
+  # for a job that never started, and dying after the spawn would leave the
+  # command running with nothing watching it. The request is remembered and
+  # acted on at the barrier, the last point at which the command can still be
+  # cancelled rather than stopped after the fact. Once the lock is ours the
+  # trap also writes the stop-request file, which the command itself tests
+  # after the barrier: a signal that lands after the check below would
+  # otherwise be read only once the command had already started.
+  # Until the launch lock is ours the trap only remembers the request: a
+  # losing racer must not write a marker into a job another supervisor runs.
+  trap 'RUN_PENDING_STOP=1' TERM INT HUP
+  mkdir "$dir/launch.lock" 2>/dev/null || { echo "status=already-launched"; exit 2; }
+  # A job in allocated has no supervisor, and stop answers not-running for one
+  # without writing, so a marker standing here is left over from a launch that
+  # was aborted earlier, not a cancellation of this one. This launch's own
+  # cancellation arrives through the trap below, which writes a fresh marker;
+  # a signal that landed before it is still held in the flag.
+  rm -f "$dir/stop-request" 2>/dev/null
+  trap 'RUN_PENDING_STOP=1; { : > "$RUN_DIR/stop-request"; } 2>/dev/null' TERM INT HUP
+  rm -f "$dir/go" 2>/dev/null
+  mkfifo "$dir/go" 2>/dev/null || abort_launch "the launch barrier could not be created"
+  : > "$dir/out.log"
+  set -m
+  # The command's last act before exec is to look for a cancellation, so a
+  # stop that arrives while the barrier is opening still catches it. The gap
+  # left is the one between that test and exec, which the group sweep covers:
+  # by then the command is running and a stop is a stop, not a cancellation.
+  ( exec env "TRACKED_JOB_DIR=$dir" bash -c 'read -r _ < "$0/go" || exit 97; if [ -e "$0/stop-request" ]; then exit 97; fi; exec "$@"' "$dir" "$@" ) >> "$dir/out.log" 2>&1 &
+  RUN_PID=$!; RUN_PGID=$RUN_PID
+  set +m
+  cmd_json=$(node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' "$@")
+  if [ -n "${HYPERPOWERS_TEST_FAIL_META:-}" ] || ! meta_set "$dir" "pid:=$RUN_PID" "pgid:=$RUN_PGID" "run_pid:=$$" "run_lstart=$(lstart_of $$)" "lstart=$(lstart_of "$RUN_PID")" "command:=$cmd_json" "launched=$(utc_ms)" "state=running"; then
+    abort_launch "metadata write failed"
+  fi
+  # Test seam: hold the launch open here, metadata published and the command
+  # still blocked, so a test can place a signal inside the launch window.
+  if [ -n "${HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER:-}" ]; then
+    i=0; while [ "$i" -lt 100 ] && [ ! -e "$HYPERPOWERS_TEST_HOLD_BEFORE_BARRIER" ]; do sleep 0.1; i=$((i + 1)); done
+  fi
+  # A stop that arrived during the launch is honoured before the command is
+  # released: the child is still blocked reading the barrier, so sweeping its
+  # group now means the command never runs at all, which is the whole point
+  # of cancelling something irreversible. A stop-request standing here counts
+  # as that stop, whether the stop subcommand wrote it or the trap above did.
+  # The job is already running in meta.json, so it concludes exactly as a stop
+  # during supervision does.
+  if [ "$RUN_PENDING_STOP" -ne 0 ] || [ -e "$dir/stop-request" ]; then
+    trap '' TERM INT HUP
+    stop_group
+    rm -f "$dir/go"
+    wait "$RUN_PID"; code=$?
+    finish_run "$code"
+    return 0
+  fi
+  # Open the barrier: the child is blocked in read on the FIFO. A writer that
+  # cannot open within five seconds means the child died before reading.
+  ( printf 'go\n' > "$dir/go" ) & t=$!
+  i=0; while [ "$i" -lt 50 ] && kill -0 "$t" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$t" 2>/dev/null; then kill -KILL "$t" 2>/dev/null; abort_launch "barrier not taken"; fi
+  # Only the barrier goes here: the command is about to test for a
+  # stop-request the trap may just have written, and removing it now would
+  # race that test.
+  rm -f "$dir/go"
+  trap 'stop_group' TERM INT HUP
+  [ "$RUN_PENDING_STOP" -eq 0 ] || stop_group
+  while alive "$RUN_PID"; do
+    sleep 1
+    if [ -e "$dir/stop-request" ] && [ "$RUN_STOPPED" -eq 0 ]; then stop_group; fi
+  done
+  wait "$RUN_PID"; code=$?
+  # The command is gone and the record has to land: a signal here would leave
+  # the job reading running for ever, with an exit status nobody can see. The
+  # three are ignored across the finish, which the supervisor exits right
+  # after. (conclude keeps them ignored under hp_lock's own traps.)
+  trap '' TERM INT HUP
+  finish_run "$code"
+}
+
+# supervisor_reused <jobdir>: the recorded supervisor pid answers kill -0 but
+# its start time is not the one recorded at launch, so another process owns
+# the pid now (ps only; without ps the residual stated in deviation 2 stands).
+supervisor_reused() {
+  local want
+  have_ps || return 1
+  want=$(meta_get "$1" run_lstart); [ -n "$want" ] || return 1
+  [ "$(lstart_of "$(meta_get "$1" run_pid)")" != "$want" ]
+}
+# exit_code <jobdir>: the command's status, empty while the job has not
+# concluded. The exit file is the published record; when it could not be
+# written (finish_run says so in out.log) the code is still in meta.json,
+# which a terminal state makes trustworthy. A job swept after a loss is
+# terminal with no code of its own, and stays empty here.
+exit_code() {
+  if [ -f "$1/exit" ]; then cat "$1/exit"; return 0; fi
+  case "$(meta_get "$1" state)" in exited|stopped) meta_get "$1" code ;; esac
+}
+# terminal_line <jobdir> <code>: the ledger line for a job that has concluded.
+terminal_line() {
+  if [ "$(meta_get "$1" state)" = stopped ]; then printf 'stopped'; else printf 'exited code=%s' "$2"; fi
+}
+cmd_wait() {
+  local dir="" max="" state deadline code now rc
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --max-ms) [ $# -ge 2 ] || usage; max=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$dir" ] || usage; dir=$1; shift ;;
+    esac
+  done
+  [ -n "$dir" ] && [ -n "$max" ] || usage
+  case "$max" in ''|*[!0-9]*) usage ;; esac
+  [ "$max" -le 600000 ] || usage
+  job_dir_ok "$dir" || { echo "status=error"; exit 2; }
+  deadline=$(( $(date +%s) + (max + 999) / 1000 ))
+  while :; do
+    state=$(meta_get "$dir" state)
+    code=$(exit_code "$dir")
+    if [ -n "$code" ]; then
+      # A supervisor that could not take the lock left the state running: repair it from the exit file.
+      [ "$state" != running ] || conclude "$dir" running exited "" "code:=$code" >/dev/null
+      ledger_append_once "$dir" "$(terminal_line "$dir" "$code")"
+      echo "status=exited code=$code"; [ "$code" = 0 ] && exit 0; exit 1
+    fi
+    case "$state" in
+      lost) ledger_append_once "$dir" "lost"; echo "status=lost"; exit 4 ;;
+      lost-unswept) echo "status=lost-unswept pgid=$(meta_get "$dir" pgid)"; exit 7 ;;
+      stopped)
+        # Swept after a loss (the job concluded with no status of its own, or
+        # the branch above would have reported it): the job was lost.
+        echo "status=lost"; exit 4 ;;
+      running)
+        # Loss is the supervisor's death: its pid answers ESRCH (deviation 2),
+        # or, where ps works, its pid now carries a different start time (reused).
+        # The transition is a conclude from running: when stop concluded the job
+        # first (lost-unswept, stopped), the loop reports what stop decided; a
+        # lock that could not be taken (rc 1) leaves the state alone and the
+        # job reads as running until the bound.
+        if ! alive "$(meta_get "$dir" run_pid)"; then sleep 2
+          if [ ! -f "$dir/exit" ]; then
+            conclude "$dir" running lost "lost" >/dev/null; rc=$?
+            case "$rc" in 0) echo "status=lost"; exit 4 ;; 2) continue ;; esac
+          fi
+        elif supervisor_reused "$dir"; then
+          conclude "$dir" running lost "lost" >/dev/null; rc=$?
+          case "$rc" in 0) echo "status=lost"; exit 4 ;; 2) continue ;; esac
+        fi ;;
+    esac
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      case "$state" in allocated) echo "status=not-started"; exit 5 ;; *) echo "status=running"; exit 3 ;; esac
+    fi
+    sleep 1
+  done
+}
+
+# The identity fence has two halves, because a command can drop either one:
+# TRACKED_JOB_DIR in its environment, and an open descriptor on the job's
+# out.log, which every process of the command's tree inherits from the
+# supervisor. The second half is deviation 4: the spec reads the first with
+# ps -E on macOS, and ps -E there prints the environment of the calling
+# process alone, never a child's, so on that platform the descriptors are the
+# whole fence and there is no environment reader at all.
+#
+# fence_env <pid> <jobdir>: the process's environment carries the fence.
+fence_env() {
+  [ -d "$PROC_ROOT" ] && [ -r "$PROC_ROOT/$1/environ" ] || return 1
+  tr '\0' '\n' < "$PROC_ROOT/$1/environ" | grep -Fxq "TRACKED_JOB_DIR=$2"
+}
+# fence_fd <pid> <jobdir>: one of the process's open descriptors is the job's
+# out.log: the fd/ symlinks under a proc tree, lsof where there is none.
+fence_fd() {
+  local e
+  if [ -d "$PROC_ROOT" ]; then
+    for e in "$PROC_ROOT/$1/fd"/*; do
+      [ -L "$e" ] || continue
+      [ "$(readlink "$e" 2>/dev/null)" = "$2/out.log" ] && return 0
+    done
+    return 1
+  fi
+  lsof -p "$1" -Fn 2>/dev/null | grep -Fxq "n$2/out.log"
+}
+# fenced <pid> <jobdir>: the process carries this job's fence, read now. A
+# process that carries neither half, or whose fence cannot be read at all, is
+# not this job's and is never signalled.
+fenced() { fence_env "$1" "$2" || fence_fd "$1" "$2"; }
+# can_read_fence <jobdir> <group pids>: the fence of this job's processes can
+# be read at all. The question is about the reader that will actually be used,
+# so wherever the readers use a proc tree the gate asks that same tree: it can
+# answer when it holds at least one of the group's live members. A tree that
+# holds none of them would let the sweep find no fenced process and call that
+# a clean stop; asking for the *recorded leader* instead would refuse a job
+# whose leader has exited while its children run, which is one of the shapes
+# the sweep exists for. Where there is no tree, lsof is the reader, and the
+# question is whether it can list a *child's* descriptors rather than this
+# process's own, so the probe is a real short-lived child holding the job's
+# out.log open. A self-test on $$ is what made ps -E look workable on macOS:
+# it answers for the caller and for nobody else.
+can_read_fence() {
+  local pid i=0 rc=1 p
+  if [ -d "$PROC_ROOT" ]; then
+    for p in $2; do [ -d "$PROC_ROOT/$p" ] && return 0; done
+    return 1
+  fi
+  command -v lsof >/dev/null 2>&1 || return 1
+  sleep 5 >> "$1/out.log" 2>/dev/null &
+  pid=$!
+  # The child opens the file between the fork and its exec, so a single read
+  # can be early; five are not.
+  while [ "$i" -lt 5 ]; do
+    if lsof -p "$pid" -Fn 2>/dev/null | grep -Fxq "n$1/out.log"; then rc=0; break; fi
+    i=$((i + 1)); sleep 0.1
+  done
+  kill -KILL "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  return "$rc"
+}
+# fenced_pids <jobdir> <pgid>: the recorded group's fenced processes. Status
+# 1 when the group could not be listed, so a caller never reads a table it
+# could not open as a group with nothing in it.
+fenced_pids() {
+  local dir=$1 pgid=$2 p members
+  members=$(group_pids "$pgid") || return 1
+  for p in $members; do fenced "$p" "$dir" && printf '%s\n' "$p"; done
+  return 0
+}
+# unswept <jobdir> <state> <pgid>: the job cannot be swept by identity here,
+# so nothing is signalled and the record names the group for the human
+# partner. Exits; a lock it cannot take is status=busy, nothing changed.
+unswept() {
+  local rc
+  if [ "$2" != lost-unswept ]; then
+    conclude "$1" lost lost-unswept "lost-unswept pgid=$3" >/dev/null; rc=$?
+    [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
+  fi
+  echo "status=lost-unswept pgid=$3"; exit 7
+}
+cmd_stop() {
+  local dir=${1:-} state i pgid members pids p code skipped survivors rc
+  [ -n "$dir" ] || usage
+  job_dir_ok "$dir" || { echo "status=error"; exit 2; }
+  state=$(meta_get "$dir" state)
+  # An allocated job has no supervisor to ask and no group to sweep: run
+  # clears a stale marker when it takes the launch lock, so writing one here
+  # would only cancel a launch that has not happened yet.
+  case "$state" in allocated) echo "status=not-running"; exit 0 ;; esac
+  # A job that has already concluded is not running, but its terminal line
+  # may still be owed: run never writes one (wait and stop do), and an append
+  # that could not take the lock is retried by the next wait or stop rather
+  # than lost. The once-key makes the attempt idempotent, and a lock that
+  # stays held is status=busy, which the controller retries: reporting
+  # not-running there would close a job the ledger cannot name.
+  case "$state" in
+    exited|stopped)
+      code=$(exit_code "$dir")
+      if [ "$state" = stopped ] || [ -n "$code" ]; then
+        ledger_append_once "$dir" "$(terminal_line "$dir" "$code")" || { echo "status=busy"; exit 3; }
+      fi
+      echo "status=not-running"; exit 0 ;;
+  esac
+  if [ "$state" = running ] && alive "$(meta_get "$dir" run_pid)" && ! supervisor_reused "$dir"; then
+    : > "$dir/stop-request"
+    # The wait is for the job to conclude, not for the exit file: a supervisor
+    # that recorded the status but could not publish the file has stopped the
+    # job all the same, and reporting a timeout for it would cost a retry.
+    i=0; while [ "$i" -lt "$STOP_WAIT" ] && [ -z "$(exit_code "$dir")" ]; do sleep 1; i=$((i + 1)); done
+    code=$(exit_code "$dir")
+    # The state is terminal whatever the ledger did, so the stop is reported
+    # as the stop it was; a line that did not land is still owed, and the
+    # terminal-state branch above writes it on the next wait or stop.
+    if [ -n "$code" ]; then ledger_append_once "$dir" "$(terminal_line "$dir" "$code")"; echo "status=stopped"; exit 0; fi
+    echo "status=stop-timeout"; exit 6
+  fi
+  # The supervisor is dead. A job that concluded while the workspace lock was
+  # held has a status of its own, published but unrecorded, and calling it
+  # lost would put a false line in the ledger: repair that record exactly as
+  # wait does. Every conclude result is checked: a lock that cannot be taken
+  # is status=busy (3), the state is left as it was, and nothing is claimed.
+  if [ "$state" = running ]; then
+    code=$(exit_code "$dir")
+    if [ -n "$code" ]; then
+      conclude "$dir" running exited "" "code:=$code" >/dev/null; rc=$?
+      [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
+      ledger_append_once "$dir" "$(terminal_line "$dir" "$code")"
+      echo "status=not-running"; exit 0
+    fi
+    conclude "$dir" running lost "lost" >/dev/null; rc=$?
+    [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
+    state=$(meta_get "$dir" state)
+  fi
+  case "$state" in lost|lost-unswept) ;; *) echo "status=not-running"; exit 0 ;; esac
+  pgid=$(meta_get "$dir" pgid)
+  # Without the process table the group cannot be listed at all, and a table
+  # that refuses the full listing is the same refusal arriving later: an
+  # empty answer there would be read below as a group with nothing in it.
+  have_ps || unswept "$dir" "$state" "$pgid"
+  members=$(group_pids "$pgid") || unswept "$dir" "$state" "$pgid"
+  # A group with no members needs no fence: there is nothing left to tell
+  # apart, and nothing to signal.
+  if [ -z "$members" ]; then
+    conclude "$dir" "$state" stopped "stopped" "survivors:=0" "skipped:=0" >/dev/null; rc=$?
+    [ "$rc" -ne 1 ] || { echo "status=busy"; exit 3; }
+    echo "status=not-running"; exit 0
+  fi
+  # The group has members, so the fence decides which of them are the job's.
+  # A fence that cannot be read would leave every one of them unsignalled and
+  # call that a clean stop, so the record names the group instead.
+  can_read_fence "$dir" "$members" || unswept "$dir" "$state" "$pgid"
+  # The fence is read again immediately before each signal: a pid that left
+  # the job between the listing and the signal is no longer this job's.
+  pids=$(fenced_pids "$dir" "$pgid") || unswept "$dir" "$state" "$pgid"
+  for p in $pids; do if fenced "$p" "$dir"; then kill -TERM "$p" 2>/dev/null; fi; done
+  sleep "$GRACE"
+  # The fenced members are listed again before every KILL pass. A TERM
+  # handler can fork during the grace, and that child is in the group and
+  # carries the fence while being absent from the list the TERM was sent
+  # from; killing only that list would leave it running and still conclude
+  # the job stopped. A pass that finds nothing fenced left ends the sweep.
+  # The bound is for what a KILL cannot reach — a process the kernel will
+  # not interrupt — which is counted as a survivor, as before.
+  #
+  # Every one of these listings is checked, the counting pass included. A
+  # table that stops answering halfway through the sweep leaves the job in
+  # the state the refusal before the TERM leaves it in: nothing has been
+  # proven dead, so the record names the group and a later stop retries,
+  # rather than concluding stopped over a member a KILL never reached.
+  i=0
+  while :; do
+    pids=$(fenced_pids "$dir" "$pgid") || unswept "$dir" "$state" "$pgid"
+    [ -n "$pids" ] || break
+    for p in $pids; do if fenced "$p" "$dir"; then kill -KILL "$p" 2>/dev/null; fi; done
+    i=$((i + 1))
+    sleep 1
+    [ "$i" -lt 3 ] || break
+  done
+  pids=$(fenced_pids "$dir" "$pgid") || unswept "$dir" "$state" "$pgid"
+  survivors=$(printf '%s\n' "$pids" | grep -c .)
+  members=$(group_pids "$pgid") || unswept "$dir" "$state" "$pgid"
+  skipped=$(( $(printf '%s\n' "$members" | grep -c .) - survivors ))
+  i=0
+  while :; do
+    conclude "$dir" "$state" stopped "stopped" "survivors:=$survivors" "skipped:=$skipped" >/dev/null; rc=$?
+    [ "$rc" -eq 1 ] || break
+    i=$((i + 1)); [ "$i" -lt 5 ] || { echo "status=busy"; exit 3; }
+    sleep 1
+  done
+  if [ "$rc" -eq 2 ]; then echo "status=not-running"; exit 0; fi
+  echo "status=stopped"; exit 0
+}
+
+# The suite sources this file to exercise the shared functions on their own;
+# a sourced copy must not run a subcommand.
+if [ "${HYPERPOWERS_TEST_LIB_ONLY:-}" != 1 ]; then
+  case "${1:-}" in
+    new) shift; cmd_new "$@" ;;
+    run) shift; cmd_run "$@" ;;
+    wait) shift; cmd_wait "$@" ;;
+    stop) shift; cmd_stop "${1:-}" ;;
+    *) usage ;;
+  esac
+fi

@@ -127,7 +127,8 @@ Subagent (general-purpose):
 
     ## After Review Findings
 
-    If the task review finds issues, you will be resumed with the findings.
+    If the task review finds issues, the findings come back to you, or to a
+    fresh implementer who reads your report file.
     Every finding is a claim: verify it against the cited code before acting.
     Fix the ones that are real, re-run the tests that cover the amended code,
     and append a fix report that names those tests, the command, and the

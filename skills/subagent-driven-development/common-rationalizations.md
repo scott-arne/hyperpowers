@@ -3,7 +3,7 @@
 | Excuse | Reality |
 |--------|---------|
 | "Close enough on spec compliance" | Reviewer found spec gaps = not done. Fix it, or hit the cap and hand it back — those are the only exits. |
-| "I'll fix it myself, dispatching is overhead" | Controller fixes pollute your context and skip review. Outside the de-minimis exception (one finding: at most 3 fully-specified lines in one file, no new logic — and it still costs a fix round, still runs the covering command with the fix report appended, disclosed in the ledger, re-review still runs), that is rationalization. Resume the implementer at rounds 1-3; dispatch the takeover at rounds 4-5. |
+| "I'll fix it myself, dispatching is overhead" | Controller fixes pollute your context and skip review. Outside the de-minimis exception (one finding: at most 3 fully-specified lines in one file, no new logic — and it still costs a fix round, still runs the covering command with the fix report appended, disclosed in the ledger, re-review still runs), that is rationalization. Hand the findings to an implementer at rounds 1-3; dispatch the takeover at rounds 4-5. |
 | "One more round will converge" | Past the cap, rounds don't converge — the failure is structural. It goes to your human partner as BLOCKED. |
 | "The reviewer will just find something new anyway" | Scoped re-reviews verify fixes; they cannot wander. New findings on untouched code go to the ledger, not the loop. |
 | "This finding is obviously wrong, I'll drop it" | A finding you disagree with is declined only as refuted or corrected, with file:line evidence the re-reviewer confirms; a disagreement without evidence goes to your human partner with the plan text beside it. Silent discards are forbidden. |
@@ -17,3 +17,4 @@
 | "I'll keep the workspace for reference" | The repo's commits are the record. Delete it — an undeleted clean-finish workspace becomes a stale-forensics trap for the next plan. |
 | "I've said what's next; I'll pick it up on the next turn" | There is no next turn until your human partner types. A status message that ends the turn stops the plan, and the editor shows the session idle while the message says it is working. Take the step's tool call now. |
 | "A trailing `&` keeps it out of my way" | A detached process is invisible to the harness: no completion notice arrives, and a turn ended to wait for it never resumes. Start it with the tracked background option and watch it in the foreground. |
+| "The hook blocked me, so I'll ask a question to get out" | A question you do not need answered is a premature stop with extra steps; the log records every allow and the field reads it. Take the step the message names. |

@@ -82,7 +82,12 @@ expected_ignore='# Regenerable on any host: briefs come from task-brief, package
 plans/*/task-*-brief.md
 plans/*/review-*.diff
 # A copy an import left beside an entry it could not install: local to that host, for a human to merge.
-plans/*/*.from-import'
+plans/*/*.from-import
+# Job scratch (tracked-job): the record is meta.json and exit.
+plans/*/jobs/*/out.log
+plans/*/jobs/*/go
+plans/*/jobs/*/launch.lock
+plans/*/jobs/*/stop-request'
 if [ "$(git -C "$r1" show hyperpowers/state:.gitignore 2>/dev/null)" = "$expected_ignore" ]; then pass ".gitignore keeps briefs and packages local"; else fail ".gitignore keeps briefs and packages local"; fi
 if [ "$(git -C "$r1" show hyperpowers/state:.gitattributes 2>/dev/null)" = "plans/*/progress.md merge=union" ]; then pass ".gitattributes gives the ledger the union driver"; else fail ".gitattributes gives the ledger the union driver"; fi
 if [ -f "$co1/README.md" ] && grep -q 'never merged into a code branch' "$co1/README.md"; then pass "README names the branch's purpose"; else fail "README names the branch's purpose"; fi
@@ -1044,8 +1049,8 @@ printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsf/pr
 out=$(run_state "$f1" finish docs/plan.md); rc=$?
 last=$(printf '%s' "$out" | sed -n 's/.* last=\([0-9a-f]*\).*/\1/p')
 case "$out" in
-    "status=finished sha="???????" last="????????????????????????????????????????" push=origin/hyperpowers/state") pass "finish prints the finish sha, the full last sha and the push target" ;;
-    *) fail "finish prints the finish sha, the full last sha and the push target (rc=$rc: $out)" ;;
+    "status=finished sha="???????" last="????????????????????????????????????????" push=origin/hyperpowers/state receipt=/"*) pass "finish prints the finish sha, the full last sha, the push target and the receipt" ;;
+    *) fail "finish prints the finish sha, the full last sha, the push target and the receipt (rc=$rc: $out)" ;;
 esac
 if [ ! -d "$wsf" ] && ! git -C "$co_f1" ls-tree -r --name-only hyperpowers/state | grep -q "plans/$(basename "$wsf")/"; then pass "finish removes the workspace from the tree and the disk"; else fail "finish removes the workspace from the tree and the disk"; fi
 if [ "$(git -C "$co_f1" show "$last:plans/$(basename "$wsf")/progress.md" 2>/dev/null | sed -n 2p)" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "the last sha still shows the ledger"; else fail "the last sha still shows the ledger"; fi
@@ -1111,18 +1116,40 @@ rm -rf "$(dirname "$wsf11")"/.removing-*
 wsf12=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf12/progress.md"
 out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-after-verify:task-3-report.md" bash "$SDD_STATE" finish docs/plan.md 2>"$TEST_ROOT/wsf12.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recreated during finish' "$TEST_ROOT/wsf12.err" && ! git -C "$co_f1" ls-tree -r --name-only hyperpowers/state | grep -q "plans/$(basename "$wsf12")/" && [ "$(cat "$wsf12/task-3-report.md")" = "late" ] && [ ! -e "$wsf12/progress.md" ] && ! ls -d "$(dirname "$wsf12")"/.removing-* >/dev/null 2>&1; then pass "a workspace recreated after the verification stays on disk, is named, and never enters the removal commit"; else fail "a workspace recreated after the verification stays on disk, is named, and never enters the removal commit (rc=$rc: $out)"; fi
+rec12=$(sed -n 's/.*the record is at \([^ ,]*\).*/\1/p' "$TEST_ROOT/wsf12.err")
+if [ -n "$rec12" ] && [ -f "$rec12/progress.md" ] && [ -f "$rec12/FINISHED" ]; then pass "a workspace recreated during finish still has its record, named on stderr"; else fail "a workspace recreated during finish still has its record, named on stderr (receipt='$rec12'; $(cat "$TEST_ROOT/wsf12.err"))"; fi
 rm -rf "$wsf12"
 wsp=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp/progress.md"
 out=$(run_state "$rp" finish docs/plan.md 2>/dev/null)
-if [ "$out" = "status=finished backend=plain" ] && [ ! -d "$wsp" ]; then pass "finish under the plain backend removes the plain workspace"; else fail "finish under the plain backend removes the plain workspace ($out)"; fi
+case "$out" in "status=finished backend=plain receipt=/"*) plainline=1 ;; *) plainline=0 ;; esac
+if [ "$plainline" = 1 ] && [ ! -d "$wsp" ]; then pass "finish under the plain backend removes the plain workspace and names the receipt"; else fail "finish under the plain backend removes the plain workspace and names the receipt ($out)"; fi
 wsp2=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp2/progress.md"
 out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -q '^concurrent write$' "$wsp2/progress.md" && ! ls -d "$wsp2"/.removing-* >/dev/null 2>&1 && [ "$(cat "$wsp2".reappeared-*/task-2-report.md 2>/dev/null)" = "written after rename" ]; then pass "under the plain backend a changed copy restored over a recreated workspace is not nested either"; else fail "under the plain backend a changed copy restored over a recreated workspace is not nested (rc=$rc: $out)"; fi
 rm -rf "$wsp2".reappeared-*
+wsp4=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp4/progress.md"
+out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="finish-after-stage:progress.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
+recp4=$(printf '%s' "$out" | sed -n 's/.*receipt=\([^ ]*\).*/\1/p')
+if [ "$rc" -eq 0 ] && [ -f "$recp4/progress.md" ] && grep -q '^concurrent write$' "$recp4/progress.md" && [ ! -d "$wsp4" ]; then pass "under the plain backend the receipt holds a line appended after the staging"; else fail "under the plain backend the receipt holds a line appended after the staging (rc=$rc: $out)"; fi
 wsp3=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp3/progress.md"; mkdir "$wsp3/held"; : > "$wsp3/held/f"; chmod 555 "$wsp3/held"
-err=$(run_state "$rp" finish docs/plan.md 2>&1 >/dev/null); rc=$?
+out=$(run_state "$rp" finish docs/plan.md 2>"$TEST_ROOT/wsp3.err"); rc=$?
+err=$(cat "$TEST_ROOT/wsp3.err")
 chmod 755 "$wsp3/held" 2>/dev/null; chmod 755 "$(dirname "$wsp3")"/.removing-*/held 2>/dev/null
-if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'could not delete' && [ -f "$wsp3/held/f" ] && ! ls -d "$(dirname "$wsp3")"/.removing-* >/dev/null 2>&1; then pass "under the plain backend a deletion that fails is an error and what remains is restored"; else fail "under the plain backend a deletion that fails is an error and what remains is restored (rc=$rc: $err)"; fi
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && printf '%s' "$err" | grep -q 'could not delete' && [ -f "$wsp3/held/f" ] && ! ls -d "$(dirname "$wsp3")"/.removing-* >/dev/null 2>&1; then pass "under the plain backend a deletion that fails is an error and what remains is restored"; else fail "under the plain backend a deletion that fails is an error and what remains is restored (rc=$rc: $err)"; fi
+# The failed deletion already took the ledger: the receipt is the only copy
+# of it left, so a finish that fails after the deletion began keeps it.
+recp3=$(sed -n 's/.*the record is at \([^ ,]*\).*/\1/p' "$TEST_ROOT/wsp3.err")
+case "$(basename "$recp3")" in .staging-*) unmarked3=1 ;; *) unmarked3=0 ;; esac
+if [ -n "$recp3" ] && [ -f "$recp3/progress.md" ] && [ "$(cat "$recp3/progress.md")" = "x" ] && [ ! -e "$wsp3/progress.md" ] && [ "$unmarked3" = 1 ] && [ ! -e "$recp3/FINISHED" ]; then pass "a deletion that had begun keeps the copy of the ledger as an unmarked staging and names it"; else fail "a deletion that had begun keeps the copy of the ledger as an unmarked staging and names it (receipt='$recp3'; err=$err)"; fi
+# A consumer discovers final names and FINISHED-marked stagings: a finish
+# that returned status=error is not among them.
+seen3=0
+for c in "$XDG_CACHE_HOME"/hyperpowers/receipts/*/ "$XDG_CACHE_HOME"/hyperpowers/receipts/.staging-*/; do
+    [ -d "$c" ] || continue
+    case "$(basename "$c")" in .staging-*) [ -f "$c/FINISHED" ] || continue ;; esac
+    [ "${c%/}" = "$recp3" ] && seen3=1
+done
+if [ "$seen3" -eq 0 ]; then pass "no consumer reads the failed finish's copy as a finished plan"; else fail "no consumer reads the failed finish's copy as a finished plan ($recp3)"; fi
 rm -rf "$wsp3"
 
 echo ""
@@ -2749,5 +2776,141 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recovery sidecar a
 plain28="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$PAIR_B")"
 err=$(materialize "$PAIR_B" "$ws28" "$plain28/plans/$ws28" 2>&1 >/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'recovery sidecar at .restore' && [ ! -e "$plain28/plans/$ws28" ] && [ ! -e "$plain28/.restore" ]; then pass "a root blob at .restore is refused before the plain fallback extracts the tip"; else fail "a root blob at .restore is refused before the plain fallback extracts the tip (rc=$rc: $err)"; fi
+
+# --- complete and handback (stop guard, 2026-10-23) -------------------------
+repo30="$TEST_ROOT/complete30"; make_repo "$repo30"
+mkdir -p "$repo30/docs"; printf '# Plan\n\n### Task 1: one\n\n### Task 2: two\n' > "$repo30/docs/plan.md"
+git -C "$repo30" add docs/plan.md; git -C "$repo30" commit -q -m plan
+ws30=$(run_sdd_dir "$repo30" docs/plan.md 2>/dev/null)
+printf '# SDD ledger — plan: docs/plan.md\nsession s30: mode worktree on main at %s started 2026-10-23T00:00:00Z\n' "$repo30" > "$ws30/progress.md"
+out=$(run_state "$repo30" complete docs/plan.md 1 --commits 1111111..2222222 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -Eq '^status=complete task=1 appended=1 snapshot=(plain|[0-9a-f]{7})$'; then pass "complete appends the canonical line and snapshots"; else fail "complete appends the canonical line and snapshots (rc=$rc: $out)"; fi
+if [ "$(grep -c '^Task 1: complete (commits 1111111..2222222, review clean)$' "$ws30/progress.md")" = 1 ]; then pass "the completion line has the canonical shape"; else fail "the completion line has the canonical shape"; fi
+out=$(run_state "$repo30" complete docs/plan.md 1 --commits 1111111..2222222 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^status=complete task=1 appended=0 snapshot=' && [ "$(grep -c '^Task 1: complete' "$ws30/progress.md")" = 1 ]; then pass "a repeated complete appends nothing and still snapshots"; else fail "a repeated complete appends nothing and still snapshots (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" complete docs/plan.md 3 --commits 1111111..2222222 --session s30); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=unknown-task task=3 tasks=2" ]; then pass "complete refuses a task the plan does not have"; else fail "complete refuses a task the plan does not have (rc=$rc: $out)"; fi
+for bad in 111111..2222222 1111111..22222222 abcdefg..1234567 1111111.2222222 1111111..2222222x; do
+  out=$(run_state "$repo30" complete docs/plan.md 2 --commits "$bad" --session s30); rc=$?
+  if [ "$rc" -eq 2 ] && [ -z "$out" ] && ! grep -q '^Task 2: complete' "$ws30/progress.md"; then pass "complete rejects the range '$bad'"; else fail "complete rejects the range '$bad' (rc=$rc: $out)"; fi
+done
+out=$(HYPERPOWERS_TEST_FAIL_SNAPSHOT=1 run_state "$repo30" complete docs/plan.md 2 --commits 3333333..4444444 --session s30); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(grep -c '^Task 2: complete' "$ws30/progress.md")" = 1 ]; then pass "a failed snapshot leaves the line and reports error"; else fail "a failed snapshot leaves the line and reports error (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits 3333333..4444444 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^status=complete task=2 appended=0 snapshot='; then pass "the retry after a failed snapshot succeeds without a second line"; else fail "the retry after a failed snapshot succeeds without a second line (rc=$rc: $out)"; fi
+# lock contention: busy, exit 3, nothing written
+lock30="$( . "$LIB"; hp_checkout_path "$repo30" ).lock"; mkdir -p "$lock30"; printf 'pid=1\n' > "$lock30/owner"
+before30=$(wc -l < "$ws30/progress.md")
+out=$(HYPERPOWERS_LOCK_WAIT_STEPS=2 run_state "$repo30" complete docs/plan.md 2 --commits 5555555..6666666 --session s30); rc=$?
+if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$(wc -l < "$ws30/progress.md")" = "$before30" ]; then pass "complete under a held lock is busy"; else fail "complete under a held lock is busy (rc=$rc: $out)"; fi
+out=$(HYPERPOWERS_LOCK_WAIT_STEPS=2 run_state "$repo30" handback docs/plan.md --reason "x" --session s30); rc=$?
+if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$(wc -l < "$ws30/progress.md")" = "$before30" ]; then pass "handback under a held lock is busy"; else fail "handback under a held lock is busy (rc=$rc: $out)"; fi
+rm -rf "$lock30"
+out=$(run_state "$repo30" handback docs/plan.md --reason "a question only you can answer" --session s30); rc=$?
+line=$(tail -n 1 "$ws30/progress.md")
+if [ "$rc" -eq 0 ] && [ "$out" = "status=handback" ] && printf '%s' "$line" | grep -Eq '^handback s30 [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z: a question only you can answer$'; then pass "handback appends a millisecond-stamped line"; else fail "handback appends a millisecond-stamped line (rc=$rc: $out / $line)"; fi
+out=$(cd "$repo30" && CLAUDE_CODE_SESSION_ID=s31 bash "$SDD_STATE" handback docs/plan.md --reason "stopped by your human partner"); rc=$?
+if [ "$rc" -eq 0 ] && tail -n 1 "$ws30/progress.md" | grep -q '^handback s31 '; then pass "handback takes the session from CLAUDE_CODE_SESSION_ID when --session is omitted"; else fail "handback takes the session from CLAUDE_CODE_SESSION_ID when --session is omitted (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" complete docs/plan.md 1 --session s30); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "complete without --commits is a usage error"; else fail "complete without --commits is a usage error (rc=$rc: $out)"; fi
+# a reason carrying a completion mark must not stand in for the canonical line
+# (the ledger is reset so task 2 is open again)
+printf '# SDD ledger — plan: docs/plan.md\n' > "$ws30/progress.md"
+before30=$(wc -l < "$ws30/progress.md")
+out=$(run_state "$repo30" handback docs/plan.md --reason "BLOCKED because Task 2: complete marker is missing" --session s30 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(wc -l < "$ws30/progress.md")" = "$before30" ]; then pass "handback refuses a reason that carries a completion mark"; else fail "handback refuses a reason that carries a completion mark (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits 7777777..8888888 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q '^status=complete task=2 appended=1 snapshot='; then pass "complete still appends after the refused handback"; else fail "complete still appends after the refused handback (rc=$rc: $out)"; fi
+# appends end a write fragment with a marker (the ledger only grows) and the completion readers ignore it
+hdr30=$(printf '# SDD ledger — plan: docs/plan.md\nsession s30: mode worktree started\n')
+reset30() { printf '%s\n' "$hdr30" > "$ws30/progress.md"; rm -rf "$ws30/claims" "$ws30/fragments.log"; }
+last30() { tail -c 1 "$ws30/progress.md" | od -An -c | tr -d ' '; }
+size30() { wc -c < "$ws30/progress.md" | tr -d ' '; }
+tab30=$(printf '\t')
+reset30; printf 'Task 2: complete (commits 1111111..22' >> "$ws30/progress.md"; sz30=$(size30)
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits 1111111..2222222 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'appended=1' && [ "$(grep -Fxc 'Task 2: complete (commits 1111111..2222222, review clean)' "$ws30/progress.md")" = 1 ] && [ "$(size30)" -gt "$sz30" ] && grep -q "^Task 2: complete (commits 1111111\.\.22${tab30}#fragment\$" "$ws30/progress.md" && grep -q ' Task 2: complete (commits 1111111..22$' "$ws30/fragments.log"; then pass "complete ends a pre-truncated fragment with a marker, keeps it in fragments.log and appends the canonical line"; else fail "complete ends a pre-truncated fragment with a marker, keeps it in fragments.log and appends the canonical line (rc=$rc: $out)"; fi
+reset30
+out=$(HYPERPOWERS_TEST_FAIL_APPEND=1 run_state "$repo30" complete docs/plan.md 2 --commits 3333333..4444444 --session s30); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(last30)" != '\n' ] && grep -q '^Task 2: complete (commits 3333333..4444444$' "$ws30/progress.md"; then pass "a short write in complete is an error and leaves a fragment past the full token"; else fail "a short write in complete is an error and leaves a fragment past the full token (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" claim docs/plan.md 2 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2" ]; then pass "claim does not treat the fragment as a completion"; else fail "claim does not treat the fragment as a completion (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 6 ] && [ "$out" = "status=open-claims tasks=2" ]; then pass "finish counts the claim open on the strength of no fragment"; else fail "finish counts the claim open on the strength of no fragment (rc=$rc: $out)"; fi
+rm -rf "$ws30/claims"; sz30=$(size30)
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits 3333333..4444444 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'appended=1' && [ "$(grep -Fxc 'Task 2: complete (commits 3333333..4444444, review clean)' "$ws30/progress.md")" = 1 ] && [ "$(size30)" -gt "$sz30" ] && grep -q "^Task 2: complete (commits 3333333\.\.4444444${tab30}#fragment\$" "$ws30/progress.md" && grep -q ' Task 2: complete (commits 3333333..4444444$' "$ws30/fragments.log"; then pass "the retry after a short write only grows the ledger and keeps the fragment"; else fail "the retry after a short write only grows the ledger and keeps the fragment (rc=$rc: $out)"; fi
+reset30
+out=$(HYPERPOWERS_TEST_FAIL_APPEND=1 run_state "$repo30" handback docs/plan.md --reason "stuck here" --session s30); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(last30)" != '\n' ]; then pass "a short write in handback is an error and leaves no newline"; else fail "a short write in handback is an error and leaves no newline (rc=$rc: $out)"; fi
+sz30=$(size30)
+out=$(run_state "$repo30" handback docs/plan.md --reason "stuck here" --session s30); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=handback" ] && [ "$(size30)" -gt "$sz30" ] && tail -n 1 "$ws30/progress.md" | grep -Eq '^handback s30 [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{12}Z: stuck here$' && grep -q "^handback s30.*${tab30}#fragment\$" "$ws30/progress.md" && grep -q ' handback s30 ' "$ws30/fragments.log"; then pass "the retry after a short write appends a well-formed handback line and keeps the fragment"; else fail "the retry after a short write appends a well-formed handback line and keeps the fragment (rc=$rc: $out)"; fi
+# a controller append that lands on an unended fragment glues to it; nothing is deleted
+reset30; printf 'Task 2: comp' >> "$ws30/progress.md"; printf 'note: a controller append\n' >> "$ws30/progress.md"; sz30=$(size30)
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits 5555555..6666666 --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'appended=1' && grep -q 'a controller append' "$ws30/progress.md" && [ "$(grep -Fxc 'Task 2: complete (commits 5555555..6666666, review clean)' "$ws30/progress.md")" = 1 ] && [ "$(size30)" -gt "$sz30" ]; then pass "a controller append glued to a fragment survives the next machine append"; else fail "a controller append glued to a fragment survives the next machine append (rc=$rc: $out)"; fi
+# verify reads the same normalized records: a fragment is never a required range
+base30=$(git -C "$repo30" rev-parse --short=7 HEAD~1); head30=$(git -C "$repo30" rev-parse --short=7 HEAD)
+reset30
+out=$(HYPERPOWERS_TEST_FAIL_APPEND=20 run_state "$repo30" complete docs/plan.md 2 --commits "$base30..$head30" --session s30); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && ! grep -q "$base30\.\.$head30" "$ws30/progress.md" && grep -q "^Task 2: complete (commits $base30\.\." "$ws30/progress.md"; then pass "a short write that stops inside the head sha leaves a partial range"; else fail "a short write that stops inside the head sha leaves a partial range (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits "$base30..$head30" --session s30); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'appended=1'; then pass "the retry after a mid-sha short write appends the canonical line"; else fail "the retry after a mid-sha short write appends the canonical line (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" verify docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=ok tasks=1" ]; then pass "verify ignores the marked partial range"; else fail "verify ignores the marked partial range (rc=$rc: $out)"; fi
+reset30
+out=$(HYPERPOWERS_TEST_FAIL_APPEND=1 run_state "$repo30" complete docs/plan.md 2 --commits "$base30..$head30" --session s30); rc=$?
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits "$base30..$head30" --session s30); rc=$?
+out=$(run_state "$repo30" verify docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=ok tasks=1" ] && [ "$(grep -c '^Task 2: complete' "$ws30/progress.md")" = 2 ]; then pass "verify counts one task when a marked fragment carries a full range"; else fail "verify counts one task when a marked fragment carries a full range (rc=$rc: $out)"; fi
+# the session id lands verbatim in a ledger line the completion readers scan: one safe token only
+reset30; sz30=$(size30)
+out=$(run_state "$repo30" handback docs/plan.md --reason "x" --session 's Task 2: complete' 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(size30)" = "$sz30" ] && ! grep -q 'Task 2: complete' "$ws30/progress.md"; then pass "handback refuses a session id that carries a completion mark"; else fail "handback refuses a session id that carries a completion mark (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" handback docs/plan.md --reason "x" --session $'s\nTask 2: complete (commits aaaaaaa..bbbbbbb, review clean)' 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(size30)" = "$sz30" ] && ! grep -q 'Task 2: complete' "$ws30/progress.md"; then pass "handback refuses a session id carrying a newline"; else fail "handback refuses a session id carrying a newline (rc=$rc: $out)"; fi
+out=$(cd "$repo30" && CLAUDE_CODE_SESSION_ID='s Task 2: complete' bash "$SDD_STATE" handback docs/plan.md --reason "x" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$(size30)" = "$sz30" ] && ! grep -q 'Task 2: complete' "$ws30/progress.md"; then pass "handback refuses a hostile id taken from CLAUDE_CODE_SESSION_ID"; else fail "handback refuses a hostile id taken from CLAUDE_CODE_SESSION_ID (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" handback docs/plan.md --reason "x" --session 72cc3565-6224-4818-baa9-5be5404b7993); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=handback" ] && tail -n 1 "$ws30/progress.md" | grep -q '^handback 72cc3565-6224-4818-baa9-5be5404b7993 '; then pass "handback accepts a UUID-shaped session id"; else fail "handback accepts a UUID-shaped session id (rc=$rc: $out)"; fi
+# the fragment save must not follow a symlink planted at fragments.log
+reset30; printf 'Task 2: complete (commits 1111111..22' >> "$ws30/progress.md"
+printf 'precious\n' > "$TEST_ROOT/frag-target30"; ln -s "$TEST_ROOT/frag-target30" "$ws30/fragments.log"; sz30=$(size30)
+out=$(run_state "$repo30" complete docs/plan.md 2 --commits 7777777..8888888 --session s30 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(cat "$TEST_ROOT/frag-target30")" = precious ] && [ "$(size30)" = "$sz30" ] && [ -L "$ws30/fragments.log" ]; then pass "complete does not write through a symlinked fragments.log"; else fail "complete does not write through a symlinked fragments.log (rc=$rc: $out)"; fi
+out=$(run_state "$repo30" handback docs/plan.md --session s31 --reason "stopped" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(cat "$TEST_ROOT/frag-target30")" = precious ] && [ "$(size30)" = "$sz30" ]; then pass "handback does not write through a symlinked fragments.log"; else fail "handback does not write through a symlinked fragments.log (rc=$rc: $out)"; fi
+rm -f "$ws30/fragments.log"
+rm -rf "$ws30"
+out=$(run_state "$repo30" complete docs/plan.md 1 --commits 1111111..2222222 --session s30); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace" ]; then pass "complete without a ledger is no-workspace"; else fail "complete without a ledger is no-workspace (rc=$rc: $out)"; fi
+# --- a job's scratch stays out of the state branch (stop guard, 2026-10-23) --
+make_pair p31
+mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan
+run_state "$PAIR_A" sync docs/plan.md >/dev/null
+co31="$STATE_ROOT/$(state_key "$PAIR_A")"
+miss31=""
+for p in 'plans/*/jobs/*/out.log' 'plans/*/jobs/*/go' 'plans/*/jobs/*/launch.lock' 'plans/*/jobs/*/stop-request'; do
+    grep -Fxq "$p" "$co31/.gitignore" || miss31="$miss31 $p"
+done
+if [ -z "$miss31" ]; then pass "the checkout's .gitignore excludes a job's scratch"; else fail "the checkout's .gitignore excludes a job's scratch (missing:$miss31)"; fi
+ws31=$(run_sdd_dir "$PAIR_A" docs/plan.md)
+printf '# SDD ledger — plan: docs/plan.md\n' > "$ws31/progress.md"
+mkdir -p "$ws31/jobs/x-0001"
+printf '{"name":"x","state":"exited"}\n' > "$ws31/jobs/x-0001/meta.json"
+printf '0\n' > "$ws31/jobs/x-0001/exit"
+printf 'noise\n' > "$ws31/jobs/x-0001/out.log"
+: > "$ws31/jobs/x-0001/stop-request"
+# the launch barrier is a FIFO git cannot index at all: an unignored one fails the commit
+mkfifo "$ws31/jobs/x-0001/go"; mkdir "$ws31/jobs/x-0001/launch.lock"
+out=$(run_state "$PAIR_A" snapshot docs/plan.md); rc=$?
+names31=$(git -C "$co31" show --name-only --format= HEAD)
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=snapshot" ] && grep -q "jobs/x-0001/meta.json\$" < <(printf '%s\n' "$names31") && grep -q "jobs/x-0001/exit\$" < <(printf '%s\n' "$names31") && ! grep -qE 'jobs/x-0001/(out\.log|stop-request|go|launch\.lock)$' < <(printf '%s\n' "$names31"); then pass "snapshot commits a job's meta.json and exit and leaves its scratch behind"; else fail "snapshot commits a job's meta.json and exit and leaves its scratch behind (rc=$rc: $out; $(printf '%s' "$names31" | tr '\n' ' '))"; fi
+# A checkout an older plugin created has no job lines; the next ensure adds them.
+printf '%s\n' '# Regenerable on any host: briefs come from task-brief, packages from review-package.' 'plans/*/task-*-brief.md' 'plans/*/review-*.diff' > "$co31/.gitignore"
+ensure "$PAIR_A" >/dev/null
+if grep -Fxq 'plans/*/jobs/*/out.log' "$co31/.gitignore" && grep -Fxq 'plans/*/task-*-brief.md' "$co31/.gitignore"; then pass "an older checkout's .gitignore gains the job lines on the next ensure"; else fail "an older checkout's .gitignore gains the job lines on the next ensure ($(tr '\n' ' ' < "$co31/.gitignore"))"; fi
+
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

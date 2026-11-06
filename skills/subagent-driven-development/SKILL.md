@@ -801,9 +801,11 @@ resume:
   granted, that session holds it): stop and hand back with the line; never
   repair the ledger or take the claim back.
 - Detach at the merged head and drop the task branch:
-  `git switch --detach <merged head>` then `git branch -D <task branch>`
+  `git switch --detach <merged head>` then `git branch -d <task branch>`
   (its commits are on the integration branch now; a missing branch on a
-  resume is fine).
+  resume is fine). If `-d` refuses, the branch holds commits that were never
+  approved or merged: keep it, do not force the delete, and hand back to
+  your human partner with git's output.
 - Append the completion line: `Task <N>: complete (commits <base7>..<head7>, review clean)`.
 - Snapshot, mark the todo complete (where you keep todos), and run `next`.
 

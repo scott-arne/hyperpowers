@@ -499,6 +499,10 @@ assert_contains "$SDD" "so append the \`approved\` line for the head the reviewe
 assert_contains "$SDD" "\`blocked waiting=<list>\` (exit 7) means an amendment put a prerequisite under your claim after you took it, and merge-back enforces the edge" "merge-back's blocked is an amended edge, not bookkeeping"
 assert_contains "$SDD" "never write a completion line for a task this session did not complete. Run \`next\` and take what it offers" "a blocked merge-back writes no completion line and runs next"
 assert_not_contains "$SDD" "\`not-approved\`, \`blocked\`: your bookkeeping is behind" "blocked is no bookkeeping repair"
+# The final gate's second round: the post-merge cleanup never force-deletes a task branch.
+assert_contains "$SDD" "\`git switch --detach <merged head>\` then \`git branch -d <task branch>\`" "the post-merge cleanup deletes the task branch with -d"
+assert_contains "$SDD" "If \`-d\` refuses, the branch holds commits that were never approved or merged: keep it, do not force the delete, and hand back to your human partner with git's output." "a refused -d keeps the branch and hands back"
+assert_not_contains "$SDD" "git branch -D <task branch>" "the post-merge cleanup never force-deletes the task branch"
 
 # finishing-a-development-branch — the session mode (portable dossiers, 2026-10-20)
 assert_contains "$FIN" "A passed \`new-branch\` or \`worktree\` changes nothing here" "new-branch and worktree keep the environment rows"

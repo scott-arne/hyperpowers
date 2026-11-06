@@ -6,14 +6,17 @@ You: I'm using Subagent-Driven Development to execute this plan.
 [Setup: branch question answered: worktree]
 [Resolve workspace: scripts/sdd-state sync docs/hyperpowers/plans/feature-plan.md → status=absent; scripts/sdd-dir docs/hyperpowers/plans/feature-plan.md — no ledger inside, fresh start]
 [Ledger: # SDD ledger — plan: docs/hyperpowers/plans/feature-plan.md]
-[Ledger: session 1f3a9c: mode worktree on feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
+[Ledger: session 1f3a9c: mode worktree on feature-plan integrating feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
+[scripts/sdd-state register docs/hyperpowers/plans/feature-plan.md --session 1f3a9c --integration feature-plan → status=registered integration=feature-plan plan-ref=feature-plan]
 [scripts/sdd-state verify docs/hyperpowers/plans/feature-plan.md → status=ok tasks=0]
 [Read plan file once: docs/hyperpowers/plans/feature-plan.md, and the spec its **Spec:** header names]
 [Create todos for all tasks]
 
 Task 1: Hook installation script (declared low)
 
-[scripts/sdd-state claim docs/hyperpowers/plans/feature-plan.md 1 --session 1f3a9c → status=claimed task=1]
+[scripts/sdd-state next docs/hyperpowers/plans/feature-plan.md --session 1f3a9c → status=next tasks=1 own-blocked=none plan=3c4d5e6]
+[scripts/sdd-state claim docs/hyperpowers/plans/feature-plan.md 1 --session 1f3a9c → status=claimed task=1 branch=feature-plan.1a2b3c4d.task-1 from=a1b2c3d]
+[git switch feature-plan.1a2b3c4d.task-1; Ledger: session 1f3a9c: mode worktree on feature-plan.1a2b3c4d.task-1 integrating feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
 [Run task-brief for Task 1; dispatch implementer with brief + report paths + context]
 [Ledger: Task 1: implementer subagent-01f3 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes]
 
@@ -34,12 +37,17 @@ Task reviewer: Spec ✅ - all requirements met, nothing extra.
 
 [Effective tier still low, plan gate reviewed the plan, no trigger fired: record the tier-skip event, skip the Codex task gate]
 [Write tier-skips.md in this plan's workspace — Task 1's skip, one line]
+[Ledger: Task 1: approved d4e5f6a]
+[scripts/sdd-state merge-back docs/hyperpowers/plans/feature-plan.md 1 --session 1f3a9c --commit d4e5f6a → status=merged task=1 head=d4e5f6a]
+[git switch --detach d4e5f6a; git branch -D feature-plan.1a2b3c4d.task-1; Ledger: session 1f3a9c: mode worktree on detached integrating feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
 [Ledger: Task 1: complete (commits a1b2c3d..d4e5f6a, review clean)]
 [scripts/sdd-state snapshot docs/hyperpowers/plans/feature-plan.md → status=snapshot sha=9e8d7c6 files=2]
 
 Task 2: Recovery modes (declared standard)
 
-[scripts/sdd-state claim docs/hyperpowers/plans/feature-plan.md 2 --session 1f3a9c → status=claimed task=2]
+[scripts/sdd-state next docs/hyperpowers/plans/feature-plan.md --session 1f3a9c → status=next tasks=2 own-blocked=none plan=3c4d5e6]
+[scripts/sdd-state claim docs/hyperpowers/plans/feature-plan.md 2 --session 1f3a9c → status=claimed task=2 branch=feature-plan.1a2b3c4d.task-2 from=d4e5f6a]
+[git switch feature-plan.1a2b3c4d.task-2; Ledger: session 1f3a9c: mode worktree on feature-plan.1a2b3c4d.task-2 integrating feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
 [Run task-brief for Task 2; dispatch implementer with brief + report paths + context]
 [Ledger: Task 2: implementer subagent-7c42 (session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix-round resumes]
 
@@ -68,19 +76,25 @@ Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
 
 [Ledger: Task 2: fix round 1/5 (2 addressed, 0 declined, 0 open; commits d4e5f6a..b7c8d9e)]
 [Codex per-task gate over d4e5f6a..b7c8d9e — approved; that would have been round 2 of the same five]
+[Ledger: Task 2: approved b7c8d9e]
+[scripts/sdd-state merge-back docs/hyperpowers/plans/feature-plan.md 2 --session 1f3a9c --commit b7c8d9e → status=merged task=2 head=b7c8d9e]
+[git switch --detach b7c8d9e; git branch -D feature-plan.1a2b3c4d.task-2; Ledger: session 1f3a9c: mode worktree on detached integrating feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
 [Ledger: Task 2: complete (commits d4e5f6a..b7c8d9e, review clean)]
 [scripts/sdd-state snapshot docs/hyperpowers/plans/feature-plan.md → status=snapshot sha=5d4c3b2 files=3]
 
 ...
 
 [After all tasks]
+[scripts/sdd-state next docs/hyperpowers/plans/feature-plan.md --session 1f3a9c → status=none reason=complete]
+[scripts/sdd-state claim docs/hyperpowers/plans/feature-plan.md final --session 1f3a9c → status=claimed task=final lease=<key>.final-5f6a7b8c9d0e]
+[git switch feature-plan — the one checkout of the integration branch, under the lease]
 [Run review-package PLAN_FILE MERGE_BASE HEAD; dispatch final code-reviewer, most capable model, with tier-skips.md]
 Final reviewer: All requirements met. Deferred minors triaged: none block merge.
 [Dispatch the decision extractor in the background: review package and ledger copied to a codex-review-dir scratch dir]
 [Ledger: Decision extractor: task-9f2a -> <dir>/decision-notes.md]
 [Codex final code gate over the branch range, tier-skips.md among the dossier adjudications — approved]
 
-[Read my session line (mode worktree); scripts/sdd-state finish docs/hyperpowers/plans/feature-plan.md → status=finished sha=0a1b2c3 last=… push=origin/hyperpowers/state; test ! -d the workspace — the record lives on hyperpowers/state and in the code history]
+[Read my session line (mode worktree); scripts/sdd-state finish docs/hyperpowers/plans/feature-plan.md --session 1f3a9c → status=finished sha=0a1b2c3 last=… push=origin/hyperpowers/state; test ! -d the workspace — the record lives on hyperpowers/state and in the code history]
 
-Done! Using hyperpowers:finishing-a-development-branch — plan, spec, and extractor task-9f2a with its notes path handed over.
+Done! Using hyperpowers:finishing-a-development-branch — plan, spec, session 1f3a9c for the lease, and extractor task-9f2a with its notes path handed over.
 ```

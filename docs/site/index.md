@@ -1,14 +1,14 @@
 # Hyperpowers
 
-Hyperpowers is a set of skills and a session-start bootstrap that give a coding agent a working method: design before code, tests before implementation, review before "done". It runs in ten agent harnesses, including Claude Code, Codex, and Cursor, plus seven more.
+Hyperpowers is a set of skills and a session-start bootstrap that give a coding agent a working method: design before code, tests before implementation, review before "done". It runs in {doc}`ten agent harnesses <install>`, including Claude Code, Codex, and Cursor, plus seven more.
 
 Left alone, a coding agent starts writing code as soon as it sees a request. Hyperpowers has it classify how much process the request needs (a feasibility spike, a bounded change, or architectural work) and ask what you are trying to do first. The ceremony scales with that classification. The approval gate before implementation applies every time. After you sign off on the design, the agent writes a plan and works through it task by task with subagents, reviewing each one.
 
 ## Where to start
 
-- If you are new, read the guide pages.
-- To choose skills, use the skills reference.
-- To lower cost, read the recommended settings.
+- If you are new, read the {doc}`guide pages <why>`.
+- To choose skills, use the {doc}`skills reference <skills/index>`.
+- To lower cost, read the {doc}`recommended settings <recommended-settings>`.
 
 ## Credit
 

@@ -98,7 +98,10 @@ has no records: for it, this step is the test run alone.
    waiting: finished, its file is the `--notes`; unfinished, stop it
    (TaskStop), compile without notes, and say so when you hand back. The spec
    must be clean before the compile (no uncommitted edits; commit or stash
-   them), because a skip restores it from HEAD. Run
+   them), because a skip restores it from HEAD. A spec that already carries
+   an Outcome line is a spec another plan finished first; the compiler
+   recompiles it, adding this plan to the Outcome line and its notes as
+   their own paragraph, and never refuses it. Run
    `bash <this skill's directory>/scripts/decisions-compile <spec> --plan <plan> --notes <file> --paths-file <dir>/records.paths`,
    omitting `--plan` when the branch has no plan and `--notes` when there is
    no notes file. A `notes ignored:` line on its stderr is repeated verbatim
@@ -243,6 +246,17 @@ records and the plan's deletion are merely staged.
 Then run the option they chose. A branch with no records shows the menu as it
 always did.
 
+**Plans that share the integration branch.** When the hand-off names a
+dossier (SDD), run `bash ../subagent-driven-development/scripts/sdd-state board --repo "$(git -C "$(dirname <plan>)" rev-parse --show-toplevel)"`
+(the script path is relative to this skill's directory): the repository is
+the plan file's, where the dossier lives, which is not the code repository
+when the plan lives elsewhere. When it lists
+another open plan whose `integration=` is this branch, the merge option is
+withheld: present the three-option menu with option 1 replaced by the line
+`1. (merge withheld: plan <ws> is still open on this branch)` and accept
+only options 2 and 3; say which plan is open, and a pull request's
+description states that another plan is still open on the branch.
+
 **Normal repo and named-branch worktree — present exactly these 3 options:**
 
 ```
@@ -304,6 +318,11 @@ was created.
 MAIN_ROOT=$(git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-toplevel)
 cd "$MAIN_ROOT"
 
+# SDD only: mark the branch closing under the locks; a sibling that opened
+# since the board was printed makes this sibling-open, which means show the
+# menu again without the merge option.
+bash ../subagent-driven-development/scripts/sdd-state lease <plan> --closing --session <sid>
+
 # Merge first — verify success before removing anything
 git checkout <base-branch>
 git pull
@@ -317,11 +336,20 @@ If tests fail on the merged result: stop, leave the worktree and branch in
 place, and investigate — nothing has been pushed, so the merge is local
 and recoverable.
 
-Once the merged result is green: clean up the worktree (Step 6), then
-delete the branch:
+Once the merged result is green: detach the session's worktree (git
+refuses to delete a branch that is checked out in any worktree, and Step 6
+leaves a host-owned worktree in place):
+
+```bash
+git -C "$WORKTREE_PATH" switch --detach   # SDD only, when that worktree still exists and has the integration branch checked out
+```
+
+Then clean up the worktree (Step 6), then delete the branch and, as the
+last action, release the lease:
 
 ```bash
 git branch -d <feature-branch>
+bash ../subagent-driven-development/scripts/sdd-state lease <plan> --release --session <sid>   # SDD only, the last action; status=no-lease is fine
 ```
 
 ### Option 2: Push and Create PR
@@ -339,9 +367,23 @@ present, and report the URL to your human partner.
 
 Keep the worktree — your human partner iterates on PR feedback there.
 
+Then, in this order:
+
+```bash
+git -C "$WORKTREE_PATH" switch --detach                                                       # SDD only, when the integration branch is checked out there
+bash ../subagent-driven-development/scripts/sdd-state lease <plan> --release --session <sid>   # SDD only, the last action; status=no-lease is fine
+```
+
 ### Option 3: Keep As-Is
 
 Report: "Keeping branch <name>. Worktree preserved at <path>."
+
+Then, in this order:
+
+```bash
+git -C "$WORKTREE_PATH" switch --detach                                                       # SDD only, when the integration branch is checked out there
+bash ../subagent-driven-development/scripts/sdd-state lease <plan> --release --session <sid>   # SDD only, the last action; status=no-lease is fine
+```
 
 ### If your human partner asks to discard the work
 
@@ -371,6 +413,9 @@ git branch -D <feature-branch>
 ```
 
 ## Step 6: Cleanup Workspace
+
+SDD only: the integration branch is checked out nowhere while sessions
+work; detach before the lease is released, never after.
 
 **Runs for the standard menu's Option 1 and confirmed discards; never after the push-or-keep menu of mode `current-branch` on the default branch.** Options 2 and 3 always
 preserve the worktree. Both callers have already changed directory to the

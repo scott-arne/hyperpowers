@@ -153,7 +153,7 @@ if [ -n "$plan" ]; then
   # The plan is deleted and named in every record, so it must not be a path
   # the compiler owns, must have the shape finishing's discovery glob
   # (*/plans/*.md) finds, and must survive the Recorded line, which is split
-  # on the last "; plan ".
+  # on every "; plan ".
   if [ "$plan_rel" = "$spec_rel" ] || [ "$plan_rel" = "$index_rel" ]; then
     die2 "$spec_rel: plan overlaps a compiler-owned path: $plan"
   fi
@@ -346,27 +346,79 @@ write_if_changed() {
 }
 
 render_record() {  # N -> the record text
-  local n=$1 target status rec_date recorded notes_body
+  local n=$1 target status rec_date recorded notes_body rec_full plans_seen p first_plan existing_body
   target="$records_dir/${files[n]}"
+  plans_seen=""
   if [ "${existing[n]}" = 1 ]; then
     status=$(existing_field "$target" Status)
     rec_date=$(existing_field "$target" Recorded | cut -c1-10)
     notes_body=$(existing_notes "$target")
+    # Every plan a finish removed stays named, in order, each once. The line
+    # is split on "; plan ", the one text a plan path may not hold, so a
+    # semicolon elsewhere in a path survives.
+    rec_full=$(existing_field "$target" Recorded)
+    plans_seen=$(printf '%s\n' "$rec_full" | awk '{ k = split($0, a, "; plan "); for (i = 2; i <= k; i++) if (sub(/ removed at finish$/, "", a[i])) print a[i] }')
+  fi
+  if [ -n "$plan_rel" ]; then
+    case $'\n'"$plans_seen"$'\n' in
+      *$'\n'"$plan_rel"$'\n'*) ;;
+      *) plans_seen="${plans_seen:+$plans_seen$'\n'}$plan_rel" ;;
+    esac
   fi
   [ -n "${status:-}" ] || status=accepted
   [ -n "${rec_date:-}" ] || rec_date=$today
-  if $notes_valid && [ -f "$tmp/note-$n.txt" ]; then notes_body=$(cat "$tmp/note-$n.txt"); fi
+  if $notes_valid && [ -f "$tmp/note-$n.txt" ]; then
+    # With --plan, plans_seen holds this plan; anything more is another plan.
+    if [ -n "$plan_rel" ] && [ "$plans_seen" != "$plan_rel" ]; then
+      # A second plan's notes do not replace the first's: each plan's
+      # notes are a section opening "From <plan basename>: ", a bare body
+      # an earlier finish wrote becomes the first plan's section, and this
+      # plan's section is replaced where it stands, so a re-run of either
+      # finish leaves the body as it was.
+      first_plan=${plans_seen%%$'\n'*}
+      existing_body=${notes_body:-}
+      [ "$existing_body" != "Nothing recorded." ] || existing_body=""
+      printf '%s: ' "From $(basename "$plan_rel")" > "$tmp/notes-new"
+      cat "$tmp/note-$n.txt" >> "$tmp/notes-new"
+      notes_body=$(printf '%s\n' "$existing_body" | NOTES_KNOWN=$(printf '%s\n' "$plans_seen" | sed 's|.*/||') NOTES_FIRST=$(basename "$first_plan") NOTES_ME=$(basename "$plan_rel") NOTES_NEW="$tmp/notes-new" awk '
+        BEGIN {
+          nk = split(ENVIRON["NOTES_KNOWN"], known, "\n")
+          for (j = 1; j <= nk; j++) if (length(known[j])) prefix[++np] = "From " known[j] ": "
+          first = "From " ENVIRON["NOTES_FIRST"] ": "; me = "From " ENVIRON["NOTES_ME"] ": "
+          f = ENVIRON["NOTES_NEW"]
+          while ((getline l < f) > 0) newtext = (seen++ ? newtext "\n" : "") l
+          blank = 1
+        }
+        {
+          if ($0 ~ /^[[:space:]]*$/) { if (ns) text[ns] = text[ns] "\n" $0; blank = 1; next }
+          o = ""
+          if (blank) for (j = 1; j <= np; j++) if (index($0, prefix[j]) == 1) { o = prefix[j]; break }
+          if (o != "") { owner[++ns] = o; text[ns] = $0 }
+          else if (!ns) { owner[++ns] = first; text[ns] = first $0 }
+          else text[ns] = text[ns] "\n" $0
+          blank = 0
+        }
+        END {
+          for (s = 1; s <= ns; s++) {
+            t = text[s]; sub(/\n[[:space:]]*$/, "", t)
+            if (owner[s] == me) { if (put) continue; t = newtext; put = 1 }
+            out = (out == "" ? "" : out "\n\n") t
+          }
+          if (!put) out = (out == "" ? "" : out "\n\n") newtext
+          print out
+        }')
+    else
+      notes_body=$(cat "$tmp/note-$n.txt")
+    fi
+  fi
   [ -n "${notes_body:-}" ] || notes_body="Nothing recorded."
   recorded=$rec_date
   if [ "$notes_body" != "Nothing recorded." ]; then
     recorded="$recorded; notes from the branch diff by a subagent at finish"
   fi
-  if [ -n "$plan_rel" ]; then
-    recorded="$recorded; plan $plan_rel removed at finish"
-  elif [ "${existing[n]}" = 1 ]; then
-    rec_full=$(existing_field "$target" Recorded)
-    case "$rec_full" in *"; plan "*) recorded="$recorded; plan ${rec_full##*; plan }" ;; esac
-  fi
+  while IFS= read -r p; do
+    [ -z "$p" ] || recorded="$recorded; plan $p removed at finish"
+  done <<< "$plans_seen"
   printf '# %s\n\n- Status: %s\n' "${titles[n]}" "$status"
   identity_of "$n"
   printf -- '- Recorded: %s\n' "$recorded"
@@ -502,19 +554,35 @@ render_index() {  # records dir -> the README text
   fi
 }
 
+# The Outcome line names every plan that implemented the spec, with its date:
+# "implemented <date> (<plan>), <date> (<plan>); <n> decisions under <dir>/".
+# Sibling plans of one spec finish one after another, and each finish
+# recompiles. A run without --plan writes a bare date only into a spec that
+# has no line yet; an older line's bare date is kept as its first entry. A
+# plan already named is not named twice, so a re-run changes nothing.
+outcome_entries() {  # existing line or empty -> its entries with this run's added
+  local existing=$1 entries entry
+  entries=$(printf '%s' "$existing" | sed -n 's/^\*\*Outcome:\*\* implemented \(.*\); [0-9][0-9]* decisions.*/\1/p')
+  if [ -n "$plan_rel" ]; then entry="$today ($(basename "$plan_rel"))"; else entry=$today; fi
+  if [ -z "$entries" ]; then printf '%s' "$entry"; return; fi
+  if [ -z "$plan_rel" ]; then printf '%s' "$entries"; return; fi
+  case "$entries" in *"($(basename "$plan_rel"))"*) printf '%s' "$entries"; return ;; esac
+  printf '%s, %s' "$entries" "$entry"
+}
+
 outcome_line() { printf '**Outcome:** implemented %s; %s decisions under %s/.' "$1" "$count" "$records_rel"; }
 
 render_spec() {  # the spec text with its Outcome line written or rewritten
-  local current odate line
+  local current line
   current=$(head -n 30 "$spec_abs" | grep -m 1 '^\*\*Outcome:\*\*' || true)
+  line=$(outcome_line "$(outcome_entries "$current")")
+  # The line reaches awk through the environment, not -v, which would read a
+  # backslash in a plan's file name as an escape.
   if [ -n "$current" ]; then
-    odate=$(printf '%s' "$current" | sed -n 's/.*implemented \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]\);.*/\1/p')
-    [ -n "$odate" ] || odate=$today
-    line=$(outcome_line "$odate")
-    awk -v line="$line" 'NR <= 30 && !r && /^\*\*Outcome:\*\*/ { print line; r = 1; next } { print }' "$spec_abs"
+    OUTCOME_LINE=$line awk 'BEGIN { line = ENVIRON["OUTCOME_LINE"] } NR <= 30 && !r && /^\*\*Outcome:\*\*/ { print line; r = 1; next } { print }' "$spec_abs"
   else
-    line=$(outcome_line "$today")
-    awk -v line="$line" '
+    OUTCOME_LINE=$line awk '
+      BEGIN { line = ENVIRON["OUTCOME_LINE"] }
       NR == 1 && /^# / { print; if ((getline nxt) > 0) { if (nxt ~ /^$/) { print ""; print line; print "" } else { print ""; print line; print ""; print nxt } } else { print ""; print line; print "" }; next }
       NR == 1 { print line; print ""; print; next }
       { print }

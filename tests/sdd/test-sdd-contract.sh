@@ -442,6 +442,12 @@ assert_contains "$FIN" "A passed \`new-branch\` or \`worktree\` changes nothing 
 assert_contains "$FIN" "Skip this step when mode \`current-branch\` was passed and \`\$CURRENT_BRANCH\` is \`\$DEFAULT_BRANCH\`" "only the default-branch case skips the base step"
 assert_contains "$FIN" "ask your human partner which is the default before choosing a row" "a main-and-master tie asks"
 assert_contains "$FIN" "git push <remote> <branch>:<branch>" "the push names one remote and one refspec"
+# finishing-a-development-branch — plans that share a spec (parallel development, 2026-10-27)
+assert_contains "$FIN" "the compiler recompiles it, adding this plan to the Outcome line" "finishing recompiles a spec with an Outcome line"
+assert_contains "$FIN" "merge withheld: plan <ws> is still open on this branch" "finishing withholds the merge while a sibling plan is open"
+assert_contains "$FIN" "sdd-state lease <plan> --closing --session <sid>" "finishing marks the branch closing before the merge"
+assert_contains "$FIN" "sdd-state lease <plan> --release --session <sid>" "finishing releases the lease last"
+assert_contains "$FIN" 'board --repo "$(git -C "$(dirname <plan>)" rev-parse --show-toplevel)"' "finishing reads the board from the plan repository"
 # Turn liveness (spec 2026-10-19): a status message never ends a turn mid-plan,
 # long work is tracked, and Claude Code waits in the foreground.
 assert_contains "$SDD" "While the plan has tasks left, a turn ends in exactly three cases" \

@@ -2035,6 +2035,74 @@ if [ "$(cksum < "$repo/$kappa_spec")" = "$kappa_spec_sum" ]; then pass "the spec
 if [ ! -d "$repo/docs/hyperpowers/decisions" ]; then pass "the records of both compiles are gone"; else fail "records after undo (files: $(ls "$repo/docs/hyperpowers/decisions" 2>/dev/null))"; fi
 if [ "$(cksum < "$repo/$kappa_plan")" = "$kappa_plan_sum" ]; then pass "the plan is restored byte for byte"; else fail "plan after undo (cksum: $(cksum < "$repo/$kappa_plan" 2>/dev/null))"; fi
 
+# --- 36. two plans of one spec: the second finish recompiles ----------------
+repo="$TEST_ROOT/shared"
+make_repo "$repo"
+write_spec "$repo" shared-design.md <<'EOF'
+# Shared
+
+## Decisions
+
+- First decision. Why it holds.
+- Second decision. Why it holds.
+EOF
+printf '# A\n\n**Spec:** docs/hyperpowers/specs/shared-design.md\n' > "$repo/docs/hyperpowers/plans/a.md"
+printf '# B\n\n**Spec:** docs/hyperpowers/specs/shared-design.md\n' > "$repo/docs/hyperpowers/plans/b.md"
+commit_all "$repo" "spec and plans"
+shared_spec="$repo/docs/hyperpowers/specs/shared-design.md"
+printf '# Decision notes: docs/hyperpowers/specs/shared-design.md\n\n## Decision 1\nPlan A changed the first thing.\n\n## Decision 2\nNo change.\n' > "$TEST_ROOT/shared-notes-a.md"
+COMPILE_DATE=2026-10-21 run_compile "$repo" docs/hyperpowers/specs/shared-design.md --plan docs/hyperpowers/plans/a.md --notes "$TEST_ROOT/shared-notes-a.md"
+if [ "$RC" -eq 0 ] && [ "$(sed -n 3p "$shared_spec")" = "**Outcome:** implemented 2026-10-21 (a.md); 2 decisions under docs/hyperpowers/decisions/." ]; then pass "a finish with a plan names it in the Outcome line"; else fail "first Outcome (rc $RC, err: $ERR, got: $(sed -n 3p "$shared_spec"))"; fi
+shared_rec="$repo/docs/hyperpowers/decisions/2026-10-21-first-decision.md"
+if grep -q '^Plan A changed the first thing\.$' "$shared_rec"; then pass "a single plan's notes carry no plan prefix"; else fail "single-plan notes ($(sed -n '/What implementation changed/,$p' "$shared_rec" | tr '\n' '|'))"; fi
+commit_all "$repo" "records for a"
+printf '# Decision notes: docs/hyperpowers/specs/shared-design.md\n\n## Decision 1\nPlan B changed it again.\n\n## Decision 2\nNo change.\n' > "$TEST_ROOT/shared-notes-b.md"
+COMPILE_DATE=2026-10-24 run_compile "$repo" docs/hyperpowers/specs/shared-design.md --plan docs/hyperpowers/plans/b.md --notes "$TEST_ROOT/shared-notes-b.md"
+if [ "$RC" -eq 0 ] && [ "$(sed -n 3p "$shared_spec")" = "**Outcome:** implemented 2026-10-21 (a.md), 2026-10-24 (b.md); 2 decisions under docs/hyperpowers/decisions/." ]; then pass "a second finish appends its plan and date to the Outcome line"; else fail "second Outcome (rc $RC, err: $ERR, got: $(sed -n 3p "$shared_spec"))"; fi
+if grep -q '^- Recorded: 2026-10-21; notes from the branch diff by a subagent at finish; plan docs/hyperpowers/plans/a.md removed at finish; plan docs/hyperpowers/plans/b.md removed at finish$' "$shared_rec"; then pass "Recorded keeps its date and lists both plans in order"; else fail "Recorded both plans (got: $(grep '^- Recorded' "$shared_rec"))"; fi
+expected_notes=$(printf '## What implementation changed\n\nFrom a.md: Plan A changed the first thing.\n\nFrom b.md: Plan B changed it again.')
+if [ "$(sed -n '/^## What implementation changed$/,$p' "$shared_rec")" = "$expected_notes" ]; then pass "each plan's notes are their own paragraph, the first kept under its plan's name"; else fail "per-plan paragraphs (got: $(sed -n '/What implementation changed/,$p' "$shared_rec" | tr '\n' '|'))"; fi
+if git -C "$repo" diff --cached --name-status | grep -q '^D[[:space:]]*docs/hyperpowers/plans/b.md$'; then pass "the second finish stages its own plan's removal"; else fail "plan b removal (staged: $(git -C "$repo" diff --cached --name-status | tr '\n' ';'))"; fi
+shared_sums="$(cksum < "$shared_spec") $(cksum < "$shared_rec")"
+shared_status=$(git -C "$repo" status --porcelain -uall)
+COMPILE_DATE=2026-10-25 run_compile "$repo" docs/hyperpowers/specs/shared-design.md --plan docs/hyperpowers/plans/b.md --notes "$TEST_ROOT/shared-notes-b.md"
+if [ "$RC" -eq 0 ] && [ "$(cksum < "$shared_spec") $(cksum < "$shared_rec")" = "$shared_sums" ] && [ "$(git -C "$repo" status --porcelain -uall)" = "$shared_status" ]; then pass "re-running the second finish on a later day adds nothing twice"; else fail "idempotent second finish (rc $RC, err: $ERR, Outcome: $(sed -n 3p "$shared_spec"), notes: $(sed -n '/What implementation changed/,$p' "$shared_rec" | tr '\n' '|'))"; fi
+commit_all "$repo" "records for b"
+run_compile "$repo" docs/hyperpowers/specs/shared-design.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "a run without a plan keeps both plans in the Outcome line, Recorded and the notes"; else fail "run without a plan after two finishes (rc $RC, err: $ERR, diff: $(git -C "$repo" diff | tr '\n' '|'))"; fi
+
+# An Outcome line of the older shape (a bare date) is kept as the first
+# entry, and a plan's multi-paragraph notes are one section: a re-run of the
+# first plan after the second replaces that section in place.
+repo="$TEST_ROOT/legacy-outcome"
+make_repo "$repo"
+write_spec "$repo" legacy-design.md <<'EOF'
+# Legacy
+
+## Decisions
+
+- Only decision. Why it holds.
+EOF
+commit_all "$repo" "spec"
+legacy_spec="$repo/docs/hyperpowers/specs/legacy-design.md"
+COMPILE_DATE=2026-10-19 run_compile "$repo" docs/hyperpowers/specs/legacy-design.md
+commit_all "$repo" "records without a plan"
+printf '# C\n\n**Spec:** docs/hyperpowers/specs/legacy-design.md\n' > "$repo/docs/hyperpowers/plans/c.md"
+printf '# D\n\n**Spec:** docs/hyperpowers/specs/legacy-design.md\n' > "$repo/docs/hyperpowers/plans/d.md"
+commit_all "$repo" "plans"
+printf '# Decision notes: docs/hyperpowers/specs/legacy-design.md\n\n## Decision 1\nC changed it.\n\nA second paragraph from C.\n' > "$TEST_ROOT/legacy-notes-c.md"
+printf '# Decision notes: docs/hyperpowers/specs/legacy-design.md\n\n## Decision 1\nD changed it too.\n' > "$TEST_ROOT/legacy-notes-d.md"
+run_compile "$repo" docs/hyperpowers/specs/legacy-design.md --plan docs/hyperpowers/plans/c.md --notes "$TEST_ROOT/legacy-notes-c.md"
+if [ "$RC" -eq 0 ] && [ "$(sed -n 3p "$legacy_spec")" = "**Outcome:** implemented 2026-10-19, 2026-10-21 (c.md); 1 decisions under docs/hyperpowers/decisions/." ]; then pass "an older Outcome line's bare date is kept as the first entry"; else fail "legacy Outcome (rc $RC, err: $ERR, got: $(sed -n 3p "$legacy_spec"))"; fi
+commit_all "$repo" "records for c"
+run_compile "$repo" docs/hyperpowers/specs/legacy-design.md --plan docs/hyperpowers/plans/d.md --notes "$TEST_ROOT/legacy-notes-d.md"
+commit_all "$repo" "records for d"
+legacy_rec="$repo/docs/hyperpowers/decisions/2026-10-19-only-decision.md"
+expected_notes=$(printf '## What implementation changed\n\nFrom c.md: C changed it.\n\nA second paragraph from C.\n\nFrom d.md: D changed it too.')
+if [ "$(sed -n '/^## What implementation changed$/,$p' "$legacy_rec")" = "$expected_notes" ]; then pass "a multi-paragraph first plan section gains its plan's name once"; else fail "multi-paragraph sections (got: $(sed -n '/What implementation changed/,$p' "$legacy_rec" | tr '\n' '|'))"; fi
+run_compile "$repo" docs/hyperpowers/specs/legacy-design.md --plan docs/hyperpowers/plans/c.md --notes "$TEST_ROOT/legacy-notes-c.md"
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "re-running the first plan after the second changes nothing"; else fail "first plan re-run (rc $RC, err: $ERR, notes: $(sed -n '/What implementation changed/,$p' "$legacy_rec" | tr '\n' '|'))"; fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

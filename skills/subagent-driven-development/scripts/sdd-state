@@ -425,7 +425,7 @@ cmd_snapshot() {
 # workspace, so a claim can never slip in between those two steps.
 cmd_claim() {
   local plan="" n="" sid="" takeover=0 release=0 code="" claims target tmp rc owner since wt prev
-  local graph pair blob deps d waiting line again pass integ ref from k prev_ref tb branch_out lease have
+  local graph pair blob deps d waiting line again pass integ ref from k prev_ref tb branch_out lease have mrc
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
@@ -746,6 +746,12 @@ cmd_claim() {
     hp_unlock; echo "sdd-state: $ref already exists at ${have:0:7}, not at its base ${from:0:7}; it is a leftover of an abandoned run" >&2; echo "status=error"; return 2
   fi
   if [ "$takeover" -eq 1 ] && [ -d "$target" ]; then
+    # A holder that died between merge-back's merged line and the completion
+    # line leaves a task that is already published: the new holder resumes
+    # it at the completion line, so its record names no task branch and
+    # none is made.
+    grep -Eq "^Task $n: merged [0-9a-f]{7} into " "$WSDIR/progress.md" 2>/dev/null; mrc=$?
+    if [ "$mrc" -eq 0 ]; then ref=""; from=""; elif [ "$mrc" -ne 1 ]; then hp_unlock; echo "status=error"; return 2; fi
     if [ -n "$ref" ]; then
       prev_ref=""
       [ -z "$(sed -n 's/^from=//p' "$target/owner" 2>/dev/null)" ] || prev_ref=$(sed -n 's/^branch=//p' "$target/owner" 2>/dev/null)
@@ -760,6 +766,10 @@ cmd_claim() {
     if ! printf -- '--- superseded at %s\n%s\n' "$(hp_utc_now)" "$prev" >> "$target/owner.history"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
     if ! mv -f "$target/owner.new" "$target/owner"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
     if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
+    if [ "$mrc" -eq 0 ]; then
+      write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }
+      hp_unlock; echo "status=claimed task=$n takeover=1 branch=none merged=1"; return 0
+    fi
     claim_finish_branch strict || { hp_unlock; echo "status=error"; return 2; }
     hp_unlock
     echo "status=claimed task=$n takeover=1${branch_out}"; return 0

@@ -457,7 +457,10 @@ branch while other sessions merge.
   compaction) prints the same two fields: check the branch out and proceed;
   `held` with `own=1` and `merged=1` means the task is already merged and its
   branch deleted: check nothing out and resume it at its completion line
-  (Complete the task, below);
+  (Complete the task, below); `claimed` with `takeover=1` and `merged=1`
+  means the same after a takeover: the task is already merged, so check
+  nothing out, dispatch nothing, and resume it at its completion line (the
+  previous holder's task branch may still exist; you do not need it);
   `held` from `claim` after `next` offered the task is a race lost, run
   `next` again; `blocked` means the plan moved under you, run `next` again.
   A task held by another session is ordinary while next offers another: take

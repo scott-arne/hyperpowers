@@ -492,6 +492,8 @@ assert_contains "$SDD" "\`held\` with \`own=1\` and \`merged=1\` means the task 
 assert_contains "$SDD" "\`not-holder owner=<sid>\` (exit 4) means the claim is no longer yours" "merge-back's not-holder is a lost claim"
 assert_contains "$SDD" "stop and hand back with the line; never repair the ledger or take the claim back" "a not-holder merge-back hands back"
 assert_not_contains "$SDD" "\`not-approved\`, \`not-holder\`, \`blocked\`: your bookkeeping is behind" "not-holder is no bookkeeping repair"
+# The final gate's first round: a takeover of a merged task.
+assert_contains "$SDD" "\`claimed\` with \`takeover=1\` and \`merged=1\` means the same after a takeover: the task is already merged, so check nothing out, dispatch nothing, and resume it at its completion line" "a takeover of a merged task resumes at the completion line"
 
 # finishing-a-development-branch — the session mode (portable dossiers, 2026-10-20)
 assert_contains "$FIN" "A passed \`new-branch\` or \`worktree\` changes nothing here" "new-branch and worktree keep the environment rows"

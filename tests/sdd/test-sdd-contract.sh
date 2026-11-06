@@ -490,5 +490,13 @@ assert_contains "$SDD_RATIONALIZATIONS" "I've said what's next; I'll pick it up 
 assert_contains "$SDD_RATIONALIZATIONS" 'A trailing `&` keeps it out of my way' \
   "rationalization row for the detached launch"
 
+assert_contains "$WPLANS" "**Depends on:** none" "writing-plans template carries the Depends on line"
+assert_contains "$WPLANS" "names the tasks whose completion lines must exist before this task may be claimed" "writing-plans defines the Depends on line"
+assert_contains "$WPLANS" "**Merge-expected files:**" "writing-plans names merge-expected files in Global Constraints"
+assert_contains "$WPLANS" "a task without a Depends on line" "writing-plans placeholder scan covers the Depends on line"
+WT="$REPO_ROOT/skills/using-git-worktrees/SKILL.md"
+assert_contains "$WT" "git worktree add --detach" "using-git-worktrees starts a later SDD session's worktree detached"
+assert_contains "$WT" "the claim creates the task branch and the controller checks it out" "using-git-worktrees defers the task branch to the claim"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

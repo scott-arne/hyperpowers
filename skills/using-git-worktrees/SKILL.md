@@ -109,6 +109,20 @@ git worktree add "$path" -b "$BRANCH_NAME"
 cd "$path"
 ```
 
+**A later session of a plan that is already running** (the SDD skill says
+so: the plan's ledger has a plan line naming an integration branch) starts
+its worktree detached at that branch's head rather than on a new branch:
+
+```bash
+git worktree add --detach "$path" "<integration branch>"
+cd "$path"
+```
+
+The integration branch itself is checked out nowhere while sessions work on
+the plan; the claim creates the task branch and the controller checks it
+out, and after each merge-back the worktree detaches again at the merged
+head.
+
 **Sandbox fallback:** If `git worktree add` fails with a permission error (sandbox denial), tell your human partner the sandbox blocked worktree creation and ask the Step 0 question again with options 1 and 2 only. Their answer is the mode you report (`current-branch` or `new-branch`); a denied worktree is never reported as `worktree`. Then run setup and baseline tests in place.
 
 ## Step 2: Project Setup
@@ -174,6 +188,7 @@ that called you records it, and the finishing skill routes on it.
 | `.worktrees/` exists | Use it (verify ignored) |
 | `worktrees/` exists | Use it (verify ignored) |
 | Both exist | Use `.worktrees/` |
+| Later session on a running SDD plan | Detached worktree at the integration head (Step 1b) |
 | Neither exists | Check instruction file, then default `.worktrees/` |
 | Directory not ignored | Add to .gitignore + commit |
 | Permission error on create | Re-ask options 1 and 2; their answer is the mode, never `worktree` (Step 1b) |

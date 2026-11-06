@@ -508,6 +508,11 @@ assert_contains "$FIN" 'PLAN_REL=$(git -C "$dir" rev-parse --show-prefix)$rest' 
 assert_contains "$FIN" '`<plan>` in the lease commands below is `"$PLAN_REPO/$PLAN_REL"`' "finishing names the lease's plan path once beside the capture"
 assert_contains "$FIN" 'board --repo "$PLAN_REPO"' "finishing reads the board from the plan repository"
 assert_contains "$FIN" "any other status, \`status=no-lease\` among them, stops Option 1 before the merge" "a closing that answers no-lease stops Option 1"
+assert_contains "$FIN" "Under SDD, a failed merge or failing tests leave the lease marked closing (\`closing=1\`)" "Option 1 names the lease state its failure paths leave"
+assert_contains "$FIN" "If your human partner decides against the merge instead, release the lease with the release line this option ends with" "Option 1 says how a closing lease is released after a failure"
+assert_contains "$FIN" "Under SDD the discard takes Option 1's check before anything is deleted." "the discard checks the branch's other plans"
+assert_contains "$FIN" "any other status, \`status=sibling-open\` and \`status=no-lease\` among them, stops the discard before anything is deleted" "a discard whose closing is refused deletes nothing"
+assert_before "$FIN" "Under SDD the discard takes Option 1's check before anything is deleted." "git branch -D <feature-branch>" "the discard's check comes before the force-delete"
 # The finishing skill runs from the repository root, so a path to another
 # skill's script is spelled from this skill's directory, as its own are.
 assert_contains "$FIN" "bash <this skill's directory>/../subagent-driven-development/scripts/sdd-state board --repo \"\$PLAN_REPO\"" "finishing spells the board's script path from its own directory"

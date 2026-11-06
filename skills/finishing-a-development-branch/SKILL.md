@@ -368,6 +368,14 @@ If tests fail on the merged result: stop, leave the worktree and branch in
 place, and investigate — nothing has been pushed, so the merge is local
 and recoverable.
 
+Under SDD, a failed merge or failing tests leave the lease marked closing
+(`closing=1`): until it is released, register and task claims on this
+branch answer `branch-closing`, so say so when you report the failure. Once
+the cause is fixed, run the block above again. If your human partner decides
+against the merge instead, release the lease with the release line this
+option ends with (`sdd-state lease <plan> --release --session <sid>`), which
+reopens the branch.
+
 Once the merged result is green: detach the session's worktree (git
 refuses to delete a branch that is checked out in any worktree, and Step 6
 leaves a host-owned worktree in place):
@@ -436,6 +444,19 @@ Wait for that exact confirmation. When it arrives:
 ```bash
 MAIN_ROOT=$(git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-toplevel)
 cd "$MAIN_ROOT"
+```
+
+Under SDD the discard takes Option 1's check before anything is deleted.
+When the board (Plans that share the integration branch, above) lists
+another open plan whose `integration=` is this branch, delete nothing: the
+branch carries that plan's work too, so tell your human partner which plan
+is open and stop. Otherwise mark the branch closing; `status=closing` goes
+on, and any other status, `status=sibling-open` and `status=no-lease` among
+them, stops the discard before anything is deleted: report its line to your
+human partner.
+
+```bash
+bash <this skill's directory>/../subagent-driven-development/scripts/sdd-state lease <plan> --closing --session <sid>   # SDD only
 ```
 
 Then detach the session's worktree, as in Option 1:

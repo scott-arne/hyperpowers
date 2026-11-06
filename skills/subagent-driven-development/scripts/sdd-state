@@ -22,14 +22,18 @@
 #   sdd-state board PLAN_FILE [--code-repo DIR]      (or: board --repo DIR)
 #
 # stdout: one line of space-separated key=value pairs, status= first; sync
-# adds a second line "merge=<command>" on diverged, and board prints its
-# table below the status line.
+# adds a second line "merge=<command>" on diverged, and board, deps and the
+# refusals of amend and deps --check print their status line and then their lines.
 # exit: 0 ok | 1 offline, offline-no-state, push-failed | 2 usage or internal
 #       (needs-sync, foreign branch, no-workspace, import-failed) |
 #       3 diverged, busy, remote-finished |
-#       4 claim held by another session | 5 scan-failed | 6 open-claims |
-#       7 plain backend (handoff) | 8 plan-not-committed |
-#       9 wrong-repo, code-missing, plan-stale | 10 code-dirty | 11 detached-head | 12 shallow-source
+#       4 claim held by another session, merge-back not-holder |
+#       5 scan-failed | 6 open-claims |
+#       7 plain backend (handoff), blocked | 8 plan-not-committed, conflict |
+#       9 wrong-repo, code-missing, plan-stale, wrong-branch, spec-branch-mismatch |
+#       10 code-dirty | 11 detached-head, not-holder (finish), no-final-claim |
+#       12 shallow-source, not-approved | 13 checked-out | 14 stale |
+#       15 branch-closing, sibling-open
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

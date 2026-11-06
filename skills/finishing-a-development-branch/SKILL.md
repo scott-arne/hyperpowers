@@ -101,7 +101,16 @@ has no records: for it, this step is the test run alone.
    them), because a skip restores it from HEAD. A spec that already carries
    an Outcome line is a spec another plan finished first; the compiler
    recompiles it, adding this plan to the Outcome line and its notes as
-   their own paragraph, and never refuses it. Run
+   their own paragraph, and never refuses it. When the hand-off names a
+   dossier (SDD), record the plan repository first, for Step 4's board: the
+   compile removes the plan file and can empty its directory (an SDD branch
+   with no spec runs no compile and records it the same way before Step 4).
+
+   ```bash
+   PLAN_REPO=$(git -C "$(dirname <plan>)" rev-parse --show-toplevel)
+   ```
+
+   Then run
    `bash <this skill's directory>/scripts/decisions-compile <spec> --plan <plan> --notes <file> --paths-file <dir>/records.paths`,
    omitting `--plan` when the branch has no plan and `--notes` when there is
    no notes file. A `notes ignored:` line on its stderr is repeated verbatim
@@ -247,10 +256,11 @@ Then run the option they chose. A branch with no records shows the menu as it
 always did.
 
 **Plans that share the integration branch.** When the hand-off names a
-dossier (SDD), run `bash ../subagent-driven-development/scripts/sdd-state board --repo "$(git -C "$(dirname <plan>)" rev-parse --show-toplevel)"`
-(the script path is relative to this skill's directory): the repository is
-the plan file's, where the dossier lives, which is not the code repository
-when the plan lives elsewhere. When it lists
+dossier (SDD), run `bash ../subagent-driven-development/scripts/sdd-state board --repo "$PLAN_REPO"`
+(the script path is relative to this skill's directory): `PLAN_REPO` is the
+plan file's repository, recorded in Step 1 before the compile, where the
+dossier lives, which is not the code repository when the plan lives
+elsewhere. When it lists
 another open plan whose `integration=` is this branch, the merge option is
 withheld: present the three-option menu with option 1 replaced by the line
 `1. (merge withheld: plan <ws> is still open on this branch)` and accept
@@ -318,9 +328,11 @@ was created.
 MAIN_ROOT=$(git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-toplevel)
 cd "$MAIN_ROOT"
 
-# SDD only: mark the branch closing under the locks; a sibling that opened
-# since the board was printed makes this sibling-open, which means show the
-# menu again without the merge option.
+# SDD only: mark the branch closing under the locks. status=closing, or
+# status=no-lease (nothing holds the branch), goes on to the merge. A sibling
+# that opened since the board was printed makes this sibling-open, which
+# means show the menu again without the merge option. Any other status stops
+# here, before the merge: report it to your human partner with its stderr line.
 bash ../subagent-driven-development/scripts/sdd-state lease <plan> --closing --session <sid>
 
 # Merge first — verify success before removing anything
@@ -406,10 +418,18 @@ MAIN_ROOT=$(git -C "$(git rev-parse --git-common-dir)/.." rev-parse --show-tople
 cd "$MAIN_ROOT"
 ```
 
-Then clean up the worktree (Step 6) and force-delete the branch:
+Then detach the session's worktree, as in Option 1:
+
+```bash
+git -C "$WORKTREE_PATH" switch --detach   # SDD only, when that worktree still exists and has the integration branch checked out
+```
+
+Then clean up the worktree (Step 6), force-delete the branch and, as the
+last action, release the lease:
 
 ```bash
 git branch -D <feature-branch>
+bash ../subagent-driven-development/scripts/sdd-state lease <plan> --release --session <sid>   # SDD only, the last action; status=no-lease is fine
 ```
 
 ## Step 6: Cleanup Workspace

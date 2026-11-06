@@ -72,12 +72,19 @@ PLAN=""; PLAN_DIR=""; REPO=""; WS=""; SLUG=""; BRANCH=""; REMOTE=""; CO=""; BACK
 
 # Resolve PLAN_FILE without touching the checkout: sync fetches first.
 # REPO and REMOTE are consumed by the sync, verify and handoff subcommands.
+# A second and third argument are a plan directory and workspace name that
+# resolve_plan_lease has already resolved for a plan whose file is gone;
+# without them the plan must be an existing file.
 # shellcheck disable=SC2034
 resolve_plan_basic() {
   PLAN=$1
-  PLAN_DIR=$(hp_plan_dir "$PLAN") || { echo "sdd-state: plan file is not inside a git repository: $PLAN" >&2; exit 2; }
+  if [ $# -ge 3 ]; then
+    PLAN_DIR=$2; WS=$3
+  else
+    PLAN_DIR=$(hp_plan_dir "$PLAN") || { echo "sdd-state: plan file is not inside a git repository: $PLAN" >&2; exit 2; }
+    WS=$(hp_plan_ws_name "$PLAN")
+  fi
   REPO=$(hp_physical_dir "$(git -C "$PLAN_DIR" rev-parse --show-toplevel)")
-  WS=$(hp_plan_ws_name "$PLAN")
   SLUG=${WS%-*}
   BRANCH=$(hp_state_branch "$PLAN_DIR")
   REMOTE=$(hp_state_remote "$PLAN_DIR")
@@ -86,7 +93,7 @@ resolve_plan_basic() {
 # Resolve and make sure the checkout (or the plain root) exists.
 resolve_plan() {
   local ensure
-  resolve_plan_basic "$1"
+  resolve_plan_basic "$@"
   # The grammar is one status line on stdout for every outcome; the library
   # has already said on stderr why the checkout could not be created.
   ensure=$(hp_ensure_checkout "$PLAN_DIR") || { echo "status=error"; exit 2; }
@@ -1534,6 +1541,33 @@ lease_supersede() {
   printf -- '--- superseded at %s\n%s\n' "$(hp_utc_now)" "$(cat "$2" 2>/dev/null)" >> "$h" || return 1
   lease_write "$1" "$2" "$3"
 }
+# PLAN_FILE for lease alone, which must work after the finishing compile has
+# removed the plan file (git rm, which also removes a directory it empties):
+# the closing and the release come after it. A path whose file is gone falls
+# back to its nearest existing ancestor directory inside a work tree, and the
+# workspace name comes from the repository-relative path as for a present
+# file. Every other subcommand refuses a missing plan, because there the
+# refusal catches a mistyped path; here a link at the plan path, an ancestor
+# that is no directory, a . or .. in the missing part, and a path whose
+# nearest existing directory is in no work tree are refused the same way.
+resolve_plan_lease() {
+  local p=$1 d missing="" top="" abs=""
+  if [ -e "$p" ] || [ -L "$p" ]; then resolve_plan "$p"; return; fi
+  # dirname ends at . or /, which always exist, so the walk ends.
+  d=$(dirname "$p")
+  while [ ! -d "$d" ] && [ ! -e "$d" ] && [ ! -L "$d" ]; do
+    missing="/$(basename "$d")$missing"; d=$(dirname "$d")
+  done
+  if [ -d "$d" ] && d=$(hp_physical_dir "$d") && top=$(git -C "$d" rev-parse --show-toplevel 2>/dev/null) && top=$(hp_physical_dir "$top"); then
+    abs="$d$missing/$(basename "$p")"
+  fi
+  case "$missing/$(basename "$p")/" in */./*|*/../*) abs="" ;; esac
+  case "$abs" in
+    "$top"/?*) ;;
+    *) echo "sdd-state: plan file is not inside a git repository: $p" >&2; exit 2 ;;
+  esac
+  resolve_plan "$p" "$d" "$(hp_ws_name_of_rel "$d" "${abs#"$top"/}")"
+}
 # <ws> [<sid>] -> the lease file whose record names this workspace and, when
 # given, this session, found without a workspace on disk: a release after
 # finish needs only the plan path's repository key, and a takeover after
@@ -1567,7 +1601,7 @@ cmd_lease() {
     esac
   done
   [ -n "$plan" ] && [ -n "$sid" ] && [ -n "$op" ] || usage
-  resolve_plan "$plan"
+  resolve_plan_lease "$plan"
   # The lock pair needs the code repository's path; its comparison with the
   # plan line waits for the recovery below.
   code=$(code_repo_arg "$code") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }

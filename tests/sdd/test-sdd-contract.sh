@@ -447,7 +447,8 @@ assert_contains "$FIN" "the compiler recompiles it, adding this plan to the Outc
 assert_contains "$FIN" "merge withheld: plan <ws> is still open on this branch" "finishing withholds the merge while a sibling plan is open"
 assert_contains "$FIN" "sdd-state lease <plan> --closing --session <sid>" "finishing marks the branch closing before the merge"
 assert_contains "$FIN" "sdd-state lease <plan> --release --session <sid>" "finishing releases the lease last"
-assert_contains "$FIN" 'board --repo "$(git -C "$(dirname <plan>)" rev-parse --show-toplevel)"' "finishing reads the board from the plan repository"
+assert_contains "$FIN" 'PLAN_REPO=$(git -C "$(dirname <plan>)" rev-parse --show-toplevel)' "finishing records the plan repository before the compile removes the plan"
+assert_contains "$FIN" 'board --repo "$PLAN_REPO"' "finishing reads the board from the plan repository"
 # Turn liveness (spec 2026-10-19): a status message never ends a turn mid-plan,
 # long work is tracked, and Claude Code waits in the foreground.
 assert_contains "$SDD" "While the plan has tasks left, a turn ends in exactly three cases" \

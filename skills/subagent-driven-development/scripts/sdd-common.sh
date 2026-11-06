@@ -175,10 +175,16 @@ hp_plan_rel() {
 }
 # <plan-file> -> <slug>-<hash8>, the workspace name, identical on every host.
 hp_plan_ws_name() {
-  local d rel slug hash8
+  local d
   d=$(hp_plan_dir "$1") || return 1
-  rel=$(hp_plan_rel "$1")
-  slug=$(basename "$1"); slug=${slug%.*}
+  hp_ws_name_of_rel "$d" "$(hp_plan_rel "$1")"
+}
+# <directory in the plan's repository> <repo-relative plan path> -> the
+# workspace name. One computation for a present plan and for the path of one
+# the finishing compile removed, which only lease resolves.
+hp_ws_name_of_rel() {
+  local d=$1 rel=$2 slug hash8
+  slug=$(basename "$rel"); slug=${slug%.*}
   # A workspace name never starts with a dot: dotted entries under plans/
   # are the leftovers of removals (.removing-, .quarantining-, .pruned-),
   # and a plan file named like one must not be taken for them. A plan file

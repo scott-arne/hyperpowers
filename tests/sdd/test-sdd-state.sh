@@ -3701,6 +3701,42 @@ if [ "$rc" -eq 4 ] && [ "$out" = "status=held task=final lease=s1 plan=$sp_enc" 
 run_state "$sp" claim "docs/a plan.md" final --session s1 --release >/dev/null; run_state "$sp" claim docs/b.md final --session s2 >/dev/null
 out=$(run_state "$sp" lease docs/b.md --closing --session s2 2>/dev/null); rc=$?
 if [ "$rc" -eq 15 ] && [ "$out" = "status=sibling-open plan=$sp_enc" ]; then pass "the open sibling's workspace name is encoded in sibling-open"; else fail "encoded sibling-open (rc=$rc: $out)"; fi
+# The finishing compile removes the plan file (git rm, then the records commit) before the closing and the release: lease alone resolves the gone path through the nearest existing directory, with the workspace name of its repository-relative path; claim and next still refuse it.
+rp="$TEST_ROOT/rp"; make_repo "$rp"; git -C "$rp" switch -q -c feat
+mkdir -p "$rp/docs/plans"; : > "$rp/docs/spec.md"; : > "$rp/docs/plans/keep.md"
+printf '# R\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rp/docs/plans/r.md"
+git -C "$rp" add docs; git -C "$rp" commit -qm plan
+wsrp=$(run_sdd_dir "$rp" docs/plans/r.md 2>/dev/null); printf '# SDD ledger — plan: docs/plans/r.md\n' > "$wsrp/progress.md"
+run_state "$rp" register docs/plans/r.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsrp/progress.md"
+run_state "$rp" claim docs/plans/r.md final --session s1 >/dev/null; run_state "$rp" finish docs/plans/r.md --session s1 >/dev/null
+lease_rp=""; for rp_f in "$STATE_ROOT/$(state_key "$rp").final-"*; do [ -f "$rp_f" ] && lease_rp=$rp_f; done
+git -C "$rp" rm -q docs/plans/r.md; git -C "$rp" commit -qm records
+out=$(run_state "$rp" claim docs/plans/r.md 1 --session s1 2>"$TEST_ROOT/rp.claim.err"); rc=$?
+out2=$(run_state "$rp" next docs/plans/r.md --session s1 2>"$TEST_ROOT/rp.next.err"); rc2=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q 'plan file is not inside a git repository' "$TEST_ROOT/rp.claim.err" && [ "$rc2" -eq 2 ] && [ -z "$out2" ] && grep -q 'plan file is not inside a git repository' "$TEST_ROOT/rp.next.err"; then pass "claim and next still refuse a plan path whose file is gone"; else fail "claim/next on a removed plan (rc=$rc: $out; rc2=$rc2: $out2)"; fi
+out=$(run_state "$rp" lease docs/plans/r.md --closing --session s1 2>"$TEST_ROOT/rp.lease.err"); rc=$?
+if [ -n "$lease_rp" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=closing" ] && [ "$(sed -n 's/^closing=//p' "$lease_rp")" = 1 ]; then pass "closing resolves a plan path whose file the finishing compile removed"; else fail "closing after the plan's removal (rc=$rc: $out; $(cat "$TEST_ROOT/rp.lease.err"))"; fi
+out=$(run_state "$rp" lease docs/plans/r.md --release --session s1 2>/dev/null); rc=$?
+if [ -n "$lease_rp" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && [ ! -f "$lease_rp" ]; then pass "release resolves a plan path whose file the finishing compile removed"; else fail "release after the plan's removal (rc=$rc: $out)"; fi
+# The only plan in its directory: the removal takes the directory with it, and the release still finds the lease.
+rq="$TEST_ROOT/rq"; make_repo "$rq"; git -C "$rq" switch -q -c feat
+mkdir -p "$rq/docs/plans"; : > "$rq/docs/spec.md"
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rq/docs/plans/q.md"
+git -C "$rq" add docs; git -C "$rq" commit -qm plan
+wsrq=$(run_sdd_dir "$rq" docs/plans/q.md 2>/dev/null); printf '# SDD ledger — plan: docs/plans/q.md\n' > "$wsrq/progress.md"
+run_state "$rq" register docs/plans/q.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsrq/progress.md"
+run_state "$rq" claim docs/plans/q.md final --session s1 >/dev/null; run_state "$rq" finish docs/plans/q.md --session s1 >/dev/null
+lease_rq=""; for rq_f in "$STATE_ROOT/$(state_key "$rq").final-"*; do [ -f "$rq_f" ] && lease_rq=$rq_f; done
+git -C "$rq" rm -q docs/plans/q.md; git -C "$rq" commit -qm records
+out=$(run_state "$rq" lease docs/plans/q.md --release --session s1 2>/dev/null); rc=$?
+if [ ! -d "$rq/docs/plans" ] && [ -n "$lease_rq" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && [ ! -f "$lease_rq" ]; then pass "release still works once the removal took the plans directory with it"; else fail "release without the plans directory (rc=$rc: $out; dir present: $([ -d "$rq/docs/plans" ] && echo yes || echo no))"; fi
+# The fallback is no wider than a removed file: a link at the plan path, and a path whose nearest existing directory is in no repository, are still refused.
+ln -s nowhere.md "$rq/docs/link.md"
+out=$(run_state "$rq" lease docs/link.md --release --session s1 2>/dev/null); rc=$?
+out2=$(run_state "$rq" lease "$TEST_ROOT/no-repo/plans/p.md" --release --session s1 2>/dev/null); rc2=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$rc2" -eq 2 ] && [ -z "$out2" ]; then pass "lease still refuses a link at the plan path and a path outside any repository"; else fail "lease fallback bounds (link rc=$rc: $out; outside rc=$rc2: $out2)"; fi
 
 
 echo "amend: the plan ref's only writer"

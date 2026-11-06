@@ -63,8 +63,20 @@ sandbox, whose file watchers it cannot open.
 ## Building the docs
 
 The Read the Docs site lives in `docs/site/` (Sphinx, the Lumina theme,
-MyST). Build it, and check its external links, with pinned dependencies in
-an ephemeral environment:
+MyST). The root `package.json` has two scripts for it. They need `uv`, no
+`npm install`, and write to `docs/site/_build/html`:
+
+```bash
+npm run docs        # live-reload server at http://127.0.0.1:8000
+npm run docs:build  # one-off build that fails on any warning, as Read the Docs does
+```
+
+`npm run docs` rebuilds when a file under `docs/site/` changes and reloads
+the page in your browser. Warnings are printed but do not stop the server.
+`npm run docs -- --port 8001` serves on another port.
+
+Without npm, build it, and check its external links, with pinned
+dependencies in an ephemeral environment:
 
 ```bash
 uv run --python 3.13 --with-requirements docs/site/requirements.txt \

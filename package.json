@@ -4,6 +4,10 @@
   "description": "Hyperpowers skills and runtime bootstrap for coding agents",
   "type": "module",
   "main": ".opencode/plugins/hyperpowers.js",
+  "scripts": {
+    "docs": "uv run --python 3.13 --with-requirements docs/site/requirements.txt --with sphinx-autobuild==2025.8.25 sphinx-autobuild docs/site docs/site/_build/html",
+    "docs:build": "uv run --python 3.13 --with-requirements docs/site/requirements.txt sphinx-build -W --keep-going docs/site docs/site/_build/html"
+  },
   "keywords": [
     "pi-package",
     "skills",

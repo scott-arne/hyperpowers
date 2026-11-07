@@ -1,5 +1,7 @@
 # Parallel development on the same machine: dependency-aware claims, merge-back and a waiting board
 
+**Outcome:** implemented 2026-11-07; 19 decisions under docs/hyperpowers/decisions/.
+
 **Date:** 2026-10-27
 **Status:** design approved in chat on 2026-10-27 (seven clarifying answers,
 the approach, six design sections); spec self-reviewed; Codex spec gate
@@ -169,6 +171,25 @@ This design closes those five gaps with the model decision 2 chose.
   path in the records writer); deferring to the final review (the live
   run would fail at the finish). Decided 2026-11-06 in chat, during Task 9
   of the plan.
+- The merged task branch is deleted with `git branch -d`, never `-D`.
+  After merge-back the SDD skill detaches at the merged head and runs
+  `git branch -d <task branch>`, which checks the reachability section 3
+  relies on; a refusal means the branch holds commits that were never
+  approved or merged, so the session keeps it, does not force the delete,
+  and hands back with git's output. This departs from section 3's
+  `git branch -D <ref>`. Rejected: keeping `-D` (it deletes commits made
+  on the task branch after its approved head without a message). Decided
+  2026-11-06 in chat, at the final Codex gate.
+- Path fields compared as keys take a reversible encoding. The `shares=`
+  paths that `deps --check` and `amend` print, and a plan line's `spec=`,
+  go through `enc_spec` (a percent sign becomes `%25` first, then a space
+  `%20`), so "a b" and "a%20b" stay distinct; every other path-valued
+  field keeps `enc`, which only turns a space into `%20` and is read,
+  never compared. This departs from the plan's Global Constraint that
+  every path-valued field goes through `enc`. Rejected: `enc` for these
+  fields (a path holding a literal `%20` would compare equal to one
+  holding a space). Made during execution and accepted at finish on
+  2026-11-07.
 
 ## Design
 

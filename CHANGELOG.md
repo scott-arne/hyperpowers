@@ -2,6 +2,12 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
+## Unreleased
+
+- **Several sessions can work one plan, or sibling plans of one spec, at once.** Plans carry a `**Depends on:**` line per task (a plan without any is serial, as before); `sdd-state deps` reads the graph from the plan ref's head and `deps --check` names tasks that share files or interfaces without an edge; a session registers the plan's integration branch (`register`), asks `next` for the claimable frontier, claims a task and gets a task branch (`<integration>.<ws8>.task-N`), merges the approved commit back after its gate (`merge-back`, by the plumbing `sync` uses, under both repositories' locks, with a merge record that makes a retry idempotent), and claims the final train (`claim final`) with a lease on the branch that serializes sibling plans' finals; `wait` and `board` show who waits on what; `amend` is the plan ref's only writer; `finish` takes `--session`. Two sessions on one plan need this version on both.
+- **A second plan of one spec recompiles its records.** The spec's Outcome line names every plan with its date, each record's `Recorded:` lists them, and each plan's notes are their own paragraph; the finishing skill withholds the merge while a sibling plan is open on the branch and releases the branch lease after the option runs.
+- **Floors.** `merge-back` and `amend` need git 2.38 (`merge-tree --write-tree`) and refuse an older git by name; everything else keeps 2.31.
+
 ## 6.17.0 (2026-11-06)
 
 In Zed, SDD sessions looked idle while the plan was unfinished, and a controller sometimes ended its turn after announcing its next step.

@@ -6,25 +6,41 @@
 # Usage:
 #   sdd-state sync PLAN_FILE [--assume-absent]      (or: sync --repo DIR [--assume-absent])
 #   sdd-state verify PLAN_FILE [--code-repo DIR]
-#   sdd-state snapshot PLAN_FILE [-m MSG]
+#   sdd-state snapshot PLAN_FILE [-m MSG] [--session SID]
 #   sdd-state handoff PLAN_FILE [--push] [--plan-untracked-ok] [--code-dirty-ok] [--code-repo DIR]
-#   sdd-state finish PLAN_FILE [--force]
+#   sdd-state finish PLAN_FILE --session SID [--force] [--code-repo DIR]
 #   sdd-state import PLAN_FILE
 #   sdd-state prune [--receipts] [--days N] [--apply] [--repo DIR]
-#   sdd-state claim PLAN_FILE N --session SID [--takeover]
+#   sdd-state claim PLAN_FILE (N|final) --session SID [--takeover] [--release] [--code-repo DIR]
 #   sdd-state complete PLAN_FILE N --commits BASE..HEAD [--session SID]
 #   sdd-state handback PLAN_FILE --reason TEXT [--session SID]
+#   sdd-state deps PLAN_FILE [--check] [--ledger FILE] [--from FILE] [--code-repo DIR]
+#   sdd-state register PLAN_FILE --session SID --integration BRANCH [--code-repo DIR]
+#   sdd-state next PLAN_FILE --session SID [--code-repo DIR]
+#   sdd-state lease PLAN_FILE (--release|--closing) --session SID [--code-repo DIR]
+#   sdd-state amend PLAN_FILE --from FILE --base BLOB [--accept SPEC ...] [--message SUBJECT] [--code-repo DIR]
+#   sdd-state merge-back PLAN_FILE N --session SID --commit SHA [--code-repo DIR]
+#   sdd-state wait PLAN_FILE --session SID (--kind KIND [--task N|final] --note TEXT | --clear)
+#   sdd-state board PLAN_FILE [--code-repo DIR]      (or: board --repo DIR)
 #
 # stdout: one line of space-separated key=value pairs, status= first; sync
-# adds a second line "merge=<command>" on diverged.
-# exit: 0 ok | 1 offline, offline-no-state, push-failed | 2 usage or internal
-#       (needs-sync, foreign branch, no-workspace, import-failed, complete's
-#       unknown-task) |
+# adds a second line "merge=<command>" on diverged, and board, deps and the
+# refusals of amend and deps --check print their status line and then their lines.
+# exit: 0 ok | 1 offline, offline-no-state, push-failed, conflicts (deps --check,
+#       amend) | 2 usage or internal (error, needs-sync, foreign branch,
+#       no-workspace, import-failed, invalid: a plan graph that does not parse,
+#       or for next and claim final a registered plan with no task headings,
+#       complete's unknown-task) |
 #       3 diverged, busy (also complete and handback), remote-finished |
-#       4 claim held by another session | 5 scan-failed | 6 open-claims |
-#       7 plain backend (handoff) | 8 plan-not-committed |
-#       9 wrong-repo, code-missing, plan-stale | 10 code-dirty | 11 detached-head | 12 shallow-source |
-#       13 live-jobs (finish, while a tracked job is live)
+#       4 claim held by another session, merge-back not-holder,
+#       no-lease (lease --closing) |
+#       5 scan-failed | 6 open-claims |
+#       7 plain backend (handoff), blocked | 8 plan-not-committed, conflict |
+#       9 wrong-repo, code-missing, plan-stale, wrong-branch, spec-branch-mismatch |
+#       10 code-dirty | 11 detached-head, not-holder (finish), no-final-claim |
+#       12 shallow-source, not-approved |
+#       13 checked-out (amend, merge-back), live-jobs (finish, while a tracked job is live) |
+#       14 stale | 15 branch-closing, sibling-open
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -50,14 +66,22 @@ usage() {
     'usage: sdd-state <subcommand> ...' \
     '  sync PLAN_FILE [--assume-absent]   |   sync --repo DIR [--assume-absent]' \
     '  verify PLAN_FILE [--code-repo DIR]' \
-    '  snapshot PLAN_FILE [-m MSG]' \
+    '  snapshot PLAN_FILE [-m MSG] [--session SID]' \
     '  handoff PLAN_FILE [--push] [--plan-untracked-ok] [--code-dirty-ok] [--code-repo DIR]' \
-    '  finish PLAN_FILE [--force]' \
+    '  finish PLAN_FILE --session SID [--force] [--code-repo DIR]' \
     '  import PLAN_FILE' \
     '  prune [--receipts] [--days N] [--apply] [--repo DIR]' \
-    '  claim PLAN_FILE N --session SID [--takeover]' \
+    '  claim PLAN_FILE (N|final) --session SID [--takeover] [--release] [--code-repo DIR]' \
     '  complete PLAN_FILE N --commits BASE..HEAD [--session SID]' \
-    '  handback PLAN_FILE --reason TEXT [--session SID]' >&2
+    '  handback PLAN_FILE --reason TEXT [--session SID]' \
+    '  deps PLAN_FILE [--check] [--ledger FILE] [--from FILE] [--code-repo DIR]' \
+    '  register PLAN_FILE --session SID --integration BRANCH [--code-repo DIR]' \
+    '  next PLAN_FILE --session SID [--code-repo DIR]' \
+    '  lease PLAN_FILE (--release|--closing) --session SID [--code-repo DIR]' \
+    '  amend PLAN_FILE --from FILE --base BLOB [--accept SPEC ...] [--message SUBJECT] [--code-repo DIR]' \
+    '  merge-back PLAN_FILE N --session SID --commit SHA [--code-repo DIR]' \
+    '  wait PLAN_FILE --session SID (--kind KIND [--task N|final] --note TEXT | --clear)' \
+    '  board PLAN_FILE [--code-repo DIR]   |   board --repo DIR' >&2
   exit 2
 }
 
@@ -65,12 +89,19 @@ PLAN=""; PLAN_DIR=""; REPO=""; WS=""; SLUG=""; BRANCH=""; REMOTE=""; CO=""; BACK
 
 # Resolve PLAN_FILE without touching the checkout: sync fetches first.
 # REPO and REMOTE are consumed by the sync, verify and handoff subcommands.
+# A second and third argument are a plan directory and workspace name that
+# resolve_plan_lease has already resolved for a plan whose file is gone;
+# without them the plan must be an existing file.
 # shellcheck disable=SC2034
 resolve_plan_basic() {
   PLAN=$1
-  PLAN_DIR=$(hp_plan_dir "$PLAN") || { echo "sdd-state: plan file is not inside a git repository: $PLAN" >&2; exit 2; }
+  if [ $# -ge 3 ]; then
+    PLAN_DIR=$2; WS=$3
+  else
+    PLAN_DIR=$(hp_plan_dir "$PLAN") || { echo "sdd-state: plan file is not inside a git repository: $PLAN" >&2; exit 2; }
+    WS=$(hp_plan_ws_name "$PLAN")
+  fi
   REPO=$(hp_physical_dir "$(git -C "$PLAN_DIR" rev-parse --show-toplevel)")
-  WS=$(hp_plan_ws_name "$PLAN")
   SLUG=${WS%-*}
   BRANCH=$(hp_state_branch "$PLAN_DIR")
   REMOTE=$(hp_state_remote "$PLAN_DIR")
@@ -79,7 +110,7 @@ resolve_plan_basic() {
 # Resolve and make sure the checkout (or the plain root) exists.
 resolve_plan() {
   local ensure
-  resolve_plan_basic "$1"
+  resolve_plan_basic "$@"
   # The grammar is one status line on stdout for every outcome; the library
   # has already said on stderr why the checkout could not be created.
   ensure=$(hp_ensure_checkout "$PLAN_DIR") || { echo "status=error"; exit 2; }
@@ -88,36 +119,324 @@ resolve_plan() {
   WSDIR="$ROOT/plans/$WS"
 }
 ledger_path() { printf '%s/progress.md\n' "$WSDIR"; }
-# One encoding for every path-valued stdout field: a space becomes %20.
+# A path-valued stdout field that is read, never compared as a key: a space
+# becomes %20. It is not reversible (a path holding a literal %20 prints the
+# same), so the fields compared as keys, the shares= paths of deps --check
+# and amend and a plan line's spec=, take enc_spec's percent-first order.
 enc() { printf '%s' "$1" | sed 's/ /%20/g'; }
-owner_record() { # <sid>
+# --code-repo DIR, or the cwd's toplevel: the repository that owns the
+# integration branch when the plan lives elsewhere. Exits 2 as verify does.
+code_repo_arg() { # <value or empty> [<ledger>] -> physical path; refuses a repository whose root is not the recorded code root
+  local code=$1 ledger=${2:-} line want
+  if [ -z "$code" ]; then
+    code=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "sdd-state: not inside a code repository; pass --code-repo DIR" >&2; echo "status=error"; exit 2; }
+  fi
+  code=$(hp_physical_dir "$code") || { echo "sdd-state: no such directory: $code" >&2; echo "status=error"; exit 2; }
+  git -C "$code" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $code" >&2; echo "status=error"; exit 2; }
+  if [ -n "$ledger" ] && [ -f "$ledger" ]; then
+    line=$(plan_line_of "$ledger")
+    if [ -n "$line" ]; then
+      want=$(plan_field "$line" code-root)
+      if [ "$(root_of "$code" | cut -c1-7)" != "$want" ]; then echo "status=wrong-repo expected=$want"; exit 9; fi
+    fi
+  fi
+  printf '%s\n' "$code"
+}
+# Reversible, unlike enc: percent first, then space, so "a b" and "a%20b"
+# stay distinct specs.
+enc_spec() { printf '%s' "$1" | sed 's/%/%25/g; s/ /%20/g'; }
+# <ledger> -> "integration=.. code-root=.. plan-ref=.. plan-root=.. spec=.." from the newest plan line, or nothing.
+# The line on disk keeps the spec path as written; the spec= value is
+# enc_spec-encoded here so that plan_field, which splits on spaces, stays exact.
+plan_line_of() {
+  local raw
+  raw=$(sed -n '/^plan: integration [^ ]* code-root [^ ]* plan-ref [^ ]* plan-root [^ ]* spec /p' "$1" 2>/dev/null | tail -n 1)
+  [ -n "$raw" ] || return 0
+  printf '%s spec=%s\n' \
+    "$(printf '%s' "$raw" | sed 's/^plan: integration \([^ ]*\) code-root \([^ ]*\) plan-ref \([^ ]*\) plan-root \([^ ]*\) spec .*$/integration=\1 code-root=\2 plan-ref=\3 plan-root=\4/')" \
+    "$(enc_spec "$(printf '%s' "$raw" | sed 's/^plan: integration [^ ]* code-root [^ ]* plan-ref [^ ]* plan-root [^ ]* spec //')")"
+}
+# <ledger>: 0 when it holds a plan line, 1 when it holds none, 2 when it
+# cannot be read (plan_line_of reads an unreadable ledger as no line).
+ledger_has_plan_line() { grep -q '^plan: integration [^ ]* code-root [^ ]* plan-ref [^ ]* plan-root [^ ]* spec ' "$1" 2>/dev/null; }
+plan_field() { printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -n 1; }
+spec_of_plan() { sed -n 's/^\*\*Spec:\*\*[[:space:]]*//p' "$1" | head -n 1; }
+ws8_of() { printf '%s' "$1" | sed 's/.*-//'; }
+owner_record() { # <sid> [<task branch> <from sha>]
   local top b
   # Test hook: a failed owner write, so the fail-closed paths are provable.
   [ -z "${HYPERPOWERS_TEST_FAIL_OWNER_WRITE:-}" ] || return 1
   top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
   b=$(git branch --show-current 2>/dev/null)
   [ -n "$b" ] || b="detached@$(git rev-parse --short=7 HEAD 2>/dev/null || echo none)"
-  printf 'session=%s\nworktree=%s\nbranch=%s\nhost=%s\ntime=%s\n' "$1" "$top" "$b" "$(hostname)" "$(hp_utc_now)"
+  # checkout= is the session's own branch, for the board; branch= is the
+  # task branch the claim owns, the name the spec gives it.
+  printf 'session=%s\nworktree=%s\ncheckout=%s\nhost=%s\ntime=%s\n' "$1" "$top" "$b" "$(hostname)" "$(hp_utc_now)"
+  # The task branch is part of the claim: written before the rename, so a
+  # crash between the rename and the branch creation leaves the retry its
+  # intended name and base.
+  [ -z "${2:-}" ] || printf 'branch=%s\nfrom=%s\n' "$2" "$3"
+}
+# Completion is a ledger record that begins with the marker; an amendment or scan
+# line that merely mentions "Task N: complete" must not satisfy a dependency.
+# The one completion reader is ledger_marks_complete below, which also drops
+# the fragments an interrupted write leaves.
+ledger_task_complete() { ledger_marks_complete "$@"; }
+claim_task_branch_name() { # <integration> <ws8> <N> [<k>] -> <integration>.<ws8>.task-<N>[.<k>]
+  printf '%s.%s.task-%s%s' "$1" "$2" "$3" "${4:+.$4}"
+}
+# <session id>: 0 when the id can name a record file and sit on one line.
+# One holding a slash would have directories made under waiting/ and
+# activity/ that block another session's records and hold no record the
+# board reads; a control character, a newline above all, splits the board's
+# line-by-line listing of those directories into phantom sessions, and the
+# owner record, the lease and amend's ledger line into lines of their own.
+# Every subcommand that writes the id calls this before its first side
+# effect.
+sid_ok() {
+  case "$1" in
+    ''|.|..|*/*|*[[:cntrl:]]*) printf 'sdd-state: a session id must be one path entry without control characters: %q\n' "$1" >&2; return 1 ;;
+  esac
+}
+# <dir under ROOT> <session id> <content>: publishes one of a session's own
+# records, waiting/<sid> or activity/<sid>. The session id is caller input
+# and both directories arrive with a fetched state branch, so the id is
+# checked here too (sid_ok). Containment is checked at the write point, leaf
+# included, only the record's own directory is made, and an entry there
+# that is not a regular file is refused: a rename onto a directory would
+# move the record inside it and report success. The content goes to an
+# exclusively created temporary file outside the tracked tree, beside the
+# checkout or plain root on the same filesystem, so the rename stays atomic
+# and a snapshot staging the workspace meanwhile (the record writers take no
+# lock) can commit neither a temporary name nor a half-written record.
+record_publish() {
+  local dest="$ROOT/$1/$2" t
+  sid_ok "$2" || return 1
+  hp_contained "$ROOT" "$1/$2" || return 1
+  mkdir -p "$ROOT/$1" || return 1
+  t=$(mktemp "$(dirname "$ROOT")/.sdd-record.XXXXXX") || return 1
+  printf '%s\n' "$3" > "$t" || { rm -f "$t"; return 1; }
+  if [ -e "$dest" ] && [ ! -f "$dest" ]; then rm -f "$t"; echo "sdd-state: $dest is not a regular file; refusing to replace it" >&2; return 1; fi
+  mv -f "$t" "$dest" || { rm -f "$t"; return 1; }
+}
+write_activity() { # <sid>
+  record_publish "plans/$WS/activity" "$1" "$(hp_utc_now)"
+}
+
+# --- deps --------------------------------------------------------------------
+# The authoritative plan is the blob at the plan ref's head in the plan
+# repository, never a worktree's copy: two sessions on two task branches
+# would otherwise read two graphs. With a plan line the ref is the line's
+# and must carry the file (an error otherwise, never a fallback); before
+# registration it is the current branch when that carries the file, and the
+# file itself only then.
+# Prints "<blob sha> <path of a temporary copy>"; the caller removes the copy.
+authoritative_plan_blob() {
+  local ledger ref rel blob tmp name
+  ledger=$(ledger_path); rel=$(hp_plan_rel "$PLAN")
+  ref=$(plan_ref_of_ledger "$ledger")
+  tmp=$(mktemp "${TMPDIR:-/tmp}/sdd-plan.XXXXXX") || return 2
+  name=""
+  if [ -n "$ref" ]; then
+    git -C "$REPO" cat-file -e "refs/heads/$ref:$rel" 2>/dev/null || { rm -f "$tmp"; echo "sdd-state: the plan ref $ref does not carry $rel" >&2; return 2; }
+    name=$ref
+  else
+    name=$(git -C "$REPO" branch --show-current 2>/dev/null)
+    if [ -n "$name" ] && git -C "$REPO" cat-file -e "refs/heads/$name:$rel" 2>/dev/null; then :; else name=""; fi
+  fi
+  if [ -n "$name" ]; then
+    # Resolve the id once and read the content from that immutable object, so
+    # a ref moved between the two steps cannot pair one plan with another's id.
+    blob=$(git -C "$REPO" rev-parse --verify "refs/heads/$name:$rel") || { rm -f "$tmp"; return 2; }
+    # Test seam: HYPERPOWERS_TEST_WRITER_AT=deps-after-resolve:<sha> moves the
+    # branch to <sha> after the id is resolved and before the content is read.
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in deps-after-resolve:*) git -C "$REPO" update-ref "refs/heads/$name" "${HYPERPOWERS_TEST_WRITER_AT#*:}" ;; esac
+    git -C "$REPO" cat-file blob "$blob" > "$tmp" || { rm -f "$tmp"; return 2; }
+  else
+    cp "$PLAN" "$tmp" || { rm -f "$tmp"; return 2; }
+    blob=$(git -C "$REPO" hash-object "$tmp")
+  fi
+  printf '%s %s\n' "$blob" "$tmp"
+}
+cmd_deps() {
+  local plan="" check=0 ledger="" from="" code="" pair blob tmp graph rc out n ref
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --check) check=1; shift ;;
+      --ledger) [ $# -ge 2 ] || usage; ledger=$2; shift 2 ;;
+      --from) [ $# -ge 2 ] || usage; from=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] || usage
+  resolve_plan "$plan"
+  [ -n "$ledger" ] || ledger=$(ledger_path)
+  code=$(code_repo_arg "$code" "$ledger") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+  ref=$(plan_ref_of_ledger "$ledger"); [ -n "$ref" ] || ref=$(git -C "$REPO" branch --show-current 2>/dev/null)
+  if [ -n "$from" ]; then
+    [ -f "$from" ] || { echo "sdd-state: no such file: $from" >&2; echo "status=error"; return 2; }
+    # One absolute path for the hash and the parse: git -C "$REPO" would
+    # otherwise resolve a relative --from against the plan repository while the
+    # parser reads it from the caller's directory.
+    from=$(cd "$(dirname "$from")" 2>/dev/null && pwd -P)/$(basename "$from")
+    tmp=$from; blob=$(git -C "$REPO" hash-object "$from") || { echo "status=error"; return 2; }
+  else
+    pair=$(authoritative_plan_blob) || { echo "status=error"; return 2; }
+    blob=${pair%% *}; tmp=${pair#* }
+  fi
+  if ! graph=$(hp_plan_graph "$tmp"); then [ -n "$from" ] || rm -f "$tmp"; echo "status=invalid plan=${blob:0:7}"; return 2; fi
+  if [ "$check" -eq 0 ]; then
+    [ -n "$from" ] || rm -f "$tmp"
+    n=$(printf '%s\n' "$graph" | grep -c .)
+    echo "status=deps plan=${blob:0:7} tasks=$n"; printf '%s\n' "$graph"; return 0
+  fi
+  out=$(hp_plan_overlaps "$tmp" "$ledger" "$(dirname "$ledger")/amends" "$REPO" "$ref"); rc=$?
+  [ -n "$from" ] || rm -f "$tmp"
+  [ "$rc" -ne 2 ] || { echo "status=error"; return 2; }
+  if [ "$rc" -eq 0 ]; then echo "status=clean plan=${blob:0:7}"; return 0; fi
+  n=$(printf '%s\n' "$out" | grep -c .)
+  echo "status=conflicts plan=${blob:0:7} count=$n"; printf '%s\n' "$out"; return 1
+}
+
+# --- register ----------------------------------------------------------------
+# A session's first act on a plan. The check (siblings of the same spec share
+# the integration branch, the plan ref and the plan root; the branch is not
+# closing; an existing line matches) and the write happen under both
+# repositories' locks, so two Setups cannot both pass and write conflicting
+# lines.
+cmd_register() {
+  local plan="" sid="" integration="" code="" ledger line spec espec same_repo plan_ref plan_root code_root d other ospec field lease rc mine cur t
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --integration) [ $# -ge 2 ] || usage; integration=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$sid" ] && [ -n "$integration" ] || usage
+  resolve_plan "$plan"
+  ledger=$(ledger_path)
+  [ -f "$ledger" ] || { echo "sdd-state: no ledger at $ledger; Setup creates it before registering" >&2; echo "status=error"; return 2; }
+  code=$(code_repo_arg "$code" "$ledger") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+  spec=$(spec_of_plan "$PLAN"); espec=$(enc_spec "$spec")
+  # A first registration names the plan ref after the current branch, so the
+  # plan repository must be on one then; a later session starts detached at
+  # the integration head and takes the plan ref from the plan line instead.
+  cur=$(git -C "$REPO" branch --show-current 2>/dev/null)
+  # A shallow clone's oldest commit is a fetch boundary, so the identity
+  # recorded now would differ after an unshallow; handoff refuses the same way.
+  # Linked worktrees of one repository have different roots but one key, the
+  # test the lock pair uses, so the key decides whether the layout is split.
+  same_repo=0; [ "$(hp_key "$code")" = "$(hp_key "$REPO")" ] && same_repo=1
+  if [ "$(git -C "$code" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=code"; return 12; fi
+  if [ "$same_repo" -eq 0 ] && [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=plan"; return 12; fi
+  plan_root=$(root_of "$REPO"); code_root=$(root_of "$code")
+  hp_lock_pair "$PLAN_DIR" "$code" || return 2
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  # The ledger is appended to below; a workspace or ledger swapped for a link
+  # since the checkout was made must not receive the write.
+  hp_contained "$ROOT" "plans/$WS/progress.md" || { hp_unlock; echo "status=error"; return 2; }
+  if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = register-before-write ]; then
+    : > "$CO/.register-before-write-paused"
+    while [ -e "$CO/.register-before-write-pause" ]; do sleep 0.1; done
+    rm -f "$CO/.register-before-write-paused"
+  fi
+  # The closing check comes first: a branch being torn down admits nothing,
+  # not even a session of a plan already registered on it.
+  lease=$(hp_lease_key "$PLAN_DIR" "$integration")
+  if [ -f "$lease" ] && [ "$(sed -n 's/^closing=//p' "$lease")" = 1 ]; then hp_unlock; echo "status=branch-closing"; return 15; fi
+  line=$(plan_line_of "$ledger")
+  if [ -n "$line" ]; then
+    # A re-registration must match the whole recorded identity: a session
+    # arriving from another checkout of the plan repository, or with another
+    # spec header, is not this plan's session.
+    hp_unlock
+    plan_ref=$(plan_field "$line" plan-ref)
+    [ "$(plan_field "$line" integration)" = "$integration" ] || { echo "status=wrong-branch expected=$(plan_field "$line" integration)"; return 9; }
+    [ "$(plan_field "$line" code-root)" = "${code_root:0:7}" ] || { echo "status=wrong-repo expected=$(plan_field "$line" code-root)"; return 9; }
+    # Detached, on the plan ref, or on one of this plan's task branches: a
+    # resumed session sits on any of the three.
+    case "$cur" in ""|"$plan_ref"|"$integration.$(ws8_of "$WS").task-"*) ;; *) echo "status=wrong-branch expected=$plan_ref repo=plan"; return 9 ;; esac
+    [ "$(plan_field "$line" plan-root)" = "${plan_root:0:7}" ] || { echo "status=wrong-repo expected=$(plan_field "$line" plan-root) repo=plan"; return 9; }
+    [ "$(plan_field "$line" spec)" = "$espec" ] || { echo "sdd-state: the plan line names spec $(plan_field "$line" spec), the plan file names $espec" >&2; echo "status=error"; return 2; }
+    echo "status=registered integration=$integration plan-ref=$plan_ref"; return 0
+  fi
+  [ -n "$cur" ] || { hp_unlock; echo "status=detached-head repo=plan"; return 11; }
+  plan_ref=$cur
+  for d in "$ROOT"/plans/*/; do
+    [ -f "$d/progress.md" ] || continue
+    [ "${d%/}" != "$WSDIR" ] || continue
+    other=$(plan_line_of "$d/progress.md"); [ -n "$other" ] || continue
+    ospec=$(plan_field "$other" spec); [ "$ospec" = "$espec" ] || continue
+    for field in integration plan-ref plan-root; do
+      case "$field" in integration) mine=$integration ;; plan-ref) mine=$plan_ref ;; plan-root) mine=${plan_root:0:7} ;; esac
+      if [ "$(plan_field "$other" "$field")" != "$mine" ]; then
+        hp_unlock; echo "status=spec-branch-mismatch expected=$(plan_field "$other" integration) plan=$(enc "$(basename "${d%/}")")"; return 9
+      fi
+    done
+  done
+  # A sibling's dossier that an interrupted finish or prune renamed aside to
+  # plans/.removing-<ws>-<pid> is still an open plan: its next finish puts it
+  # back. The glob above skips dotted names, so those copies are compared
+  # here, as lease --closing reads them.
+  for d in "$ROOT"/plans/.removing-*/; do
+    [ -f "$d/progress.md" ] || continue
+    t=$(basename "${d%/}"); t=${t#.removing-}; t=${t%-*}
+    [ "$t" != "$WS" ] || continue
+    other=$(plan_line_of "$d/progress.md"); [ -n "$other" ] || continue
+    ospec=$(plan_field "$other" spec); [ "$ospec" = "$espec" ] || continue
+    for field in integration plan-ref plan-root; do
+      case "$field" in integration) mine=$integration ;; plan-ref) mine=$plan_ref ;; plan-root) mine=${plan_root:0:7} ;; esac
+      if [ "$(plan_field "$other" "$field")" != "$mine" ]; then
+        hp_unlock; echo "status=spec-branch-mismatch expected=$(plan_field "$other" integration) plan=$(enc "$t")"; return 9
+      fi
+    done
+  done
+  # With one repository the plan ref is the integration branch itself, so a
+  # mistyped --integration would record a line that verify then rejects.
+  if [ "$same_repo" -eq 1 ] && [ "$cur" != "$integration" ]; then hp_unlock; echo "status=wrong-branch expected=$cur"; return 9; fi
+  if ! git -C "$code" rev-parse -q --verify "refs/heads/$integration^{commit}" >/dev/null 2>&1; then
+    hp_unlock; echo "sdd-state: the integration branch $integration does not exist in $code" >&2; echo "status=error"; return 2
+  fi
+  printf 'plan: integration %s code-root %s plan-ref %s plan-root %s spec %s\n' "$integration" "${code_root:0:7}" "$plan_ref" "${plan_root:0:7}" "$spec" >> "$ledger" || { hp_unlock; echo "status=error"; return 2; }
+  hp_unlock
+  echo "status=registered integration=$integration plan-ref=$plan_ref"
 }
 
 # --- snapshot ----------------------------------------------------------------
 cmd_snapshot() {
-  local plan="" msg="" out rc n
+  local plan="" msg="" sid="" out rc n
   while [ $# -gt 0 ]; do
     case "$1" in
       -m) [ $# -ge 2 ] || usage; msg=$2; shift 2 ;;
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
       -*) usage ;;
       *) plan=$1; shift ;;
     esac
   done
   [ -n "$plan" ] || usage
+  [ -z "$sid" ] || sid_ok "$sid" || { echo "status=error"; return 2; }
   resolve_plan "$plan"
-  if [ "$BACKEND" != branch ]; then echo "status=plain"; return 0; fi
+  # The plain backend commits nothing, but the board still reads the
+  # activity stamp from the local workspace.
+  if [ "$BACKEND" != branch ]; then
+    if [ -n "$sid" ] && [ -f "$WSDIR/progress.md" ]; then write_activity "$sid" || { echo "status=error"; return 2; }; fi
+    echo "status=plain"; return 0
+  fi
   [ -d "$WSDIR" ] || { echo "status=none"; return 0; }
   [ -n "$msg" ] || msg="sdd $SLUG: snapshot $(hp_utc_now)"
   hp_lock "$PLAN_DIR" || return 2
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   hp_contained "$CO" "plans/$WS" || { hp_unlock; echo "status=error"; return 2; }
+  # Stamped under the lock and before the commit, so the stamp travels with
+  # this snapshot. The ledger is checked again here: a finish that removed
+  # the workspace while this call waited for the lock must not have it
+  # recreated by the stamp's mkdir.
+  if [ -n "$sid" ] && [ -f "$WSDIR/progress.md" ]; then write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }; fi
   out=$(hp_commit_paths "$CO" "$BRANCH" "$msg" "plans/$WS"); rc=$?
   hp_unlock
   [ "$rc" -eq 0 ] || { echo "status=error"; return 2; }
@@ -134,10 +453,11 @@ ledger_records() { # <ledger>
 }
 
 # ledger_marks_complete LEDGER N: 0 when the ledger records task N complete,
-# 1 when it does not, 2 on a read error.
+# 1 when it does not, 2 on a read error. Only a record that begins with the
+# marker counts (ledger_task_complete).
 ledger_marks_complete() { # <ledger> <n>
   [ -r "$1" ] || return 2
-  ledger_records "$1" | grep -Ec "(^|[^A-Za-z0-9])Task $2: complete" >/dev/null; return "${PIPESTATUS[1]}"
+  ledger_records "$1" | grep -Ec "^[[:space:]*_>-]*Task $2: complete([^[:alnum:]_]|\$)" >/dev/null; return "${PIPESTATUS[1]}"
 }
 
 # --- claim -------------------------------------------------------------------
@@ -148,64 +468,521 @@ ledger_marks_complete() { # <ledger> <n>
 # the same lock finish holds while it reads the claims and removes the
 # workspace, so a claim can never slip in between those two steps.
 cmd_claim() {
-  local plan="" n="" sid="" takeover=0 claims target tmp rc owner since wt prev
+  local plan="" n="" sid="" takeover=0 release=0 code="" claims target tmp rc owner since wt prev
+  local graph pair blob deps d waiting line again pass integ ref from k prev_ref tb branch_out lease have mrc
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
       --takeover) takeover=1; shift ;;
+      --release) release=1; shift ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
       -*) usage ;;
       *) if [ -z "$plan" ]; then plan=$1; elif [ -z "$n" ]; then n=$1; else usage; fi; shift ;;
     esac
   done
   [ -n "$plan" ] && [ -n "$n" ] && [ -n "$sid" ] || usage
-  case "$n" in ''|*[!0-9]*) usage ;; esac
+  case "$n" in final) ;; ''|*[!0-9]*) usage ;; esac
+  # A release gives up the final claim and the lease; it is no takeover and
+  # means nothing for a numbered task.
+  [ "$release" -eq 0 ] || { [ "$n" = final ] && [ "$takeover" -eq 0 ]; } || usage
+  sid_ok "$sid" || { echo "status=error"; return 2; }
   command -v node >/dev/null 2>&1 || { echo "sdd-state: node not found" >&2; return 2; }
   resolve_plan "$plan"
   claims="$WSDIR/claims"; target="$claims/task-$n"
+  [ "$n" != final ] || target="$claims/final"
   # Everything below runs under the repository lock, the same lock finish
   # holds while it reads the claims and removes the workspace: a claim can
   # never slip in between those steps, and never resurrect a finished one.
   # Every write is checked: a claim is reported only once its owner record
   # is durable and names this session, because a caller that believes it
   # owns a task it does not own duplicates work.
-  hp_lock "$PLAN_DIR" || return 2
-  recover_apply || { hp_unlock; echo "status=error"; return 2; }
-  if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace task=$n"; return 2; fi
-  ledger_marks_complete "$WSDIR/progress.md" "$n"; rc=$?
+  # A claim with a plan line writes a code ref, so it holds both repositories'
+  # locks in the pair's order; without one it writes only state. A
+  # --code-repo is validated whenever it is given, so a mistyped directory is
+  # refused rather than silently ignored.
+  claim_take_locks() {
+    integ=""
+    if [ -n "$line" ]; then
+      integ=$(plan_field "$line" integration)
+      code=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+      hp_lock_pair "$PLAN_DIR" "$code" || return 2
+    else
+      if [ -n "$code" ]; then
+        code=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+      fi
+      hp_lock "$PLAN_DIR" || return 2
+    fi
+  }
+  # Creates the task branch at its base and records it, idempotently. A fresh
+  # claim (strict) accepts only an absent branch or one exactly at its base,
+  # because anything else is a leftover of an abandoned run; the owner's retry
+  # also keeps a branch that has moved past its base, the work it made.
+  claim_finish_branch() { # [strict]
+    local have
+    branch_out=""
+    [ -n "$ref" ] || { branch_out=" branch=none"; return 0; }
+    if have=$(git -C "$code" rev-parse -q --verify "refs/heads/$ref^{commit}" 2>/dev/null); then
+      if [ "$have" != "$from" ]; then
+        if [ "${1:-}" = strict ]; then echo "sdd-state: $ref already exists at ${have:0:7}, not at its base ${from:0:7}; it is a leftover of an abandoned run" >&2; return 1; fi
+        git -C "$code" merge-base --is-ancestor "$from" "$have" 2>/dev/null || { echo "sdd-state: $ref exists at ${have:0:7}, not at or past its recorded base ${from:0:7}" >&2; return 1; }
+      fi
+    else
+      git -C "$code" branch "$ref" "$from" >/dev/null || return 1
+    fi
+    if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = claim-after-branch ]; then hp_unlock; exit 99; fi
+    hp_contained "$ROOT" "plans/$WS/progress.md" || return 1
+    grep -q "^Task $n: branch $ref from ${from:0:7}$" "$WSDIR/progress.md" || printf 'Task %s: branch %s from %s\n' "$n" "$ref" "${from:0:7}" >> "$WSDIR/progress.md" || return 1
+    write_activity "$sid" || return 1
+    branch_out=" branch=$ref from=${from:0:7}"
+  }
+  # The owner's own record names the task branch only when it also names its
+  # base: records written before task branches existed carry the session's
+  # checked-out branch under branch= and no from=, and carry no task branch.
+  claim_finish_own() {
+    local mrc
+    ref=$(sed -n 's/^branch=//p' "$target/owner" 2>/dev/null); from=$(sed -n 's/^from=//p' "$target/owner" 2>/dev/null)
+    # The controller deletes a merged task's branch before it writes the
+    # completion line: a retry in that window must not recreate the branch at
+    # its old base, and there is nothing left to check out.
+    grep -Eq "^Task $n: merged [0-9a-f]{7} into " "$WSDIR/progress.md" 2>/dev/null; mrc=$?
+    if [ "$mrc" -eq 0 ]; then ref=""; from=""; write_activity "$sid" || return 1; branch_out=" branch=none merged=1"; return 0; fi
+    [ "$mrc" -eq 1 ] || return 1
+    if [ -n "$ref" ] && [ -n "$from" ]; then claim_finish_branch; else ref=""; from=""; branch_out=" branch=none"; fi
+  }
+  # The plan line is only settled once recovery has run: finishing an
+  # interrupted sync can bring in a registered ledger. Locks are taken for the
+  # line as it stands, recovery runs under them, and the line is read again;
+  # a claim that went on with one lock would publish a branchless record on a
+  # registered plan, which the owner's retry could not repair.
+  claim_held() {
+    # Read the holder's record while the lock still excludes takeovers and
+    # finish, so the fields come from one record.
+    owner=$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)
+    since=$(sed -n 's/^time=//p' "$target/owner" 2>/dev/null)
+    wt=$(sed -n 's/^worktree=//p' "$target/owner" 2>/dev/null)
+    if [ -z "$owner" ]; then hp_unlock; echo "status=error"; return 2; fi
+    if [ "$owner" = "$sid" ]; then
+      # The owner's retry completes whatever a crash left undone.
+      claim_finish_own || { hp_unlock; echo "status=error"; return 2; }
+      hp_unlock; echo "status=held task=$n owner=$owner own=1${branch_out}"; return 0
+    fi
+    hp_unlock
+    echo "status=held task=$n owner=$owner since=$since worktree=$(enc "$wt")"
+    return 4
+  }
+  # The final claim, for the session that runs the plan's final train. It is
+  # published once every task of the authoritative plan has a completion line
+  # and no task claim is open; then the branch lease is taken, the file
+  # hp_lease_key names beside the plan repository's lock, which serializes
+  # the finals of every plan on the integration branch. Without a plan line
+  # (a plan that predates registration) there is no branch to lease, and only
+  # claims/final is published. Runs under the locks the loop below settled.
+  claim_final() {
+    local c lowner="" lplan="" own_lease=0 lease_prev=0 took=0 missing="" t open lease_out rec lclosing=0
+    lease=""
+    c=$(hp_checkout_path "$PLAN_DIR") || { hp_unlock; echo "status=error"; return 2; }
+    if [ "$release" -eq 1 ]; then
+      # Only this session's own claim is removed; the lease is found by its
+      # identity, so the release works whichever of the two is already gone.
+      hp_contained "$ROOT" "plans/$WS/claims/final" || { hp_unlock; echo "status=error"; return 2; }
+      if [ -d "$target" ] && [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null | head -n 1)" = "$sid" ]; then
+        rm -rf "$target"
+        [ ! -e "$target" ] || { hp_unlock; echo "status=error"; return 2; }
+      fi
+      lease=$(lease_find "$WS" "$sid") || { hp_unlock; echo "status=error"; return 2; }
+      if [ -n "$lease" ]; then rm -f "$lease" || { hp_unlock; echo "status=error"; return 2; }; fi
+      hp_unlock; echo "status=released"; return 0
+    fi
+    # As for a numbered claim, a plan absent from both the ref and the working
+    # tree has no graph only while there is no plan line; the open claims are
+    # then all that can hold final back.
+    graph=""
+    if [ -n "$line" ]; then pair=$(authoritative_plan_blob) || pair=""; else pair=$(authoritative_plan_blob 2>/dev/null) || pair=""; fi
+    if [ -n "$pair" ]; then
+      blob=${pair%% *}; tmp=${pair#* }
+      graph=$(hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
+      [ "$rc" -eq 0 ] || { hp_unlock; echo "status=invalid plan=${blob:0:7}"; return 2; }
+    elif [ -n "$line" ] || [ -e "$PLAN" ]; then
+      hp_unlock; echo "status=error"; return 2
+    fi
+    # A registered plan with no task headings is one whose headings were not
+    # read, never a finished one: nothing would hold the train back.
+    if [ -z "$graph" ] && [ -n "$line" ]; then hp_unlock; echo "sdd-state: the registered plan has no task headings (### Task N:)" >&2; echo "status=invalid plan=${blob:0:7}"; return 2; fi
+    for t in $(printf '%s\n' "$graph" | sed -n 's/^task=\([0-9][0-9]*\) .*/\1/p'); do
+      ledger_task_complete "$WSDIR/progress.md" "$t"; rc=$?
+      if [ "$rc" -eq 1 ]; then missing="$missing,$t"; elif [ "$rc" -ne 0 ]; then hp_unlock; echo "status=error"; return 2; fi
+    done
+    open=$(open_claims); [ -z "$open" ] || missing="$missing,$open"
+    if [ -n "$missing" ]; then hp_unlock; echo "status=blocked task=final waiting=$(printf '%s\n' "${missing#,}" | tr ',' '\n' | sort -nu | paste -sd, -)"; return 7; fi
+    if [ -d "$target" ]; then
+      owner=$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null | head -n 1)
+      since=$(sed -n 's/^time=//p' "$target/owner" 2>/dev/null | head -n 1)
+      if [ "$takeover" -eq 0 ] && [ -z "$owner" ]; then hp_unlock; echo "sdd-state: claim owner unreadable or without a session: $target/owner" >&2; echo "status=error"; return 2; fi
+      if [ "$takeover" -eq 0 ] && [ "$owner" != "$sid" ]; then hp_unlock; echo "status=held task=final owner=$owner since=$since"; return 4; fi
+    fi
+    if [ -n "$line" ]; then
+      { lease=$(hp_lease_key "$PLAN_DIR" "$integ") && lease_path_ok "$c" "$lease"; } || { hp_unlock; echo "status=error"; return 2; }
+    fi
+    if [ -n "$lease" ] && [ -f "$lease" ]; then
+      lowner=$(sed -n 's/^session=//p' "$lease" | head -n 1); lplan=$(sed -n 's/^plan=//p' "$lease" | head -n 1)
+      # A lease that names no holder is no free lease; only a takeover may
+      # replace it.
+      if { [ -z "$lowner" ] || [ -z "$lplan" ]; } && [ "$takeover" -eq 0 ]; then
+        hp_unlock; echo "sdd-state: lease unreadable or without session= or plan=: $lease" >&2; echo "status=error"; return 2
+      fi
+      if [ "$lowner" = "$sid" ] && [ "$lplan" = "$WS" ]; then
+        own_lease=1
+      elif [ "$takeover" -eq 0 ]; then
+        # This plan's own claim is published first, so the second finisher
+        # keeps its place and retries for the lease. Its activity is written
+        # too: a session that waits for the lease is alive, and a board that
+        # read it as idle would invite a takeover of the claim it holds.
+        [ -d "$target" ] || publish_final_claim || { hp_unlock; echo "status=error"; return 2; }
+        write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }
+        hp_unlock; echo "status=held task=final lease=$lowner plan=$(enc "$lplan")"; return 4
+      else
+        took=1; lease_prev=1
+      fi
+    fi
+    lease_out=none; [ -z "$lease" ] || lease_out=$(basename "$lease")
+    # The holder's repeat leaves both records exactly as they are, the lease's
+    # closing= included. A takeover by the holder itself is the same repeat:
+    # rewriting the lease would reopen a branch its own closing has marked.
+    if { [ "$own_lease" -eq 1 ] && { [ ! -d "$target" ] || [ "$owner" = "$sid" ]; }; } || { [ -z "$lease" ] && [ -d "$target" ] && [ "$owner" = "$sid" ]; }; then
+      [ -d "$target" ] || publish_final_claim || { hp_unlock; echo "status=error"; return 2; }
+      write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }
+      hp_unlock; echo "status=held task=final owner=$sid own=1 lease=$lease_out"; return 0
+    fi
+    if [ -d "$target" ] && [ "$owner" != "$sid" ]; then
+      # Only a takeover reaches here with another owner. New record first
+      # (invisible until the rename), then the history line, then the atomic
+      # replacement; a failure anywhere leaves the old owner.
+      { hp_contained "$ROOT" "plans/$WS/claims/final/owner.new" && hp_contained "$ROOT" "plans/$WS/claims/final/owner.history"; } || { hp_unlock; echo "status=error"; return 2; }
+      if ! owner_record "$sid" > "$target/owner.new"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
+      if ! printf -- '--- superseded at %s\n%s\n' "$(hp_utc_now)" "$(cat "$target/owner" 2>/dev/null)" >> "$target/owner.history"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
+      if ! mv -f "$target/owner.new" "$target/owner"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
+      took=1
+    elif [ ! -d "$target" ]; then
+      publish_final_claim || { hp_unlock; echo "status=error"; return 2; }
+    fi
+    if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null | head -n 1)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
+    if [ -n "$lease" ] && [ "$own_lease" -eq 0 ]; then
+      # A takeover keeps the replaced lease's closing=: once the closing has
+      # found the branch free of open plans, a new holder must not reopen it
+      # to registrations and task claims while the branch can still be
+      # deleted under them.
+      if [ "$lease_prev" -eq 1 ]; then lclosing=$(sed -n 's/^closing=//p' "$lease" | head -n 1); [ "$lclosing" = 1 ] || lclosing=0; fi
+      rec=$(printf 'session=%s\nhost=%s\nplan=%s\nbranch=%s\ntime=%s\nclosing=%s' "$sid" "$(hostname)" "$WS" "$integ" "$(hp_utc_now)" "$lclosing")
+      if [ "$lease_prev" -eq 1 ]; then
+        lease_supersede "$c" "$lease" "$rec" || { hp_unlock; echo "status=error"; return 2; }
+      else
+        lease_write "$c" "$lease" "$rec" || { hp_unlock; echo "status=error"; return 2; }
+      fi
+    fi
+    # The claim stands once published; a failed activity write is reported,
+    # and the holder's retry answers held.
+    write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }
+    hp_unlock
+    if [ "$took" -eq 1 ]; then echo "status=claimed task=final lease=$lease_out takeover=1"; else echo "status=claimed task=final lease=$lease_out"; fi
+  }
+  # claims/final by the same single rename as a task claim. A target that
+  # exists already (EEXIST) is no failure: the caller reads its owner.
+  publish_final_claim() {
+    local tmpl prc
+    hp_contained "$ROOT" "plans/$WS/claims" || return 1
+    mkdir -p "$claims" || return 1
+    tmpl=$(mktemp -d "$claims/.tmp-XXXXXX") || return 1
+    owner_record "$sid" > "$tmpl/owner" || { rm -rf "$tmpl"; return 1; }
+    node -e 'const fs=require("fs");try{fs.renameSync(process.argv[1],process.argv[2]);}catch(e){process.exit(e.code==="ENOTEMPTY"||e.code==="EEXIST"?4:2);}' "$tmpl" "$target"; prc=$?
+    [ "$prc" -eq 0 ] || rm -rf "$tmpl"
+    [ "$prc" -eq 0 ] || [ "$prc" -eq 4 ]
+  }
+  # A takeover of final after finish has removed the workspace: the holder
+  # stopped before releasing the branch lease, and every other plan on the
+  # integration branch waits behind it. The lease is found by this plan's
+  # workspace alone, because the stopped session's identity is what the
+  # caller lacks, and moves to the caller with the prior record kept beside
+  # it. Its closing= is kept, so a branch the holder had marked closing is
+  # not reopened to sibling registrations by the takeover. Nothing else is
+  # published: recreating the workspace would undo the finish. Runs under
+  # the plan repository's lock, which every lease operation also holds.
+  claim_final_orphan() {
+    local c lowner lbranch lclosing rec
+    c=$(hp_checkout_path "$PLAN_DIR") || { hp_unlock; echo "status=error"; return 2; }
+    lease=$(lease_find "$WS") || { hp_unlock; echo "status=error"; return 2; }
+    if [ -z "$lease" ]; then hp_unlock; echo "status=no-workspace task=final"; return 2; fi
+    lowner=$(sed -n 's/^session=//p' "$lease" | head -n 1)
+    if [ "$lowner" = "$sid" ]; then hp_unlock; echo "status=held task=final owner=$sid own=1 lease=$(basename "$lease")"; return 0; fi
+    lbranch=$(sed -n 's/^branch=//p' "$lease" | head -n 1)
+    [ -n "$lbranch" ] || { hp_unlock; echo "sdd-state: the lease $lease names no branch" >&2; echo "status=error"; return 2; }
+    lclosing=$(sed -n 's/^closing=//p' "$lease" | head -n 1); [ "$lclosing" = 1 ] || lclosing=0
+    rec=$(printf 'session=%s\nhost=%s\nplan=%s\nbranch=%s\ntime=%s\nclosing=%s' "$sid" "$(hostname)" "$WS" "$lbranch" "$(hp_utc_now)" "$lclosing")
+    lease_supersede "$c" "$lease" "$rec" || { hp_unlock; echo "status=error"; return 2; }
+    hp_unlock; echo "status=claimed task=final lease=$(basename "$lease") takeover=1"
+  }
+  line=$(plan_line_of "$WSDIR/progress.md"); ref=""; from=""; pass=0
+  while :; do
+    pass=$((pass + 1))
+    if [ "$pass" -gt 3 ]; then echo "sdd-state: the plan line has not settled after three passes" >&2; echo "status=error"; return 2; fi
+    claim_take_locks || return $?
+    recover_apply || { hp_unlock; echo "status=error"; return 2; }
+    again=$(plan_line_of "$WSDIR/progress.md")
+    [ "$again" != "$line" ] || break
+    hp_unlock
+    if [ -n "$line" ]; then echo "sdd-state: the plan line changed while the claim took its locks" >&2; echo "status=error"; return 2; fi
+    line=$again
+  done
+  if [ ! -f "$WSDIR/progress.md" ]; then
+    if [ "$n" = final ] && [ "$takeover" -eq 1 ]; then claim_final_orphan; return $?; fi
+    hp_unlock; echo "status=no-workspace task=$n"; return 2
+  fi
+  # final is no numbered task: none of the checks below apply to it.
+  if [ "$n" = final ]; then claim_final; return $?; fi
+  ledger_task_complete "$WSDIR/progress.md" "$n"; rc=$?
   if [ "$rc" -eq 0 ]; then hp_unlock; echo "status=done task=$n"; return 0; fi
   if [ "$rc" -ne 1 ]; then hp_unlock; echo "status=error"; return 2; fi
+  # An existing claim answers held exactly as it always has, even if a plan
+  # amendment has since added a predecessor: the dependency check guards
+  # publication, and only a takeover publishes a new record. A takeover by
+  # the owner itself is the owner's retry, not a publication.
+  if [ -d "$target" ] && { [ "$takeover" -eq 0 ] || [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" = "$sid" ]; }; then
+    claim_held; return $?
+  fi
+  # Every parse error refuses the claim, registered or not: a plan with an
+  # invalid graph would let two sessions claim dependent tasks together. Two
+  # carve-outs keep plans that never had a graph claimable as before, and
+  # apply only without a plan line: a plan absent from both the ref and the
+  # working tree, and a plan with no task headings at all (an empty graph,
+  # so there is nothing to violate).
+  claim_quiet() { if [ -n "$line" ]; then "$@"; else "$@" 2>/dev/null; fi; }
+  deps=none
+  if pair=$(claim_quiet authoritative_plan_blob); then
+    blob=${pair%% *}; tmp=${pair#* }
+    graph=$(hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
+    if [ "$rc" -ne 0 ]; then hp_unlock; echo "status=invalid plan=${blob:0:7}"; return 2; fi
+    if [ -n "$graph" ] || [ -n "$line" ]; then
+      deps=$(printf '%s\n' "$graph" | sed -n "s/^task=$n depends=//p")
+      [ -n "$deps" ] || { hp_unlock; echo "sdd-state: task $n is not in the plan" >&2; echo "status=error"; return 2; }
+    fi
+  elif [ -n "$line" ] || [ -e "$PLAN" ]; then
+    hp_unlock; echo "status=error"; return 2
+  fi
+  waiting=""
+  if [ "$deps" != none ]; then
+    for d in $(printf '%s' "$deps" | tr ',' ' '); do
+      ledger_task_complete "$WSDIR/progress.md" "$d" || waiting="$waiting,$d"
+    done
+  fi
+  if [ -n "$waiting" ]; then hp_unlock; echo "status=blocked task=$n waiting=${waiting#,} plan=${blob:0:7}"; return 7; fi
+  if [ -n "$line" ]; then
+    lease=$(hp_lease_key "$PLAN_DIR" "$integ")
+    if [ -f "$lease" ] && [ "$(sed -n 's/^closing=//p' "$lease")" = 1 ]; then hp_unlock; echo "status=branch-closing"; return 15; fi
+    from=$(git -C "$code" rev-parse -q --verify "refs/heads/$integ^{commit}" 2>/dev/null) || { hp_unlock; echo "sdd-state: the integration branch $integ does not exist in $code" >&2; echo "status=error"; return 2; }
+    ref=$(claim_task_branch_name "$integ" "$(ws8_of "$WS")" "$n")
+  fi
   hp_contained "$ROOT" "plans/$WS/claims" || { hp_unlock; echo "status=error"; return 2; }
   mkdir -p "$claims" || { hp_unlock; echo "status=error"; return 2; }
+  # A task branch that is not exactly at its base is a leftover of an
+  # abandoned run; refusing it here, before the record is published, keeps
+  # the claim from owning commits it never made. A takeover's branch takes the
+  # smallest unused suffix, so it never meets this.
+  if [ -n "$ref" ] && ! { [ "$takeover" -eq 1 ] && [ -d "$target" ]; } && have=$(git -C "$code" rev-parse -q --verify "refs/heads/$ref^{commit}" 2>/dev/null) && [ "$have" != "$from" ]; then
+    hp_unlock; echo "sdd-state: $ref already exists at ${have:0:7}, not at its base ${from:0:7}; it is a leftover of an abandoned run" >&2; echo "status=error"; return 2
+  fi
   if [ "$takeover" -eq 1 ] && [ -d "$target" ]; then
+    # A holder that died between merge-back's merged line and the completion
+    # line leaves a task that is already published: the new holder resumes
+    # it at the completion line, so its record names no task branch and
+    # none is made.
+    grep -Eq "^Task $n: merged [0-9a-f]{7} into " "$WSDIR/progress.md" 2>/dev/null; mrc=$?
+    if [ "$mrc" -eq 0 ]; then ref=""; from=""; elif [ "$mrc" -ne 1 ]; then hp_unlock; echo "status=error"; return 2; fi
+    if [ -n "$ref" ]; then
+      prev_ref=""
+      [ -z "$(sed -n 's/^from=//p' "$target/owner" 2>/dev/null)" ] || prev_ref=$(sed -n 's/^branch=//p' "$target/owner" 2>/dev/null)
+      k=2; while git -C "$code" rev-parse -q --verify "refs/heads/$ref.$k" >/dev/null 2>&1; do k=$((k + 1)); done
+      if [ -n "$prev_ref" ] && tb=$(git -C "$code" rev-parse -q --verify "refs/heads/$prev_ref^{commit}" 2>/dev/null); then from=$tb; fi
+      ref="$ref.$k"
+    fi
     # New record first (invisible until the rename), then the history line,
     # then the atomic replacement; a failure anywhere leaves the old owner.
-    if ! owner_record "$sid" > "$target/owner.new"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
+    if ! owner_record "$sid" "$ref" "$from" > "$target/owner.new"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
     prev=$(cat "$target/owner" 2>/dev/null)
     if ! printf -- '--- superseded at %s\n%s\n' "$(hp_utc_now)" "$prev" >> "$target/owner.history"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
     if ! mv -f "$target/owner.new" "$target/owner"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
     if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
+    if [ "$mrc" -eq 0 ]; then
+      write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }
+      hp_unlock; echo "status=claimed task=$n takeover=1 branch=none merged=1"; return 0
+    fi
+    claim_finish_branch strict || { hp_unlock; echo "status=error"; return 2; }
     hp_unlock
-    echo "status=claimed task=$n takeover=1"; return 0
+    echo "status=claimed task=$n takeover=1${branch_out}"; return 0
   fi
   tmp=$(mktemp -d "$claims/.tmp-XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
-  if ! owner_record "$sid" > "$tmp/owner"; then rm -rf "$tmp"; hp_unlock; echo "status=error"; return 2; fi
+  if ! owner_record "$sid" "$ref" "$from" > "$tmp/owner"; then rm -rf "$tmp"; hp_unlock; echo "status=error"; return 2; fi
   node -e 'const fs=require("fs");try{fs.renameSync(process.argv[1],process.argv[2]);}catch(e){process.exit(e.code==="ENOTEMPTY"||e.code==="EEXIST"?4:2);}' "$tmp" "$target"; rc=$?
   if [ "$rc" -eq 0 ]; then
     if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
-    hp_unlock; echo "status=claimed task=$n"; return 0
+    if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = claim-after-rename ]; then hp_unlock; exit 99; fi
+    claim_finish_branch strict || { hp_unlock; echo "status=error"; return 2; }
+    hp_unlock; echo "status=claimed task=$n${branch_out}"; return 0
   fi
   rm -rf "$tmp"
   if [ "$rc" -ne 4 ]; then hp_unlock; echo "status=error"; return 2; fi
-  # Read the holder's record while the lock still excludes takeovers and
-  # finish, so the fields come from one record.
-  owner=$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)
-  since=$(sed -n 's/^time=//p' "$target/owner" 2>/dev/null)
-  wt=$(sed -n 's/^worktree=//p' "$target/owner" 2>/dev/null)
+  claim_held; return $?
+}
+# --- next --------------------------------------------------------------------
+# Classifies every open task of the authoritative plan. The assignment split
+# comes first: a task outside the session's assigned list is excluded
+# whatever its graph state. Every allowed task is then claimable,
+# own-blocked, held, or waiting, and the waiting kind is the first kind
+# found in the order held, own-blocked, excluded, open over its incomplete
+# predecessors, transitively. The classification is total, so the status
+# below is defined for every ledger. Bash 3.2 has no associative arrays, so
+# the three maps are variables named by task number. The key is spliced into
+# an eval, so both helpers refuse anything but digits themselves instead of
+# trusting the plan parser to have kept the id clean.
+map_set() { # map_set DEP 5 "1,3"
+  case "$2" in ''|*[!0-9]*) echo "sdd-state: not a task number: $2" >&2; return 2 ;; esac
+  eval "MAP_$1_$2=\$3"
+}
+map_get() { # map_get DEP 5
+  case "$2" in ''|*[!0-9]*) echo "sdd-state: not a task number: $2" >&2; return 2 ;; esac
+  eval "printf '%s' \"\${MAP_$1_$2:-}\""
+}
+cmd_next() {
+  local plan="" sid="" code="" rc out
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$sid" ] || usage
+  resolve_plan "$plan"
+  # Recovery comes first: a sync that crashed while introducing this plan's
+  # workspace leaves no ledger on disk until the apply is finished, and the
+  # workspace check below would call that state no-workspace. The lock also
+  # covers the classification, which reads the ledger and the claims, so a
+  # stale working-tree ledger cannot offer a task the recovered assignment
+  # line excludes.
+  hp_lock "$PLAN_DIR" || { echo "status=error"; return 2; }
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace"; return 2; fi
+  out=$(code_repo_arg "$code" "$WSDIR/progress.md") || {
+    rc=$?; hp_unlock
+    [ -z "$out" ] || printf '%s\n' "$out"
+    return "$rc"
+  }
+  code=$out
+  out=$(next_classify "$sid"); rc=$?
   hp_unlock
-  if [ -z "$owner" ]; then echo "status=error"; return 2; fi
-  if [ "$owner" = "$sid" ]; then echo "status=held task=$n owner=$owner own=1"; return 0; fi
-  echo "status=held task=$n owner=$owner since=$since worktree=$(enc "$wt")"
-  return 4
+  printf '%s\n' "$out"
+  return "$rc"
+}
+# <sid> [board] -> the status line, from the resolved plan's state alone. The
+# board calls this directly rather than the subcommand, so a board run from a
+# cwd that is no repository still computes the frontier.
+next_classify() {
+  local sid=$1 pair blob tmp graph t deps cls assigned="" line n_list mine_list own_list held_list wait_list excl_list waitown_list remaining held_all open_any=0 p rc owner
+  pair=$(authoritative_plan_blob) || { echo "status=error"; return 2; }
+  blob=${pair%% *}; tmp=${pair#* }
+  graph=$(hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
+  [ "$rc" -eq 0 ] || { echo "status=invalid plan=${blob:0:7}"; return 2; }
+  if [ "${2:-}" = board ]; then
+    # The board's frontier is next's answer for a session that is assigned
+    # nothing and holds nothing. Session ids are unrestricted, so any
+    # printable placeholder could be a real session's, with its assignment
+    # line and its claims. An id holding a newline equals no owner (an owner
+    # record's session= is one line), so every claim reads as held by
+    # another session, and no assignment line is read.
+    sid=$'\n'
+  else
+    # A fixed-string prefix match: an id with a regex metacharacter must not
+    # match another session's assignment line.
+    assigned=$(SID=$sid awk 'BEGIN { p = "session " ENVIRON["SID"] ": tasks " } index($0, p) == 1 { l = substr($0, length(p) + 1); gsub(/ /, "", l); found = l } END { print found }' "$WSDIR/progress.md" 2>/dev/null)
+  fi
+  # A plan with no task headings leaves nothing to claim while it predates
+  # registration. A registered one is a plan whose headings were not read,
+  # never a finished one: complete would send the session to the final train.
+  if [ -z "$graph" ]; then
+    ledger_has_plan_line "$WSDIR/progress.md"; rc=$?
+    if [ "$rc" -eq 0 ]; then echo "sdd-state: the registered plan has no task headings (### Task N:)" >&2; echo "status=invalid plan=${blob:0:7}"; return 2; fi
+    if [ "$rc" -ne 1 ]; then echo "sdd-state: cannot read $WSDIR/progress.md" >&2; echo "status=error"; return 2; fi
+    echo "status=none reason=complete"; return 0
+  fi
+  while IFS= read -r line; do
+    t=${line#task=}; t=${t%% *}; deps=${line#*depends=}
+    map_set DEP "$t" "$deps" && map_set CLASS "$t" "" && map_set OWNER "$t" "" || { echo "status=invalid plan=${blob:0:7}"; return 2; }
+    # An unreadable ledger is an error, never "not complete": reading it as
+    # open work would offer finished tasks to a session.
+    ledger_task_complete "$WSDIR/progress.md" "$t"; rc=$?
+    if [ "$rc" -eq 0 ]; then map_set CLASS "$t" complete; continue; fi
+    if [ "$rc" -ne 1 ]; then echo "sdd-state: cannot read $WSDIR/progress.md" >&2; echo "status=error"; return 2; fi
+    open_any=1
+    if [ -e "$WSDIR/claims/task-$t" ]; then
+      # A claim directory whose owner cannot be read is no claim at all to
+      # this code, yet claim refuses the task, so it must not be offered.
+      owner=$(sed -n 's/^session=//p' "$WSDIR/claims/task-$t/owner" 2>/dev/null | head -n 1)
+      if [ -z "$owner" ]; then echo "sdd-state: claim owner unreadable or without a session: $WSDIR/claims/task-$t/owner" >&2; echo "status=error"; return 2; fi
+      map_set OWNER "$t" "$owner"
+    fi
+  done <<< "$graph"
+  [ "$open_any" -eq 1 ] || { echo "status=none reason=complete"; return 0; }
+  allowed() { [ -z "$assigned" ] && return 0; case ",$assigned," in *",$1,"*) return 0 ;; esac; return 1; }
+  # Classes resolve recursively through the predecessors; a valid graph has
+  # no cycle, so the recursion ends.
+  classify() { # <task> -> sets CLASS[task]
+    local task=$1 kinds="" p pc owner
+    [ -z "$(map_get CLASS "$task")" ] || return 0
+    if ! allowed "$task"; then map_set CLASS "$task" excluded; return 0; fi
+    if [ "$(map_get DEP "$task")" != none ]; then
+      for p in $(map_get DEP "$task" | tr ',' ' '); do
+        classify "$p"; pc=$(map_get CLASS "$p")
+        [ "$pc" != complete ] || continue
+        case "$pc" in held|waiting-on-held) kinds="$kinds held" ;; own-blocked|waiting-on-own-blocked) kinds="$kinds own" ;; excluded|waiting-on-excluded) kinds="$kinds excluded" ;; *) kinds="$kinds open" ;; esac
+      done
+    fi
+    owner=$(map_get OWNER "$task")
+    if [ -n "$owner" ] && [ "$owner" != "$sid" ]; then map_set CLASS "$task" held; return 0; fi
+    if [ -z "$kinds" ]; then map_set CLASS "$task" claimable; return 0; fi
+    if [ -n "$owner" ]; then map_set CLASS "$task" own-blocked; return 0; fi
+    case " $kinds " in *" held "*) map_set CLASS "$task" waiting-on-held ;; *" own "*) map_set CLASS "$task" waiting-on-own-blocked ;; *" excluded "*) map_set CLASS "$task" waiting-on-excluded ;; *) map_set CLASS "$task" waiting-on-open ;; esac
+  }
+  n_list=""; mine_list=""; own_list=""; held_list=""; wait_list=""; excl_list=""; waitown_list=""; remaining=""; held_all=""
+  while IFS= read -r line; do
+    t=${line#task=}; t=${t%% *}
+    [ "$(map_get CLASS "$t")" != complete ] || continue
+    classify "$t"
+    cls=$(map_get CLASS "$t")
+    if [ -n "$(map_get OWNER "$t")" ] && [ "$(map_get OWNER "$t")" != "$sid" ]; then held_all="${held_all:+$held_all,}$t@$(map_get OWNER "$t")"; fi
+    case "$cls" in
+      claimable) if [ "$(map_get OWNER "$t")" = "$sid" ]; then mine_list="${mine_list:+$mine_list,}$t"; else n_list="${n_list:+$n_list,}$t"; fi ;;
+      own-blocked) own_list="${own_list:+$own_list,}$t" ;;
+      held) held_list="${held_list:+$held_list,}$t@$(map_get OWNER "$t")" ;;
+      waiting-on-held) wait_list="${wait_list:+$wait_list,}$t" ;;
+      waiting-on-own-blocked) waitown_list="${waitown_list:+$waitown_list,}$t" ;;
+      waiting-on-excluded|waiting-on-open) excl_list="${excl_list:+$excl_list,}$t" ;;
+      excluded) remaining="${remaining:+$remaining,}$t" ;;
+    esac
+  done <<< "$graph"
+  # This session's own claims lead, each group in heading order.
+  n_list="$mine_list${mine_list:+${n_list:+,}}$n_list"
+  if [ -n "$n_list" ]; then echo "status=next tasks=$n_list own-blocked=${own_list:-none} plan=${blob:0:7}"; return 0; fi
+  if [ -n "$own_list" ] || [ -n "$waitown_list" ]; then
+    t=${own_list%%,*}; [ -n "$t" ] || t=${waitown_list%%,*}
+    wait_list=""
+    for p in $(map_get DEP "$t" | tr ',' ' '); do
+      [ "$(map_get CLASS "$p")" != complete ] || continue
+      if [ -n "$(map_get OWNER "$p")" ] && [ "$(map_get OWNER "$p")" != "$sid" ]; then wait_list="${wait_list:+$wait_list,}$p@$(map_get OWNER "$p")"; else wait_list="${wait_list:+$wait_list,}$p"; fi
+    done
+    echo "status=none reason=own-blocked task=$t waiting=$wait_list"; return 0
+  fi
+  if [ -n "$assigned" ] && [ -z "$held_list" ] && [ -z "$wait_list" ] && [ -z "$excl_list" ]; then echo "status=none reason=assigned-complete remaining=${remaining:-none}"; return 0; fi
+  if [ -z "$excl_list" ]; then echo "status=none reason=held held=$held_list waiting=${wait_list:-none}"; return 0; fi
+  echo "status=none reason=blocked waiting=$excl_list excluded=${remaining:-none} held=${held_all:-none}"
 }
 
 # take_lock_or_busy: the lock path must derive (else error, 2); contention past
@@ -717,7 +1494,7 @@ open_claims() {
   for d in "$WSDIR"/claims/task-*/; do
     [ -d "$d" ] || continue
     n=${d%/}; n=${n##*/task-}
-    if ! ledger_marks_complete "$WSDIR/progress.md" "$n" 2>/dev/null; then open="$open,$n"; fi
+    if ! ledger_task_complete "$WSDIR/progress.md" "$n"; then open="$open,$n"; fi
   done
   printf '%s' "${open#,}"
 }
@@ -954,12 +1731,21 @@ live_jobs() { # <wsdir>
   printf '%s' "${list#,}"
 }
 cmd_finish() {
-  local plan="" force=0 open live last commit rc t
+  local plan="" force=0 sid="" code="" open live last commit rc t owner out line c lease lowner lplan
   while [ $# -gt 0 ]; do
-    case "$1" in --force) force=1; shift ;; -*) usage ;; *) [ -z "$plan" ] || usage; plan=$1; shift ;; esac
+    case "$1" in
+      --force) force=1; shift ;;
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
   done
-  [ -n "$plan" ] || usage
+  [ -n "$plan" ] && [ -n "$sid" ] || usage
   resolve_plan "$plan"
+  # The cwd's repository when no --code-repo is given. Only the path is
+  # resolved here; the comparison with the plan line waits for the recovery.
+  code=$(code_repo_arg "$code") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
   hp_lock "$PLAN_DIR" || return 2
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   # A removal interrupted after its rename-aside left the dossier at
@@ -976,6 +1762,31 @@ cmd_finish() {
   done
   [ -d "$WSDIR" ] || { hp_unlock; echo "status=none"; return 0; }
   hp_contained "$ROOT" "plans/$WS" || { hp_unlock; echo "status=error"; return 2; }
+  # A session working in the wrong repository must not delete this
+  # workspace. The comparison reads the ledger as recovery and the restore
+  # above left it, so a plan line that only they brought in still counts.
+  out=$(code_repo_arg "$code" "$(ledger_path)") || { rc=$?; hp_unlock; [ -z "$out" ] || printf '%s\n' "$out"; return "$rc"; }
+  # Only the session holding claims/final removes the dossier, and --force
+  # never bypasses that. The claim is read here, under the lock and after a
+  # copy an interrupted removal left has been put back, so the restored
+  # copy's own claim counts and a finish that has nothing left says none.
+  if [ ! -d "$WSDIR/claims/final" ]; then hp_unlock; echo "status=no-final-claim"; return 11; fi
+  owner=$(sed -n 's/^session=//p' "$WSDIR/claims/final/owner" 2>/dev/null | head -n 1)
+  if [ -z "$owner" ]; then hp_unlock; echo "sdd-state: claim owner unreadable or without a session: $WSDIR/claims/final/owner" >&2; echo "status=error"; return 2; fi
+  if [ "$owner" != "$sid" ]; then hp_unlock; echo "status=not-holder owner=$owner"; return 11; fi
+  # A registered plan's final train runs under its branch lease, so the
+  # claim alone does not make a holder: a claimant still waiting for another
+  # plan's lease, or one whose lease is gone, has not reached the train, and
+  # removing its dossier would lose the plan it still has to finish.
+  line=$(plan_line_of "$(ledger_path)")
+  if [ -n "$line" ]; then
+    c=$(hp_checkout_path "$PLAN_DIR") || { hp_unlock; echo "status=error"; return 2; }
+    { lease=$(hp_lease_key "$PLAN_DIR" "$(plan_field "$line" integration)") && lease_path_ok "$c" "$lease"; } || { hp_unlock; echo "status=error"; return 2; }
+    if [ ! -f "$lease" ]; then hp_unlock; echo "status=not-holder owner=none"; return 11; fi
+    lowner=$(sed -n 's/^session=//p' "$lease" | head -n 1); lplan=$(sed -n 's/^plan=//p' "$lease" | head -n 1)
+    if [ -z "$lowner" ] || [ -z "$lplan" ]; then hp_unlock; echo "sdd-state: lease unreadable or without session= or plan=: $lease" >&2; echo "status=error"; return 2; fi
+    if [ "$lowner" != "$sid" ] || [ "$lplan" != "$WS" ]; then hp_unlock; echo "status=not-holder owner=$lowner"; return 11; fi
+  fi
   # The claims are read under the lock, so a claim published after a first
   # look, or a takeover in flight, is seen before anything is removed.
   open=$(open_claims)
@@ -1041,6 +1852,980 @@ cmd_finish() {
   fi
   commit_receipt
   echo "status=finished sha=${commit:0:7} last=$last push=$REMOTE/$BRANCH $(receipt_field)"
+}
+
+# --- lease -------------------------------------------------------------------
+# <checkout path> <lease path>: 0 when the path has the shape hp_lease_key
+# gives it, <checkout>.final-<12 hex>, and is no link and, when present, a
+# regular file. The lease sits beside the lock, outside plans/, where
+# hp_contained does not reach.
+lease_path_ok() {
+  local s=${2#"$1".final-}
+  if [ "$s" = "$2" ] || [ "${#s}" -ne 12 ]; then echo "sdd-state: $2 is not a lease path" >&2; return 1; fi
+  case "$s" in *[!0-9a-f]*) echo "sdd-state: $2 is not a lease path" >&2; return 1 ;; esac
+  if [ -L "$2" ] || { [ -e "$2" ] && [ ! -f "$2" ]; }; then echo "sdd-state: $2 is not a regular file; refusing to use it as a lease" >&2; return 1; fi
+}
+# <checkout path> <lease path> <record>: written to an exclusively created
+# temporary file beside the lease and renamed over it, so no reader sees half
+# a record. The temporary name stays outside the .final-* names lease_find
+# reads, so one a crash leaves behind is never taken for a lease.
+lease_write() {
+  local t
+  lease_path_ok "$1" "$2" || return 1
+  t=$(mktemp "$1.lease-tmp.XXXXXX") || return 1
+  { printf '%s\n' "$3" > "$t" && mv -f "$t" "$2"; } || { rm -f "$t"; return 1; }
+}
+# <checkout path> <lease path> <record>: a takeover's replacement of another
+# session's lease. The prior record goes to <lease>.history first, as a
+# claim's takeover keeps owner.history, so the session that held the branch
+# stays on record; a history that cannot be written refuses the takeover.
+# The suffix keeps the history outside the names lease_find reads.
+lease_supersede() {
+  local h="$2.history"
+  lease_path_ok "$1" "$2" || return 1
+  if [ -L "$h" ] || { [ -e "$h" ] && [ ! -f "$h" ]; }; then echo "sdd-state: $h is not a regular file; refusing to use it as a lease history" >&2; return 1; fi
+  printf -- '--- superseded at %s\n%s\n' "$(hp_utc_now)" "$(cat "$2" 2>/dev/null)" >> "$h" || return 1
+  lease_write "$1" "$2" "$3"
+}
+# PLAN_FILE for lease alone, which must work after the finishing compile has
+# removed the plan file (git rm, which also removes a directory it empties):
+# the closing and the release come after it. A path whose file is gone falls
+# back to its nearest existing ancestor directory inside a work tree, and the
+# workspace name comes from the repository-relative path as for a present
+# file. Every other subcommand refuses a missing plan, because there the
+# refusal catches a mistyped path; here a link at the plan path, an ancestor
+# that is no directory, a . or .. in the missing part, and a path whose
+# nearest existing directory is in no work tree are refused the same way.
+resolve_plan_lease() {
+  local p=$1 d missing="" top="" abs=""
+  if [ -e "$p" ] || [ -L "$p" ]; then resolve_plan "$p"; return; fi
+  # dirname ends at . or /, which always exist, so the walk ends.
+  d=$(dirname "$p")
+  while [ ! -d "$d" ] && [ ! -e "$d" ] && [ ! -L "$d" ]; do
+    missing="/$(basename "$d")$missing"; d=$(dirname "$d")
+  done
+  if [ -d "$d" ] && d=$(hp_physical_dir "$d") && top=$(git -C "$d" rev-parse --show-toplevel 2>/dev/null) && top=$(hp_physical_dir "$top"); then
+    abs="$d$missing/$(basename "$p")"
+  fi
+  case "$missing/$(basename "$p")/" in */./*|*/../*) abs="" ;; esac
+  case "$abs" in
+    "$top"/?*) ;;
+    *) echo "sdd-state: plan file is not inside a git repository: $p" >&2; exit 2 ;;
+  esac
+  resolve_plan "$p" "$d" "$(hp_ws_name_of_rel "$d" "${abs#"$top"/}")"
+}
+# <ws> [<sid>] -> the lease file whose record names this workspace and, when
+# given, this session, found without a workspace on disk: a release after
+# finish needs only the plan path's repository key, and a takeover after
+# finish knows only the workspace. Two matches is a state nothing produces.
+lease_find() {
+  local c f s hit="" n=0 all="" who
+  c=$(hp_checkout_path "$PLAN_DIR") || return 1
+  who="workspace $1"; [ -z "${2:-}" ] || who="$who and session $2"
+  for f in "$c".final-*; do
+    s=${f#"$c".final-}
+    [ "${#s}" -eq 12 ] || continue
+    case "$s" in *[!0-9a-f]*) continue ;; esac
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    lease_path_ok "$c" "$f" || return 2
+    [ "$(sed -n 's/^plan=//p' "$f" | head -n 1)" = "$1" ] || continue
+    [ -z "${2:-}" ] || [ "$(sed -n 's/^session=//p' "$f" | head -n 1)" = "$2" ] || continue
+    n=$((n + 1)); hit=$f; all="$all $f"
+  done
+  if [ "$n" -gt 1 ]; then echo "sdd-state: more than one lease names $who:$all" >&2; return 2; fi
+  [ -z "$hit" ] || printf '%s\n' "$hit"
+}
+cmd_lease() {
+  local plan="" sid="" code="" op="" c lease integ d other rc rec out t
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --release|--closing) [ -z "$op" ] || usage; op=${1#--}; shift ;;
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$sid" ] && [ -n "$op" ] || usage
+  resolve_plan_lease "$plan"
+  # The lock pair needs the code repository's path; its comparison with the
+  # plan line waits for the recovery below.
+  code=$(code_repo_arg "$code") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+  hp_lock_pair "$PLAN_DIR" "$code" || { echo "status=error"; return 2; }
+  # Recovery first: an interrupted sync may be what brings in this plan's
+  # line or a sibling's ledger, and the comparison and the sibling check
+  # below must both read the recovered state.
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  # After finish there is no ledger, so the comparison has nothing to compare
+  # and the lease is found by identity alone.
+  out=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; hp_unlock; [ -z "$out" ] || printf '%s\n' "$out"; return "$rc"; }
+  c=$(hp_checkout_path "$PLAN_DIR") || { hp_unlock; echo "status=error"; return 2; }
+  lease=$(lease_find "$WS" "$sid") || { hp_unlock; echo "status=error"; return 2; }
+  if [ -z "$lease" ]; then
+    hp_unlock; echo "status=no-lease"
+    [ "$op" = release ] && return 0
+    return 4
+  fi
+  if [ "$op" = release ]; then
+    rm -f "$lease" || { hp_unlock; echo "status=error"; return 2; }
+    hp_unlock; echo "status=released"; return 0
+  fi
+  integ=$(sed -n 's/^branch=//p' "$lease" | head -n 1)
+  [ -n "$integ" ] || { hp_unlock; echo "sdd-state: the lease $lease names no branch" >&2; echo "status=error"; return 2; }
+  # Checked at this moment under the locks, never from an earlier board: once
+  # closing=1 is written, register and a task claim refuse the branch, so
+  # nothing opens between this check and the branch's deletion.
+  for d in "$ROOT"/plans/*/; do
+    [ -f "$d/progress.md" ] || continue
+    [ "${d%/}" != "$WSDIR" ] || continue
+    other=$(plan_line_of "$d/progress.md"); [ -n "$other" ] || continue
+    if [ "$(plan_field "$other" integration)" = "$integ" ]; then hp_unlock; echo "status=sibling-open plan=$(enc "$(basename "${d%/}")")"; return 15; fi
+  done
+  # A sibling's dossier that an interrupted finish or prune renamed aside to
+  # plans/.removing-<ws>-<pid> is still an open plan: its next finish puts it
+  # back. The glob above skips dotted names, so those copies are read here,
+  # and the branch is never deleted under a plan that may return.
+  for d in "$ROOT"/plans/.removing-*/; do
+    [ -f "$d/progress.md" ] || continue
+    t=$(basename "${d%/}"); t=${t#.removing-}; t=${t%-*}
+    [ "$t" != "$WS" ] || continue
+    other=$(plan_line_of "$d/progress.md"); [ -n "$other" ] || continue
+    if [ "$(plan_field "$other" integration)" = "$integ" ]; then hp_unlock; echo "status=sibling-open plan=$(enc "$t")"; return 15; fi
+  done
+  # Test seam: a pause between the sibling check and the write, so a fixture
+  # can prove the locks keep a sibling's registration out of that window.
+  if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = lease-before-close ]; then
+    : > "$CO/.lease-before-close-paused"
+    while [ -e "$CO/.lease-before-close-pause" ]; do sleep 0.1; done
+    rm -f "$CO/.lease-before-close-paused"
+  fi
+  # A lease that cannot be read must not be replaced by a bare closing line.
+  rec=$(sed '/^closing=/d' "$lease") || { hp_unlock; echo "status=error"; return 2; }
+  lease_write "$c" "$lease" "$(printf '%s\nclosing=1' "$rec")" || { hp_unlock; echo "status=error"; return 2; }
+  hp_unlock; echo "status=closing"
+}
+
+# --- amend -------------------------------------------------------------------
+# The plan ref's only writer while a plan is open. The candidate is validated
+# whole (graph and overlaps) before anything moves, the base blob must still
+# be the authoritative one (so a concurrent amendment is never overwritten),
+# and the acceptances are made durable in a record before the swap, so a
+# crash between the swap and the ledger lines leaves nothing that reads an
+# accepted overlap as undeclared. A worktree with the plan ref checked out is
+# updated in place, as git's updateInstead does: it must hold the base before
+# the swap and is refreshed after it, so its status never shows the amendment
+# reverted.
+cmd_amend() {
+  local plan="" from="" base="" msg="" code="" accepts="" rel ref P cur mode blob out rc tree commit n record t idx
+  local lease lowner line integ c sid full base_unknown="" errf rbase uerr wb a all
+  # The spelling hp_plan_overlaps keys acceptances by: any other would
+  # suppress a conflict here that every later check reports again. Paths
+  # arrive encoded as conflict lines print them, a percent as %25 and then a
+  # space as %20; an interface name is keyed as written, spaces and all.
+  local accept_re='^tasks=[0-9]+,[0-9]+ (path=[^[:space:]]+|interface=[^[:cntrl:]]+)$'
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from) [ $# -ge 2 ] || usage; from=$2; shift 2 ;;
+      --base) [ $# -ge 2 ] || usage; base=$2; shift 2 ;;
+      --accept) [ $# -ge 2 ] || usage; [[ $2 =~ $accept_re ]] || usage; accepts="$accepts
+$2"; shift 2 ;;
+      --message) [ $# -ge 2 ] || usage; msg=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$from" ] && [ -n "$base" ] || usage
+  # The subject becomes a ledger line, and the ledger is read line by line: a
+  # newline would let the subject write a line of its own, a completion line
+  # among them.
+  case "$msg" in *$'\n'*) usage ;; esac
+  # The session id goes into the same ledger line, from the environment.
+  sid=$(hp_session_id); [ -n "$sid" ] || sid=unknown
+  sid_ok "$sid" || { echo "status=error"; return 2; }
+  [ -f "$from" ] || { echo "sdd-state: no such file: $from" >&2; echo "status=error"; return 2; }
+  # One absolute path for the hash and the parse, as deps takes it: git -C
+  # "$REPO" would otherwise resolve a relative --from against the plan
+  # repository while the parser reads it from the caller's directory.
+  from=$(cd "$(dirname "$from")" 2>/dev/null && pwd -P)/$(basename "$from")
+  resolve_plan "$plan"
+  hp_git_version_at_least 2 38 || { echo "sdd-state: git 2.38 or newer is required to amend the plan ref (found $(git --version))" >&2; echo "status=error"; return 2; }
+  # amend writes only the plan ref, so it holds the plan repository's lock;
+  # the code repository (--code-repo, or the cwd's) is checked, not locked.
+  # Only the path is resolved here; the comparison with the plan line waits
+  # for the recovery under the lock.
+  code=$(code_repo_arg "$code") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+  rel=$(hp_plan_rel "$PLAN")
+  [ -n "$msg" ] || msg="amendment"
+  blob=$(git -C "$REPO" hash-object "$from") || { echo "status=error"; return 2; }
+  # --base is the plan= token deps prints, seven characters: resolve it to the
+  # full blob id. An abbreviation that matches nothing is a base that is not
+  # current, so it reads as stale below; an ambiguous one cannot be compared.
+  errf=$(mktemp "${TMPDIR:-/tmp}/sdd-amend-base.XXXXXX") || { echo "status=error"; return 2; }
+  if full=$(git -C "$REPO" rev-parse --verify "$base^{blob}" 2>"$errf"); then base=$full
+  elif grep -q ambiguous "$errf"; then rm -f "$errf"; echo "sdd-state: $base is ambiguous; pass the full blob id (git -C $REPO rev-parse <plan ref>:$rel)" >&2; echo "status=error"; return 2
+  else base_unknown=1; fi
+  rm -f "$errf"
+  hp_plan_graph "$from" >/dev/null || { echo "status=invalid plan=${blob:0:7}"; return 2; }
+  # Every acceptance must name an overlap the candidate has. One that names
+  # nothing yet would reach the ledger and silently clear that overlap when a
+  # later amendment introduced it, without the decision it needs. An overlap
+  # the ledger already accepts is still an overlap of the candidate, so
+  # restating its acceptance is allowed; the ledger gets the line once.
+  if [ -n "$accepts" ]; then
+    all=$(hp_plan_overlaps "$from"); rc=$?
+    [ "$rc" -ne 2 ] || { echo "status=error"; return 2; }
+    while IFS= read -r a; do
+      [ -n "$a" ] || continue
+      grep -qxF "$(printf '%s\n' "$a" | amend_accept_lines)" <<< "$all" && continue
+      echo "sdd-state: --accept '$a' names no overlap in the candidate plan; nothing was published or recorded" >&2; echo "status=error"; return 2
+    done <<< "$accepts"
+  fi
+  hp_lock "$PLAN_DIR" || { echo "status=error"; return 2; }
+  # Recovery first: an interrupted sync may be what brings in this plan's
+  # ledger or settles its plan line, so the workspace check, the code
+  # repository comparison and the plan ref all read the recovered state.
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  # The bookkeeping appends to the ledger; without one it would create a
+  # ledger with no identity line.
+  if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace"; return 2; fi
+  out=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; hp_unlock; [ -z "$out" ] || printf '%s\n' "$out"; return "$rc"; }
+  line=$(plan_line_of "$WSDIR/progress.md")
+  ref=$(plan_ref_of_ledger "$WSDIR/progress.md"); [ -n "$ref" ] || ref=$(git -C "$REPO" branch --show-current 2>/dev/null)
+  [ -n "$ref" ] || { hp_unlock; echo "status=detached-head repo=plan"; return 11; }
+  if [ -n "$line" ]; then
+    integ=$(plan_field "$line" integration)
+    c=$(hp_checkout_path "$PLAN_DIR") || { hp_unlock; echo "status=error"; return 2; }
+    { lease=$(hp_lease_key "$PLAN_DIR" "$integ") && lease_path_ok "$c" "$lease"; } || { hp_unlock; echo "status=error"; return 2; }
+    if [ -f "$lease" ]; then
+      if [ "$(sed -n 's/^closing=//p' "$lease" | head -n 1)" = 1 ]; then hp_unlock; echo "status=branch-closing"; return 15; fi
+      # A lease without session= has no holder to name; it is an error,
+      # never a free lease.
+      lowner=$(sed -n 's/^session=//p' "$lease" | head -n 1)
+      if [ -z "$lowner" ]; then hp_unlock; echo "sdd-state: lease unreadable or without session=: $lease" >&2; echo "status=error"; return 2; fi
+      hp_unlock; echo "status=checked-out worktree=lease:$lowner"; return 13
+    fi
+  fi
+  hp_contained "$ROOT" "plans/$WS/amends" || { hp_unlock; echo "status=error"; return 2; }
+  mkdir -p "$WSDIR/amends" || { hp_unlock; echo "status=error"; return 2; }
+  record="$WSDIR/amends/$blob"
+  # A worktree on the plan ref that a crash or a failed refresh left at the
+  # base of the published amendment is brought to it first. The record named
+  # by the ref's current blob gives that amendment's commit while it is on
+  # the ref, and the commit and its parent differ in the plan alone. The same
+  # amend run again is finished this way, and so is any other amendment made
+  # in that window, whose own check below would otherwise find the worktree
+  # at the old base.
+  cur=$(git -C "$REPO" rev-parse -q --verify "refs/heads/$ref:$rel" 2>/dev/null) || cur=""
+  if [ -n "$cur" ] && [ -f "$WSDIR/amends/$cur" ] && commit=$(sed -n 's/^commit=//p' "$WSDIR/amends/$cur" | head -n 1) && [ -n "$commit" ] && git -C "$REPO" merge-base --is-ancestor "$commit" "refs/heads/$ref" 2>/dev/null; then
+    amend_refresh "$commit^" "$commit" || { hp_unlock; echo "status=error"; return 2; }
+  fi
+  # A record whose commit is on the plan ref was published by a call that
+  # crashed before its ledger lines; they are completed here. The same base
+  # makes this call that call's retry, answered already=1, unless the plan
+  # on the ref is back at exactly that base: the amendment was undone, and
+  # the call goes on as a fresh one, which publishes it again. A ref without
+  # the plan is never already=1; the fresh path refuses it. A later
+  # amendment's plan still answers already=1, and so, an accepted gap, does
+  # an undo that also edits the plan. Another base is a new amendment to the
+  # same text, which goes on as a fresh one with the earlier acceptances
+  # safely in the ledger.
+  if [ -f "$record" ] && commit=$(sed -n 's/^commit=//p' "$record" | head -n 1) && [ -n "$commit" ] && git -C "$REPO" merge-base --is-ancestor "$commit" "refs/heads/$ref" 2>/dev/null; then
+    rbase=$(sed -n 's/^base=//p' "$record" | head -n 1)
+    amend_bookkeeping || { hp_unlock; echo "sdd-state: the plan ref carries ${commit:0:7}, but its ledger lines could not be written; run the same amend again to finish them" >&2; echo "status=error"; return 2; }
+    if [ -z "$base_unknown" ] && [ "$rbase" = "$base" ] && [ -n "$cur" ] && [ "$cur" != "$rbase" ]; then hp_unlock; echo "status=amended head=${commit:0:7} plan=${blob:0:7} already=1"; return 0; fi
+  fi
+  out=$(hp_plan_overlaps "$from" "$WSDIR/progress.md" "$WSDIR/amends" "$REPO" "$ref"); rc=$?
+  [ "$rc" -ne 2 ] || { hp_unlock; echo "status=error"; return 2; }
+  # An --accept names a conflict the way hp_plan_overlaps keys it in the
+  # ledger; whole-line matching keeps an accepted path from suppressing a
+  # longer path it happens to prefix.
+  out=$(printf '%s\n' "$out" | grep -v -x -F -f <(printf '%s\n' "$accepts" | amend_accept_lines))
+  if [ -n "$out" ]; then hp_unlock; n=$(printf '%s\n' "$out" | grep -c .); echo "status=conflicts plan=${blob:0:7} count=$n"; printf '%s\n' "$out"; return 1; fi
+  # The object is written once, and only if it is still the text validated
+  # above, so the published blob is the one the record and the output name.
+  [ "$(git -C "$REPO" hash-object -w "$from")" = "$blob" ] || { hp_unlock; echo "sdd-state: $from changed during the amendment" >&2; echo "status=error"; return 2; }
+  idx="$WSDIR/amends/.index-$$"
+  { hp_contained "$ROOT" "plans/$WS/amends/.index-$$" && hp_contained "$ROOT" "plans/$WS/amends/$blob"; } || { hp_unlock; echo "status=error"; return 2; }
+  for _ in 1 2 3; do
+    P=$(git -C "$REPO" rev-parse -q --verify "refs/heads/$ref^{commit}") || { hp_unlock; echo "status=error"; return 2; }
+    if ! cur=$(git -C "$REPO" rev-parse -q --verify "$P:$rel" 2>/dev/null); then
+      rm -f "$record"; hp_unlock; echo "sdd-state: the plan ref $ref does not carry $rel" >&2; echo "status=error"; return 2
+    fi
+    # Stale leaves no record behind: one a lost attempt wrote would otherwise
+    # be read as an acceptance once its commit is nowhere.
+    { [ -z "$base_unknown" ] && [ "$cur" = "$base" ]; } || { rm -f "$record"; hp_unlock; echo "status=stale base=${base:0:7} current=${cur:0:7}"; return 14; }
+    # The tree is P's with the plan's blob replaced, its mode kept, through a
+    # private index as hp_commit_paths builds its commits.
+    mode=$(git -C "$REPO" ls-tree "$P" -- "$rel"); mode=${mode%% *}
+    rm -f "$idx"
+    if ! { GIT_INDEX_FILE=$idx git -C "$REPO" read-tree "$P" && GIT_INDEX_FILE=$idx git -C "$REPO" update-index --cacheinfo "$mode,$blob,$rel" && tree=$(GIT_INDEX_FILE=$idx git -C "$REPO" write-tree); }; then
+      rm -f "$idx"; hp_unlock; echo "status=error"; return 2
+    fi
+    rm -f "$idx"
+    commit=$(printf 'docs(hyperpowers): amend %s: %s\n' "$(basename "$PLAN")" "$msg" | hp_git_id "$REPO" commit-tree "$tree" -p "$P") || { hp_unlock; echo "status=error"; return 2; }
+    # A worktree on the plan ref keeps its index and file when the ref moves
+    # under it, so a copy that is not the base would read as a revert of the
+    # amendment there, and a commit or a switch from it would carry the
+    # revert forward. Each such worktree must hold the base and accept the
+    # refresh from P to this commit, tried first as a dry run, so a refresh
+    # that would fail after the swap refuses before it instead. The commit
+    # object left by a refusal is unreachable and harmless.
+    wb=$(amend_wt_blocker "$base" "$P" "$commit") || { rm -f "$record"; hp_unlock; echo "sdd-state: the worktrees of $REPO could not be listed" >&2; echo "status=error"; return 2; }
+    if [ -n "$wb" ]; then rm -f "$record"; hp_unlock; echo "status=checked-out worktree=$(enc "$wb")"; return 13; fi
+    # Written beside and renamed, through an exclusively created dotted name
+    # that the record readers' glob never lists.
+    t=$(mktemp "$WSDIR/amends/.$blob.XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
+    if ! { { printf 'base=%s\nblob=%s\ncommit=%s\n' "$base" "$blob" "$commit" && printf '%s\n' "$accepts" | sed '/^$/d; s/^/accept=/'; } > "$t" && mv -f "$t" "$record"; }; then
+      rm -f "$t"; hp_unlock; echo "status=error"; return 2
+    fi
+    # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-before-swap:<sha> moves the
+    # plan ref to <sha> after the record and before the swap, once.
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in amend-before-swap:*) git -C "$REPO" update-ref "refs/heads/$ref" "${HYPERPOWERS_TEST_WRITER_AT#amend-before-swap:}" 2>/dev/null; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
+    if uerr=$(git -C "$REPO" update-ref -m "sdd amend" "refs/heads/$ref" "$commit" "$P" 2>&1); then
+      if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = amend-after-swap ]; then hp_unlock; exit 99; fi
+      # The refresh comes before the bookkeeping, which removes the record:
+      # a refresh that fails keeps it, for the same amend run again.
+      amend_refresh "$P" "$commit" || { hp_unlock; echo "status=error"; return 2; }
+      amend_bookkeeping || { hp_unlock; echo "sdd-state: the plan ref carries ${commit:0:7}, but its ledger lines could not be written; run the same amend again to finish them" >&2; echo "status=error"; return 2; }
+      hp_unlock; echo "status=amended head=${commit:0:7} plan=${blob:0:7}"; return 0
+    fi
+    # A ref still at P was not moved by another writer: the update itself
+    # failed (a leftover lock, for one), and another attempt would only
+    # repeat the failure.
+    if [ "$(git -C "$REPO" rev-parse -q --verify "refs/heads/$ref^{commit}" 2>/dev/null)" = "$P" ]; then
+      rm -f "$record"; hp_unlock
+      echo "sdd-state: update-ref failed and the plan ref $ref is unchanged at ${P:0:7}: $uerr" >&2; echo "status=error"; return 2
+    fi
+  done
+  rm -f "$record"
+  cur=$(git -C "$REPO" rev-parse -q --verify "refs/heads/$ref^{commit}" 2>/dev/null) || cur=""
+  hp_unlock; echo "sdd-state: the plan ref $ref moved during each of three attempts (expected ${P:0:7}, found $(short "$cur"))" >&2; echo "status=error"; return 2
+}
+# The ledger lines an amendment owes, each appended once, then the record
+# goes. A record that cannot be read or a line that cannot be written keeps
+# the record, so a retry finds it and finishes. Reads record, blob, sid, msg
+# and WSDIR from cmd_amend's scope.
+amend_bookkeeping() {
+  local a acc
+  hp_contained "$ROOT" "plans/$WS/progress.md" || return 1
+  acc=$(sed -n 's/^accept=//p' "$record") || return 1
+  while IFS= read -r a; do
+    [ -n "$a" ] || continue
+    grep -qxF "scan: accepted-overlap $a" "$WSDIR/progress.md" || printf 'scan: accepted-overlap %s\n' "$a" >> "$WSDIR/progress.md" || return 1
+  done <<< "$acc"
+  grep -q "^plan: amended ${blob:0:7} by " "$WSDIR/progress.md" || printf 'plan: amended %s by %s: %s\n' "${blob:0:7}" "$sid" "$msg" >> "$WSDIR/progress.md" || return 1
+  rm -f "$record"
+}
+# The conflict line each --accept value on stdin names, as hp_plan_overlaps
+# prints it.
+amend_accept_lines() {
+  sed '/^$/d' | sed 's/^tasks=\([0-9,]*\) path=\(.*\)$/conflict tasks=\1 shares=\2/; s/^tasks=\([0-9,]*\) interface=\(.*\)$/conflict tasks=\1 interface=\2 direction=consumer-first/'
+}
+# Fills AMEND_WT with the worktrees of the plan repository that have the plan
+# ref checked out, as git worktree list names them. A worktree whose
+# directory is gone holds no copy. Reads REPO and ref from cmd_amend.
+amend_ref_worktrees() {
+  local f wt="" all
+  AMEND_WT=()
+  all=$(mktemp "${TMPDIR:-/tmp}/sdd-amend-wt.XXXXXX") || return 1
+  # -z, since a worktree path may hold a newline.
+  if ! git -C "$REPO" worktree list --porcelain -z > "$all"; then rm -f "$all"; return 1; fi
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      "worktree "*) wt=${f#worktree } ;;
+      "branch refs/heads/$ref") if [ -d "$wt" ]; then AMEND_WT[${#AMEND_WT[@]}]=$wt; fi ;;
+    esac
+  done < "$all"
+  rm -f "$all"
+}
+# <worktree> -> "<mode> <blob>" of the plan path's stage-0 index entry, or
+# nothing when the index holds no single such entry (absent, or conflicted).
+amend_wt_index() {
+  local e
+  e=$(git -C "$1" ls-files -s -- ":(top,literal)$rel" 2>/dev/null) || return 0
+  [ "$(printf '%s\n' "$e" | grep -c .)" -eq 1 ] || return 0
+  case "$e" in *" 0	"*) printf '%s\n' "${e%% 0	*}" ;; esac
+}
+# <base blob> <old commit> <new commit> -> the first worktree on the plan ref
+# that the refresh after the swap could not bring over, or nothing. Its index
+# entry and file for the plan must be the base, and amend_refresh's own
+# update must succeed as a dry run: git refuses that one for reasons outside
+# the plan too, such as an unmerged entry on any path (a conflicted merge,
+# cherry-pick or am) or a held index lock. The stat refresh before it, as in
+# amend_refresh, rewrites no content. Fails when the list cannot be read.
+amend_wt_blocker() {
+  local i=0 w e
+  amend_ref_worktrees || return 1
+  while [ "$i" -lt "${#AMEND_WT[@]}" ]; do
+    w=${AMEND_WT[$i]}; i=$((i + 1))
+    e=$(amend_wt_index "$w")
+    if [ -z "$e" ] || [ "${e#* }" != "$1" ] || [ "$(git -C "$w" hash-object -- "$rel" 2>/dev/null)" != "$1" ]; then printf '%s\n' "$w"; return 0; fi
+    git -C "$w" update-index -q --refresh >/dev/null 2>&1
+    { amend_wt_plan_clean "$w" && git -C "$w" read-tree -m -u -n "$2" "$3" >/dev/null 2>&1; } || { printf '%s\n' "$w"; return 0; }
+  done
+}
+# <worktree>: succeeds when the plan file there exists and matches its index
+# entry, once the stat data is refreshed. read-tree -m -u takes a missing
+# file for an unchanged one and writes it back, so without this a deletion
+# would be undone without a word.
+amend_wt_plan_clean() {
+  { [ -e "$1/$rel" ] || [ -L "$1/$rel" ]; } && git -C "$1" diff-files --quiet -- ":(top,literal)$rel" 2>/dev/null
+}
+# <old commit> <new commit>: brings every worktree on the plan ref from the
+# old commit's plan to the new one's through git's own two-way update,
+# read-tree -m -u. It touches only the paths the two commits differ in, the
+# plan alone here, keeps the worktree's other changes, and refuses rather
+# than overwrites a copy that is neither clean at the old blob nor already
+# the new one. A copy that is missing or differs from its index entry is
+# refused before git is asked, since git would write a deleted file back,
+# so an edit or a deletion made since the check survives. The index's stat
+# data is refreshed first, or a file rewritten with the same content would
+# be taken for an edit. A worktree that cannot be brought over is an error,
+# never skipped: its index would keep the old plan staged against the new
+# head.
+amend_refresh() {
+  local i=0 w
+  amend_ref_worktrees || { echo "sdd-state: the plan ref $ref carries the amendment, but the worktrees of $REPO could not be listed; run the same amend again" >&2; return 1; }
+  while [ "$i" -lt "${#AMEND_WT[@]}" ]; do
+    w=${AMEND_WT[$i]}; i=$((i + 1))
+    git -C "$w" update-index -q --refresh >/dev/null 2>&1
+    if ! amend_wt_plan_clean "$w"; then
+      echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it: its copy of $rel is missing or differs from its index entry; settle that copy, then run the same amend again" >&2
+      return 1
+    fi
+    if ! git -C "$w" read-tree -m -u "$1" "$2"; then
+      echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it; settle what git names above in that worktree, then run the same amend again" >&2
+      return 1
+    fi
+  done
+}
+
+# --- merge-back --------------------------------------------------------------
+# The integration ref's only writer while a plan is open. It merges exactly
+# the commit the reviewers approved, under both repositories' locks, by the
+# plumbing sync uses for the state branch, so no worktree is touched. The
+# merge record is written before the swap and names the published commit
+# after it, so a retry after any crash recognizes its state: before the
+# record nothing changed; a record whose commit the ref does not carry was
+# left before the swap, and the retry recomputes and rewrites it; once the
+# approved commit is on the ref only the bookkeeping is left. The
+# controller's detach and branch deletion follow this command and are its
+# own idempotent steps.
+cmd_merge_back() {
+  local plan="" n="" sid="" sha="" code="" rc out line integ ref owner_f owner full approved approved_full
+  local pair blob tmp graph title deps d waiting c lease lowner wt record H new mt mrc tree paths published t uerr cur o nc
+  # A replace ref would have git read another commit's parents and tree under
+  # the approved id, and merge content nobody reviewed: every git call here,
+  # and in the helpers it calls, reads the objects as they were written.
+  local -x GIT_NO_REPLACE_OBJECTS=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --commit) [ $# -ge 2 ] || usage; sha=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) if [ -z "$plan" ]; then plan=$1; elif [ -z "$n" ]; then n=$1; else usage; fi; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$n" ] && [ -n "$sid" ] && [ -n "$sha" ] || usage
+  case "$n" in *[!0-9]*) usage ;; esac
+  # The value goes to git as a revision and its full id is compared with the
+  # approved commit's, so anything but hex is no commit id.
+  case "$sha" in *[!0-9a-f]*) usage ;; esac
+  # The id is written by the bookkeeping after the merge, so it is checked
+  # before the first side effect: a planted owner record naming a malformed
+  # id must not let the merge land before a record write refuses it.
+  sid_ok "$sid" || { echo "status=error"; return 2; }
+  resolve_plan "$plan"
+  hp_git_version_at_least 2 38 || { echo "sdd-state: git 2.38 or newer is required to merge a task back (found $(git --version))" >&2; echo "status=error"; return 2; }
+  # The lock pair needs the code repository's path; its comparison with the
+  # plan line waits for the recovery under the locks.
+  code=$(code_repo_arg "$code") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
+  hp_lock_pair "$PLAN_DIR" "$code" || { echo "status=error"; return 2; }
+  # Recovery first: an interrupted sync may be what brings in this plan's
+  # ledger, its plan line, a claim or an approval line.
+  recover_apply || { hp_unlock; echo "status=error"; return 2; }
+  if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace"; return 2; fi
+  out=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; hp_unlock; [ -z "$out" ] || printf '%s\n' "$out"; return "$rc"; }
+  line=$(plan_line_of "$WSDIR/progress.md")
+  [ -n "$line" ] || { hp_unlock; echo "sdd-state: the ledger has no plan line; register the plan first" >&2; echo "status=error"; return 2; }
+  integ=$(plan_field "$line" integration); ref="refs/heads/$integ"
+  # The preconditions, in the spec's order. An owner record that exists but
+  # names no session has no holder to compare; it is an error, never an
+  # unclaimed task.
+  owner_f="$WSDIR/claims/task-$n/owner"; owner=""
+  if [ -e "$owner_f" ]; then
+    owner=$(sed -n 's/^session=//p' "$owner_f" 2>/dev/null | head -n 1)
+    [ -n "$owner" ] || { hp_unlock; echo "sdd-state: claim owner unreadable or without a session: $owner_f" >&2; echo "status=error"; return 2; }
+  fi
+  [ "$owner" = "$sid" ] || { hp_unlock; echo "status=not-holder owner=${owner:-none}"; return 4; }
+  full=$(git -C "$code" rev-parse -q --verify "$sha^{commit}" 2>/dev/null) || { hp_unlock; echo "sdd-state: no such commit in $code: $sha" >&2; echo "status=error"; return 2; }
+  sha=$full
+  # The newest approval line names the approved commit; a longer hex run is
+  # some other token, not a seven-character abbreviation.
+  approved=$(grep -E "^Task $n: approved [0-9a-f]{7}([^0-9a-f]|\$)" "$WSDIR/progress.md" | tail -n 1 | cut -d' ' -f4 | cut -c1-7)
+  [ -n "$approved" ] || { hp_unlock; echo "status=not-approved approved=none"; return 12; }
+  # The token is resolved to one commit here and the full ids compared: a
+  # prefix comparison would pass any commit that shares the approved one's
+  # seven characters. It is looked up among objects only, never as a
+  # revision, where a ref named like the token wins over an ambiguous object
+  # prefix and a tag object's id is peeled to the commit it tags. Exactly one
+  # commit must carry it; an approval that cannot be resolved is an error,
+  # never read as no approval.
+  approved_full=""; nc=0
+  for o in $(git -C "$code" rev-parse --disambiguate="$approved" 2>/dev/null); do
+    [ "$(git -C "$code" cat-file -t "$o" 2>/dev/null)" = commit ] || continue
+    approved_full=$o; nc=$((nc + 1))
+  done
+  [ "$nc" -eq 1 ] || { hp_unlock; echo "sdd-state: the approval line's token $approved for task $n does not name exactly one commit in $code" >&2; echo "status=error"; return 2; }
+  [ "$sha" = "$approved_full" ] || { hp_unlock; echo "status=not-approved approved=$approved"; return 12; }
+  # The predecessors come from the authoritative plan, never a worktree copy:
+  # an amendment may have added an edge to a task claimed before it.
+  pair=$(authoritative_plan_blob) || { hp_unlock; echo "status=error"; return 2; }
+  blob=${pair%% *}; tmp=${pair#* }
+  graph=$(hp_plan_graph "$tmp"); rc=$?
+  title=$(merge_back_title "$tmp")
+  rm -f "$tmp"
+  [ "$rc" -eq 0 ] || { hp_unlock; echo "status=invalid plan=${blob:0:7}"; return 2; }
+  deps=$(printf '%s\n' "$graph" | sed -n "s/^task=$n depends=//p")
+  [ -n "$deps" ] || { hp_unlock; echo "sdd-state: task $n is not in the plan" >&2; echo "status=error"; return 2; }
+  waiting=""
+  if [ "$deps" != none ]; then
+    for d in $(printf '%s' "$deps" | tr ',' ' '); do
+      ledger_task_complete "$WSDIR/progress.md" "$d"; rc=$?
+      if [ "$rc" -eq 1 ]; then waiting="$waiting,$d"; elif [ "$rc" -ne 0 ]; then hp_unlock; echo "status=error"; return 2; fi
+    done
+  fi
+  [ -z "$waiting" ] || { hp_unlock; echo "status=blocked waiting=${waiting#,}"; return 7; }
+  # A held lease refuses whether or not it is closing: the merge-back waits
+  # for the final train to end. A lease without session= has no holder to
+  # name; it is an error, never a free lease.
+  c=$(hp_checkout_path "$PLAN_DIR") || { hp_unlock; echo "status=error"; return 2; }
+  { lease=$(hp_lease_key "$PLAN_DIR" "$integ") && lease_path_ok "$c" "$lease"; } || { hp_unlock; echo "status=error"; return 2; }
+  if [ -f "$lease" ]; then
+    lowner=$(sed -n 's/^session=//p' "$lease" | head -n 1)
+    if [ -z "$lowner" ]; then hp_unlock; echo "sdd-state: lease unreadable or without session=: $lease" >&2; echo "status=error"; return 2; fi
+    hp_unlock; echo "status=checked-out worktree=lease:$lowner"; return 13
+  fi
+  # A worktree with the integration branch checked out would keep its index
+  # and files when the ref moved under it, and its status would read the
+  # merge as reverted.
+  wt=$(merge_back_checked_out "$code" "$ref") || { hp_unlock; echo "sdd-state: the worktrees of $code could not be listed" >&2; echo "status=error"; return 2; }
+  [ -z "$wt" ] || { hp_unlock; echo "status=checked-out worktree=$(enc "$wt")"; return 13; }
+  record="$WSDIR/merges/task-$n"
+  hp_contained "$ROOT" "plans/$WS/merges/task-$n" || { hp_unlock; echo "status=error"; return 2; }
+  mkdir -p "$WSDIR/merges" || { hp_unlock; echo "status=error"; return 2; }
+  for _ in 1 2 3; do
+    H=$(git -C "$code" rev-parse -q --verify "$ref^{commit}" 2>/dev/null) || { hp_unlock; echo "sdd-state: the integration branch $integ does not exist in $code" >&2; echo "status=error"; return 2; }
+    # Already published: only the bookkeeping is owed, and it names the
+    # commit that published the approved one, whatever has merged since.
+    if git -C "$code" merge-base --is-ancestor "$sha" "$H" 2>/dev/null; then
+      published=$(merge_back_published) || published=""
+      [ -n "$published" ] || { hp_unlock; echo "sdd-state: ${sha:0:7} is on $integ but neither on its first-parent history nor the second parent of a commit there, so the commit that published it cannot be named" >&2; echo "status=error"; return 2; }
+      merge_back_bookkeeping || { hp_unlock; echo "sdd-state: $integ carries ${published:0:7}, but the merge-back's bookkeeping could not be written; run the same merge-back again to finish it" >&2; echo "status=error"; return 2; }
+      hp_unlock; echo "status=merged task=$n head=${published:0:7} already=1"; return 0
+    fi
+    if git -C "$code" merge-base --is-ancestor "$H" "$sha" 2>/dev/null; then
+      new=$sha
+    else
+      # One call answers both questions: exit 1 is a conflict, and with
+      # --name-only the conflicted paths follow the tree id up to a blank
+      # line; any other non-zero exit is no merge at all.
+      mt=$(git -C "$code" merge-tree --write-tree --name-only "$H" "$sha" 2>/dev/null); mrc=$?
+      if [ "$mrc" -eq 1 ]; then
+        paths=$(enc "$(printf '%s\n' "$mt" | awk 'NR == 1 { next } $0 == "" { stop = 1 } !stop { print }' | paste -sd, -)")
+        merge_back_wait "$paths" || { hp_unlock; echo "sdd-state: merging ${sha:0:7} into $integ conflicts in $paths, but the waiting record could not be written" >&2; echo "status=error"; return 2; }
+        hp_unlock; echo "status=conflict task=$n paths=$paths"; return 8
+      fi
+      [ "$mrc" -eq 0 ] || { hp_unlock; echo "sdd-state: git merge-tree could not merge ${sha:0:7} into $integ at ${H:0:7}" >&2; echo "status=error"; return 2; }
+      tree=$(printf '%s\n' "$mt" | head -n 1)
+      new=$(printf 'Merge task %s%s\n' "$n" "${title:+: $title}" | hp_git_id "$code" commit-tree "$tree" -p "$H" -p "$sha") || { hp_unlock; echo "status=error"; return 2; }
+    fi
+    # Written beside and renamed, through an exclusively created dotted name.
+    t=$(mktemp "$WSDIR/merges/.task-$n.XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
+    if ! { printf 'approved=%s\nproposed=%s\nbase=%s\n' "$sha" "$new" "$H" > "$t" && mv -f "$t" "$record"; }; then
+      rm -f "$t"; hp_unlock; echo "status=error"; return 2
+    fi
+    if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = merge-back-after-record ]; then hp_unlock; exit 99; fi
+    # Test seam: HYPERPOWERS_TEST_WRITER_AT=merge-back-before-swap:<sha> moves
+    # the integration ref to <sha> after the record and before the swap, once.
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in merge-back-before-swap:*) git -C "$code" update-ref "$ref" "${HYPERPOWERS_TEST_WRITER_AT#merge-back-before-swap:}" 2>/dev/null; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
+    if uerr=$(git -C "$code" update-ref -m "sdd merge-back task $n" "$ref" "$new" "$H" 2>&1); then
+      if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = merge-back-after-swap ]; then hp_unlock; exit 99; fi
+      published=$new
+      merge_back_bookkeeping || { hp_unlock; echo "sdd-state: $integ carries ${published:0:7}, but the merge-back's bookkeeping could not be written; run the same merge-back again to finish it" >&2; echo "status=error"; return 2; }
+      hp_unlock; echo "status=merged task=$n head=${new:0:7}"; return 0
+    fi
+    # A ref still at H was not moved by another writer: the update itself
+    # failed (a leftover lock, for one), and another attempt would only
+    # repeat the failure.
+    if [ "$(git -C "$code" rev-parse -q --verify "$ref^{commit}" 2>/dev/null)" = "$H" ]; then
+      hp_unlock; echo "sdd-state: update-ref failed and the integration branch $integ is unchanged at ${H:0:7}: $uerr" >&2; echo "status=error"; return 2
+    fi
+  done
+  cur=$(git -C "$code" rev-parse -q --verify "$ref^{commit}" 2>/dev/null) || cur=""
+  hp_unlock; echo "sdd-state: the integration branch $integ moved during each of three attempts (expected ${H:0:7}, found $(short "$cur"))" >&2; echo "status=error"; return 2
+}
+# <plan text> -> the title of task n's heading, read outside fenced blocks as
+# hp_plan_graph reads headings, for the merge commit's subject. Reads n from
+# cmd_merge_back.
+merge_back_title() {
+  awk -v h="### Task $n:" '
+    /^(```|~~~)/ { match($0, /^(`+|~+)/); run = substr($0, 1, RLENGTH); if (fence == "") fence = run; else if (substr(run, 1, 1) == substr(fence, 1, 1) && RLENGTH >= length(fence)) fence = ""; next }
+    fence != "" { next }
+    index($0, h) == 1 { t = substr($0, length(h) + 1); sub(/^[ \t]+/, "", t); sub(/[ \t\r]+$/, "", t); print t; exit }' "$1"
+}
+# <repo> <full ref> -> the first worktree of the repository with the ref
+# checked out, whole, or nothing. A registration whose directory is gone
+# still counts: its index is kept and would read the merge as reverted once
+# the directory is back. Fails when the list cannot be read.
+merge_back_checked_out() {
+  local f wt="" all
+  all=$(mktemp "${TMPDIR:-/tmp}/sdd-merge-wt.XXXXXX") || return 1
+  # -z, since a worktree path may hold a newline or a space.
+  if ! git -C "$1" worktree list --porcelain -z > "$all"; then rm -f "$all"; return 1; fi
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      "worktree "*) wt=${f#worktree } ;;
+      "branch $2") printf '%s\n' "$wt"; break ;;
+    esac
+  done < "$all"
+  rm -f "$all"
+}
+# The commit that published sha on the integration branch at H, for a call
+# that found sha already there. The merge record names it when the record is
+# for this approved commit and the ref carries its proposed commit; a record
+# left by a crash before the swap names a commit the ref does not carry and
+# is passed over. Otherwise it is sha itself on the branch's first-parent
+# history (a fast-forward), or else the oldest first-parent commit whose
+# second parent is sha (the merge that brought it in). Reads sha, record,
+# code and H from cmd_merge_back.
+merge_back_published() {
+  local p
+  if [ "$(sed -n 's/^approved=//p' "$record" 2>/dev/null | head -n 1)" = "$sha" ]; then
+    p=$(sed -n 's/^proposed=//p' "$record" | head -n 1)
+    if [ -n "$p" ] && git -C "$code" merge-base --is-ancestor "$p" "$H" 2>/dev/null; then printf '%s\n' "$p"; return 0; fi
+  fi
+  # awk reads the whole list rather than exiting at the first match: a
+  # producer cut off mid-write would fail the pipeline under pipefail.
+  git -C "$code" rev-list --first-parent --parents "$H" | awk -v s="$sha" '$1 == s { on = 1 } NF >= 3 && $3 == s { m = $1 } END { if (on) print s; else if (m != "") print m }'
+}
+# The bookkeeping a published merge owes, each step idempotent and each
+# naming the published commit: the ledger line, the cleared merge waiting
+# record and the activity stamp. A step that fails stops here, and the same
+# merge-back run again finds the commit on the ref and finishes. Only a merge
+# record for this task is cleared: a session holding several claims may
+# still owe the resolve route for another. Reads n, sha, sid, integ and
+# published from cmd_merge_back.
+merge_back_bookkeeping() {
+  local w="$WSDIR/waiting/$sid" mline
+  mline="Task $n: merged ${published:0:7} into $integ (from ${sha:0:7})"
+  hp_contained "$ROOT" "plans/$WS/progress.md" || return 1
+  grep -qxF "$mline" "$WSDIR/progress.md" || printf '%s\n' "$mline" >> "$WSDIR/progress.md" || return 1
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = merge-back-after-ledger ]; then hp_unlock; exit 99; fi
+  hp_contained "$ROOT" "plans/$WS/waiting/$sid" || return 1
+  if [ -f "$w" ] && [ "$(sed -n 's/^kind=//p' "$w" | head -n 1)" = merge ] && [ "$(sed -n 's/^task=//p' "$w" | head -n 1)" = "$n" ]; then rm -f "$w" || return 1; fi
+  write_activity "$sid"
+}
+# <paths>: this session's waiting record of kind merge, in the record format
+# the board reads, published by record_publish, so no reader sees half a
+# record. The worktree and branch are the claim's, read from its owner
+# record, never the caller's location: merge-back may run detached, or from
+# another repository with --code-repo. An owner record without either names
+# no place to resolve the conflict. Reads n, sid and owner_f from
+# cmd_merge_back.
+merge_back_wait() {
+  local owt ob
+  owt=$(sed -n 's/^worktree=//p' "$owner_f" 2>/dev/null | head -n 1)
+  ob=$(sed -n 's/^branch=//p' "$owner_f" 2>/dev/null | head -n 1)
+  if [ -z "$owt" ] || [ -z "$ob" ]; then echo "sdd-state: claim owner without worktree= or branch=: $owner_f" >&2; return 1; fi
+  record_publish "plans/$WS/waiting" "$sid" "$(printf 'session=%s\ntask=%s\nkind=merge\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s' "$sid" "$n" "$(hp_utc_now)" "merge-back conflict in $1" "$(enc "$owt")" "$ob" "$(hostname)")"
+}
+
+# --- wait --------------------------------------------------------------------
+# One record per session, written by its session only, so no lock: the write
+# goes through record_publish, in merge_back_wait's format. The note is one
+# line because the board prints it on one line and a human reads it there.
+cmd_wait() {
+  local plan="" sid="" kind="" task="" task_given=0 note="" clear=0 d top b
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --kind) [ $# -ge 2 ] || usage; kind=$2; shift 2 ;;
+      --task) [ $# -ge 2 ] || usage; task=$2; task_given=1; shift 2 ;;
+      --note) [ $# -ge 2 ] || usage; note=$2; shift 2 ;;
+      --clear) clear=1; shift ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  [ -n "$plan" ] && [ -n "$sid" ] || usage
+  sid_ok "$sid" || { echo "status=error"; return 2; }
+  resolve_plan "$plan"
+  d="$WSDIR/waiting"
+  [ -f "$WSDIR/progress.md" ] || { echo "status=no-workspace"; return 2; }
+  # The waiting directory arrives with a fetched state branch: a planted
+  # link would otherwise aim the removal or the rename at another file.
+  hp_contained "$ROOT" "plans/$WS/waiting/$sid" || { echo "sdd-state: the session id does not name a record under $d: $sid" >&2; echo "status=error"; return 2; }
+  if [ "$clear" -eq 1 ]; then
+    rm -f "$d/$sid" || { echo "status=error"; return 2; }
+    write_activity "$sid" || { echo "status=error"; return 2; }
+    echo "status=cleared"; return 0
+  fi
+  case "$kind" in question|tasks|merge|gate|handoff) ;; *) echo "sdd-state: --kind must be question, tasks, merge, gate or handoff" >&2; echo "status=error"; return 2 ;; esac
+  [ -n "$note" ] || { echo "sdd-state: --note is required" >&2; echo "status=error"; return 2; }
+  case "$note" in *$'\n'*) echo "sdd-state: the note must be one line" >&2; echo "status=error"; return 2 ;; esac
+  if [ "$task_given" -eq 0 ]; then
+    task=none
+  else
+    case "$task" in final) ;; ''|*[!0-9]*) echo "sdd-state: --task must be a task number or final" >&2; echo "status=error"; return 2 ;; esac
+  fi
+  # The caller's own place, by owner_record's rule: git branch --show-current
+  # prints nothing on a detached head, so that case is named by its commit.
+  top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$(pwd -P)
+  b=$(git branch --show-current 2>/dev/null)
+  [ -n "$b" ] || b="detached@$(git rev-parse --short=7 HEAD 2>/dev/null || echo none)"
+  record_publish "plans/$WS/waiting" "$sid" "$(printf 'session=%s\ntask=%s\nkind=%s\nsince=%s\nnote=%s\nworktree=%s\nbranch=%s\nhost=%s' "$sid" "$task" "$kind" "$(hp_utc_now)" "$note" "$(enc "$top")" "$b" "$(hostname)")" || { echo "status=error"; return 2; }
+  write_activity "$sid" || { echo "status=error"; return 2; }
+  echo "status=waiting kind=$kind"
+}
+
+# --- board -------------------------------------------------------------------
+# For a human reader: who holds what, who waits on what, and what is
+# claimable. It syncs first when there is a remote and prints from local
+# state whatever sync said, because an unreachable remote is no reason to
+# hide the local board. It takes no lock and writes nothing of its own.
+board_field() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1; }
+# <dir> [f] -> the name of every entry in it (with f, every regular file),
+# dot names included. record_publish makes its temporary files outside the
+# tracked tree, so every name in waiting/ or activity/ is a session's
+# record, and a session id may begin with a dot.
+board_entries() {
+  local f
+  for f in "$1"/* "$1"/.*; do
+    case "${f##*/}" in .|..) continue ;; esac
+    if [ "${2:-}" = f ]; then [ -f "$f" ] || continue; else [ -e "$f" ] || continue; fi
+    printf '%s\n' "${f##*/}"
+  done
+}
+# <workspace dir> -> every session that left a trace, one per line: a claim,
+# a waiting record, an activity file or a session line. The per-plan board
+# and board --repo count the same set.
+board_sessions() {
+  local d
+  {
+    for d in "$1"/claims/task-* "$1"/claims/final; do [ -f "$d/owner" ] && board_field "$d/owner" session; done
+    board_entries "$1/waiting"
+    board_entries "$1/activity"
+    awk 'index($0, "session ") == 1 { i = index($0, ": mode "); if (i > 9) print substr($0, 9, i - 9) }' "$1/progress.md" 2>/dev/null
+  } | sed '/^$/d' | LC_ALL=C sort -u
+}
+cmd_board() {
+  local plan="" code="" repo="" syncs out err syncerr="" sync_ok=1 clserr="" rc ensure ledger line integ spec now frontier sessions count=0 waiting=0 rows=""
+  local sid d n task since host chost l rest wt br rec wkind wsince note act ts silence quiet ws8 b other
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo) [ $# -ge 2 ] || usage; repo=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$plan" ] || usage; plan=$1; shift ;;
+    esac
+  done
+  if [ -n "$repo" ]; then { [ -z "$plan" ] && [ -z "$code" ]; } || usage; board_repo "$repo"; return $?; fi
+  [ -n "$plan" ] || usage
+  # The sync comes before the checkout is required: on a host that has not
+  # fetched the state branch yet, sync is what creates the checkout. Its
+  # stderr line is held back until the code repository has been checked,
+  # so a refusal is the only output it makes.
+  resolve_plan_basic "$plan"
+  if hp_has_remote "$PLAN_DIR"; then
+    err=$(mktemp "${TMPDIR:-/tmp}/sdd-board-sync.XXXXXX") || err=""
+    out=$(bash "$0" sync "$plan" 2>"${err:-/dev/null}")
+    syncs=${out%%$'\n'*}; syncs=${syncs#status=}; syncs=${syncs%% *}
+    case "$syncs" in up-to-date|fast-forwarded|merged|ahead|created|absent|no-remote|assumed-absent|plain) ;; *) sync_ok=0; [ -z "$err" ] || syncerr=$(sed -n 1p "$err") ;; esac
+    [ -z "$err" ] || rm -f "$err"
+    [ -n "$syncs" ] || syncs=error
+  else
+    syncs=no-remote
+  fi
+  # resolve_plan without its exit. A checkout that cannot be ensured after a
+  # failed sync is the fetch's doing (no state branch arrived, or the one
+  # that did is foreign), and the board never fails because the fetch did:
+  # it prints an empty table below the sync's own line, and the library's
+  # needs-sync line is left out because that line already says why.
+  if [ "$sync_ok" -eq 1 ]; then
+    ensure=$(hp_ensure_checkout "$PLAN_DIR") || { echo "status=error"; return 2; }
+  else
+    ensure=$(hp_ensure_checkout "$PLAN_DIR" 2>/dev/null) || ensure=""
+  fi
+  ledger=""
+  if [ -n "$ensure" ]; then
+    BACKEND=${ensure%% *}; ROOT=${ensure#* }; WSDIR="$ROOT/plans/$WS"
+    ledger=$(ledger_path)
+  fi
+  # The code repository, for the leftover branches: a given --code-repo, or
+  # the cwd's repository when the cwd is one, is checked against the plan
+  # line before any output; with neither there are no leftover lines.
+  if [ -n "$code" ] || code=$(git rev-parse --show-toplevel 2>/dev/null); then
+    out=$(code_repo_arg "$code" "$ledger") || { rc=$?; [ -z "$out" ] || printf '%s\n' "$out"; return "$rc"; }
+    code=$out
+  else
+    code=""
+  fi
+  if [ -z "$ensure" ]; then
+    [ -z "$syncerr" ] || printf '%s\n' "$syncerr" >&2
+    echo "status=board sync=$syncs sessions=0 waiting=0 frontier=none"
+    return 0
+  fi
+  line=$(plan_line_of "$ledger"); integ=$(plan_field "$line" integration); spec=$(plan_field "$line" spec)
+  now=$(date -u +%s)
+  # The frontier as next prints it for a session that is assigned nothing and
+  # holds nothing. A classifier failure (no authoritative plan, an invalid
+  # graph, an unreadable ledger or claim) still prints the board with
+  # frontier=none, but its status line and its stderr line are repeated on
+  # stderr, so broken state never reads as no claimable work.
+  frontier=none
+  err=$(mktemp "${TMPDIR:-/tmp}/sdd-board-next.XXXXXX") || err=""
+  out=$(next_classify "" board 2>"${err:-/dev/null}"); rc=$?
+  case "$rc:$out" in
+    "0:status=next tasks="*) frontier=$(printf '%s\n' "$out" | sed -n '1s/^status=next tasks=\([^ ]*\) .*/\1/p'); [ -n "$frontier" ] || frontier=none ;;
+    "0:status=none "*) ;;
+    *) clserr=$(printf '%s\n' "${out%%$'\n'*}"; [ -z "$err" ] || sed -n 1p "$err") ;;
+  esac
+  [ -z "$err" ] || rm -f "$err"
+  sessions=$(board_sessions "$WSDIR")
+  while IFS= read -r sid; do
+    [ -n "$sid" ] || continue
+    count=$((count + 1))
+    # The session's open claim: a task without a completion line, or final.
+    task=none; since=none; host=""; chost=""
+    for d in "$WSDIR"/claims/task-* "$WSDIR"/claims/final; do
+      [ -f "$d/owner" ] || continue
+      n=${d##*/}; n=${n#task-}
+      case "$n" in final) ;; ''|*[!0-9]*) continue ;; esac
+      [ "$(board_field "$d/owner" session)" = "$sid" ] || continue
+      [ -n "$chost" ] || chost=$(board_field "$d/owner" host)
+      if [ "$n" != final ] && ledger_task_complete "$ledger" "$n"; then continue; fi
+      task=$n; since=$(board_field "$d/owner" time); host=$(board_field "$d/owner" host)
+      [ -n "$since" ] || since=none
+      break
+    done
+    # The session line's worktree may itself hold " at ", so the branch is
+    # cut at the first " at " (branch names hold no spaces), then before the
+    # " integrating <integration branch>" field when the line has one, and
+    # the worktree runs to the last " started ".
+    wt=unknown; br=unknown
+    l=$(SID=$sid awk 'BEGIN { p = "session " ENVIRON["SID"] ": mode " } index($0, p) == 1 { l = substr($0, length(p) + 1) } END { print l }' "$ledger" 2>/dev/null)
+    case "$l" in
+      *" on "*" at "*" started "*) rest=${l#* on }; br=${rest%% at *}; br=${br%% integrating *}; wt=${rest#* at }; wt=${wt% started *} ;;
+    esac
+    # A record path is read only for an id that names one entry: an owner
+    # record arriving with the state branch can carry any session= value.
+    rec=""; case "$sid" in */*|.|..) ;; *) rec=$sid ;; esac
+    wkind=none; wsince=none; note=none
+    if [ -n "$rec" ] && [ -f "$WSDIR/waiting/$rec" ]; then
+      waiting=$((waiting + 1))
+      wkind=$(board_field "$WSDIR/waiting/$rec" kind); [ -n "$wkind" ] || wkind=unknown
+      wsince=$(board_field "$WSDIR/waiting/$rec" since); [ -n "$wsince" ] || wsince=none
+      note=$(board_field "$WSDIR/waiting/$rec" note); if [ -n "$note" ]; then note=$(enc "$note"); else note=none; fi
+      [ -n "$host" ] || host=$(board_field "$WSDIR/waiting/$rec" host)
+    fi
+    [ -n "$host" ] || host=$chost
+    [ -n "$host" ] || host=unknown
+    silence=none; act=""; ts=""
+    [ -z "$rec" ] || act=$(head -n 1 "$WSDIR/activity/$rec" 2>/dev/null)
+    [ -z "$act" ] || ts=$(hp_utc_epoch "$act")
+    if [ -n "$ts" ]; then silence=$((now - ts)); [ "$silence" -ge 0 ] || silence=0; fi
+    # Quiet: a live claim, no waiting record, and no activity for thirty
+    # minutes. Without a readable stamp the claim's own time is the last
+    # activity the dossier records.
+    quiet=none
+    if [ "$task" != none ] && [ "$wkind" = none ]; then
+      if [ "$silence" = none ]; then quiet=$since; elif [ "$silence" -gt 1800 ]; then quiet=$act; fi
+    fi
+    rows="${rows}session $sid task=$task since=$since worktree=$(enc "$wt") branch=$br host=$host waiting=$wkind waiting-since=$wsince note=$note silence=$silence quiet-since=$quiet"$'\n'
+  done <<< "$sessions"
+  [ -z "$syncerr" ] || printf '%s\n' "$syncerr" >&2
+  [ -z "$clserr" ] || printf '%s\n' "$clserr" | sed '/^$/d' >&2
+  echo "status=board sync=$syncs sessions=$count waiting=$waiting frontier=$frontier"
+  printf '%s' "$rows"
+  for d in "$WSDIR"/claims/task-*; do
+    [ -f "$d/owner" ] || continue
+    n=${d##*/task-}
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    ledger_task_complete "$ledger" "$n" || echo "held task=$n owner=$(board_field "$d/owner" session) since=$(board_field "$d/owner" time)"
+  done
+  # A task branch is a leftover once its task is complete or its claim names
+  # another branch (a takeover's .<k> branch, or no claim at all). Deleting
+  # one is your human partner's call, so the board only lists them.
+  if [ -n "$code" ] && [ -n "$integ" ]; then
+    ws8=$(ws8_of "$WS")
+    while IFS= read -r b; do
+      [ -n "$b" ] || continue
+      b=${b#refs/heads/}
+      n=${b##*.task-}; n=${n%%.*}
+      case "$n" in ''|*[!0-9]*) echo "leftover branch=$b"; continue ;; esac
+      if ledger_task_complete "$ledger" "$n" || [ "$(board_field "$WSDIR/claims/task-$n/owner" branch)" != "$b" ]; then echo "leftover branch=$b"; fi
+    done <<< "$(git -C "$code" for-each-ref --format='%(refname)' "refs/heads/$integ.$ws8.task-*" 2>/dev/null)"
+  fi
+  # The plan line's spec= is already encoded by plan_line_of.
+  if [ -n "$line" ]; then
+    for d in "$ROOT"/plans/*/; do
+      [ -f "$d/progress.md" ] || continue
+      [ "${d%/}" != "$WSDIR" ] || continue
+      other=$(plan_line_of "$d/progress.md"); [ -n "$other" ] || continue
+      if [ "$(plan_field "$other" spec)" = "$spec" ] || [ "$(plan_field "$other" integration)" = "$integ" ]; then
+        echo "sibling plan=$(enc "$(basename "${d%/}")") spec=$(plan_field "$other" spec) integration=$(plan_field "$other" integration)"
+      fi
+    done
+  fi
+  return 0
+}
+# <repo dir>: every open workspace in the repository's state checkout,
+# grouped by spec then integration branch, then the branch leases. It does
+# not sync; the per-plan board does.
+board_repo() {
+  local ensure root c d f s line spec integ n held nw lh lt rows="" count=0
+  git -C "$1" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $1" >&2; echo "status=error"; return 2; }
+  ensure=$(hp_ensure_checkout "$1") || { echo "status=error"; return 2; }
+  root=${ensure#* }
+  for d in "$root"/plans/*/; do
+    [ -f "$d/progress.md" ] || continue
+    count=$((count + 1))
+    line=$(plan_line_of "$d/progress.md")
+    spec=$(plan_field "$line" spec); [ -n "$spec" ] || spec=none
+    integ=$(plan_field "$line" integration); [ -n "$integ" ] || integ=none
+    held=""
+    for c in "$d"/claims/task-*; do
+      [ -f "$c/owner" ] || continue
+      n=${c##*/task-}
+      case "$n" in ''|*[!0-9]*) continue ;; esac
+      ledger_task_complete "$d/progress.md" "$n" || held="$held,$n"
+    done
+    held=${held#,}
+    nw=$(board_entries "$d/waiting" f | grep -c .)
+    # spec= (encoded) and the branch hold no spaces, so they lead each row
+    # as the sort keys and are cut off after the sort.
+    rows="$rows$spec $integ plan ws=$(enc "$(basename "${d%/}")") spec=$spec integration=$integ sessions=$(board_sessions "${d%/}" | grep -c .) waiting=$nw held=${held:-none}"$'\n'
+  done
+  echo "status=board plans=$count"
+  printf '%s' "$rows" | LC_ALL=C sort -k1,1 -k2,2 | cut -d' ' -f3-
+  # Lease files only, filtered as lease_find filters them: <lease>.history
+  # and a crash's temporary file share the prefix and are no leases.
+  c=$(hp_checkout_path "$1") || return 0
+  for f in "$c".final-*; do
+    s=${f#"$c".final-}
+    [ "${#s}" -eq 12 ] || continue
+    case "$s" in *[!0-9a-f]*) continue ;; esac
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    lease_path_ok "$c" "$f" || continue
+    # The holder's host and the lease's time are the takeover evidence once
+    # finish has removed the workspace: this row is then all that shows them.
+    lh=$(board_field "$f" host); lt=$(board_field "$f" time)
+    echo "lease branch=$(board_field "$f" branch) session=$(board_field "$f" session) plan=$(enc "$(board_field "$f" plan)") closing=$(board_field "$f" closing) host=${lh:-unknown} time=${lt:-none}"
+  done
+  return 0
 }
 
 # --- prune -------------------------------------------------------------------
@@ -2254,7 +4039,7 @@ verify_ledger() {
   echo "status=ok tasks=$tasks"
 }
 cmd_verify() {
-  local plan="" code="" ledger copy rc
+  local plan="" code="" ledger copy rc line cur integ
   while [ $# -gt 0 ]; do
     case "$1" in
       --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
@@ -2284,6 +4069,15 @@ cmd_verify() {
   copy=$(mktemp "${TMPDIR:-/tmp}/sdd-verify.XXXXXX") || { hp_unlock; echo "status=error"; return 2; }
   cp "$ledger" "$copy" || { rm -f "$copy"; hp_unlock; echo "status=error"; return 2; }
   hp_unlock
+  line=$(plan_line_of "$copy")
+  if [ -n "$line" ]; then
+    cur=$(git -C "$code" branch --show-current 2>/dev/null)
+    integ=$(plan_field "$line" integration)
+    case "$cur" in
+      ""|"$integ"|"$integ.$(ws8_of "$WS").task-"*) ;;
+      *) rm -f "$copy"; echo "status=wrong-branch expected=$integ"; return 9 ;;
+    esac
+  fi
   verify_ledger "$copy" "$code"; rc=$?
   rm -f "$copy"
   return "$rc"
@@ -2423,7 +4217,15 @@ case "$sub" in
   claim) cmd_claim "$@" ;;
   complete) cmd_complete "$@" ;;
   handback) cmd_handback "$@" ;;
+  next) cmd_next "$@" ;;
+  deps) cmd_deps "$@" ;;
+  register) cmd_register "$@" ;;
   finish) cmd_finish "$@" ;;
+  lease) cmd_lease "$@" ;;
+  amend) cmd_amend "$@" ;;
+  merge-back) cmd_merge_back "$@" ;;
+  wait) cmd_wait "$@" ;;
+  board) cmd_board "$@" ;;
   prune) cmd_prune "$@" ;;
   sync) cmd_sync "$@" ;;
   verify) cmd_verify "$@" ;;

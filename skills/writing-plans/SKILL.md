@@ -84,6 +84,13 @@ naming and copy rules, platform requirements — one line each, with exact
 values copied verbatim from the spec. Every task's requirements implicitly
 include this section.]
 
+Name here, under **Merge-expected files:**, the files every task touches by
+nature (a changelog, a test index), each in backticks: two independent tasks
+that share only those files are not a conflict, and their merge-back
+conflicts are resolved by hand like any other. Put the paths on the label's
+own line, as ``- **Merge-expected files:** `CHANGELOG.md`, `docs/testing.md` ``;
+the dependency check reads the backticked paths on that line only.
+
 ## Grounding
 
 [One line per convention the work touches, at minimum naming, error
@@ -120,6 +127,8 @@ whole-branch train never tier off.
 ### Task N: [Component Name]
 
 **Risk tier:** low|standard|high — <one-line rationale>
+
+**Depends on:** none
 
 **Files:**
 - Create: `exact/path/to/file.py`
@@ -168,6 +177,13 @@ git commit -m "feat: add specific feature"
 ```
 ````
 
+The `**Depends on:**` line names the tasks whose completion lines must exist
+before this task may be claimed: `none`, or `Task 1, Task 3`. It says
+nothing about files; the pre-flight scan checks declared independence
+against file and interface overlap separately. Every task carries the line;
+a plan with no such line on any task is read as serial, each task after
+every earlier one.
+
 The `**Mirror:**` line is optional: include it when a real analogue exists
 and omit it when none does. An omitted Mirror is not a placeholder. A Mirror
 cites the code as it stands when the plan is written; if earlier tasks have
@@ -188,6 +204,7 @@ Every step must contain the actual content an engineer needs. These are **plan f
 - Steps that describe what to do without showing how (code blocks required for code steps)
 - References to types, functions, or methods not defined in any task
 - A Grounding or Mirror citation that does not resolve to real code
+- A task with no `**Depends on:**` line (write `none` when there is none)
 
 The one sanctioned unknown names its own resolution and its deadline:
 `Unknown: <what>, validate via <method>, before Task N` or
@@ -206,7 +223,7 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 
 **1. Spec coverage:** Skim each section/requirement in the spec. Can you point to a task that implements it? List any gaps.
 
-**2. Placeholder scan:** Search your plan for red flags — any of the patterns from the "No Placeholders" section above. Fix them.
+**2. Placeholder scan:** Search your plan for red flags — any of the patterns from the "No Placeholders" section above, and a task without a Depends on line (a plan written under the dependency design carries one on every task). Fix them.
 
 **3. Type consistency:** Do the types, method signatures, and property names you used in later tasks match what you defined in earlier tasks? A function called `clearLayers()` in Task 3 but `clearFullLayers()` in Task 7 is a bug.
 

@@ -50,6 +50,29 @@ assert_not_contains() {
   fi
 }
 
+# Positions are compared in the same whitespace-normalized text the other
+# assertions search, so a line wrap inside either needle cannot hide it.
+assert_before() {
+  local file="$1"
+  local first="$2"
+  local second="$3"
+  local description="$4"
+  local haystack
+
+  haystack="$(tr '\n\t' '  ' <"$file" | sed 's/  */ /g')"
+  case "$haystack" in *"$first"*) ;; *) fail "$description"; echo "    missing: $first"; echo "    in: $file"; return ;; esac
+  case "$haystack" in *"$second"*) ;; *) fail "$description"; echo "    missing: $second"; echo "    in: $file"; return ;; esac
+  local before_first="${haystack%%"$first"*}"
+  local before_second="${haystack%%"$second"*}"
+  if [ "${#before_first}" -lt "${#before_second}" ]; then
+    pass "$description"
+  else
+    fail "$description"
+    echo "    expected \"$first\" before \"$second\""
+    echo "    in: $file"
+  fi
+}
+
 echo "SDD prompt-surface contract tests"
 # SKILL.md — dispatch discipline
 assert_contains "$SDD_MODEL_SELECTION" "Always specify the model explicitly when dispatching a subagent." "explicit model is mandatory"
@@ -400,11 +423,11 @@ assert_contains "$SDD" "hyperpowers/state/<key>/plans/<plan-slug>-<hash8>/" "wor
 assert_not_contains "$SDD" "hyperpowers/sdd/<per-repo-key>/plans/<plan-slug>-<hash8>/" "the plain-cache workspace path is gone"
 assert_contains "$SDD" "# SDD ledger — plan: <repo-relative plan path>" "identity line is repo-relative"
 assert_contains "$SDD" "Compare repo-relative paths" "resume compares repo-relative paths"
-assert_contains "$SDD" "session <sid>: mode <current-branch|new-branch|worktree> on <branch> at <toplevel> started <UTC time>" "session line shape"
+assert_contains "$SDD" "session <sid>: mode <current-branch|new-branch|worktree> on <task branch or detached> integrating <integration branch> at <toplevel> started <UTC time>" "session line shape"
 assert_contains "$SDD" "\$(date -u +%s)-\$RANDOM\$RANDOM" "session id fallback needs only bash"
-assert_contains "$SDD" "Then run \`scripts/sdd-state verify PLAN_FILE\`" "verify runs after the session line"
+assert_contains "$SDD" "Then, once registered (the next bullet), run \`scripts/sdd-state verify PLAN_FILE\`" "verify runs after registering"
 assert_contains "$SDD" "scripts/sdd-state claim PLAN_FILE N --session <sid>" "claim before dispatch"
-assert_contains "$SDD" "take over (\`--takeover\`) only on their explicit yes" "takeover needs an explicit yes"
+assert_contains "$SDD" "Take a held task over only on your human partner's explicit yes to a question that names the holder and the time since (\`--takeover\`)" "takeover needs an explicit yes"
 assert_contains "$SDD" "(model <model>, session <sid>, worktree <path>, branch <name>)" "implementer identity carries model, session, worktree, branch"
 assert_contains "$SDD" "never with the Edit tool" "append discipline when another session may be live"
 assert_contains "$SDD" "scripts/sdd-state snapshot PLAN_FILE" "snapshot cadence named"
@@ -416,7 +439,7 @@ assert_contains "$SDD" "scripts/sdd-state finish PLAN_FILE" "finish uses the hel
 assert_contains "$SDD" "git -C <checkout> push <remote> <branch>" "the push command is spelled out"
 assert_not_contains "$SDD" "with \`rm -rf <workspace>\`" "finish no longer rm -rfs the workspace by hand"
 assert_not_contains "$SDD" "The 14-day reclaim in \`scripts/sdd-dir\`" "no automatic reclaim is promised"
-assert_contains "$SDD" "a session that finished its assigned tasks while other sessions' tasks are open reports that and stops" "completion barrier"
+assert_contains "$SDD" "\`assigned-complete\` is reported and the session hands back" "completion barrier"
 
 assert_contains "$SDD" "anything else stops Setup until \`verify\` passes again" "every verify outcome but ok stops setup"
 assert_contains "$SDD" "\`busy\` (exit 3) when another session is writing the workspace" "finish busy is handled"
@@ -437,11 +460,103 @@ assert_contains "$SDD" "Any other status stops the dispatch until \`claim\` succ
 assert_contains "$SDD" "any status other than \`finished\` stops Finish until the command succeeds" "finish has a catch-all"
 assert_contains "$SDD" "\`snapshot ... push=none\` (exit 0) is no hand-off either" "a hand-off with no remote is not reported as one"
 
+# SKILL.md — sessions on a dependency graph (parallel development, 2026-10-27)
+assert_contains "$SDD" "scripts/sdd-state register PLAN_FILE --session <sid> --integration <branch>" "Setup registers the plan"
+assert_contains "$SDD" "runs \`git switch --detach <branch>\` before \`register\`, whatever mode using-git-worktrees reported" "a later session detaches before register"
+assert_contains "$SDD" "scripts/sdd-state deps --check PLAN_FILE --ledger" "the scan runs the overlap check"
+assert_contains "$SDD" "never the checked-out plan file itself, which \`amend\` refuses" "an amendment's edited copy lies outside the checkout's plan path"
+assert_contains "$SDD" "scripts/sdd-state next PLAN_FILE --session <sid>" "next before every dispatch"
+assert_contains "$SDD" "A task held by another session is ordinary while next offers another" "a held task is ordinary with a frontier"
+assert_contains "$SDD" "\`held\` with your own session id (\`own=1\`, a resume after compaction) prints the same two fields" "the session's own claim resumes rather than reading as a lost race"
+assert_contains "$SDD" "Task <N>: approved <sha7>" "the approved line after the gate"
+assert_contains "$SDD" "write it with \`git rev-parse <head> | cut -c1-7\`, never \`git rev-parse --short\`" "the approved sha is exactly seven characters"
+assert_contains "$SDD" "scripts/sdd-state merge-back PLAN_FILE N --session <sid> --commit <sha>" "merge-back after the gate"
+assert_contains "$SDD" "git switch --detach <merged head>" "the controller detaches at the merged head"
+assert_contains "$SDD" "scripts/sdd-state wait PLAN_FILE --session <sid> --kind" "the waiting board rule"
+assert_contains "$SDD" "scripts/sdd-state claim PLAN_FILE final --session <sid>" "the final train is claimed"
+assert_contains "$SDD" "\`held\` with your own session id (\`own=1\`, a resume after compaction) means this session already holds the train: continue as its holder" "the final holder's own claim resumes the train"
+assert_before "$SDD" "The final train is claimed." "whole-branch review gets a package too" "the final train is claimed before the final review is packaged"
+assert_contains "$SDD" "Record BASE right after \`git switch <branch>\` and before dispatching, as the task branch's fork point from the integration branch: \`git merge-base HEAD <integration branch>\`" "the task BASE is the task branch's fork point from the integration branch"
+assert_contains "$SDD" "\"Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back\" [shape=box];" "the graph's final claim continues on the session's own hold"
+assert_not_contains "$SDD" "held means post, print the board, hand back" "no graph edge names the old final-claim node"
+assert_contains "$SDD" "scripts/sdd-state finish PLAN_FILE --session <sid>" "finish takes the session"
+assert_not_contains "$SDD" "\`scripts/sdd-state finish PLAN_FILE\`" "no finish call omits the session"
+assert_not_contains "$SDD" "Never dispatch multiple implementation subagents in parallel (conflicts)." "the old parallel sentence is replaced"
+# Final review wave of parallel development: register's detached outcome, the occupied worktree, a merged task's retry, merge-back's not-holder.
+assert_contains "$SDD" "\`detached-head\` (exit 11) means a first registration found the repository the line names on a detached HEAD" "register names the detached-head outcome"
+assert_contains "$SDD" "create it in place with \`git -C <the repository the line names> switch -c <name>\`, and register again" "a detached first registration creates the branch in place and registers again"
+assert_contains "$SDD" "Any other status stops Setup until \`register\` succeeds; show its stderr line." "register has a catch-all"
+assert_contains "$SDD" "Before that detach, and before any claim, a later session compares \`git rev-parse --show-toplevel\` with the \`at <toplevel>\` of every other session's newest session line" "a later session checks whose worktree it is in before detaching"
+assert_contains "$SDD" "do not detach, switch or claim there. Leave it, create your own worktree with a name that carries your session id" "a later session inside another session's worktree leaves it for one of its own"
+assert_contains "$SDD" "\`held\` with \`own=1\` and \`merged=1\` means the task is already merged and its branch deleted: check nothing out and resume it at its completion line" "the owner's retry of a merged task resumes at the completion line"
+assert_contains "$SDD" "\`not-holder owner=<sid>\` (exit 4) means the claim is no longer yours" "merge-back's not-holder is a lost claim"
+assert_contains "$SDD" "stop and hand back with the line; never repair the ledger or take the claim back" "a not-holder merge-back hands back"
+assert_not_contains "$SDD" "\`not-approved\`, \`not-holder\`, \`blocked\`: your bookkeeping is behind" "not-holder is no bookkeeping repair"
+# The final gate's first round: a takeover of a merged task, and merge-back's blocked apart from not-approved.
+assert_contains "$SDD" "\`claimed\` with \`takeover=1\` and \`merged=1\` means the same after a takeover: the task is already merged, so check nothing out, dispatch nothing, and resume it at its completion line" "a takeover of a merged task resumes at the completion line"
+assert_contains "$SDD" "\`not-approved approved=<sha7|none>\` means your bookkeeping is behind" "not-approved is bookkeeping"
+assert_contains "$SDD" "so append the \`approved\` line for the head the reviewers saw (or pass that head) and retry" "not-approved is repaired by the approved line for the reviewed head"
+assert_contains "$SDD" "\`blocked waiting=<list>\` (exit 7) means an amendment put a prerequisite under your claim after you took it, and merge-back enforces the edge" "merge-back's blocked is an amended edge, not bookkeeping"
+assert_contains "$SDD" "never write a completion line for a task this session did not complete. Run \`next\` and take what it offers" "a blocked merge-back writes no completion line and runs next"
+assert_not_contains "$SDD" "\`not-approved\`, \`blocked\`: your bookkeeping is behind" "blocked is no bookkeeping repair"
+# The final gate's second round: the post-merge cleanup never force-deletes a task branch.
+assert_contains "$SDD" "\`git switch --detach <merged head>\` then \`git branch -d <task branch>\`" "the post-merge cleanup deletes the task branch with -d"
+assert_contains "$SDD" "If \`-d\` refuses, the branch holds commits that were never approved or merged: keep it, do not force the delete, and hand back to your human partner with git's output." "a refused -d keeps the branch and hands back"
+assert_not_contains "$SDD" "git branch -D <task branch>" "the post-merge cleanup never force-deletes the task branch"
+
 # finishing-a-development-branch — the session mode (portable dossiers, 2026-10-20)
 assert_contains "$FIN" "A passed \`new-branch\` or \`worktree\` changes nothing here" "new-branch and worktree keep the environment rows"
 assert_contains "$FIN" "Skip this step when mode \`current-branch\` was passed and \`\$CURRENT_BRANCH\` is \`\$DEFAULT_BRANCH\`" "only the default-branch case skips the base step"
 assert_contains "$FIN" "ask your human partner which is the default before choosing a row" "a main-and-master tie asks"
 assert_contains "$FIN" "git push <remote> <branch>:<branch>" "the push names one remote and one refspec"
+# finishing-a-development-branch — plans that share a spec (parallel development, 2026-10-27)
+assert_contains "$FIN" "the compiler recompiles it, adding this plan to the Outcome line" "finishing recompiles a spec with an Outcome line"
+assert_contains "$FIN" "merge withheld: plan <ws> is still open on this branch" "finishing withholds the merge while a sibling plan is open"
+assert_contains "$FIN" "sdd-state lease <plan> --closing --session <sid>" "finishing marks the branch closing before the merge"
+assert_contains "$FIN" "sdd-state lease <plan> --release --session <sid>" "finishing releases the lease last"
+assert_contains "$FIN" "PLAN_REPO=\$(git -C \"\$dir\" worktree list --porcelain | sed -n '1s/^worktree //p')" "finishing records the plan repository's main checkout before the compile removes the plan"
+assert_contains "$FIN" 'PLAN_REL=$(git -C "$dir" rev-parse --show-prefix)$rest' "finishing records the plan's repository-relative path before the compile removes the plan"
+assert_contains "$FIN" '`<plan>` in the lease commands below is `"$PLAN_REPO/$PLAN_REL"`' "finishing names the lease's plan path once beside the capture"
+assert_contains "$FIN" 'board --repo "$PLAN_REPO"' "finishing reads the board from the plan repository"
+assert_contains "$FIN" "any other status, \`status=no-lease\` among them, stops Option 1 before the merge" "a closing that answers no-lease stops Option 1"
+assert_contains "$FIN" "Under SDD, a failed merge or failing tests leave the lease marked closing (\`closing=1\`)" "Option 1 names the lease state its failure paths leave"
+assert_contains "$FIN" "If your human partner decides against the merge instead, put the base branch back first, from the main checkout." "Option 1's cancel route puts the base branch back first"
+assert_not_contains "$FIN" "decides against the merge instead, release the lease" "Option 1's cancel route does not release the lease alone"
+# The final gate's third round: a cancelled merge restores the base before the lease reopens the branch.
+assert_contains "$FIN" "git pull git rev-parse HEAD # the base tip before the merge; on the first run, keep the sha it prints git merge <feature-branch>" "Option 1 records the base tip between the pull and the merge, from the first run"
+assert_contains "$FIN" "A merge stopped on conflicts is still in progress: run \`git merge --abort\`." "the cancel route aborts an in-progress merge"
+assert_contains "$FIN" "ask your human partner \"Reset <base-branch> to <sha>, its tip before the merge?" "the cancel route asks before resetting, naming the recorded sha"
+assert_contains "$FIN" "Run \`git reset --hard <sha>\` only on their explicit yes; without one, leave the base as it is and report" "the cancel route resets a completed merge only on an explicit yes"
+assert_before "$FIN" "run \`git merge --abort\`" "Only then, under SDD, release the lease with the release line this option ends with" "the cancel route aborts the merge before it releases the lease"
+# The follow-on review of that round: a retry keeps the first run's sha, and the cancel route works on the base branch, not whatever HEAD is.
+assert_contains "$FIN" "Once the cause is fixed, run the block above again, but keep the sha its first run printed: after a completed merge, a rerun prints the merged tip." "a retry keeps the base tip its first run printed"
+assert_contains "$FIN" "Below, \`<sha>\` is the one the block's first run printed." "the cancel route restores the first run's sha"
+assert_not_contains "$FIN" "(\`<sha>\` is the one the block printed)" "the cancel route's sha is not whichever run printed last"
+assert_contains "$FIN" "If \`git branch --show-current\` does not print \`<base-branch>\`, run \`git switch <base-branch>\`; if that fails, stop and report." "the cancel route gets onto the base branch first, or stops"
+assert_contains "$FIN" "Next, if \`git rev-parse refs/heads/<base-branch>\` does not print \`<sha>\`, ask your human partner" "the cancel route asks to reset whenever the base is not at the first run's sha"
+assert_contains "$FIN" "Then confirm the checkout is settled (\`git branch --show-current\` prints \`<base-branch>\`, \`git rev-parse refs/heads/<base-branch>\` prints \`<sha>\`, and \`git status\` shows no merge in progress and a clean tree)" "the cancel route verifies the base branch itself before the release"
+assert_not_contains "$FIN" "git rev-parse <base-branch>" "the cancel route never compares the bare base name, which a same-named tag would shadow"
+assert_not_contains "$FIN" "\`git rev-parse HEAD\` prints the recorded sha" "the settled check does not read HEAD"
+assert_before "$FIN" "If \`git branch --show-current\` does not print \`<base-branch>\`" "run \`git merge --abort\`" "the cancel route checks the base branch before it aborts a merge"
+assert_before "$FIN" "If \`git branch --show-current\` does not print \`<base-branch>\`" "git reset --hard" "the cancel route checks the base branch before it resets"
+assert_before "$FIN" "Run \`git reset --hard <sha>\` only on their explicit yes" "Only then, under SDD, release the lease with the release line this option ends with" "the cancel route restores the base before it releases the lease"
+assert_before "$FIN" "Then confirm the checkout is settled" "Only then, under SDD, release the lease with the release line this option ends with" "the cancel route verifies the checkout before it releases the lease"
+assert_contains "$FIN" "Under SDD the discard takes Option 1's check before anything is deleted." "the discard checks the branch's other plans"
+assert_contains "$FIN" "any other status, \`status=sibling-open\` and \`status=no-lease\` among them, stops the discard before anything is deleted" "a discard whose closing is refused deletes nothing"
+assert_before "$FIN" "Under SDD the discard takes Option 1's check before anything is deleted." "git branch -D <feature-branch>" "the discard's check comes before the force-delete"
+# The finishing skill runs from the repository root, so a path to another
+# skill's script is spelled from this skill's directory, as its own are.
+assert_contains "$FIN" "bash <this skill's directory>/../subagent-driven-development/scripts/sdd-state board --repo \"\$PLAN_REPO\"" "finishing spells the board's script path from its own directory"
+assert_contains "$FIN" "bash <this skill's directory>/../subagent-driven-development/scripts/sdd-state lease <plan> --closing --session <sid>" "finishing spells the lease's script path from its own directory"
+assert_not_contains "$FIN" "bash ../subagent-driven-development/scripts/sdd-state" "finishing has no sdd-state call relative to the working directory"
+if [ -x "$REPO_ROOT/skills/finishing-a-development-branch/../subagent-driven-development/scripts/sdd-state" ]; then pass "the sdd-state path the finishing skill names exists and is executable"; else fail "the sdd-state path the finishing skill names exists and is executable"; fi
+# The default-branch push of mode current-branch bypasses the standard
+# options, so its section carries their detach and release itself.
+fin_scratch="$(mktemp -d)"
+sed -n '/^### Mode current-branch on the default branch$/,/^### Option 1: Merge Locally$/p' "$FIN" > "$fin_scratch/default-branch-mode.md"
+assert_contains "$fin_scratch/default-branch-mode.md" "sdd-state lease <plan> --release --session <sid>" "the default-branch push releases the lease"
+assert_contains "$fin_scratch/default-branch-mode.md" "switch --detach" "the default-branch push detaches the integration branch"
+rm -rf "$fin_scratch"
 # Turn liveness (spec 2026-10-19): a status message never ends a turn mid-plan,
 # long work is tracked, and Claude Code waits in the foreground.
 assert_contains "$SDD" "While the plan has tasks left, a turn ends in exactly three cases" \
@@ -491,7 +606,7 @@ assert_contains "$SDD" '`status=error` means the job directory could not be read
 assert_contains "$SDD" 'Completing the last task does not end the plan: it opens the final whole-branch review, and the plan ends only after Finish' "the last task opens the final review instead of ending the plan"
 assert_contains "$SDD" 'finishing the tasks is never a reason for it' "a hand-back is not written for finishing the tasks"
 assert_contains "$SDD" "\"Complete the task (scripts/sdd-state complete); any status but complete stops\" -> \"Mark the task's todo complete (where kept)\";" "the graph completes the task before the todo node"
-assert_contains "$SDD" "\"Mark the task's todo complete (where kept)\" -> \"More tasks remain?\";" "the todo node leads back to the loop"
+assert_contains "$SDD" "\"Mark the task's todo complete (where kept)\" -> \"next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)\";" "the todo node leads back to the loop"
 assert_not_contains "$SDD" "Append completion to ledger" "the hand-written completion node is gone"
 assert_contains "$SDD" 'a fix round on Claude Code dispatches a fresh foreground implementer; a SendMessage resume is for harnesses without the option' "fix rounds dispatch a fresh foreground implementer on Claude Code"
 assert_not_contains "$SDD" 'the stop guard treats it as live work, and your turn may end while it runs' "the resumed-agent-is-live-work sentence is gone"
@@ -501,6 +616,24 @@ assert_contains "$SDD" 'where it does not (fork mode in an interactive terminal)
 assert_contains "$SDD" 'receipt=<path>' "finish records the receipt"
 assert_not_contains "$SDD" '<out>.exit' "the hand-written exit-file protocol is gone"
 assert_contains "$SDD_RATIONALIZATIONS" 'The hook blocked me, so I'"'"'ll ask a question to get out' "rationalization row for gaming the guard"
+
+assert_contains "$WPLANS" "**Depends on:** none" "writing-plans template carries the Depends on line"
+assert_contains "$WPLANS" "names the tasks whose completion lines must exist before this task may be claimed" "writing-plans defines the Depends on line"
+assert_contains "$WPLANS" "**Merge-expected files:**" "writing-plans names merge-expected files in Global Constraints"
+assert_contains "$WPLANS" "a task without a Depends on line" "writing-plans placeholder scan covers the Depends on line"
+WT="$REPO_ROOT/skills/using-git-worktrees/SKILL.md"
+assert_contains "$WT" "git worktree add --detach" "using-git-worktrees starts a later SDD session's worktree detached"
+assert_contains "$WT" "the claim creates the task branch and the controller checks it out" "using-git-worktrees defers the task branch to the claim"
+
+assert_contains "$WT" 'git switch --detach "<integration branch>"' "using-git-worktrees detaches an existing, native or in-place session at the integration head"
+assert_contains "$WT" "a later session of a running SDD plan then detaches it; see Detaching a later session (every path)" "using-git-worktrees points Step 0 and Step 1a at the detach paragraph"
+assert_contains "$WT" "Skip to Step 2 (Project Setup), after the detach in Detaching a later session (every path)" "using-git-worktrees Step 0 skip keeps the detach"
+assert_contains "$WT" "use it and skip to Step 2, after the detach in Detaching a later session (every path)" "using-git-worktrees Step 1a skip keeps the detach"
+assert_contains "$WPLANS" '- **Merge-expected files:** `CHANGELOG.md`, `docs/testing.md`' "writing-plans gives the one-line Merge-expected form the parser reads"
+assert_contains "$WT" 'path="$LOCATION/<integration branch>-<session id>"' "using-git-worktrees gives a later session a worktree path of its own"
+assert_contains "$WT" "the later session compares \`git rev-parse --show-toplevel\` with the \`at <toplevel>\` of every other session's newest session line in the plan's ledger" "using-git-worktrees checks whose worktree a later session is in"
+assert_contains "$WT" "it must not detach, switch or claim there. It leaves that worktree" "using-git-worktrees keeps a later session out of another session's worktree"
+assert_contains "$WT" "creates its own, with a name that carries its session id" "using-git-worktrees names the later session's own worktree after its session id"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

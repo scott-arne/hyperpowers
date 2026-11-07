@@ -56,7 +56,7 @@ digraph process {
 
     subgraph cluster_per_task {
         label="Per Task";
-        "Claim the task (scripts/sdd-state claim): done means skip it; held by another session means ask" [shape=box];
+        "Claim the first task next offers (scripts/sdd-state claim), git switch to its branch" [shape=box];
         "Dispatch implementer subagent (./implementer-prompt.md)" [shape=box];
         "Implementer asks questions?" [shape=diamond];
         "Answer questions, provide context" [shape=box];
@@ -74,12 +74,14 @@ digraph process {
         "Record tier-skip (ungated-ledger), skip Codex task gate" [shape=box];
         "Codex task code gate\n(Claude Code; degrade if absent)" [shape=box];
         "Codex gate blocking findings?" [shape=diamond];
+        "Append approved line, merge back (scripts/sdd-state merge-back), detach, delete the task branch" [shape=box];
         "Complete the task (scripts/sdd-state complete); any status but complete stops" [shape=box];
         "Mark the task's todo complete (where kept)" [shape=box];
     }
 
     "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" [shape=box];
-    "More tasks remain?" [shape=diamond];
+    "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)" [shape=diamond];
+    "Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back" [shape=box];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [shape=box];
     "Final findings? ONE fix dispatch, one scoped re-review, surface residuals" [shape=box];
     "Dispatch decision extractor (background)" [shape=box];
@@ -87,8 +89,9 @@ digraph process {
     "Final review clean: delete this plan's workspace" [shape=box];
     "Use hyperpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
-    "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" -> "Claim the task (scripts/sdd-state claim): done means skip it; held by another session means ask";
-    "Claim the task (scripts/sdd-state claim): done means skip it; held by another session means ask" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="claimed"];
+    "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" -> "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)";
+    "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)" -> "Claim the first task next offers (scripts/sdd-state claim), git switch to its branch" [label="yes"];
+    "Claim the first task next offers (scripts/sdd-state claim), git switch to its branch" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="claimed"];
     "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer asks questions?";
     "Implementer asks questions?" -> "Answer questions, provide context" [label="yes"];
     "Answer questions, provide context" -> "Implementer implements, tests, commits, self-reviews";
@@ -107,15 +110,16 @@ digraph process {
     "R = 5?" -> "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model" [label="no - next round"];
     "R = 5?" -> "Surface open findings to your human partner (BLOCKED)" [label="yes - breaker trips"];
     "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Record tier-skip (ungated-ledger), skip Codex task gate" [label="yes"];
-    "Record tier-skip (ungated-ledger), skip Codex task gate" -> "Complete the task (scripts/sdd-state complete); any status but complete stops";
+    "Record tier-skip (ungated-ledger), skip Codex task gate" -> "Append approved line, merge back (scripts/sdd-state merge-back), detach, delete the task branch";
     "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Codex task code gate\n(Claude Code; degrade if absent)" [label="no"];
     "Codex task code gate\n(Claude Code; degrade if absent)" -> "Codex gate blocking findings?";
     "Codex gate blocking findings?" -> "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model" [label="yes - same five-round cap"];
-    "Codex gate blocking findings?" -> "Complete the task (scripts/sdd-state complete); any status but complete stops" [label="no"];
+    "Codex gate blocking findings?" -> "Append approved line, merge back (scripts/sdd-state merge-back), detach, delete the task branch" [label="no"];
+    "Append approved line, merge back (scripts/sdd-state merge-back), detach, delete the task branch" -> "Complete the task (scripts/sdd-state complete); any status but complete stops" [label="merged"];
     "Complete the task (scripts/sdd-state complete); any status but complete stops" -> "Mark the task's todo complete (where kept)";
-    "Mark the task's todo complete (where kept)" -> "More tasks remain?";
-    "More tasks remain?" -> "Claim the task (scripts/sdd-state claim): done means skip it; held by another session means ask" [label="yes"];
-    "More tasks remain?" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="no"];
+    "Mark the task's todo complete (where kept)" -> "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)";
+    "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)" -> "Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back" [label="none - complete"];
+    "Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="claimed"];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, surface residuals";
     "Final findings? ONE fix dispatch, one scoped re-review, surface residuals" -> "Dispatch decision extractor (background)";
     "Dispatch decision extractor (background)" -> "Codex final code gate\n(Claude Code; degrade if absent)";
@@ -213,25 +217,71 @@ a ledger file, not only in todos.
   When that write fails because the file now exists, another session
   created it first: continue as if you had found it. Whether you created
   it or found one, append your session line (with `>>`, never a rewrite):
-  `session <sid>: mode <current-branch|new-branch|worktree> on <branch> at <toplevel> started <UTC time>`,
+  `session <sid>: mode <current-branch|new-branch|worktree> on <task branch or detached> integrating <integration branch> at <toplevel> started <UTC time>`,
   where `<sid>` is `$CLAUDE_CODE_SESSION_ID` on Claude Code and, on a harness
   without one, a value you generate once as `$(date -u +%s)-$RANDOM$RANDOM`,
-  and the mode is what using-git-worktrees reported. When your human partner
-  assigned this session specific tasks, add `session <sid>: tasks <N,M,...>`.
-  Then run `scripts/sdd-state verify PLAN_FILE` (on a found ledger this is
-  the check that this host holds the code it relies on): `ok` continues;
+  and the mode is what using-git-worktrees reported. Append a fresh session
+  line whenever you move to a new task branch or detach; your newest line is
+  your location. When your human partner assigned this session specific
+  tasks, add `session <sid>: tasks <N,M,...>`. Then, once registered (the
+  next bullet), run `scripts/sdd-state verify PLAN_FILE` (on a found ledger
+  this is the check that this host holds the code it relies on): `ok` continues;
   anything else stops Setup until `verify` passes again. `code-missing`
   names commits the ledger relies on that this checkout lacks, so ask your
   human partner to pull the named branch; `wrong-repo` names the repository
   the ledger was handed off from, so ask which checkout this work belongs
   in; `plan-stale` names the plan repository branch to pull, and you read
   the plan again after that pull.
+- Register the plan before anything else is claimed:
+  `scripts/sdd-state register PLAN_FILE --session <sid> --integration <branch>`,
+  where `<branch>` is the branch the branch choice produced (the plan's
+  integration branch; later sessions read it from the ledger's plan line and
+  pass the same). `registered` continues; `wrong-branch` means this plan is
+  already running on another integration branch: switch to it or ask;
+  `spec-branch-mismatch` means a sibling plan of this spec runs on another
+  branch: use that branch; `branch-closing` means the plan's branch is being
+  merged and deleted: wait for your human partner; `detached-head` (exit 11)
+  means a first registration found the repository the line names on a
+  detached HEAD, as a host-managed workspace can be, and the plan ref is
+  named after a branch: ask your human partner for the branch to create
+  (the integration branch itself when plan and code share one repository),
+  create it in place with `git -C <the repository the line names> switch -c <name>`,
+  and register again. Any other status stops Setup until `register`
+  succeeds; show its stderr line. A later session of a
+  running plan starts its worktree detached at the integration head
+  (using-git-worktrees says how) and never checks the integration branch
+  out; a later session (the ledger already has a plan line naming the
+  integration branch) that is not already detached at that branch's head
+  runs `git switch --detach <branch>` before `register`, whatever mode
+  using-git-worktrees reported (an existing worktree, a native tool's
+  worktree, or work in place); a worktree that skill created detached is
+  already there. Before that detach, and before any claim, a later session
+  compares `git rev-parse --show-toplevel` with the `at <toplevel>` of every
+  other session's newest session line: a match means you are inside another
+  session's worktree (a native tool can resume one under the same name), so
+  do not detach, switch or claim there. Leave it, create your own worktree
+  with a name that carries your session id (using-git-worktrees, Detaching a
+  later session), append a fresh session line from it, and detach that one.
+  When the plan file lives in another repository
+  than the code, pass `--code-repo <code toplevel>` to every `sdd-state`
+  call; an omitted option means the current repository, and a wrong one is
+  `wrong-repo`.
+- Quote the graph in the ledger: run `scripts/sdd-state deps PLAN_FILE` and
+  append its lines after the scan table. The scan's conflict rows include
+  `scripts/sdd-state deps --check PLAN_FILE --ledger <workspace>/progress.md`'s
+  lines: each `conflict tasks=A,B ...` is a row for your human partner, settled
+  by an amendment (`scripts/sdd-state amend PLAN_FILE --from <edited copy>
+  --base <plan= blob> --message <subject>`, with `--accept 'tasks=A,B path=<p>'`
+  when they accept the overlap; the edited copy is a file outside the
+  checkout's plan path, a copy in the plan's workspace, never the checked-out
+  plan file itself, which `amend` refuses) and never by editing the plan in
+  the worktree alone, because the plan ref is what every session reads.
 - The ledger is your recovery map: the commits it names exist in git even
   when your context no longer remembers creating them. After compaction,
   trust the ledger and `git log` over your own recollection.
 - The workspace is scratch for the working tree and a record on the branch:
   the Finish step removes the plan's directory through
-  `scripts/sdd-state finish PLAN_FILE`, and the branch history keeps it, so
+  `scripts/sdd-state finish PLAN_FILE --session <sid>`, and the branch history keeps it, so
   an evidence note can cite `git show <sha>:plans/<ws>/<file>`. Nothing
   inside the checkout is reclaimed automatically; `scripts/sdd-state prune --repo <dir>`
   lists and removes idle plan directories only when asked. Snapshot the
@@ -362,8 +412,13 @@ On a harness whose subagents run asynchronously, never poll a wait interface wit
 
 ### 1. Dispatch the implementer
 
-Record BASE (`git rev-parse HEAD`) before dispatching — the review package
-and fix-round diffs need it.
+Record BASE right after `git switch <branch>` and before dispatching, as the
+task branch's fork point from the integration branch:
+`git merge-base HEAD <integration branch>`. On a fresh claim that is the
+claim's `from=` commit. On a takeover it is the original claim's base, so the
+previous holder's commits stay in the review package and the fix-round diffs,
+which both need BASE. A HEAD read before the claim can lag the integration
+branch while other sessions merge.
 
 - **Task brief:** before dispatching an implementer, run this skill's
   `scripts/task-brief PLAN_FILE N` — it extracts the task's full text to a
@@ -398,26 +453,42 @@ and fix-round diffs need it.
 - If an earlier task deferred a finding in the area this task touches — a
   Minor in the ledger, or one your human partner decided — carry a pointer
   to that ledger entry in the dispatch.
-- Claim the task first: `scripts/sdd-state claim PLAN_FILE N --session <sid>`.
-  `claimed`, or `held` by your own session id (a resume after compaction):
-  proceed. `done`: another session completed the task since you read the
-  ledger; read its completion line, mark the task done, and never dispatch
-  it. `no-workspace` (exit 2): the workspace is gone (finished or pruned
-  elsewhere); stop, run `sync`, and re-read the ledger before anything
-  else. `error` (exit 2, the same exit as `no-workspace` and a different
-  problem): a read or a write failed, so the task is not claimed and `sync`
-  is not the answer; stop and show the stderr line.
-  `held` by another session: do not take the next task on your own
-  initiative; which tasks may run concurrently is not yet decided, and
-  skipping ahead would decide it by accident. Tell your human partner who
-  holds the task and since when, and ask whether to take it over; take over
-  (`--takeover`) only on their explicit yes to that question, recording the
-  takeover beside the original identity; if they say the other session is
-  still working, wait for their instruction. The exception is a task list
-  your human partner assigned this session (`session <sid>: tasks ...`):
-  work only those tasks, and report a held task in your list the same way.
-  Any other status stops the dispatch until `claim` succeeds; show its
-  stderr line.
+- Ask what to take: `scripts/sdd-state next PLAN_FILE --session <sid>`.
+  `status=next tasks=<list>` names the claimable tasks in plan order, this
+  session's own claims first; claim the first:
+  `scripts/sdd-state claim PLAN_FILE N --session <sid>`. `claimed` prints the
+  task branch and its base: check the branch out (`git switch <branch>`) and
+  dispatch on it; `held` with your own session id (`own=1`, a resume after
+  compaction) prints the same two fields: check the branch out and proceed;
+  `held` with `own=1` and `merged=1` means the task is already merged and its
+  branch deleted: check nothing out and resume it at its completion line
+  (Complete the task, below); `claimed` with `takeover=1` and `merged=1`
+  means the same after a takeover: the task is already merged, so check
+  nothing out, dispatch nothing, and resume it at its completion line (the
+  previous holder's task branch may still exist; you do not need it);
+  `held` from `claim` after `next` offered the task is a race lost, run
+  `next` again; `blocked` means the plan moved under you, run `next` again.
+  A task held by another session is ordinary while next offers another: take
+  what it offers. When `next` prints `status=none reason=<reason>`:
+  `complete` goes to the final train (Finish below); `assigned-complete` is
+  reported and the session hands back; `held` and `blocked` mean post a
+  waiting record (`scripts/sdd-state wait PLAN_FILE --session <sid> --kind
+  tasks --note "<the held= and waiting= fields>"`), print
+  `scripts/sdd-state board PLAN_FILE`, and hand back with the board's session
+  lines in your message. Take a held task over only on your human partner's
+  explicit yes to a question that names the holder and the time since
+  (`--takeover`), recording the takeover beside the original identity;
+  `own-blocked` means an amendment put a prerequisite under your own claim:
+  post, print the board, hand back, and let your human partner remove the
+  edge or let the prerequisite complete. `done`, `no-workspace` and `error`
+  keep their handling: `done`: another session completed the task since you
+  read the ledger; read its completion line, mark the task done, and never
+  dispatch it. `no-workspace` (exit 2): the workspace is gone (finished or
+  pruned elsewhere); stop, run `sync`, and re-read the ledger before
+  anything else. `error` (exit 2, the same exit as `no-workspace` and a
+  different problem): a read or a write failed, so the task is not claimed
+  and `sync` is not the answer; stop and show the stderr line. Any other
+  status stops the dispatch until `claim` succeeds; show its stderr line.
 - Record the implementer's agent identity from the dispatch result in the
   ledger's task entry
   (`Task <N>: implementer <agent-id-or-name> (model <model>, session <sid>, worktree <path>, branch <name>)`) —
@@ -430,7 +501,7 @@ and fix-round diffs need it.
   quoted heredoc (`cat >> <workspace>/progress.md <<'EOF'`), never with the
   Edit tool, whose read-modify-write drops a line another session appended
   in between.
-- Never dispatch multiple implementation subagents in parallel (conflicts).
+- One implementer at a time in this session: parallel work is other sessions' (one controller per task branch); never dispatch two implementers at once here.
 - Where the Agent tool offers `run_in_background`, dispatch with it false; where it does not (fork mode in an interactive terminal), dispatches run in the background and the stop guard treats them as live work.
 
 Template: [implementer-prompt.md](implementer-prompt.md)
@@ -713,16 +784,67 @@ next.
 
 When the review comes back clean — the task reviewer approved, every
 fix-loop finding is addressed or declined, and the per-task Codex gate
-approved or was skipped by tier — run `scripts/sdd-state complete PLAN_FILE N
---commits <base7>..<head7>` and repeat it until it prints `status=complete`
-(`busy` and `error` are retried; `unknown-task` means the number is not a
-heading in the plan, `no-workspace` that the ledger is gone, and a usage
-error that the arguments are wrong: each of those stops you, not the loop).
-Its `snapshot=` is the completion's durable record.
+approved or was skipped by tier — in this order, each step idempotent on a
+resume:
 
-Then mark the task's todo complete, where you keep todos, and move on.
-Never move to the next task while the review has open Critical/Important
-issues.
+- Append `Task <N>: approved <sha7>` with the head the reviewers saw (every
+  later approval of the same task appends a new line; the newest is what
+  merges). `<sha7>` is exactly the first seven characters of the full id:
+  write it with `git rev-parse <head> | cut -c1-7`, never
+  `git rev-parse --short`, which prints more than seven characters in a large
+  repository, and merge-back accepts exactly seven, so a longer token reads
+  as no approval.
+- Merge back: `scripts/sdd-state merge-back PLAN_FILE N --session <sid> --commit <sha>`.
+  `merged` continues (`already=1` on a resume means the ref was moved
+  before the crash). `conflict paths=<list>`: merge the integration branch
+  into the task branch in your worktree (`git merge <integration>`), resolve
+  through one implementer dispatch whose brief names the paths and both
+  sides, re-run the task reviewer over the resolution and the task gate's
+  re-review lens, append the new `approved` line, and retry. `checked-out`
+  names a worktree or `lease:<sid>`: a final train holds the branch; post a
+  `tasks` record and retry after it ends, or ask your human partner to move
+  the checkout. `not-approved approved=<sha7|none>` means your bookkeeping
+  is behind: the commit you passed is not the task's newest `approved` line,
+  so append the `approved` line for the head the reviewers saw (or pass that
+  head) and retry. `blocked waiting=<list>` (exit 7) means an amendment put a
+  prerequisite under your claim after you took it, and merge-back enforces
+  the edge: leave the `approved` line as it is, and never write a completion
+  line for a task this session did not complete. Run `next` and take what it
+  offers; on `own-blocked`, post, print the board and hand back as the
+  `own-blocked` text above says. Retry merge-back once every waiting task has
+  its completion line, or after your human partner removes the edge.
+  `not-holder owner=<sid>` (exit 4)
+  means the claim is no longer yours (after a takeover your human partner
+  granted, that session holds it): stop and hand back with the line; never
+  repair the ledger or take the claim back.
+- Detach at the merged head and drop the task branch:
+  `git switch --detach <merged head>` then `git branch -d <task branch>`
+  (its commits are on the integration branch now; a missing branch on a
+  resume is fine). If `-d` refuses, the branch holds commits that were never
+  approved or merged: keep it, do not force the delete, and hand back to
+  your human partner with git's output.
+- Complete the task: run `scripts/sdd-state complete PLAN_FILE N
+  --commits <base7>..<head7>` and repeat it until it prints `status=complete`
+  (`busy` and `error` are retried; `unknown-task` means the number is not a
+  heading in the plan, `no-workspace` that the ledger is gone, and a usage
+  error that the arguments are wrong: each of those stops you, not the loop).
+  Its `snapshot=` is the completion's durable record.
+- Mark the todo complete (where you keep todos), and run `next`.
+
+A task whose ledger has a `merged` line and no completion line is resumed
+at the completion line, never redispatched.
+
+## The waiting board
+
+Before you ask your human partner a question, hand back BLOCKED, meet an
+empty frontier (`held` or `blocked`), or stop on a merge conflict, post what
+you wait on: `scripts/sdd-state wait PLAN_FILE --session <sid> --kind
+<question|tasks|merge|gate|handoff> [--task N] --note "<one line>"`, and put
+the session lines of `scripts/sdd-state board PLAN_FILE` in what you write.
+When you resume, clear it: `scripts/sdd-state wait PLAN_FILE --session <sid> --clear`.
+The board is how your human partner finds the session that needs them among
+several; a session that holds a claim and posts nothing shows as quiet
+after half an hour, which is where they look for a permission prompt.
 
 ## Risk Tiers (per-task Codex gate applicability)
 
@@ -742,7 +864,22 @@ low.
 
 ## Final Review
 
-The final whole-branch review gets a package too: run
+The final train is claimed. When `next` says `complete`, run
+`scripts/sdd-state claim PLAN_FILE final --session <sid>`: `claimed` means
+this session runs the final review, the final gate and Finish; `blocked`
+names tasks still open (claims without completion lines elsewhere: wait or
+ask); `held` with your own session id (`own=1`, a resume after compaction)
+means this session already holds the train: continue as its holder; `held`
+names the session that holds it, or `lease=<sid> plan=<ws>`
+when a sibling plan's final holds the branch: post a `tasks` record naming
+the holder, print the board, and hand back. The holder checks the
+integration branch out in its own worktree (`git switch <integration>`), the
+one time a session does so, and runs the review package, the final
+reviewer, the fix wave and the final Codex gate on it; its fix commits land
+on the integration branch directly, which the lease makes safe.
+
+Once you hold the train and have checked the integration branch out, the
+final whole-branch review gets a package too: run
 `scripts/review-package PLAN_FILE MERGE_BASE HEAD` (MERGE_BASE = the commit the
 branch started from, e.g. `git merge-base main HEAD`) — take the path from the
 `wrote <path>: ...` line and include it in the final review dispatch, so the
@@ -754,10 +891,6 @@ hyperpowers:requesting-code-review's
 the ledger's deferred-minor lines — and at `tier-skips.md`, if any task
 skipped its per-task gate — so it can triage which must be fixed before
 merge.
-
-Final review requires a `Task <N>: complete` line for every task of the
-plan; a session that finished its assigned tasks while other sessions' tasks
-are open reports that and stops rather than finishing the plan.
 
 If the final whole-branch review returns findings, dispatch ONE fix subagent
 with the complete findings list — not one fixer per finding. Compose the
@@ -831,15 +964,17 @@ When the final whole-branch review is clean and its fixes are merged:
    step removes the ledger from the working tree, and
    hyperpowers:finishing-a-development-branch takes the mode, the plan, the
    spec and the extractor's task id and output path as its input.
-2. **Finish the workspace** with `scripts/sdd-state finish PLAN_FILE`: it
-   refuses with `open-claims` while any claimed task lacks a completion line
+2. **Finish the workspace** with `scripts/sdd-state finish PLAN_FILE --session <sid>`:
+   it refuses with `open-claims` while any claimed task lacks a completion line
    (that is a plan not finished, not a reason for `--force`), and with
    `busy` (exit 3) when another session is writing the workspace or a copy
    from an interrupted removal sits beside it (report the stderr line, wait
    for the other session or ask your human partner about the copy, then run
    `finish` again); it also refuses with `live-jobs` while a tracked job it
    names is still live (run `tracked-job wait` on it, or `tracked-job stop`
-   when the job is no longer wanted, then run `finish` again); otherwise it
+   when the job is no longer wanted, then run `finish` again). `not-holder`
+   or `no-final-claim` (exit 11): this session does not hold the final
+   train; stop and hand back. Otherwise it
    removes the plan's directory, commits the removal to the state branch,
    and prints `last=<sha>`, the commit that still holds the dossier,
    `push=<remote>/<branch>` and `receipt=<path>`, the durable copy of the
@@ -857,6 +992,14 @@ When the final whole-branch review is clean and its fixes are merged:
    The push command is `git -C <checkout> push <remote> <branch>`, the
    checkout being the parent of the `plans/` directory `sdd-dir` printed;
    run it only if your human partner asks.
+4. **Keep the lease through the branch action.** `finish` leaves the branch
+   lease in place; hyperpowers:finishing-a-development-branch marks the
+   branch closing before a merge and releases the lease after whichever
+   option your human partner chose. Hand it the plan path and your session
+   id for that. When the final ends with a hand-back instead, detach your
+   worktree first (`git switch --detach`) and then release the lease
+   yourself, as the last action:
+   `scripts/sdd-state lease PLAN_FILE --release --session <sid>`.
 
 A clean finish that leaves the workspace behind is an INCOMPLETE finish —
 "keeping it for reference" is not an option; the repo's commits are the

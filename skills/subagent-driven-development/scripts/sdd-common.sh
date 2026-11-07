@@ -167,6 +167,15 @@ hp_ledger_records() { # <ledger>
   return 0
 }
 
+# <UTC timestamp as hp_utc_now prints> -> seconds since the epoch; GNU date
+# reads -d, BSD date needs -j -f. The shape is checked first because GNU -d
+# also takes "yesterday" and BSD -f ignores trailing characters, and a value
+# either would accept is not one hp_utc_now wrote.
+hp_utc_epoch() {
+  case "$1" in [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;; *) return 1 ;; esac
+  date -u -d "$1" +%s 2>/dev/null || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$1" +%s 2>/dev/null
+}
+
 # <pid> -> 0 when the process is gone. kill(2) answers ESRCH for a pid that
 # is gone and EPERM for one that exists but may not be signalled (another
 # user's process, or any process from a sandboxed shell); only the first is
@@ -220,10 +229,16 @@ hp_plan_rel() {
 }
 # <plan-file> -> <slug>-<hash8>, the workspace name, identical on every host.
 hp_plan_ws_name() {
-  local d rel slug hash8
+  local d
   d=$(hp_plan_dir "$1") || return 1
-  rel=$(hp_plan_rel "$1")
-  slug=$(basename "$1"); slug=${slug%.*}
+  hp_ws_name_of_rel "$d" "$(hp_plan_rel "$1")"
+}
+# <directory in the plan's repository> <repo-relative plan path> -> the
+# workspace name. One computation for a present plan and for the path of one
+# the finishing compile removed, which only lease resolves.
+hp_ws_name_of_rel() {
+  local d=$1 rel=$2 slug hash8
+  slug=$(basename "$rel"); slug=${slug%.*}
   # A workspace name never starts with a dot: dotted entries under plans/
   # are the leftovers of removals (.removing-, .quarantining-, .pruned-),
   # and a plan file named like one must not be taken for them. A plan file
@@ -235,6 +250,143 @@ hp_plan_ws_name() {
   hash8=$(printf '%s' "$rel" | git -C "$d" hash-object --stdin | cut -c1-8)
   printf '%s-%s\n' "$slug" "$hash8"
 }
+
+# --- plan graph -------------------------------------------------------------
+# <plan text file> -> one "task=N depends=<list|none>" line per "### Task N:"
+# heading, in heading order. The "**Depends on:**" line under a heading
+# names the tasks whose completion lines must exist before the task may be
+# claimed; a plan with no such line on any task predates the dependency
+# design and is read as serial (each task depends on every earlier one), so
+# existing plans behave as they always did. Everything that can make the
+# graph lie is a parse error here rather than a surprise at claim time.
+# A fenced code block is text: an implementation plan embeds fixture plans in
+# its steps, and their headings must not become tasks of the plan itself.
+hp_plan_graph() {
+  local f=$1 errf out rc
+  errf=$(mktemp "${TMPDIR:-/tmp}/sdd-graph.XXXXXX") || return 2
+  # One program both validates and emits: its END block prints task lines only
+  # after every check passes, so stdout is empty on error, and a second copy of
+  # the grammar could drift from the validator and emit a graph it never checked.
+  out=$(awk '
+    /^(```|~~~)/ { match($0, /^(`+|~+)/); run = substr($0, 1, RLENGTH); if (fence == "") fence = run; else if (substr(run, 1, 1) == substr(fence, 1, 1) && RLENGTH >= length(fence)) fence = ""; next }
+    fence != "" { next }
+    # A heading that starts like a task but is not "### Task N:" plus a space or
+    # the line end would otherwise drop the task silently, or carry shell text
+    # into the task id. That holds at every heading level and spacing too:
+    # task-brief reads "## Task 1" as a task, and a plan of such headings read
+    # here as having none would report itself complete.
+    /^#+[ \t]+Task[ \t]+[0-9]/ && !/^### Task [0-9]/ { printf "malformed task heading: %s\n", $0 > "/dev/stderr"; bad = 1; exit 2 }
+    /^### Task [0-9]/ { if ($0 !~ /^### Task [0-9]+:([ \t]|$)/) { printf "malformed task heading: %s\n", $0 > "/dev/stderr"; bad = 1; exit 2 }
+      n = $0; sub(/^### Task /, "", n); sub(/:.*$/, "", n); if (n in seen) { printf "duplicate heading: task %s\n", n > "/dev/stderr"; bad = 1; exit 2 } seen[n] = 1; order[++k] = n; cur = n; next }
+    cur != "" && /^\*\*Depends on:\*\*/ {
+      line = $0; sub(/^\*\*Depends on:\*\*[ \t]*/, "", line); gsub(/[ \t]+$/, "", line)
+      # Validate the raw text before normalizing it: a typo must be an error,
+      # not a dropped prerequisite.
+      ok = (line == "none")
+      if (!ok && line != "") { ok = 1; m = split(line, parts, ","); delete rep
+        for (p = 1; p <= m; p++) { it = parts[p]; gsub(/^[ \t]+|[ \t]+$/, "", it)
+          if (it !~ /^Task[ \t]+[0-9]+$/) { ok = 0; break }
+          sub(/^Task[ \t]+/, "", it); if (it in rep) { ok = 0; break } rep[it] = 1 } }
+      if (!ok || has[cur]) { printf "malformed dependency line: task %s: %s\n", cur, line > "/dev/stderr"; bad = 1; exit 2 }
+      has[cur] = 1
+      if (line == "none") { dep[cur] = ""; next }
+      gsub(/Task[ \t]*/, "", line); gsub(/[ \t]/, "", line); dep[cur] = line; next }
+    END {
+      if (bad) exit 2
+      annotated = 0; for (i = 1; i <= k; i++) if (has[order[i]]) annotated++
+      if (annotated > 0 && annotated < k) {
+        printf "mixed annotation: tasks without a Depends on line:" > "/dev/stderr"; sep = " "
+        for (i = 1; i <= k; i++) if (!has[order[i]]) { printf "%s%s", sep, order[i] > "/dev/stderr"; sep = ", " }
+        printf "\n" > "/dev/stderr"; exit 2 }
+      if (annotated == 0) { for (i = 1; i <= k; i++) { d = ""; for (j = 1; j < i; j++) d = d (d == "" ? "" : ",") order[j]; dep[order[i]] = d } }
+      for (i = 1; i <= k; i++) { t = order[i]; m = split(dep[t], parts, ",")
+        for (p = 1; p <= m; p++) { if (parts[p] == "") continue
+          if (!(parts[p] in seen)) { printf "unknown task: %s (from task %s)\n", parts[p], t > "/dev/stderr"; exit 2 }
+          if (parts[p] == t) { printf "self-dependency: task %s\n", t > "/dev/stderr"; exit 2 } } }
+      # Kahn: a cycle is whatever never reaches in-degree zero.
+      for (i = 1; i <= k; i++) { t = order[i]; m = split(dep[t], parts, ","); indeg[t] = 0; for (p = 1; p <= m; p++) if (parts[p] != "") { indeg[t]++; succ[parts[p]] = succ[parts[p]] " " t } }
+      done = 0; changed = 1
+      while (changed) { changed = 0; for (i = 1; i <= k; i++) { t = order[i]; if (!(t in out) && indeg[t] == 0) { out[t] = 1; done++; changed = 1; m = split(succ[t], s, " "); for (p = 1; p <= m; p++) if (s[p] != "") indeg[s[p]]-- } } }
+      if (done < k) { first = ""; for (i = 1; i <= k; i++) if (!(order[i] in out)) { first = order[i]; break }
+        path = first; t = first; for (g = 0; g < k; g++) { m = split(dep[t], parts, ","); nxt = ""; for (p = 1; p <= m; p++) if (parts[p] != "" && !(parts[p] in out)) { nxt = parts[p]; break } if (nxt == "") break; path = path " -> " nxt; if (nxt == first) break; t = nxt }
+        printf "cycle: %s\n", path > "/dev/stderr"; exit 2 }
+      for (i = 1; i <= k; i++) printf "task=%s depends=%s\n", order[i], (dep[order[i]] == "" ? "none" : dep[order[i]])
+    }' "$f" 2>"$errf")
+  rc=$?
+  if [ "$rc" -ne 0 ] || [ -s "$errf" ]; then cat "$errf" >&2; rm -f "$errf"; return 2; fi
+  rm -f "$errf"
+  printf '%s\n' "$out"
+}
+
+# <plan text file> [<ledger file>] [<amends dir>] -> one "conflict ..." line
+# per pair of tasks that share a Create, Modify or Test path, or an interface
+# (a backticked name in one task's Produces and another's Consumes), without
+# one depending on the other directly or through a chain; a consumer must
+# follow its producer, so the reverse edge does not clear an interface pair.
+# Only the first backticked span of a Files line is the path; later spans
+# are annotations. Paths are printed with a percent as %25 and then a space
+# as %20, enc_spec's order in sdd-state, the form the ledger and amend carry.
+# Escaping the percent first keeps the key reversible: src/a b and src/a%20b
+# are two paths, and an acceptance of one must never cover the other.
+# Paths under "**Merge-expected files:**" in Global Constraints never conflict.
+# Accepted pairs are read from "scan: accepted-overlap" ledger lines and from
+# "accept=" lines in amendment records whose commit is on the plan ref (a
+# record a failed attempt left behind must not hide a conflict). Exit 1 when
+# any line was printed.
+hp_plan_overlaps() { # <plan text> [<ledger>] [<amends dir>] [<plan repo> <plan ref>]
+  local f=$1 ledger=${2:-} amends=${3:-} graph accepted rec c
+  graph=$(hp_plan_graph "$f") || return 2
+  accepted=""
+  [ -n "$ledger" ] && [ -f "$ledger" ] && accepted=$(sed -n 's/^scan: accepted-overlap //p' "$ledger")
+  if [ -n "$amends" ] && [ -d "$amends" ] && [ -n "${4:-}" ] && [ -n "${5:-}" ]; then
+    for rec in "$amends"/*; do
+      [ -f "$rec" ] || continue
+      c=$(sed -n 's/^commit=//p' "$rec"); [ -n "$c" ] || continue
+      git -C "$4" merge-base --is-ancestor "$c" "refs/heads/$5" 2>/dev/null || continue
+      accepted="$accepted
+$(sed -n 's/^accept=//p' "$rec")"
+    done
+  fi
+  # The graph and the accepted pairs are multi-line, which BSD awk refuses in
+  # a -v assignment, so they travel through the environment.
+  HP_GRAPH="$graph" HP_ACCEPTED="$accepted" awk '
+    BEGIN {
+      graph = ENVIRON["HP_GRAPH"]; accepted = ENVIRON["HP_ACCEPTED"]
+      m = split(graph, g, "\n"); for (i = 1; i <= m; i++) { if (g[i] == "") continue; split(g[i], kv, " "); t = substr(kv[1], 6); d = substr(kv[2], 9); order[++k] = t; if (d != "none") { c = split(d, parts, ","); for (p = 1; p <= c; p++) direct[t, parts[p]] = 1 } }
+      # transitive closure: after[a,b] means a depends on b through a chain
+      for (i = 1; i <= k; i++) for (j = 1; j <= k; j++) if (direct[order[i], order[j]]) after[order[i], order[j]] = 1
+      for (x = 1; x <= k; x++) for (i = 1; i <= k; i++) for (j = 1; j <= k; j++) if (after[order[i], order[x]] && after[order[x], order[j]]) after[order[i], order[j]] = 1
+      n = split(accepted, acc, "\n"); for (i = 1; i <= n; i++) if (acc[i] != "") ok[acc[i]] = 1
+    }
+    /^(```|~~~)/ { match($0, /^(`+|~+)/); run = substr($0, 1, RLENGTH); if (fence == "") fence = run; else if (substr(run, 1, 1) == substr(fence, 1, 1) && RLENGTH >= length(fence)) fence = ""; next }
+    fence != "" { next }
+    /^## Global Constraints/ { gc = 1; next }
+    /^## / { gc = 0 }
+    gc && /Merge-expected files:/ { s = $0; while (match(s, /`[^`]+`/)) { me[substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } }
+    /^### Task [0-9]+:/ { cur = $3; sub(/:$/, "", cur); mode = ""; gc = 0; next }
+    cur == "" { next }
+    /^\*\*Files:\*\*/ { mode = "files"; next }
+    /^\*\*Interfaces:\*\*/ { mode = "ifaces"; next }
+    /^\*\*/ && !/^\*\*Files:\*\*/ && !/^\*\*Interfaces:\*\*/ { mode = "" }
+    mode == "files" && /^- (Create|Modify|Test):/ { s = $0; if (match(s, /`[^`]+`/)) { p = substr(s, RSTART + 1, RLENGTH - 2); sub(/:[0-9-]+$/, "", p); if (!(p in me)) { gsub(/%/, "%25", p); gsub(/ /, "%20", p); paths[cur, p] = 1 } } next }
+    mode == "ifaces" && /^- Produces:/ { s = $0; while (match(s, /`[^`]+`/)) { prod[cur, substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } next }
+    mode == "ifaces" && /^- Consumes:/ { s = $0; while (match(s, /`[^`]+`/)) { cons[cur, substr(s, RSTART + 1, RLENGTH - 2)] = 1; s = substr(s, RSTART + RLENGTH) } next }
+    END {
+      any = 0
+      for (i = 1; i <= k; i++) for (j = i + 1; j <= k; j++) { a = order[i]; b = order[j]
+        if (after[a, b] || after[b, a]) continue
+        for (key in paths) { split(key, kp, SUBSEP); if (kp[1] != a) continue; if ((b, kp[2]) in paths) { line = "tasks=" a "," b " path=" kp[2]; if (!(line in ok)) { printf "conflict tasks=%s,%s shares=%s\n", a, b, kp[2]; any = 1 } } } }
+      for (key in prod) { split(key, kp, SUBSEP); pr = kp[1]; name = kp[2]
+        for (co = 1; co <= k; co++) { c = order[co]; if (c == pr || !((c, name) in cons)) continue
+          if (after[c, pr]) continue
+          lo = (pr + 0 < c + 0) ? pr : c; hi = (pr + 0 < c + 0) ? c : pr
+          line = "tasks=" lo "," hi " interface=" name; if (!(line in ok)) { printf "conflict tasks=%s,%s interface=%s direction=consumer-first\n", lo, hi, name; any = 1 } } }
+      exit any
+    }' "$f"
+}
+
+# <ledger> -> the plan ref recorded by the plan line, or nothing.
+plan_ref_of_ledger() { sed -n 's/^plan: integration .* plan-ref \([^ ]*\) .*/\1/p' "$1" 2>/dev/null | tail -n 1; }
 
 # git with the dedicated identity when either identity field is missing.
 hp_git_id() { # <repo-dir> <git args...>
@@ -359,13 +511,45 @@ hp_lock_at() { # <lock-dir>
     trap 'hp_unlock; exit 143' TERM
   fi
 }
-# Remove the lock only when this pid owns it: a stale takeover may have
+# Two repositories' locks are taken in ascending key order whichever role
+# each plays (plan or code), so two sessions whose roles are swapped cannot
+# wait on each other. Equal keys mean one repository: one lock.
+: "${HP_LOCK_DIR2:=}"
+hp_lock_pair() { # <repoA> <repoB>
+  local ka kb first second la lb
+  ka=$(hp_key "$1") || return 2; kb=$(hp_key "$2") || return 2
+  if [ "$ka" = "$kb" ]; then hp_lock "$1"; return $?; fi
+  if [ "$ka" \< "$kb" ]; then first=$1; second=$2; else first=$2; second=$1; fi
+  la=$(hp_checkout_path "$first") || return 2; lb=$(hp_checkout_path "$second") || return 2
+  hp_lock_at "$la.lock" || return 2
+  if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = lock-pair-between ]; then
+    : > "$la.lock-pair-between-paused"
+    while [ -e "$la.lock-pair-between-pause" ]; do sleep 0.1; done
+    rm -f "$la.lock-pair-between-paused"
+  fi
+  HP_LOCK_DIR2=$HP_LOCK_DIR; HP_LOCK_DIR=""
+  if ! hp_lock_at "$lb.lock"; then HP_LOCK_DIR=$HP_LOCK_DIR2; HP_LOCK_DIR2=""; hp_unlock; return 2; fi
+  # hp_lock_at left HP_LOCK_DIR on the second lock; the first is held in
+  # HP_LOCK_DIR2 so that one hp_unlock, the trap included, releases both,
+  # the first-taken lock last.
+}
+# Remove each lock only when this pid owns it: a stale takeover may have
 # replaced it with another process's lock.
 hp_unlock() {
-  if [ -n "$HP_LOCK_DIR" ] && [ "$(sed -n 's/^pid=//p' "$HP_LOCK_DIR/owner" 2>/dev/null)" = "$$" ]; then
-    rm -rf "$HP_LOCK_DIR"
-  fi
-  HP_LOCK_DIR=""
+  local d
+  for d in "$HP_LOCK_DIR" "$HP_LOCK_DIR2"; do
+    if [ -n "$d" ] && [ "$(sed -n 's/^pid=//p' "$d/owner" 2>/dev/null)" = "$$" ]; then rm -rf "$d"; fi
+  done
+  HP_LOCK_DIR=""; HP_LOCK_DIR2=""
+}
+# <repo-dir> <branch> -> the lease file for the branch beside the lock: a
+# branch name may hold slashes, so the file is keyed by a digest of the full
+# ref name and carries the name inside.
+hp_lease_key() {
+  local c ref12
+  c=$(hp_checkout_path "$1") || return 1
+  ref12=$(printf 'refs/heads/%s' "$2" | git -C "$1" hash-object --stdin | cut -c1-12)
+  printf '%s.final-%s\n' "$c" "$ref12"
 }
 
 # --- containment ------------------------------------------------------------

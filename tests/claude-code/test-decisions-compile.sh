@@ -2035,6 +2035,181 @@ if [ "$(cksum < "$repo/$kappa_spec")" = "$kappa_spec_sum" ]; then pass "the spec
 if [ ! -d "$repo/docs/hyperpowers/decisions" ]; then pass "the records of both compiles are gone"; else fail "records after undo (files: $(ls "$repo/docs/hyperpowers/decisions" 2>/dev/null))"; fi
 if [ "$(cksum < "$repo/$kappa_plan")" = "$kappa_plan_sum" ]; then pass "the plan is restored byte for byte"; else fail "plan after undo (cksum: $(cksum < "$repo/$kappa_plan" 2>/dev/null))"; fi
 
+# --- 36. two plans of one spec: the second finish recompiles ----------------
+repo="$TEST_ROOT/shared"
+make_repo "$repo"
+write_spec "$repo" shared-design.md <<'EOF'
+# Shared
+
+## Decisions
+
+- First decision. Why it holds.
+- Second decision. Why it holds.
+EOF
+printf '# A\n\n**Spec:** docs/hyperpowers/specs/shared-design.md\n' > "$repo/docs/hyperpowers/plans/a.md"
+printf '# B\n\n**Spec:** docs/hyperpowers/specs/shared-design.md\n' > "$repo/docs/hyperpowers/plans/b.md"
+commit_all "$repo" "spec and plans"
+shared_spec="$repo/docs/hyperpowers/specs/shared-design.md"
+printf '# Decision notes: docs/hyperpowers/specs/shared-design.md\n\n## Decision 1\nPlan A changed the first thing.\n\n## Decision 2\nNo change.\n' > "$TEST_ROOT/shared-notes-a.md"
+COMPILE_DATE=2026-10-21 run_compile "$repo" docs/hyperpowers/specs/shared-design.md --plan docs/hyperpowers/plans/a.md --notes "$TEST_ROOT/shared-notes-a.md"
+if [ "$RC" -eq 0 ] && [ "$(sed -n 3p "$shared_spec")" = "**Outcome:** implemented 2026-10-21 (a.md); 2 decisions under docs/hyperpowers/decisions/." ]; then pass "a finish with a plan names it in the Outcome line"; else fail "first Outcome (rc $RC, err: $ERR, got: $(sed -n 3p "$shared_spec"))"; fi
+shared_rec="$repo/docs/hyperpowers/decisions/2026-10-21-first-decision.md"
+if grep -q '^Plan A changed the first thing\.$' "$shared_rec"; then pass "a single plan's notes carry no plan prefix"; else fail "single-plan notes ($(sed -n '/What implementation changed/,$p' "$shared_rec" | tr '\n' '|'))"; fi
+commit_all "$repo" "records for a"
+printf '# Decision notes: docs/hyperpowers/specs/shared-design.md\n\n## Decision 1\nPlan B changed it again.\n\n## Decision 2\nNo change.\n' > "$TEST_ROOT/shared-notes-b.md"
+COMPILE_DATE=2026-10-24 run_compile "$repo" docs/hyperpowers/specs/shared-design.md --plan docs/hyperpowers/plans/b.md --notes "$TEST_ROOT/shared-notes-b.md"
+if [ "$RC" -eq 0 ] && [ "$(sed -n 3p "$shared_spec")" = "**Outcome:** implemented 2026-10-21 (a.md), 2026-10-24 (b.md); 2 decisions under docs/hyperpowers/decisions/." ]; then pass "a second finish appends its plan and date to the Outcome line"; else fail "second Outcome (rc $RC, err: $ERR, got: $(sed -n 3p "$shared_spec"))"; fi
+if grep -q '^- Recorded: 2026-10-21; notes from the branch diff by a subagent at finish; plan docs/hyperpowers/plans/a.md removed at finish; plan docs/hyperpowers/plans/b.md removed at finish$' "$shared_rec"; then pass "Recorded keeps its date and lists both plans in order"; else fail "Recorded both plans (got: $(grep '^- Recorded' "$shared_rec"))"; fi
+expected_notes=$(printf '## What implementation changed\n\nFrom a.md: Plan A changed the first thing.\n\nFrom b.md: Plan B changed it again.')
+if [ "$(sed -n '/^## What implementation changed$/,$p' "$shared_rec")" = "$expected_notes" ]; then pass "each plan's notes are their own paragraph, the first kept under its plan's name"; else fail "per-plan paragraphs (got: $(sed -n '/What implementation changed/,$p' "$shared_rec" | tr '\n' '|'))"; fi
+if git -C "$repo" diff --cached --name-status | grep -q '^D[[:space:]]*docs/hyperpowers/plans/b.md$'; then pass "the second finish stages its own plan's removal"; else fail "plan b removal (staged: $(git -C "$repo" diff --cached --name-status | tr '\n' ';'))"; fi
+shared_sums="$(cksum < "$shared_spec") $(cksum < "$shared_rec")"
+shared_status=$(git -C "$repo" status --porcelain -uall)
+COMPILE_DATE=2026-10-25 run_compile "$repo" docs/hyperpowers/specs/shared-design.md --plan docs/hyperpowers/plans/b.md --notes "$TEST_ROOT/shared-notes-b.md"
+if [ "$RC" -eq 0 ] && [ "$(cksum < "$shared_spec") $(cksum < "$shared_rec")" = "$shared_sums" ] && [ "$(git -C "$repo" status --porcelain -uall)" = "$shared_status" ]; then pass "re-running the second finish on a later day adds nothing twice"; else fail "idempotent second finish (rc $RC, err: $ERR, Outcome: $(sed -n 3p "$shared_spec"), notes: $(sed -n '/What implementation changed/,$p' "$shared_rec" | tr '\n' '|'))"; fi
+commit_all "$repo" "records for b"
+run_compile "$repo" docs/hyperpowers/specs/shared-design.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "a run without a plan keeps both plans in the Outcome line, Recorded and the notes"; else fail "run without a plan after two finishes (rc $RC, err: $ERR, diff: $(git -C "$repo" diff | tr '\n' '|'))"; fi
+
+# An Outcome line of the older shape (a bare date) is kept as the first
+# entry, and a plan's multi-paragraph notes are one section: a re-run of the
+# first plan after the second replaces that section in place.
+repo="$TEST_ROOT/legacy-outcome"
+make_repo "$repo"
+write_spec "$repo" legacy-design.md <<'EOF'
+# Legacy
+
+## Decisions
+
+- Only decision. Why it holds.
+EOF
+commit_all "$repo" "spec"
+legacy_spec="$repo/docs/hyperpowers/specs/legacy-design.md"
+COMPILE_DATE=2026-10-19 run_compile "$repo" docs/hyperpowers/specs/legacy-design.md
+commit_all "$repo" "records without a plan"
+printf '# C\n\n**Spec:** docs/hyperpowers/specs/legacy-design.md\n' > "$repo/docs/hyperpowers/plans/c.md"
+printf '# D\n\n**Spec:** docs/hyperpowers/specs/legacy-design.md\n' > "$repo/docs/hyperpowers/plans/d.md"
+commit_all "$repo" "plans"
+printf '# Decision notes: docs/hyperpowers/specs/legacy-design.md\n\n## Decision 1\nC changed it.\n\nA second paragraph from C.\n' > "$TEST_ROOT/legacy-notes-c.md"
+printf '# Decision notes: docs/hyperpowers/specs/legacy-design.md\n\n## Decision 1\nD changed it too.\n' > "$TEST_ROOT/legacy-notes-d.md"
+run_compile "$repo" docs/hyperpowers/specs/legacy-design.md --plan docs/hyperpowers/plans/c.md --notes "$TEST_ROOT/legacy-notes-c.md"
+if [ "$RC" -eq 0 ] && [ "$(sed -n 3p "$legacy_spec")" = "**Outcome:** implemented 2026-10-19, 2026-10-21 (c.md); 1 decisions under docs/hyperpowers/decisions/." ]; then pass "an older Outcome line's bare date is kept as the first entry"; else fail "legacy Outcome (rc $RC, err: $ERR, got: $(sed -n 3p "$legacy_spec"))"; fi
+commit_all "$repo" "records for c"
+run_compile "$repo" docs/hyperpowers/specs/legacy-design.md --plan docs/hyperpowers/plans/d.md --notes "$TEST_ROOT/legacy-notes-d.md"
+commit_all "$repo" "records for d"
+legacy_rec="$repo/docs/hyperpowers/decisions/2026-10-19-only-decision.md"
+expected_notes=$(printf '## What implementation changed\n\nFrom c.md: C changed it.\n\nA second paragraph from C.\n\nFrom d.md: D changed it too.')
+if [ "$(sed -n '/^## What implementation changed$/,$p' "$legacy_rec")" = "$expected_notes" ]; then pass "a multi-paragraph first plan section gains its plan's name once"; else fail "multi-paragraph sections (got: $(sed -n '/What implementation changed/,$p' "$legacy_rec" | tr '\n' '|'))"; fi
+run_compile "$repo" docs/hyperpowers/specs/legacy-design.md --plan docs/hyperpowers/plans/c.md --notes "$TEST_ROOT/legacy-notes-c.md"
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "re-running the first plan after the second changes nothing"; else fail "first plan re-run (rc $RC, err: $ERR, notes: $(sed -n '/What implementation changed/,$p' "$legacy_rec" | tr '\n' '|'))"; fi
+
+# --- 37. two plans of one spec with one file name are refused ---------------
+# The Outcome line and the notes sections tell sibling plans apart by file
+# name, so a second plan named like a recorded one in another directory is
+# refused before anything is written; the same path again is a re-run.
+repo="$TEST_ROOT/samename"
+make_repo "$repo"
+write_spec "$repo" same-design.md <<'EOF'
+# Same
+
+## Decisions
+
+- Only decision. Why it holds.
+EOF
+mkdir -p "$repo/docs/hyperpowers/plans/v1" "$repo/docs/hyperpowers/plans/v2"
+printf '# V1\n\n**Spec:** docs/hyperpowers/specs/same-design.md\n' > "$repo/docs/hyperpowers/plans/v1/a.md"
+printf '# V2\n\n**Spec:** docs/hyperpowers/specs/same-design.md\n' > "$repo/docs/hyperpowers/plans/v2/a.md"
+commit_all "$repo" "spec and plans"
+run_compile "$repo" docs/hyperpowers/specs/same-design.md --plan docs/hyperpowers/plans/v1/a.md
+commit_all "$repo" "records for v1"
+same_sums=$(cd "$repo" && cksum docs/hyperpowers/specs/same-design.md docs/hyperpowers/decisions/*.md)
+run_compile "$repo" docs/hyperpowers/specs/same-design.md --plan docs/hyperpowers/plans/v2/a.md
+case "$ERR" in *docs/hyperpowers/plans/v2/a.md*docs/hyperpowers/plans/v1/a.md*) same_msg=1 ;; *) same_msg=0 ;; esac
+if [ "$RC" -eq 2 ] && [ "$same_msg" = 1 ] && [ "$(printf '%s\n' "$ERR" | wc -l | tr -d ' ')" = 1 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ] && [ "$(cd "$repo" && cksum docs/hyperpowers/specs/same-design.md docs/hyperpowers/decisions/*.md)" = "$same_sums" ]; then pass "a second plan with a recorded plan's file name exits 2, names both paths and writes nothing"; else fail "same file name (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+run_compile "$repo" docs/hyperpowers/specs/same-design.md --plan docs/hyperpowers/plans/v2/a.md --dry-run
+if [ "$RC" -eq 2 ]; then pass "the dry run refuses the same file name too"; else fail "same file name dry run (rc $RC, out: $OUT)"; fi
+run_compile "$repo" docs/hyperpowers/specs/same-design.md --plan docs/hyperpowers/plans/v1/a.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "the recorded plan's own path is still the idempotent re-run"; else fail "same-path re-run (rc $RC, err: $ERR)"; fi
+# A record that lost its plan part still leaves the name in the Outcome line.
+same_rec=$(ls "$repo"/docs/hyperpowers/decisions/*only-decision*.md)
+sed 's/; plan docs\/hyperpowers\/plans\/v1\/a.md removed at finish$//' "$same_rec" > "$TEST_ROOT/same-rec" && cp "$TEST_ROOT/same-rec" "$same_rec"
+commit_all "$repo" "a record without its plan part"
+run_compile "$repo" docs/hyperpowers/specs/same-design.md --plan docs/hyperpowers/plans/v2/a.md
+case "$ERR" in *docs/hyperpowers/plans/v2/a.md*"(a.md)"*) same_msg=1 ;; *) same_msg=0 ;; esac
+if [ "$RC" -eq 2 ] && [ "$same_msg" = 1 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "a file name the Outcome line already names is refused for another path"; else fail "Outcome-named file name (rc $RC, err: $ERR)"; fi
+
+# --- 38. a note paragraph shaped like a plan label is never written ---------
+# A later plan's finish reads a paragraph opening "From <name>.md: " as that
+# plan's section, so a note carrying one would be replaced by it. The
+# compiler ignores such a decision's note where the notes are loaded.
+repo="$TEST_ROOT/labelnote"
+make_repo "$repo"
+write_spec "$repo" label-design.md <<'EOF'
+# Label
+
+## Decisions
+
+- First decision. Why it holds.
+- Second decision. Why it holds.
+- Third decision. Why it holds.
+EOF
+printf '# A\n\n**Spec:** docs/hyperpowers/specs/label-design.md\n' > "$repo/docs/hyperpowers/plans/a.md"
+printf '# B\n\n**Spec:** docs/hyperpowers/specs/label-design.md\n' > "$repo/docs/hyperpowers/plans/b.md"
+commit_all "$repo" "spec and plans"
+printf '# Decision notes: docs/hyperpowers/specs/label-design.md\n\n## Decision 1\nA changed one.\n\nFrom b.md: a paragraph shaped like a label.\n\n## Decision 2\nFrom b.md: a first paragraph shaped like a label.\n\n## Decision 3\nFrom the diff: A changed three.\n' > "$TEST_ROOT/label-notes-a.md"
+printf '# Decision notes: docs/hyperpowers/specs/label-design.md\n\n## Decision 1\nB changed one.\n\n## Decision 2\nNo change.\n\n## Decision 3\nB changed three.\n' > "$TEST_ROOT/label-notes-b.md"
+run_compile "$repo" docs/hyperpowers/specs/label-design.md --plan docs/hyperpowers/plans/a.md --notes "$TEST_ROOT/label-notes-a.md"
+expected_err=$(printf '%s\n%s' 'notes ignored: decision 1: a paragraph opens with "From b.md: ", which the compiler reserves for plan labels' 'notes ignored: decision 2: a paragraph opens with "From b.md: ", which the compiler reserves for plan labels')
+if [ "$RC" -eq 0 ] && [ "$ERR" = "$expected_err" ]; then pass "a decision whose note has a paragraph shaped like a plan label is ignored with one line each"; else fail "label-shaped notes (rc $RC, err: $ERR)"; fi
+label_rec1=$(ls "$repo"/docs/hyperpowers/decisions/*first-decision*.md); label_rec2=$(ls "$repo"/docs/hyperpowers/decisions/*second-decision*.md); label_rec3=$(ls "$repo"/docs/hyperpowers/decisions/*third-decision*.md)
+label_body() { sed -n '/^## What implementation changed$/,$p' "$1" | sed 1,2d; }
+if [ "$(label_body "$label_rec1")" = "Nothing recorded." ] && [ "$(label_body "$label_rec2")" = "Nothing recorded." ] && ! grep -q '^- Recorded: .*notes from the branch diff' "$label_rec1" && [ "$(label_body "$label_rec3")" = "From the diff: A changed three." ]; then pass "the ignored decisions compile without notes and another decision keeps its own"; else fail "label-shaped notes bodies (1: $(label_body "$label_rec1" | tr '\n' '|'); 2: $(label_body "$label_rec2" | tr '\n' '|'); 3: $(label_body "$label_rec3" | tr '\n' '|'))"; fi
+commit_all "$repo" "records for a"
+run_compile "$repo" docs/hyperpowers/specs/label-design.md --plan docs/hyperpowers/plans/b.md --notes "$TEST_ROOT/label-notes-b.md"
+if [ "$RC" -eq 0 ] && [ "$(label_body "$label_rec1")" = "From b.md: B changed one." ] && [ "$(label_body "$label_rec3")" = "$(printf 'From a.md: From the diff: A changed three.\n\nFrom b.md: B changed three.')" ]; then pass "the second plan's finish adds its notes and keeps the first plan's"; else fail "second finish after ignored notes (rc $RC, 1: $(label_body "$label_rec1" | tr '\n' '|'); 3: $(label_body "$label_rec3" | tr '\n' '|'))"; fi
+commit_all "$repo" "records for b"
+label_sums=$(cksum "$label_rec1" "$label_rec2" "$label_rec3")
+run_compile "$repo" docs/hyperpowers/specs/label-design.md --plan docs/hyperpowers/plans/b.md --notes "$TEST_ROOT/label-notes-b.md"
+label_rc_b=$RC
+run_compile "$repo" docs/hyperpowers/specs/label-design.md --plan docs/hyperpowers/plans/a.md --notes "$TEST_ROOT/label-notes-a.md"
+if [ "$label_rc_b" -eq 0 ] && [ "$RC" -eq 0 ] && [ "$(cksum "$label_rec1" "$label_rec2" "$label_rec3")" = "$label_sums" ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "re-running both finishes leaves every record byte-identical"; else fail "re-runs after ignored notes (rc $label_rc_b/$RC, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'))"; fi
+# Without --plan the same reservation holds.
+repo="$TEST_ROOT/labelnote-noplan"
+make_repo "$repo"
+write_spec "$repo" noplan-design.md <<'EOF'
+# No plan
+
+## Decisions
+
+- First decision. Why it holds.
+- Second decision. Why it holds.
+EOF
+commit_all "$repo" "spec"
+printf '# Decision notes: docs/hyperpowers/specs/noplan-design.md\n\n## Decision 1\nFrom x.md: shaped like a label.\n\n## Decision 2\nA plain note.\n' > "$TEST_ROOT/label-notes-noplan.md"
+run_compile "$repo" docs/hyperpowers/specs/noplan-design.md --notes "$TEST_ROOT/label-notes-noplan.md"
+label_rec1=$(ls "$repo"/docs/hyperpowers/decisions/*first-decision*.md); label_rec2=$(ls "$repo"/docs/hyperpowers/decisions/*second-decision*.md)
+if [ "$RC" -eq 0 ] && [ "$ERR" = 'notes ignored: decision 1: a paragraph opens with "From x.md: ", which the compiler reserves for plan labels' ] && [ "$(label_body "$label_rec1")" = "Nothing recorded." ] && [ "$(label_body "$label_rec2")" = "A plain note." ]; then pass "a compile without a plan ignores a label-shaped note the same way"; else fail "label-shaped note without a plan (rc $RC, err: $ERR)"; fi
+# A plan's file name may hold spaces, and its label then does too.
+repo="$TEST_ROOT/labelnote-spaced"
+make_repo "$repo"
+write_spec "$repo" spaced-design.md <<'EOF'
+# Spaced
+
+## Decisions
+
+- First decision. Why it holds.
+- Second decision. Why it holds.
+- Third decision. Why it holds.
+EOF
+printf '# A\n\n**Spec:** docs/hyperpowers/specs/spaced-design.md\n' > "$repo/docs/hyperpowers/plans/a.md"
+printf '# B\n\n**Spec:** docs/hyperpowers/specs/spaced-design.md\n' > "$repo/docs/hyperpowers/plans/b plan.md"
+commit_all "$repo" "spec and plans"
+printf '# Decision notes: docs/hyperpowers/specs/spaced-design.md\n\n## Decision 1\nA changed one.\n\nFrom b plan.md: a paragraph shaped like a spaced label.\n\n## Decision 2\nFrom b plan.md: a first paragraph shaped like a spaced label.\n\n## Decision 3\nA changed three.\n' > "$TEST_ROOT/label-notes-spaced.md"
+run_compile "$repo" docs/hyperpowers/specs/spaced-design.md --plan docs/hyperpowers/plans/a.md --notes "$TEST_ROOT/label-notes-spaced.md"
+expected_err=$(printf '%s\n%s' 'notes ignored: decision 1: a paragraph opens with "From b plan.md: ", which the compiler reserves for plan labels' 'notes ignored: decision 2: a paragraph opens with "From b plan.md: ", which the compiler reserves for plan labels')
+label_rec1=$(ls "$repo"/docs/hyperpowers/decisions/*first-decision*.md); label_rec2=$(ls "$repo"/docs/hyperpowers/decisions/*second-decision*.md); label_rec3=$(ls "$repo"/docs/hyperpowers/decisions/*third-decision*.md)
+if [ "$RC" -eq 0 ] && [ "$ERR" = "$expected_err" ] && [ "$(label_body "$label_rec1")" = "Nothing recorded." ] && [ "$(label_body "$label_rec2")" = "Nothing recorded." ] && [ "$(label_body "$label_rec3")" = "A changed three." ]; then pass "a paragraph shaped like a label with spaces in its file name is ignored the same way"; else fail "spaced label-shaped notes (rc $RC, err: $ERR; 1: $(label_body "$label_rec1" | tr '\n' '|'); 3: $(label_body "$label_rec3" | tr '\n' '|'))"; fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

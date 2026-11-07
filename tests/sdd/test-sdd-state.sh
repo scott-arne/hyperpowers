@@ -597,21 +597,21 @@ rcs="$(cat "$TEST_ROOT/c1.rc1") $(cat "$TEST_ROOT/c1.rc2")"
 outs="$(cat "$TEST_ROOT/c1.o1")
 $(cat "$TEST_ROOT/c1.o2")"
 case "$rcs" in "0 4"|"4 0") pass "two concurrent claims: one claimed, one held" ;; *) fail "two concurrent claims: one claimed, one held (rcs: $rcs)" ;; esac
-if printf '%s\n' "$outs" | grep -q '^status=claimed task=1$' && printf '%s\n' "$outs" | grep -Eq '^status=held task=1 owner=s-(one|two) since=[0-9TZ:-]+ worktree=/'; then pass "the loser's line carries the winner's complete owner record"; else fail "the loser's line carries the winner's complete owner record ($outs)"; fi
+if printf '%s\n' "$outs" | grep -q '^status=claimed task=1 branch=none$' && printf '%s\n' "$outs" | grep -Eq '^status=held task=1 owner=s-(one|two) since=[0-9TZ:-]+ worktree=/'; then pass "the loser's line carries the winner's complete owner record"; else fail "the loser's line carries the winner's complete owner record ($outs)"; fi
 winner=$(sed -n 's/^session=//p' "$wsc/claims/task-1/owner")
 out=$(run_state "$c1" claim docs/plan.md 1 --session "$winner"); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=1 owner=$winner own=1" ]; then pass "re-claiming with the owner's own session exits 0"; else fail "re-claiming with the owner's own session exits 0 (rc=$rc: $out)"; fi
-if grep -q "^worktree=$c1$" "$wsc/claims/task-1/owner" && grep -q '^branch=main$' "$wsc/claims/task-1/owner" && grep -q '^host=' "$wsc/claims/task-1/owner"; then pass "the owner record names worktree, branch and host"; else fail "the owner record names worktree, branch and host"; fi
+if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=1 owner=$winner own=1 branch=none" ]; then pass "re-claiming with the owner's own session exits 0"; else fail "re-claiming with the owner's own session exits 0 (rc=$rc: $out)"; fi
+if grep -q "^worktree=$c1$" "$wsc/claims/task-1/owner" && grep -q '^checkout=main$' "$wsc/claims/task-1/owner" && grep -q '^host=' "$wsc/claims/task-1/owner"; then pass "the owner record names worktree, branch and host"; else fail "the owner record names worktree, branch and host"; fi
 mkdir -p "$wsc/claims/.tmp-prepared"; printf 'session=ghost\n' > "$wsc/claims/.tmp-prepared/owner"
 out=$(run_state "$c1" claim docs/plan.md 2 --session s-three); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2" ]; then pass "a prepared but unpublished claim is invisible to the next claimant"; else fail "a prepared but unpublished claim is invisible to the next claimant (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2 branch=none" ]; then pass "a prepared but unpublished claim is invisible to the next claimant"; else fail "a prepared but unpublished claim is invisible to the next claimant (rc=$rc: $out)"; fi
 out=$(run_state "$c1" claim docs/plan.md 1 --session s-four --takeover); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 takeover=1" ] && [ "$(sed -n 's/^session=//p' "$wsc/claims/task-1/owner")" = s-four ] && grep -q "^session=$winner" "$wsc/claims/task-1/owner.history"; then pass "--takeover rewrites the owner and keeps the history"; else fail "--takeover rewrites the owner and keeps the history (rc=$rc: $out)"; fi
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 takeover=1 branch=none" ] && [ "$(sed -n 's/^session=//p' "$wsc/claims/task-1/owner")" = s-four ] && grep -q "^session=$winner" "$wsc/claims/task-1/owner.history"; then pass "--takeover rewrites the owner and keeps the history"; else fail "--takeover rewrites the owner and keeps the history (rc=$rc: $out)"; fi
 run_state "$c1" claim docs/plan.md 3 >/dev/null 2>&1; rc=$?
    if [ "$rc" -eq 2 ] && [ ! -d "$wsc/claims/task-3" ]; then pass "claim without --session is a usage error (exit 2, nothing created)"; else fail "claim without --session is a usage error (rc=$rc)"; fi
 bash -c '. "$1"; hp_lock "$2"; sleep 1.5; hp_unlock' _ "$LIB" "$c1" &
 sleep 0.3; start=$(date +%s); out=$(run_state "$c1" claim docs/plan.md 4 --session s-seven); end=$(date +%s); wait
-if [ "$out" = "status=claimed task=4" ] && [ $((end - start)) -ge 1 ]; then pass "claim waits for the repository lock, so it serializes with finish"; else fail "claim waits for the repository lock ($out, waited $((end - start))s)"; fi
+if [ "$out" = "status=claimed task=4 branch=none" ] && [ $((end - start)) -ge 1 ]; then pass "claim waits for the repository lock, so it serializes with finish"; else fail "claim waits for the repository lock ($out, waited $((end - start))s)"; fi
 printf 'Task 5: complete (commits 1111111..2222222, review clean)\n' >> "$wsc/progress.md"
 out=$(run_state "$c1" claim docs/plan.md 5 --session s-eight); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=done task=5" ] && [ ! -d "$wsc/claims/task-5" ]; then pass "a task the ledger records complete is not claimed"; else fail "a task the ledger records complete is not claimed (rc=$rc: $out)"; fi
@@ -1042,11 +1042,13 @@ f1="$TEST_ROOT/f1"; make_repo "$f1"
 mkdir -p "$f1/docs"; : > "$f1/docs/plan.md"; git -C "$f1" add docs; git -C "$f1" commit -qm plan
 wsf=$(run_sdd_dir "$f1" docs/plan.md); co_f1="$STATE_ROOT/$(state_key "$f1")"
 printf '# SDD ledger — plan: docs/plan.md\n' > "$wsf/progress.md"
+# final is claimed before the task, so finish gets past the holder check to the open claim.
+run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
 run_state "$f1" claim docs/plan.md 1 --session s-f >/dev/null
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 6 ] && [ "$out" = "status=open-claims tasks=1" ] && [ -d "$wsf" ]; then pass "finish refuses while a claim has no completion line"; else fail "finish refuses while a claim has no completion line (rc=$rc: $out)"; fi
 printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsf/progress.md"
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 last=$(printf '%s' "$out" | sed -n 's/.* last=\([0-9a-f]*\).*/\1/p')
 case "$out" in
     "status=finished sha="???????" last="????????????????????????????????????????" push=origin/hyperpowers/state receipt=/"*) pass "finish prints the finish sha, the full last sha, the push target and the receipt" ;;
@@ -1054,85 +1056,86 @@ case "$out" in
 esac
 if [ ! -d "$wsf" ] && ! git -C "$co_f1" ls-tree -r --name-only hyperpowers/state | grep -q "plans/$(basename "$wsf")/"; then pass "finish removes the workspace from the tree and the disk"; else fail "finish removes the workspace from the tree and the disk"; fi
 if [ "$(git -C "$co_f1" show "$last:plans/$(basename "$wsf")/progress.md" 2>/dev/null | sed -n 2p)" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "the last sha still shows the ledger"; else fail "the last sha still shows the ledger"; fi
-if [ "$(run_state "$f1" finish docs/plan.md)" = "status=none" ]; then pass "finishing twice reports none"; else fail "finishing twice reports none"; fi
-wsf3=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf3/progress.md"
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove:plans/$(basename "$wsf3")/progress.md" bash "$SDD_STATE" finish docs/plan.md); rc=$?
+if [ "$(run_state "$f1" finish docs/plan.md --session s-f)" = "status=none" ]; then pass "finishing twice reports none"; else fail "finishing twice reports none"; fi
+wsf3=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf3/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove:plans/$(basename "$wsf3")/progress.md" bash "$SDD_STATE" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ -d "$wsf3" ] && grep -q '^concurrent write$' "$wsf3/progress.md"; then pass "a line appended between the final snapshot and the removal makes finish busy and keeps the workspace"; else fail "a line appended between the final snapshot and the removal makes finish busy (rc=$rc: $out)"; fi
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ]; then pass "finish succeeds on the retry"; else fail "finish succeeds on the retry (rc=$rc: $out)"; fi
 wsf2=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsf2/progress.md"
+run_state "$f1" claim docs/plan.md final --session s-g >/dev/null
 run_state "$f1" claim docs/plan.md 2 --session s-g >/dev/null
-out=$(run_state "$f1" finish docs/plan.md --force); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --force --session s-g); rc=$?
 if [ "$rc" -eq 0 ] && [ ! -d "$wsf2" ]; then pass "--force finishes over an open claim"; else fail "--force finishes over an open claim (rc=$rc: $out)"; fi
-wsf4=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf4/progress.md"
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove:plans/$(basename "$wsf4")/notes.txt" bash "$SDD_STATE" finish docs/plan.md); rc=$?
+wsf4=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf4/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove:plans/$(basename "$wsf4")/notes.txt" bash "$SDD_STATE" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ -f "$wsf4/notes.txt" ] && [ "$(sed -n 2p "$wsf4/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "a file created between the snapshot and the removal makes finish busy and keeps it"; else fail "a file created between the snapshot and the removal makes finish busy (rc=$rc: $out)"; fi
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 last4=$(printf '%s' "$out" | sed -n 's/.* last=\([0-9a-f]*\).*/\1/p')
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsf4" ] && [ "$(git -C "$co_f1" show "$last4:plans/$(basename "$wsf4")/notes.txt" 2>/dev/null)" = "concurrent write" ]; then pass "the retry snapshots the new file and finishes"; else fail "the retry snapshots the new file and finishes (rc=$rc: $out)"; fi
-wsf5=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf5/progress.md"
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove:plans/$(basename "$wsf5")/task-9-brief.md" bash "$SDD_STATE" finish docs/plan.md); rc=$?
+wsf5=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf5/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove:plans/$(basename "$wsf5")/task-9-brief.md" bash "$SDD_STATE" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsf5" ]; then pass "an ignored file created between the snapshot and the removal does not block finish"; else fail "an ignored file created between the snapshot and the removal does not block finish (rc=$rc: $out)"; fi
-wsf6=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf6/progress.md"
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
+wsf6=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf6/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md --session s-f 2>/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$(sed -n 2p "$wsf6/progress.md")" = "Task 1: complete (commits 1111111..2222222, review clean)" ] && [ ! -e "$wsf6/task-2-report.md" ] && ! ls -d "$wsf6"/.removing-* >/dev/null 2>&1 && [ "$(cat "$wsf6".reappeared-*/task-2-report.md 2>/dev/null)" = "written after rename" ]; then pass "a workspace recreated after the rename-aside is moved beside the restored copy and finish is busy"; else fail "a workspace recreated after the rename-aside is moved beside the restored copy (rc=$rc: $out)"; fi
 rm -rf "$wsf6".reappeared-*
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md --session s-f 2>/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -q '^concurrent write$' "$wsf6/progress.md" && ! ls -d "$wsf6"/.removing-* >/dev/null 2>&1 && [ "$(cat "$wsf6".reappeared-*/task-2-report.md 2>/dev/null)" = "written after rename" ]; then pass "a changed copy restored over a recreated workspace is not nested inside it"; else fail "a changed copy restored over a recreated workspace is not nested inside it (rc=$rc: $out; $(ls -a "$wsf6" 2>/dev/null | tr '\n' ' '))"; fi
 rm -rf "$wsf6".reappeared-*
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsf6" ]; then pass "finish succeeds once the recreated files are out of the way"; else fail "finish succeeds once the recreated files are out of the way (rc=$rc: $out)"; fi
-wsf7=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf7/progress.md"
-out=$(run_state "$f1" finish docs/plan.md docs/other.md 2>/dev/null); rc=$?
+wsf7=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf7/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(run_state "$f1" finish docs/plan.md docs/other.md --session s-f 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ -d "$wsf7" ]; then pass "a second positional argument is a usage error and finishes nothing"; else fail "a second positional argument is a usage error and finishes nothing (rc=$rc: $out)"; fi
 ln -s progress.md "$wsf7/ledger-link"; run_state "$f1" snapshot docs/plan.md >/dev/null
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsf7" ]; then pass "a tracked symlink compares by its link text and does not block finish"; else fail "a tracked symlink compares by its link text and does not block finish (rc=$rc: $out)"; fi
-wsf8=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf8/progress.md"
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove-link:plans/$(basename "$wsf8")/late-link" bash "$SDD_STATE" finish docs/plan.md); rc=$?
+wsf8=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf8/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-before-remove-link:plans/$(basename "$wsf8")/late-link" bash "$SDD_STATE" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ -L "$wsf8/late-link" ]; then pass "a symlink created between the snapshot and the removal counts as an extra entry"; else fail "a symlink created between the snapshot and the removal counts as an extra entry (rc=$rc: $out)"; fi
 rm -f "$wsf8/late-link"
 tomb8="$(dirname "$wsf8")/.removing-$(basename "$wsf8")-424242"; mv "$wsf8" "$tomb8"
-out=$(run_state "$f1" finish docs/plan.md 2>/dev/null); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f 2>/dev/null); rc=$?
 last8=$(printf '%s' "$out" | sed -n 's/.* last=\([0-9a-f]*\).*/\1/p')
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$tomb8" ] && [ ! -d "$wsf8" ] && [ "$(git -C "$co_f1" show "$last8:plans/$(basename "$wsf8")/progress.md" 2>/dev/null | sed -n 2p)" = "Task 1: complete (commits 1111111..2222222, review clean)" ]; then pass "a copy left by an interrupted removal is restored and finished, its ledger in history"; else fail "a copy left by an interrupted removal is restored and finished (rc=$rc: $out)"; fi
-wsf9=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf9/progress.md"
+wsf9=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf9/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
 tomb9="$(dirname "$wsf9")/.removing-$(basename "$wsf9")-434343"; mkdir -p "$tomb9"; printf 'older copy\n' > "$tomb9/progress.md"
-err=$(run_state "$f1" finish docs/plan.md 2>&1 >/dev/null); rc=$?
+err=$(run_state "$f1" finish docs/plan.md --session s-f 2>&1 >/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && printf '%s' "$err" | grep -q "$tomb9" && [ -d "$wsf9" ] && [ -d "$tomb9" ]; then pass "a leftover copy beside a live workspace makes finish refuse and name the copy"; else fail "a leftover copy beside a live workspace makes finish refuse and name the copy (rc=$rc: $err)"; fi
 rm -rf "$tomb9"
-out=$(run_state "$f1" finish docs/plan.md); rc=$?
+out=$(run_state "$f1" finish docs/plan.md --session s-f); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ]; then pass "finish proceeds once the leftover copy is resolved"; else fail "finish proceeds once the leftover copy is resolved (rc=$rc: $out)"; fi
 wsf10=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nrestored by sdd-dir\n' > "$wsf10/progress.md"
 mv "$wsf10" "$(dirname "$wsf10")/.removing-$(basename "$wsf10")-454545"
 out=$(run_sdd_dir "$f1" docs/plan.md)
 if [ "$out" = "$wsf10" ] && [ "$(sed -n 2p "$wsf10/progress.md")" = "restored by sdd-dir" ] && ! ls -d "$(dirname "$wsf10")"/.removing-* >/dev/null 2>&1; then pass "sdd-dir brings back a copy left by an interrupted removal instead of creating an empty workspace"; else fail "sdd-dir brings back a copy left by an interrupted removal instead of creating an empty workspace ($out)"; fi
-run_state "$f1" finish docs/plan.md >/dev/null
-wsf11=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsf11/progress.md"; mkdir "$wsf11/held"; : > "$wsf11/held/f"; chmod 555 "$wsf11/held"
-err=$(run_state "$f1" finish docs/plan.md 2>&1 >/dev/null); rc=$?
+run_state "$f1" claim docs/plan.md final --session s-f >/dev/null; run_state "$f1" finish docs/plan.md --session s-f >/dev/null
+wsf11=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsf11/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null; mkdir "$wsf11/held"; : > "$wsf11/held/f"; chmod 555 "$wsf11/held"
+err=$(run_state "$f1" finish docs/plan.md --session s-f 2>&1 >/dev/null); rc=$?
 chmod 755 "$(dirname "$wsf11")"/.removing-*/held 2>/dev/null
 if [ "$rc" -eq 0 ] && printf '%s' "$err" | grep -q 'could not delete' && ! git -C "$co_f1" ls-tree -r --name-only hyperpowers/state | grep -q "plans/$(basename "$wsf11")/" && ls -d "$(dirname "$wsf11")"/.removing-* >/dev/null 2>&1 && [ ! -d "$wsf11" ]; then pass "under the branch backend the removal is committed and a deletion that fails names the surviving copy"; else fail "under the branch backend the removal is committed and a deletion that fails names the surviving copy (rc=$rc: $err)"; fi
 rm -rf "$(dirname "$wsf11")"/.removing-*
-wsf12=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf12/progress.md"
-out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-after-verify:task-3-report.md" bash "$SDD_STATE" finish docs/plan.md 2>"$TEST_ROOT/wsf12.err"); rc=$?
+wsf12=$(run_sdd_dir "$f1" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\nTask 1: complete (commits 1111111..2222222, review clean)\n' > "$wsf12/progress.md"; run_state "$f1" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$f1" && HYPERPOWERS_TEST_WRITER_AT="finish-after-verify:task-3-report.md" bash "$SDD_STATE" finish docs/plan.md --session s-f 2>"$TEST_ROOT/wsf12.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'recreated during finish' "$TEST_ROOT/wsf12.err" && ! git -C "$co_f1" ls-tree -r --name-only hyperpowers/state | grep -q "plans/$(basename "$wsf12")/" && [ "$(cat "$wsf12/task-3-report.md")" = "late" ] && [ ! -e "$wsf12/progress.md" ] && ! ls -d "$(dirname "$wsf12")"/.removing-* >/dev/null 2>&1; then pass "a workspace recreated after the verification stays on disk, is named, and never enters the removal commit"; else fail "a workspace recreated after the verification stays on disk, is named, and never enters the removal commit (rc=$rc: $out)"; fi
 rec12=$(sed -n 's/.*the record is at \([^ ,]*\).*/\1/p' "$TEST_ROOT/wsf12.err")
 if [ -n "$rec12" ] && [ -f "$rec12/progress.md" ] && [ -f "$rec12/FINISHED" ]; then pass "a workspace recreated during finish still has its record, named on stderr"; else fail "a workspace recreated during finish still has its record, named on stderr (receipt='$rec12'; $(cat "$TEST_ROOT/wsf12.err"))"; fi
 rm -rf "$wsf12"
-wsp=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp/progress.md"
-out=$(run_state "$rp" finish docs/plan.md 2>/dev/null)
+wsp=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp/progress.md"; run_state "$rp" claim docs/plan.md final --session s-f >/dev/null
+out=$(run_state "$rp" finish docs/plan.md --session s-f 2>/dev/null)
 case "$out" in "status=finished backend=plain receipt=/"*) plainline=1 ;; *) plainline=0 ;; esac
 if [ "$plainline" = 1 ] && [ ! -d "$wsp" ]; then pass "finish under the plain backend removes the plain workspace and names the receipt"; else fail "finish under the plain backend removes the plain workspace and names the receipt ($out)"; fi
-wsp2=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp2/progress.md"
-out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
+wsp2=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp2/progress.md"; run_state "$rp" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="remove-after-rename-changed:task-2-report.md" bash "$SDD_STATE" finish docs/plan.md --session s-f 2>/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -q '^concurrent write$' "$wsp2/progress.md" && ! ls -d "$wsp2"/.removing-* >/dev/null 2>&1 && [ "$(cat "$wsp2".reappeared-*/task-2-report.md 2>/dev/null)" = "written after rename" ]; then pass "under the plain backend a changed copy restored over a recreated workspace is not nested either"; else fail "under the plain backend a changed copy restored over a recreated workspace is not nested (rc=$rc: $out)"; fi
 rm -rf "$wsp2".reappeared-*
-wsp4=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp4/progress.md"
-out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="finish-after-stage:progress.md" bash "$SDD_STATE" finish docs/plan.md 2>/dev/null); rc=$?
+wsp4=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp4/progress.md"; run_state "$rp" claim docs/plan.md final --session s-f >/dev/null
+out=$(cd "$rp" && HYPERPOWERS_TEST_WRITER_AT="finish-after-stage:progress.md" bash "$SDD_STATE" finish docs/plan.md --session s-f 2>/dev/null); rc=$?
 recp4=$(printf '%s' "$out" | sed -n 's/.*receipt=\([^ ]*\).*/\1/p')
 if [ "$rc" -eq 0 ] && [ -f "$recp4/progress.md" ] && grep -q '^concurrent write$' "$recp4/progress.md" && [ ! -d "$wsp4" ]; then pass "under the plain backend the receipt holds a line appended after the staging"; else fail "under the plain backend the receipt holds a line appended after the staging (rc=$rc: $out)"; fi
-wsp3=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp3/progress.md"; mkdir "$wsp3/held"; : > "$wsp3/held/f"; chmod 555 "$wsp3/held"
-out=$(run_state "$rp" finish docs/plan.md 2>"$TEST_ROOT/wsp3.err"); rc=$?
+wsp3=$(run_sdd_dir "$rp" docs/plan.md 2>/dev/null); printf 'x\n' > "$wsp3/progress.md"; run_state "$rp" claim docs/plan.md final --session s-f >/dev/null; mkdir "$wsp3/held"; : > "$wsp3/held/f"; chmod 555 "$wsp3/held"
+out=$(run_state "$rp" finish docs/plan.md --session s-f 2>"$TEST_ROOT/wsp3.err"); rc=$?
 err=$(cat "$TEST_ROOT/wsp3.err")
 chmod 755 "$wsp3/held" 2>/dev/null; chmod 755 "$(dirname "$wsp3")"/.removing-*/held 2>/dev/null
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && printf '%s' "$err" | grep -q 'could not delete' && [ -f "$wsp3/held/f" ] && ! ls -d "$(dirname "$wsp3")"/.removing-* >/dev/null 2>&1; then pass "under the plain backend a deletion that fails is an error and what remains is restored"; else fail "under the plain backend a deletion that fails is an error and what remains is restored (rc=$rc: $err)"; fi
@@ -1602,10 +1605,10 @@ if [ "$rc" -eq 0 ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 7r: comp
 
 # A remote finish racing a local writer: refused, nothing changed. The seam
 # writes after the pending check and right before the rename.
-printf 'Task 6: complete (commits ddddddd..eeeeeee, review clean)\n' >> "$wsa/progress.md"
+printf 'Task 6: complete (commits ddddddd..eeeeeee, review clean)\n' >> "$wsa/progress.md"; run_state "$PAIR_A" claim docs/plan.md final --session s-a >/dev/null
 run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md >/dev/null
-run_state "$PAIR_A" finish docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_A" finish docs/plan.md --session s-a >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 out=$(cd "$PAIR_B" && HYPERPOWERS_TEST_WRITER_AT="sync-before-delete:plans/$(basename "$wsa")/progress.md" bash "$SDD_STATE" sync docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 3 ] && [ "${out%% *}" = "status=remote-finished" ] && grep -q "plans=$(basename "$wsa")" < <(printf '%s\n' "$out") && [ -f "$wsb/progress.md" ] && grep -q '^concurrent write$' "$wsb/progress.md" && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" != "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "a line written after the check and before the rename still makes the remote finish refuse, ledger and ref intact"; else fail "a remote finish racing a local ledger write is refused (rc=$rc: $out)"; fi
 if ( cd "$co_b" && printf 'late\n' >> "plans/.removing-probe-0/progress.md" ) 2>/dev/null; then fail "a write to a renamed-away path fails loudly"; else pass "a write to a renamed-away path fails loudly (ENOENT), never silently"; fi
@@ -1706,9 +1709,9 @@ printf 'Task 10: complete (commits 1212121..3434343, review clean)\n' >> "$ws2a/
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/second.md >/dev/null 2>&1 )
 out=$(run_state "$PAIR_B" prune --repo "$PAIR_B" --apply); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=pruned" ] && [ ! -f "$co_b/.sync-applying" ] && grep -q '^Task 10: complete' "$ws2b/progress.md"; then pass "prune --apply recovers an interrupted apply before it selects"; else fail "prune --apply recovers an interrupted apply before it selects (rc=$rc: $out)"; fi
-printf 'Task 11: complete (commits 5656565..7878787, review clean)\n' >> "$ws2a/progress.md"; run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+printf 'Task 11: complete (commits 5656565..7878787, review clean)\n' >> "$ws2a/progress.md"; run_state "$PAIR_A" claim docs/second.md final --session s-a >/dev/null; run_state "$PAIR_A" snapshot docs/second.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/second.md >/dev/null 2>&1 )
-out=$(run_state "$PAIR_B" finish docs/second.md --force); rc=$?
+out=$(run_state "$PAIR_B" finish docs/second.md --force --session s-a); rc=$?
 last_b=$(printf '%s' "$out" | sed -n 's/.* last=\([0-9a-f]*\).*/\1/p')
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -f "$co_b/.sync-applying" ] && git -C "$co_b" show "$last_b:plans/$(basename "$ws2a")/progress.md" 2>/dev/null | grep -q '^Task 11: complete'; then pass "finish recovers an interrupted apply before it reads claims or snapshots"; else fail "finish recovers an interrupted apply before it reads claims or snapshots (rc=$rc: $out)"; fi
 # A marker that cannot be trusted fails closed and is named.
@@ -1750,17 +1753,17 @@ out=$(run_state "$PAIR_A" sync docs/plan.md); rc2=$?
 if [ "$rc" -eq 99 ] && [ "$rc2" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ "$(cat "$wsa/progress.md")" = "$(git -C "$co_a" show "hyperpowers/state:$lpath")" ] && [ ! -e "$co_a/.rewrite/$(basename "$wsa").journal" ] && [ "$(grep -c '^j2 A$' "$wsa/progress.md")" -eq 1 ] && [ "$(grep -c '^j2 B$' "$wsa/progress.md")" -eq 1 ]; then pass "recovery finishes a rewrite interrupted between its two writes without duplicating bytes"; else fail "recovery finishes a rewrite interrupted between its two writes without duplicating bytes (rc=$rc/$rc2: $out)"; fi
 # A crash after the marker but before the copies go, and one after they went: both recover forward.
 : > "$PAIR_A/docs/fin.md"; git -C "$PAIR_A" add docs/fin.md; git -C "$PAIR_A" commit -qm fin; git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
-wsf=$(run_sdd_dir "$PAIR_A" docs/fin.md); printf '# SDD ledger — plan: docs/fin.md\n' > "$wsf/progress.md"; run_state "$PAIR_A" snapshot docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+wsf=$(run_sdd_dir "$PAIR_A" docs/fin.md); printf '# SDD ledger — plan: docs/fin.md\n' > "$wsf/progress.md"; run_state "$PAIR_A" claim docs/fin.md final --session s-a >/dev/null; run_state "$PAIR_A" snapshot docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md >/dev/null; wsfb="$co_b/plans/$(basename "$wsf")"
-run_state "$PAIR_A" finish docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_A" finish docs/fin.md --session s-a >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-marker bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
 if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ ! -d "$wsfb" ] && ls -d "$co_b"/plans/.removing-* >/dev/null 2>&1 && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" != "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "the crash seam after the marker leaves the copy renamed aside, the marker down and the ref at S"; else fail "the crash seam after the marker leaves the copy renamed aside, the marker down and the ref at S (rc=$rc)"; fi
 out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -d "$wsfb" ] && ! ls -d "$co_b"/plans/.removing-* >/dev/null 2>&1 && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "recovery moves the ref forward, drops the verified copy, and the remote finish holds"; else fail "recovery moves the ref forward, drops the verified copy, and the remote finish holds (rc=$rc: $out)"; fi
 : > "$PAIR_A/docs/fin2.md"; git -C "$PAIR_A" add docs/fin2.md; git -C "$PAIR_A" commit -qm fin2; git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
-wsf2=$(run_sdd_dir "$PAIR_A" docs/fin2.md); printf '# SDD ledger — plan: docs/fin2.md\n' > "$wsf2/progress.md"; run_state "$PAIR_A" snapshot docs/fin2.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+wsf2=$(run_sdd_dir "$PAIR_A" docs/fin2.md); printf '# SDD ledger — plan: docs/fin2.md\n' > "$wsf2/progress.md"; run_state "$PAIR_A" claim docs/fin2.md final --session s-a >/dev/null; run_state "$PAIR_A" snapshot docs/fin2.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md >/dev/null; wsf2b="$co_b/plans/$(basename "$wsf2")"
-run_state "$PAIR_A" finish docs/fin2.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_A" finish docs/fin2.md --session s-a >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-discard bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
 if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ ! -d "$wsf2b" ] && ! ls -d "$co_b"/plans/.removing-* >/dev/null 2>&1 && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" != "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "the crash seam after the discard leaves the copy gone, the marker down and the ref at S"; else fail "the crash seam after the discard leaves the copy gone, the marker down and the ref at S (rc=$rc)"; fi
 out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
@@ -2023,10 +2026,10 @@ if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=fast-forwarded" ] && grep -q '^li
 # A crash inside the recovery between its ref move and its tomb loop: the
 # tombs go before the ref, so the crash leaves nothing under plans/.
 : > "$PAIR_A/docs/fin.md"; git -C "$PAIR_A" add docs/fin.md; git -C "$PAIR_A" commit -qm fin; git -C "$PAIR_A" push -q origin main 2>/dev/null; git -C "$PAIR_B" pull -q origin main 2>/dev/null
-wsf=$(run_sdd_dir "$PAIR_A" docs/fin.md); printf '# SDD ledger — plan: docs/fin.md\n' > "$wsf/progress.md"
+wsf=$(run_sdd_dir "$PAIR_A" docs/fin.md); printf '# SDD ledger — plan: docs/fin.md\n' > "$wsf/progress.md"; run_state "$PAIR_A" claim docs/fin.md final --session s-a >/dev/null
 run_state "$PAIR_A" snapshot docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md >/dev/null
-run_state "$PAIR_A" finish docs/fin.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
+run_state "$PAIR_A" finish docs/fin.md --session s-a >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=sync-after-marker bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 )
 ( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=recover-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
 if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && ! ls -d "$co_b/plans/.removing-$(basename "$wsf")-"* >/dev/null 2>&1; then pass "the recovery deletes the verified copies before it moves the ref"; else fail "the recovery deletes the verified copies before it moves the ref (rc=$rc)"; fi
@@ -2233,7 +2236,7 @@ git -C "$PAIR_B" pull -q origin main 2>/dev/null
 co_b14="$STATE_ROOT/$(state_key "$PAIR_B")"
 run_state "$PAIR_A" sync docs/plan.md >/dev/null
 wsy=$(run_sdd_dir "$PAIR_A" docs/plan.md); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsy/progress.md"
-wsx=$(run_sdd_dir "$PAIR_A" docs/x.md); printf '# SDD ledger — plan: docs/x.md\n' > "$wsx/progress.md"
+wsx=$(run_sdd_dir "$PAIR_A" docs/x.md); printf '# SDD ledger — plan: docs/x.md\n' > "$wsx/progress.md"; run_state "$PAIR_A" claim docs/x.md final --session s-a >/dev/null
 wsz=$(run_sdd_dir "$PAIR_A" docs/z.md); printf '# SDD ledger — plan: docs/z.md\n' > "$wsz/progress.md"
 run_state "$PAIR_A" snapshot docs/plan.md >/dev/null
 run_state "$PAIR_A" snapshot docs/x.md >/dev/null
@@ -2242,7 +2245,7 @@ git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null
 run_state "$PAIR_B" sync docs/plan.md >/dev/null
 wsy_b="$co_b14/plans/$(basename "$wsy")"; wsx_b="$co_b14/plans/$(basename "$wsx")"; wsz_b="$co_b14/plans/$(basename "$wsz")"
 advance14() { printf '%s\n' "$1" >> "$wsy/progress.md"; run_state "$PAIR_A" snapshot docs/plan.md >/dev/null; git -C "$PAIR_A" push -q origin hyperpowers/state 2>/dev/null; }
-( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=remove-after-rename bash "$SDD_STATE" finish docs/x.md >/dev/null 2>&1 ); rc=$?
+( cd "$PAIR_B" && HYPERPOWERS_TEST_CRASH_AT=remove-after-rename bash "$SDD_STATE" finish docs/x.md --session s-a >/dev/null 2>&1 ); rc=$?
 if [ "$rc" -eq 99 ] && [ ! -d "$wsx_b" ] && ls -d "$co_b14/plans/.removing-$(basename "$wsx")-"* >/dev/null 2>&1; then pass "the seam leaves finish's copy renamed aside"; else fail "the seam leaves finish's copy renamed aside (rc=$rc)"; fi
 advance14 'line after the killed finish'
 run_state "$PAIR_B" sync docs/plan.md > "$TEST_ROOT/p14a.out" 2> "$TEST_ROOT/p14a.err"; rc=$?
@@ -2779,7 +2782,7 @@ if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'recovery sidecar at .restore
 
 # --- complete and handback (stop guard, 2026-10-23) -------------------------
 repo30="$TEST_ROOT/complete30"; make_repo "$repo30"
-mkdir -p "$repo30/docs"; printf '# Plan\n\n### Task 1: one\n\n### Task 2: two\n' > "$repo30/docs/plan.md"
+mkdir -p "$repo30/docs"; printf '# Plan\n\n### Task 1: one\n\n**Depends on:** none\n\n### Task 2: two\n\n**Depends on:** none\n' > "$repo30/docs/plan.md"
 git -C "$repo30" add docs/plan.md; git -C "$repo30" commit -q -m plan
 ws30=$(run_sdd_dir "$repo30" docs/plan.md 2>/dev/null)
 printf '# SDD ledger — plan: docs/plan.md\nsession s30: mode worktree on main at %s started 2026-10-23T00:00:00Z\n' "$repo30" > "$ws30/progress.md"
@@ -2834,8 +2837,11 @@ reset30
 out=$(HYPERPOWERS_TEST_FAIL_APPEND=1 run_state "$repo30" complete docs/plan.md 2 --commits 3333333..4444444 --session s30); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(last30)" != '\n' ] && grep -q '^Task 2: complete (commits 3333333..4444444$' "$ws30/progress.md"; then pass "a short write in complete is an error and leaves a fragment past the full token"; else fail "a short write in complete is an error and leaves a fragment past the full token (rc=$rc: $out)"; fi
 out=$(run_state "$repo30" claim docs/plan.md 2 --session s30); rc=$?
-if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2" ]; then pass "claim does not treat the fragment as a completion"; else fail "claim does not treat the fragment as a completion (rc=$rc: $out)"; fi
-out=$(run_state "$repo30" finish docs/plan.md); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2 branch=none" ]; then pass "claim does not treat the fragment as a completion"; else fail "claim does not treat the fragment as a completion (rc=$rc: $out)"; fi
+# finish reads the holder first; claim final waits for every task, so the
+# final claim is written in place to reach the open-claims check.
+mkdir -p "$ws30/claims/final"; printf 'session=s30\n' > "$ws30/claims/final/owner"
+out=$(run_state "$repo30" finish docs/plan.md --session s30); rc=$?
 if [ "$rc" -eq 6 ] && [ "$out" = "status=open-claims tasks=2" ]; then pass "finish counts the claim open on the strength of no fragment"; else fail "finish counts the claim open on the strength of no fragment (rc=$rc: $out)"; fi
 rm -rf "$ws30/claims"; sz30=$(size30)
 out=$(run_state "$repo30" complete docs/plan.md 2 --commits 3333333..4444444 --session s30); rc=$?
@@ -2911,6 +2917,1782 @@ if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=snapshot" ] && grep -q "jobs/x-00
 printf '%s\n' '# Regenerable on any host: briefs come from task-brief, packages from review-package.' 'plans/*/task-*-brief.md' 'plans/*/review-*.diff' > "$co31/.gitignore"
 ensure "$PAIR_A" >/dev/null
 if grep -Fxq 'plans/*/jobs/*/out.log' "$co31/.gitignore" && grep -Fxq 'plans/*/task-*-brief.md' "$co31/.gitignore"; then pass "an older checkout's .gitignore gains the job lines on the next ensure"; else fail "an older checkout's .gitignore gains the job lines on the next ensure ($(tr '\n' ' ' < "$co31/.gitignore"))"; fi
+
+echo "deps: the plan graph and the overlap check"
+make_repo "$TEST_ROOT/dp"; dp="$TEST_ROOT/dp"
+mkdir -p "$dp/docs"
+cat > "$dp/docs/plan.md" <<'PLAN'
+# Plan
+
+**Spec:** docs/spec.md
+
+## Global Constraints
+
+- **Merge-expected files:** `CHANGELOG.md`
+
+### Task 1: A
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+**Files:**
+- Create: `src/a.sh`
+- Test: `tests/t.sh`
+
+**Interfaces:**
+- Produces: `a_fn`
+
+### Task 2: B
+
+**Risk tier:** standard
+
+**Depends on:** Task 1
+
+**Files:**
+- Modify: `src/b.sh`
+- Modify: `CHANGELOG.md`
+
+**Interfaces:**
+- Consumes: `a_fn`
+
+### Task 3: C
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+**Files:**
+- Modify: `tests/t.sh`
+- Modify: `CHANGELOG.md`
+
+**Interfaces:**
+- Consumes: `a_fn`
+PLAN
+git -C "$dp" add docs; git -C "$dp" commit -qm plan
+out=$(run_state "$dp" deps docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f1,3)" = "status=deps tasks=3" ] && [ "$(printf '%s\n' "$out" | sed -n 2,4p | tr '\n' '|')" = "task=1 depends=none|task=2 depends=1|task=3 depends=none|" ]; then pass "deps prints the graph in heading order with a plan= blob"; else fail "deps prints the graph (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+out=$(run_state "$dp" deps docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f1,3)" = "status=conflicts count=2" ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,3 shares=tests/t.sh' && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,3 interface=a_fn direction=consumer-first' && ! printf '%s\n' "$out" | grep -q 'CHANGELOG'; then pass "deps --check names a shared Test path and a consumer without an edge, and skips a merge-expected file"; else fail "deps --check conflicts (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+printf 'scan: accepted-overlap tasks=1,3 path=tests/t.sh\nscan: accepted-overlap tasks=1,3 interface=a_fn\n' > "$TEST_ROOT/dp.ledger"
+out=$(run_state "$dp" deps docs/plan.md --check --ledger "$TEST_ROOT/dp.ledger" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=clean" ]; then pass "accepted overlaps from the ledger are suppressed"; else fail "accepted overlaps suppressed (rc=$rc: $out)"; fi
+# A legacy plan: no Depends on lines at all, serial by default.
+sed '/^\*\*Depends on:\*\*/d' "$dp/docs/plan.md" > "$dp/docs/legacy.md"; git -C "$dp" add docs; git -C "$dp" commit -qm legacy
+out=$(run_state "$dp" deps docs/legacy.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 2,4p | tr '\n' '|')" = "task=1 depends=none|task=2 depends=1|task=3 depends=1,2|" ]; then pass "a plan without Depends on lines is serial"; else fail "legacy serial default (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# Mixed annotation, a cycle, an unknown task, a self-dependency, a duplicate heading: each exit 2 with its line.
+# awk, not sed '0,/re/': BSD sed has no 0,/re/ address and would leave the plan unchanged.
+awk '/^\*\*Depends on:\*\* none$/ && !dropped { dropped = 1; next } { print }' "$dp/docs/plan.md" > "$dp/docs/mixed.md"
+err=$(run_state "$dp" deps --from docs/mixed.md docs/plan.md 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'mixed annotation: tasks without a Depends on line: 1'; then pass "mixed annotation is a parse error naming the task"; else fail "mixed annotation (rc=$rc: $err)"; fi
+sed 's/^\*\*Depends on:\*\* none$/**Depends on:** Task 2/' "$dp/docs/plan.md" | awk 'BEGIN{n=0} /^\*\*Depends on:\*\* Task 2$/{n++; if(n==2){print "**Depends on:** none"; next}} {print}' > "$dp/docs/cycle.md"
+err=$(run_state "$dp" deps --from docs/cycle.md docs/plan.md 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'cycle: '; then pass "a cycle is a parse error"; else fail "cycle (rc=$rc: $err)"; fi
+sed 's/^\*\*Depends on:\*\* Task 1$/**Depends on:** Task 9/' "$dp/docs/plan.md" > "$dp/docs/unknown.md"
+err=$(run_state "$dp" deps --from docs/unknown.md docs/plan.md 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'unknown task: 9 (from task 2)'; then pass "an unknown dependency is a parse error"; else fail "unknown task (rc=$rc: $err)"; fi
+sed 's/^\*\*Depends on:\*\* Task 1$/**Depends on:** Task 2/' "$dp/docs/plan.md" > "$dp/docs/self.md"
+err=$(run_state "$dp" deps --from docs/self.md docs/plan.md 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'self-dependency: task 2'; then pass "a self-dependency is a parse error"; else fail "self-dependency (rc=$rc: $err)"; fi
+sed 's/^### Task 3: C$/### Task 2: C/' "$dp/docs/plan.md" > "$dp/docs/dup.md"
+err=$(run_state "$dp" deps --from docs/dup.md docs/plan.md 2>&1 >/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -q 'duplicate heading: task 2'; then pass "a duplicated heading is a parse error"; else fail "duplicate heading (rc=$rc: $err)"; fi
+# Fenced blocks are text: an implementation plan embeds fixture plans, and their headings are not tasks.
+cp "$dp/docs/plan.md" "$dp/docs/fenced.md"
+cat >> "$dp/docs/fenced.md" <<'FENCED'
+
+### Task 4: D
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+**Files:**
+- Create: `src/d.sh`
+
+- [ ] **Step 1: A fixture plan inside a fence**
+
+```bash
+cat > plan.md <<'EOF'
+### Task 9: Ghost
+
+**Depends on:** Task 1
+
+**Files:**
+- Modify: `src/a.sh`
+EOF
+```
+
+~~~
+### Task 10: Ghost
+~~~
+FENCED
+out=$(run_state "$dp" deps --from docs/fenced.md docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f3)" = "tasks=4" ] && ! printf '%s\n' "$out" | grep -q 'task=9\|task=10'; then pass "headings and Depends on lines inside fenced blocks are not tasks"; else fail "fenced headings (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+out=$(run_state "$dp" deps --from docs/fenced.md docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f1,3)" = "status=conflicts count=2" ]; then pass "a Files block inside a fence adds no overlap"; else fail "fenced Files block (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# The authoritative plan is the plan ref's head, not the working copy.
+printf '\n### Task 4: D\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n**Files:**\n- Create: `src/d.sh`\n' >> "$dp/docs/plan.md"
+out=$(run_state "$dp" deps docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f3)" = "tasks=3" ]; then pass "deps reads the committed plan, not the working copy"; else fail "deps reads the ref (rc=$rc: $(printf '%s' "$out" | sed -n 1p))"; fi
+git -C "$dp" checkout -q -- docs/plan.md
+# A path with a space is printed percent-encoded, so a space-splitting reader keeps one field, and the ledger carries the same form.
+cat > "$dp/docs/spaced.md" <<'SPACED'
+### Task 1: A
+
+**Depends on:** none
+
+**Files:**
+- Modify: `docs/design notes.md`
+
+### Task 2: B
+
+**Depends on:** none
+
+**Files:**
+- Modify: `docs/design notes.md`
+SPACED
+out=$(run_state "$dp" deps --from docs/spaced.md docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=docs/design%20notes.md'; then pass "a shared path with a space is printed percent-encoded"; else fail "encoded shares path (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+printf 'scan: accepted-overlap tasks=1,2 path=docs/design%%20notes.md\n' > "$TEST_ROOT/dp-space.ledger"
+out=$(run_state "$dp" deps --from docs/spaced.md docs/plan.md --check --ledger "$TEST_ROOT/dp-space.ledger" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=clean" ]; then pass "an accepted overlap carrying the encoded path is suppressed"; else fail "encoded accepted overlap (rc=$rc: $out)"; fi
+# A literal percent is escaped before a space is, so a path holding %20 keeps a key of its own: docs/a b.md and docs/a%20b.md never share one, and an acceptance of the first leaves the second's conflict.
+sed 's/design notes\.md/a b.md/' "$dp/docs/spaced.md" > "$dp/docs/ab-space.md"; sed 's/design notes\.md/a%20b.md/' "$dp/docs/spaced.md" > "$dp/docs/ab-pct.md"
+out=$(run_state "$dp" deps --from docs/ab-space.md docs/plan.md --check 2>/dev/null); rc=$?
+out2=$(run_state "$dp" deps --from docs/ab-pct.md docs/plan.md --check 2>/dev/null); rc2=$?
+printf 'scan: accepted-overlap tasks=1,2 path=docs/a%%20b.md\n' > "$TEST_ROOT/dp-ab.ledger"
+out3=$(run_state "$dp" deps --from docs/ab-pct.md docs/plan.md --check --ledger "$TEST_ROOT/dp-ab.ledger" 2>/dev/null); rc3=$?
+if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=docs/a%20b.md' && [ "$rc2" -eq 1 ] && printf '%s\n' "$out2" | grep -qx 'conflict tasks=1,2 shares=docs/a%2520b.md' && [ "$rc3" -eq 1 ] && printf '%s\n' "$out3" | grep -qx 'conflict tasks=1,2 shares=docs/a%2520b.md'; then pass "paths docs/a b.md and docs/a%20b.md print distinct conflict keys, and one's acceptance leaves the other"; else fail "percent-encoded keys (rc=$rc/$rc2/$rc3: $(printf '%s' "$out" | tr '\n' '|') / $(printf '%s' "$out2" | tr '\n' '|') / $(printf '%s' "$out3" | tr '\n' '|'))"; fi
+
+# A malformed dependency line is an error, never a normalized guess: a typo must not erase a prerequisite.
+dep_bad() { # <name> <awk program rewriting plan.md> <expected stderr fragment>
+  awk "$2" "$dp/docs/plan.md" > "$dp/docs/$1.md"
+  err=$(run_state "$dp" deps --from "docs/$1.md" docs/plan.md 2>&1 >/dev/null); rc=$?
+  if [ "$rc" -eq 2 ] && printf '%s' "$err" | grep -qF "$3"; then pass "dependency line: $1 is a parse error"; else fail "dependency line $1 (rc=$rc: $err)"; fi
+}
+dep_bad blank '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:**"; next } { print }' 'malformed dependency line: task 2: '
+dep_bad bare '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:** Task"; next } { print }' 'malformed dependency line: task 2: Task'
+dep_bad nocomma '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:** Task 1 Task 2"; next } { print }' 'malformed dependency line: task 2: Task 1 Task 2'
+dep_bad repeated '/^\*\*Depends on:\*\* Task 1$/ { print "**Depends on:** Task 1, Task 1"; next } { print }' 'malformed dependency line: task 2: Task 1, Task 1'
+# A heading that starts like a task but breaks the grammar is an error: it must not drop the task or carry text into its id.
+dep_bad headtext '/^### Task 2:/ { print "### Task 2:x"; next } { print }' 'malformed task heading: ### Task 2:x'
+dep_bad headsub '/^### Task 2:/ { print "### Task 2:$(true)"; next } { print }' 'malformed task heading: ### Task 2:$(true)'
+# A task heading at another level is an error too: read as no task, it would drop the task, and a plan of them would read as complete.
+dep_bad level2 '{ sub(/^### Task /, "## Task "); print }' 'malformed task heading: ## Task 1: A'
+dep_bad level4 '{ print } END { print ""; print "#### Task 5: E" }' 'malformed task heading: #### Task 5: E'
+dep_bad twice '/^\*\*Depends on:\*\* Task 1$/ { print; print ""; print "**Depends on:** none"; next } { print }' 'malformed dependency line: task 2: none'
+# The Global Constraints scope ends at the first task heading, so a task's prose cannot widen the allowlist.
+cat > "$dp/docs/gcscope.md" <<'GCSCOPE'
+# Plan
+
+## Global Constraints
+
+- **Merge-expected files:** `CHANGELOG.md`
+
+### Task 1: A
+
+**Depends on:** none
+
+The **Merge-expected files:** `src/shared.sh` note here is prose.
+
+**Files:**
+- Modify: `src/shared.sh`
+
+### Task 2: B
+
+**Depends on:** none
+
+**Files:**
+- Modify: `src/shared.sh`
+GCSCOPE
+out=$(run_state "$dp" deps --from docs/gcscope.md docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=src/shared.sh'; then pass "task prose cannot extend the merge-expected list"; else fail "constraints scope (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# Only the first backticked span of a Files line is a path; the rest is annotation.
+cat > "$dp/docs/annot.md" <<'ANNOT'
+### Task 1: A
+
+**Depends on:** none
+
+**Files:**
+- Modify: `src/a.sh` (new functions after `helper_fn`, `:186`)
+
+### Task 2: B
+
+**Depends on:** none
+
+**Files:**
+- Modify: `src/b.sh` (new functions after `helper_fn`, `:186`)
+ANNOT
+out=$(run_state "$dp" deps --from docs/annot.md docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=clean" ]; then pass "annotation spans on a Files line are not paths"; else fail "annotated Files lines (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# A declared chain orders a shared path: 3 depends on 1 through 2, so their shared file is no conflict.
+cat > "$dp/docs/chain.md" <<'CHAIN'
+### Task 1: A
+
+**Depends on:** none
+
+**Files:**
+- Modify: `src/shared.sh`
+
+### Task 2: B
+
+**Depends on:** Task 1
+
+**Files:**
+- Modify: `src/b.sh`
+
+### Task 3: C
+
+**Depends on:** Task 2
+
+**Files:**
+- Modify: `src/shared.sh`
+CHAIN
+out=$(run_state "$dp" deps --from docs/chain.md docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=clean" ]; then pass "a 3->2->1 chain suppresses the shared-path pair of 1 and 3"; else fail "chain suppression (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# The reverse edge does not clear an interface pair: a producer that depends on its consumer is still consumer-first.
+cat > "$dp/docs/reverse.md" <<'REVERSE'
+### Task 1: A
+
+**Depends on:** Task 2
+
+**Interfaces:**
+- Produces: `x_fn`
+
+### Task 2: B
+
+**Depends on:** none
+
+**Interfaces:**
+- Consumes: `x_fn`
+REVERSE
+out=$(run_state "$dp" deps --from docs/reverse.md docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && [ "$(printf '%s\n' "$out" | sed -n 1p | cut -d' ' -f1,3)" = "status=conflicts count=1" ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 interface=x_fn direction=consumer-first'; then pass "a producer that depends on its consumer prints interface=x_fn direction=consumer-first"; else fail "reverse producer edge (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# The plan id and the plan text come from one object even when the branch moves between them.
+make_repo "$TEST_ROOT/dr"; dr="$TEST_ROOT/dr"; mkdir -p "$dr/docs"
+printf '### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** none\n' > "$dr/docs/plan.md"
+git -C "$dr" add docs; git -C "$dr" commit -qm old; old_sha=$(git -C "$dr" rev-parse HEAD)
+printf '\n### Task 3: C\n\n**Depends on:** none\n' >> "$dr/docs/plan.md"
+git -C "$dr" commit -qam new; new_blob=$(git -C "$dr" rev-parse HEAD:docs/plan.md)
+out=$(HYPERPOWERS_TEST_WRITER_AT="deps-after-resolve:$old_sha" run_state "$dr" deps docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=deps plan=${new_blob:0:7} tasks=3" ]; then pass "a branch moved after the id is resolved does not change the plan read"; else fail "plan id and text from one object (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+
+# --from is read from the caller's directory, and its hash is of that same file.
+mkdir -p "$TEST_ROOT/elsewhere/docs"
+# deps resolves the cwd's repository as the code repository, so the caller's directory must be one.
+git init -q "$TEST_ROOT/elsewhere"
+printf '### Task 1: A\n\n**Depends on:** none\n' > "$TEST_ROOT/elsewhere/docs/only-here.md"
+out=$(cd "$TEST_ROOT/elsewhere" && bash "$SDD_STATE" deps --from docs/only-here.md "$dp/docs/plan.md" 2>/dev/null); rc=$?
+want=$(git -C "$dp" hash-object "$TEST_ROOT/elsewhere/docs/only-here.md")
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=deps plan=${want:0:7} tasks=1" ]; then pass "--from outside the plan repository hashes the file it parsed"; else fail "--from relative to another cwd (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+printf '### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** none\n' > "$dp/docs/candidate.md"
+printf '### Task 1: A\n\n**Depends on:** none\n' > "$TEST_ROOT/elsewhere/docs/candidate.md"
+out=$(cd "$TEST_ROOT/elsewhere" && bash "$SDD_STATE" deps --from docs/candidate.md "$dp/docs/plan.md" 2>/dev/null); rc=$?
+want=$(git -C "$dp" hash-object "$TEST_ROOT/elsewhere/docs/candidate.md")
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=deps plan=${want:0:7} tasks=1" ]; then pass "a same-named file in the plan repository does not stand in for the caller's --from"; else fail "same-named --from (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+echo "register: the plan line, siblings and the lock pair"
+make_pair rg; rg_a=$PAIR_A
+mkdir -p "$rg_a/docs"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rg_a/docs/plan.md"; : > "$rg_a/docs/spec.md"
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rg_a/docs/plan2.md"
+git -C "$rg_a" add docs; git -C "$rg_a" commit -qm plans; git -C "$rg_a" push -q origin main 2>/dev/null
+git -C "$rg_a" switch -q -c feat
+run_state "$rg_a" sync docs/plan.md >/dev/null 2>&1; wsr=$(run_sdd_dir "$rg_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsr/progress.md"
+out=$(run_state "$rg_a" register docs/plan.md --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=feat" ] && grep -q "^plan: integration feat code-root [0-9a-f]\{7\} plan-ref feat plan-root [0-9a-f]\{7\} spec docs/spec.md$" "$wsr/progress.md"; then pass "register writes the plan line once"; else fail "register writes the plan line (rc=$rc: $out: $(grep '^plan:' "$wsr/progress.md" 2>/dev/null))"; fi
+out=$(run_state "$rg_a" register docs/plan.md --session s2 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=feat" ] && [ "$(grep -c '^plan: integration' "$wsr/progress.md")" = 1 ]; then pass "a matching re-registration is a no-op"; else fail "matching re-registration (rc=$rc: $out)"; fi
+out=$(run_state "$rg_a" register docs/plan.md --session s2 --integration other 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-branch expected=feat" ]; then pass "a different branch for a registered plan is wrong-branch"; else fail "wrong-branch (rc=$rc: $out)"; fi
+wsr2=$(run_sdd_dir "$rg_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsr2/progress.md"
+out=$(run_state "$rg_a" register docs/plan2.md --session s3 --integration feat2 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% plan=*}" = "status=spec-branch-mismatch expected=feat" ] && [ "${out##* plan=}" = "$(basename "$wsr")" ]; then pass "a sibling plan of the same spec must share the integration branch"; else fail "spec-branch-mismatch (rc=$rc: $out)"; fi
+out=$(run_state "$rg_a" register docs/plan2.md --session s3 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ]; then pass "a sibling on the same branch registers"; else fail "sibling registers (rc=$rc: $out)"; fi
+# A removal interrupted after its rename-aside leaves a sibling's dossier at plans/.removing-<ws>-<pid>; that plan is still open, so register compares it too.
+make_pair rgt; rt_a=$PAIR_A
+mkdir -p "$rt_a/docs"; : > "$rt_a/docs/spec.md"
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rt_a/docs/plan.md"
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rt_a/docs/plan2.md"
+git -C "$rt_a" add docs; git -C "$rt_a" commit -qm plans; git -C "$rt_a" switch -q -c feat
+run_state "$rt_a" sync docs/plan.md >/dev/null 2>&1
+wrt=$(run_sdd_dir "$rt_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wrt/progress.md"
+run_state "$rt_a" register docs/plan.md --session s1 --integration feat >/dev/null 2>&1
+wrt2=$(run_sdd_dir "$rt_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wrt2/progress.md"
+tomb_rt="$(dirname "$wrt")/.removing-$(basename "$wrt")-4242"; mv "$wrt" "$tomb_rt"
+git -C "$rt_a" switch -q -c feat2
+out=$(run_state "$rt_a" register docs/plan2.md --session s2 --integration feat2 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=spec-branch-mismatch expected=feat plan=$(basename "$wrt")" ] && ! grep -q '^plan:' "$wrt2/progress.md"; then pass "a sibling left in a removal tomb on another branch is spec-branch-mismatch and nothing is written"; else fail "tombed sibling on another branch (rc=$rc: $out: $(grep '^plan:' "$wrt2/progress.md" 2>/dev/null))"; fi
+git -C "$rt_a" switch -q feat
+out=$(run_state "$rt_a" register docs/plan2.md --session s2 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=feat" ]; then pass "a sibling left in a removal tomb on the same branch does not block registration"; else fail "tombed sibling on the same branch (rc=$rc: $out)"; fi
+rm -rf "$tomb_rt"
+# verify: a named branch that is neither the integration branch nor a task branch.
+git -C "$rg_a" switch -q -c stray
+out=$(run_state "$rg_a" verify docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-branch expected=feat" ]; then pass "verify reports wrong-branch on a stray branch"; else fail "verify wrong-branch (rc=$rc: $out)"; fi
+git -C "$rg_a" switch -q -c "feat.$(basename "$wsr" | sed 's/.*-//').task-1" feat
+out=$(run_state "$rg_a" verify docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=ok" ]; then pass "verify accepts this plan's task branch"; else fail "verify task branch (rc=$rc: $out)"; fi
+git -C "$rg_a" switch -q --detach feat
+out=$(run_state "$rg_a" verify docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ]; then pass "verify accepts a detached checkout"; else fail "verify detached (rc=$rc: $out)"; fi
+# A later session registers detached (the plan ref comes from the plan line) or from this plan's task branch; a first registration needs a named branch.
+out=$(run_state "$rg_a" register docs/plan.md --session s9 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=feat" ]; then pass "a later session registers from a detached checkout"; else fail "detached re-registration (rc=$rc: $out)"; fi
+git -C "$rg_a" switch -q "feat.$(basename "$wsr" | sed 's/.*-//').task-1"
+out=$(run_state "$rg_a" register docs/plan.md --session s9 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ]; then pass "a session on this plan's task branch re-registers"; else fail "task-branch re-registration (rc=$rc: $out)"; fi
+git -C "$rg_a" switch -q --detach feat
+printf '# T\n\n**Spec:** docs/spec3.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rg_a/docs/plan3.md"; : > "$rg_a/docs/spec3.md"
+wsr3=$(run_sdd_dir "$rg_a" docs/plan3.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan3.md\n' > "$wsr3/progress.md"
+out=$(run_state "$rg_a" register docs/plan3.md --session s9 --integration feat3 2>/dev/null); rc=$?
+if [ "$rc" -eq 11 ] && [ "$out" = "status=detached-head repo=plan" ] && ! grep -q '^plan:' "$wsr3/progress.md"; then pass "a first registration needs a named branch to name the plan ref"; else fail "detached first registration (rc=$rc: $out)"; fi
+rm -rf "$wsr3"; rm -f "$rg_a/docs/plan3.md" "$rg_a/docs/spec3.md"
+git -C "$rg_a" switch -q feat
+make_repo "$TEST_ROOT/foreign"
+out=$(run_state "$rg_a" register docs/plan.md --session s2 --integration feat --code-repo "$TEST_ROOT/foreign" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "register refuses a code repository whose root is not the recorded code root"; else fail "register wrong-repo (rc=$rc: $out)"; fi
+out=$(run_state "$rg_a" deps docs/plan.md --code-repo "$TEST_ROOT/foreign" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "deps refuses a foreign --code-repo once the plan line exists"; else fail "deps wrong-repo (rc=$rc: $out)"; fi
+out=$(cd "$TEST_ROOT/foreign" && bash "$SDD_STATE" deps "$rg_a/docs/plan.md" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "deps run from a foreign repository without --code-repo is wrong-repo"; else fail "deps foreign cwd (rc=$rc: $out)"; fi
+# A re-registration must match the whole plan line: the plan ref and the plan root too.
+git -C "$rg_a" switch -q -c feat-b feat
+out=$(run_state "$rg_a" register docs/plan.md --session s2 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-branch expected=feat repo=plan" ]; then pass "a plan repository on another branch than the recorded plan ref is wrong-branch repo=plan"; else fail "plan-ref mismatch (rc=$rc: $out)"; fi
+git -C "$rg_a" switch -q feat
+pl_orig=$(grep '^plan: integration' "$wsr/progress.md")
+sed -i '' 's| plan-root [0-9a-f]* spec | plan-root 0000000 spec |' "$wsr/progress.md" 2>/dev/null || sed -i 's| plan-root [0-9a-f]* spec | plan-root 0000000 spec |' "$wsr/progress.md"
+out=$(run_state "$rg_a" register docs/plan.md --session s2 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-repo expected=0000000 repo=plan" ]; then pass "a recorded plan root that is not this repository's is wrong-repo repo=plan"; else fail "plan-root mismatch (rc=$rc: $out)"; fi
+sed -i '' "s|^plan: integration .*|$pl_orig|" "$wsr/progress.md" 2>/dev/null || sed -i "s|^plan: integration .*|$pl_orig|" "$wsr/progress.md"
+# The plan in one repository and the code in another: the state lives with the plan, the plan line records both roots.
+make_repo "$TEST_ROOT/sp"; make_repo "$TEST_ROOT/sc"; sp="$TEST_ROOT/sp"; sc="$TEST_ROOT/sc"
+# Two repositories made in the same second would share a root commit id, and the root is what identifies the code repository.
+git -C "$sc" commit -q --amend --allow-empty -m "code root"
+mkdir -p "$sp/docs"; printf '# S\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$sp/docs/plan.md"; : > "$sp/docs/spec.md"; git -C "$sp" add docs; git -C "$sp" commit -qm plan; git -C "$sp" switch -q -c plans
+git -C "$sc" switch -q -c feat
+wssp=$(run_sdd_dir "$sp" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wssp/progress.md"
+root_sc=$(git -C "$sc" rev-list --max-parents=0 HEAD | sort | head -n 1 | cut -c1-7); root_sp=$(git -C "$sp" rev-list --max-parents=0 HEAD | sort | head -n 1 | cut -c1-7)
+out=$(cd "$sc" && bash "$SDD_STATE" register "$sp/docs/plan.md" --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=plans" ] && grep -q "^plan: integration feat code-root $root_sc plan-ref plans plan-root $root_sp spec docs/spec.md$" "$wssp/progress.md"; then pass "a split layout records the code root from the cwd and the plan ref from the plan repository"; else fail "split register (rc=$rc: $out: $(grep '^plan:' "$wssp/progress.md" 2>/dev/null))"; fi
+out=$(run_state "$sp" register docs/plan.md --session s2 --integration feat --code-repo "$sc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=plans" ]; then pass "a re-registration from the plan repository with --code-repo matches"; else fail "split re-register (rc=$rc: $out)"; fi
+out=$(run_state "$sp" register docs/plan.md --session s2 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "the plan repository itself is not the code repository"; else fail "split wrong-repo (rc=$rc: $out)"; fi
+# A spec path with a space and a plan file name with a space: the plan line keeps the path as written, comparisons and status fields are percent-encoded.
+make_pair sp2; sq_a=$PAIR_A
+mkdir -p "$sq_a/docs"; : > "$sq_a/docs/design notes.md"
+printf '# P\n\n**Spec:** docs/design notes.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$sq_a/docs/plan.md"
+printf '# Q\n\n**Spec:** docs/design notes.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$sq_a/docs/old plan.md"
+git -C "$sq_a" add docs; git -C "$sq_a" commit -qm plans; git -C "$sq_a" switch -q -c feat
+run_state "$sq_a" sync docs/plan.md >/dev/null 2>&1
+sq1=$(run_sdd_dir "$sq_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$sq1/progress.md"
+sq2=$(run_sdd_dir "$sq_a" "docs/old plan.md" 2>/dev/null); printf '# SDD ledger — plan: docs/old plan.md\n' > "$sq2/progress.md"
+out=$(run_state "$sq_a" register docs/plan.md --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && grep -q '^plan: integration feat code-root [0-9a-f]\{7\} plan-ref feat plan-root [0-9a-f]\{7\} spec docs/design notes.md$' "$sq1/progress.md"; then pass "a spec path with a space is written as the header has it"; else fail "spaced spec register (rc=$rc: $out: $(grep '^plan:' "$sq1/progress.md"))"; fi
+out=$(run_state "$sq_a" register docs/plan.md --session s2 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=registered integration=feat plan-ref=feat" ]; then pass "a plan with a spaced spec path re-registers"; else fail "spaced spec re-register (rc=$rc: $out)"; fi
+out=$(run_state "$sq_a" register "docs/old plan.md" --session s3 --integration feat2 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% plan=*}" = "status=spec-branch-mismatch expected=feat" ] && [ "${out##* plan=}" = "$(basename "$sq1")" ]; then pass "a sibling of a spaced spec on another branch is spec-branch-mismatch"; else fail "spaced spec sibling (rc=$rc: $out)"; fi
+out=$(run_state "$sq_a" register "docs/old plan.md" --session s3 --integration feat 2>/dev/null); rc=$?
+# Only the spaced workspace is registered now, so the mismatch must name it.
+sed -i '' '/^plan: integration/d' "$sq1/progress.md" 2>/dev/null || sed -i '/^plan: integration/d' "$sq1/progress.md"
+out=$(run_state "$sq_a" register docs/plan.md --session s4 --integration feat2 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out##* plan=}" = "$(basename "$sq2" | sed 's/ /%20/g')" ] && [ "${out##* plan=}" != "$(basename "$sq2")" ]; then pass "the plan= field names a spaced workspace percent-encoded"; else fail "spaced workspace encoding (rc=$rc: $out)"; fi
+# register guards: a mistyped integration branch, a missing one, links, shallow clones and look-alike specs.
+reg_repo() { # <path> <spec name>: a plan repository on branch feat with a ledger; prints the workspace
+  make_repo "$1"; mkdir -p "$1/docs"
+  printf '# P\n\n**Spec:** docs/%s\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' "$2" > "$1/docs/plan.md"; : > "$1/docs/$2"
+  git -C "$1" add docs; git -C "$1" commit -qm plan; git -C "$1" switch -q -c feat
+  run_state "$1" sync docs/plan.md >/dev/null 2>&1
+  local w; w=$(run_sdd_dir "$1" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$w/progress.md"; printf '%s\n' "$w"
+}
+ty=$TEST_ROOT/ty; wty=$(reg_repo "$ty" spec.md)
+out=$(run_state "$ty" register docs/plan.md --session s1 --integration typo 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-branch expected=feat" ] && ! grep -q '^plan:' "$wty/progress.md"; then pass "a mistyped integration branch on one repository is wrong-branch and writes nothing"; else fail "typo integration (rc=$rc: $out)"; fi
+mc=$TEST_ROOT/mc; make_repo "$mc"
+out=$(cd "$mc" && bash "$SDD_STATE" register "$ty/docs/plan.md" --session s1 --integration nothere 2>"$TEST_ROOT/ty.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "the integration branch nothere does not exist" "$TEST_ROOT/ty.err" && ! grep -q '^plan:' "$wty/progress.md"; then pass "an integration branch missing from the code repository is an error and writes nothing"; else fail "missing integration branch (rc=$rc: $out)"; fi
+# A --code-repo that exists but is no repository is named, with a status line, like a missing one.
+mkdir -p "$TEST_ROOT/notrepo-rg"
+out=$(run_state "$ty" register docs/plan.md --session s1 --integration feat --code-repo "$TEST_ROOT/notrepo-rg" 2>"$TEST_ROOT/ty.notrepo.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "sdd-state: not a git repository: $TEST_ROOT/notrepo-rg" "$TEST_ROOT/ty.notrepo.err" && ! grep -q '^plan:' "$wty/progress.md"; then pass "a first registration whose --code-repo is no repository says so and writes nothing"; else fail "--code-repo not a repository (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ty.notrepo.err"))"; fi
+# A workspace or a ledger replaced by a link is never written through.
+mkdir -p "$TEST_ROOT/outside"; printf '# SDD ledger — plan: docs/plan.md\n' > "$TEST_ROOT/outside/progress.md"; cp "$TEST_ROOT/outside/progress.md" "$TEST_ROOT/outside/progress.orig"
+rm -rf "$wty"; ln -s "$TEST_ROOT/outside" "$wty"
+out=$(run_state "$ty" register docs/plan.md --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && cmp -s "$TEST_ROOT/outside/progress.md" "$TEST_ROOT/outside/progress.orig"; then pass "a workspace replaced by a link is refused and the referent is untouched"; else fail "workspace link (rc=$rc: $out)"; fi
+rm -f "$wty"; wty=$(run_sdd_dir "$ty" docs/plan.md 2>/dev/null); rm -f "$wty/progress.md"; ln -s "$TEST_ROOT/outside/progress.md" "$wty/progress.md"
+out=$(run_state "$ty" register docs/plan.md --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && cmp -s "$TEST_ROOT/outside/progress.md" "$TEST_ROOT/outside/progress.orig"; then pass "a ledger replaced by a link is refused and the referent is untouched"; else fail "ledger link (rc=$rc: $out)"; fi
+# A shallow clone's root is a fetch boundary: register refuses it until it is unshallowed.
+make_repo "$TEST_ROOT/shsrc"; git -C "$TEST_ROOT/shsrc" commit -q --allow-empty -m two; mkdir -p "$TEST_ROOT/shsrc/docs"
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$TEST_ROOT/shsrc/docs/plan.md"; : > "$TEST_ROOT/shsrc/docs/spec.md"; git -C "$TEST_ROOT/shsrc" add docs; git -C "$TEST_ROOT/shsrc" commit -qm three
+git clone -q --depth 1 "file://$TEST_ROOT/shsrc" "$TEST_ROOT/shc" 2>/dev/null; git -C "$TEST_ROOT/shc" switch -q -c feat
+run_state "$TEST_ROOT/shc" sync docs/plan.md >/dev/null 2>&1; wshc=$(run_sdd_dir "$TEST_ROOT/shc" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wshc/progress.md"
+out=$(run_state "$TEST_ROOT/shc" register docs/plan.md --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=shallow-source repo=code" ] && ! grep -q '^plan:' "$wshc/progress.md"; then pass "a shallow code repository is refused"; else fail "shallow code (rc=$rc: $out)"; fi
+git clone -q --depth 1 "file://$TEST_ROOT/shsrc" "$TEST_ROOT/shp" 2>/dev/null
+run_state "$TEST_ROOT/shp" sync docs/plan.md >/dev/null 2>&1; wshp=$(run_sdd_dir "$TEST_ROOT/shp" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wshp/progress.md"
+make_repo "$TEST_ROOT/shk"; git -C "$TEST_ROOT/shk" switch -q -c feat
+out=$(cd "$TEST_ROOT/shk" && bash "$SDD_STATE" register "$TEST_ROOT/shp/docs/plan.md" --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=shallow-source repo=plan" ] && ! grep -q '^plan:' "$wshp/progress.md"; then pass "a shallow plan repository in a split layout is refused"; else fail "shallow plan (rc=$rc: $out)"; fi
+git -C "$TEST_ROOT/shc" fetch -q --unshallow 2>/dev/null
+out=$(run_state "$TEST_ROOT/shc" register docs/plan.md --session s1 --integration feat 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ]; then pass "after an unshallow the same registration succeeds"; else fail "unshallowed register (rc=$rc: $out)"; fi
+# Specs that differ only by a literal %20 are different specs.
+make_repo "$TEST_ROOT/dd"; mkdir -p "$TEST_ROOT/dd/docs"
+printf '# P\n\n**Spec:** docs/a b.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$TEST_ROOT/dd/docs/pa.md"
+printf '# P\n\n**Spec:** docs/a%%20b.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$TEST_ROOT/dd/docs/pb.md"
+git -C "$TEST_ROOT/dd" add docs; git -C "$TEST_ROOT/dd" commit -qm plans; git -C "$TEST_ROOT/dd" switch -q -c feat
+for pn in pa pb; do run_state "$TEST_ROOT/dd" sync docs/$pn.md >/dev/null 2>&1; w=$(run_sdd_dir "$TEST_ROOT/dd" docs/$pn.md 2>/dev/null); printf '# SDD ledger — plan: docs/%s.md\n' "$pn" > "$w/progress.md"; done
+out=$(run_state "$TEST_ROOT/dd" register docs/pa.md --session s1 --integration feat 2>/dev/null); rc1=$?
+git -C "$TEST_ROOT/dd" switch -q -c feat2 feat
+out2=$(run_state "$TEST_ROOT/dd" register docs/pb.md --session s2 --integration feat2 2>/dev/null); rc2=$?
+if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ]; then pass "specs docs/a b.md and docs/a%20b.md are not siblings"; else fail "look-alike specs (rc $rc1 $rc2: $out / $out2)"; fi
+# Linked worktrees of one repository are one repository: the plan ref must still be the integration branch.
+lw=$TEST_ROOT/lw; wlw=$(reg_repo "$lw" spec.md)
+git -C "$lw" worktree add -q "$TEST_ROOT/lw-linked" -b other 2>/dev/null
+out=$(run_state "$lw" register docs/plan.md --session s1 --integration other --code-repo "$TEST_ROOT/lw-linked" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-branch expected=feat" ] && ! grep -q '^plan:' "$wlw/progress.md"; then pass "a linked worktree of the plan repository is the same repository: a mismatched integration is wrong-branch"; else fail "linked worktree mismatch (rc=$rc: $out)"; fi
+out=$(run_state "$lw" register docs/plan.md --session s1 --integration feat --code-repo "$TEST_ROOT/lw-linked" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && grep -q '^plan: integration feat code-root [0-9a-f]\{7\} plan-ref feat ' "$wlw/progress.md"; then pass "the same call with the plan's branch registers"; else fail "linked worktree register (rc=$rc: $out: $(grep '^plan:' "$wlw/progress.md"))"; fi
+git -C "$lw" worktree remove --force "$TEST_ROOT/lw-linked" 2>/dev/null
+# Two sibling registrations with different branches through a barrier: exactly one succeeds.
+git -C "$rg_a" switch -q feat
+rm -rf "$wsr2"; wsr2=$(run_sdd_dir "$rg_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsr2/progress.md"
+sed -i '' '/^plan: integration/d' "$wsr/progress.md" 2>/dev/null || sed -i '/^plan: integration/d' "$wsr/progress.md"
+co_r=$(dirname "$(dirname "$wsr")")
+: > "$co_r/.register-before-write-pause"
+( cd "$rg_a" && HYPERPOWERS_TEST_PAUSE_AT=register-before-write bash "$SDD_STATE" register docs/plan.md --session s1 --integration feat > "$TEST_ROOT/rg.1" 2>/dev/null; echo $? > "$TEST_ROOT/rg.1rc" ) &
+n=0; while [ ! -e "$co_r/.register-before-write-paused" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+( cd "$rg_a" && bash "$SDD_STATE" register docs/plan2.md --session s3 --integration feat2 > "$TEST_ROOT/rg.2" 2>/dev/null; echo $? > "$TEST_ROOT/rg.2rc" ) &
+sleep 0.5; rm -f "$co_r/.register-before-write-pause"; wait
+r1=$(cat "$TEST_ROOT/rg.1rc"); r2=$(cat "$TEST_ROOT/rg.2rc")
+if { [ "$r1" = 0 ] && [ "$r2" = 9 ]; } || { [ "$r1" = 9 ] && [ "$r2" = 0 ]; }; then pass "two sibling registrations with different branches: exactly one succeeds"; else fail "registration race (rcs $r1 $r2: $(cat "$TEST_ROOT/rg.1") / $(cat "$TEST_ROOT/rg.2"))"; fi
+# The lock pair in ascending key order, roles swapped between two operations.
+make_repo "$TEST_ROOT/lk1"; make_repo "$TEST_ROOT/lk2"
+# HP_LOCK_DIR2 is the first-taken (lower-key) lock. The pause files make the barrier real: without them the first holder would finish before the second starts.
+for lkr in lk1 lk2; do : > "$( . "$LIB"; hp_checkout_path "$TEST_ROOT/$lkr" ).lock-pair-between-pause"; done
+( . "$LIB"; HYPERPOWERS_TEST_PAUSE_AT=lock-pair-between hp_lock_pair "$TEST_ROOT/lk1" "$TEST_ROOT/lk2" > /dev/null 2>&1; echo "$HP_LOCK_DIR2" > "$TEST_ROOT/lk.first"; hp_unlock ) &
+sleep 0.3
+( . "$LIB"; hp_lock_pair "$TEST_ROOT/lk2" "$TEST_ROOT/lk1" > /dev/null 2>&1; echo "$HP_LOCK_DIR2" > "$TEST_ROOT/lk.second"; hp_unlock ) &
+sleep 0.3; rm -f "$XDG_CACHE_HOME"/hyperpowers/state/*.lock-pair-between-pause 2>/dev/null; wait
+k1=$(state_key "$TEST_ROOT/lk1"); k2=$(state_key "$TEST_ROOT/lk2"); lower=$k1; [ "$k1" \< "$k2" ] || lower=$k2
+if [ "$(basename "$(cat "$TEST_ROOT/lk.first")" .lock)" = "$lower" ] && [ "$(basename "$(cat "$TEST_ROOT/lk.second")" .lock)" = "$lower" ]; then pass "hp_lock_pair takes the lower key first whichever role each repository plays"; else fail "lock pair order ($(cat "$TEST_ROOT/lk.first") / $(cat "$TEST_ROOT/lk.second") lower=$lower)"; fi
+
+echo "claim: dependencies and branches"
+make_pair cl; cl_a=$PAIR_A
+mkdir -p "$cl_a/docs"; : > "$cl_a/docs/spec.md"
+cat > "$cl_a/docs/plan.md" <<'PLAN'
+# P
+
+**Spec:** docs/spec.md
+
+### Task 1: A
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+### Task 2: B
+
+**Risk tier:** standard
+
+**Depends on:** Task 1
+
+### Task 3: C
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+### Task 4: D
+
+**Risk tier:** standard
+
+**Depends on:** none
+PLAN
+git -C "$cl_a" add docs; git -C "$cl_a" commit -qm plan; git -C "$cl_a" push -q origin main 2>/dev/null; git -C "$cl_a" switch -q -c feat
+run_state "$cl_a" sync docs/plan.md >/dev/null 2>&1; wscl=$(run_sdd_dir "$cl_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wscl/progress.md"
+run_state "$cl_a" register docs/plan.md --session s1 --integration feat >/dev/null
+ws8cl=$(basename "$wscl" | sed 's/.*-//'); H0=$(git -C "$cl_a" rev-parse feat)
+make_repo "$TEST_ROOT/foreign-cl"
+out=$(run_state "$cl_a" claim docs/plan.md 1 --session s1 --code-repo "$TEST_ROOT/foreign-cl" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ ! -d "$wscl/claims/task-1" ]; then pass "a claim refuses a foreign code repository before writing"; else fail "claim wrong-repo (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "${out%% plan=*}" = "status=blocked task=2 waiting=1" ] && [ ! -d "$wscl/claims/task-2" ]; then pass "a task whose predecessor is incomplete is blocked and nothing is written"; else fail "blocked (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=feat.$ws8cl.task-1 from=${H0:0:7}" ] && [ "$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-1")" = "$H0" ] && grep -q "^Task 1: branch feat.$ws8cl.task-1 from ${H0:0:7}$" "$wscl/progress.md" && grep -q "^branch=feat.$ws8cl.task-1$" "$wscl/claims/task-1/owner" && [ -f "$wscl/activity/s1" ]; then pass "a claim creates the task branch at the integration head, records it and stamps activity"; else fail "claim creates the branch (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=1 owner=s1 own=1 branch=feat.$ws8cl.task-1 from=${H0:0:7}" ]; then pass "the owner's re-claim repeats the branch"; else fail "own re-claim (rc=$rc: $out)"; fi
+# A crash after the rename: the retry creates the branch and the line.
+out=$(run_state "$cl_a" claim docs/plan.md 3 --session s1 2>/dev/null); rc=$?
+git -C "$cl_a" branch -D "feat.$ws8cl.task-3" >/dev/null 2>&1; sed -i '' '/^Task 3: branch/d' "$wscl/progress.md" 2>/dev/null || sed -i '/^Task 3: branch/d' "$wscl/progress.md"
+out=$(run_state "$cl_a" claim docs/plan.md 3 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% owner=*}" = "status=held task=3" ] && git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-3" >/dev/null && grep -q '^Task 3: branch' "$wscl/progress.md"; then pass "the owner's retry completes a missing branch and ledger line"; else fail "own retry completes (rc=$rc: $out)"; fi
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wscl/progress.md"
+( cd "$cl_a" && HYPERPOWERS_TEST_CRASH_AT=claim-after-rename bash "$SDD_STATE" claim docs/plan.md 2 --session s1 >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -d "$wscl/claims/task-2" ] && ! git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-2" >/dev/null; then pass "the crash seam stops after the rename with no branch yet"; else fail "crash after rename (rc=$rc)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 2 --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && ! git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-2" >/dev/null; then pass "a losing claimant creates no branch"; else fail "loser no branch (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-2" >/dev/null && grep -q '^Task 2: branch' "$wscl/progress.md"; then pass "the retry after the crash finishes the claim"; else fail "retry after crash (rc=$rc: $out)"; fi
+# A crash after the branch: the branch exists, the ledger line is owed; the retry appends it.
+( cd "$cl_a" && HYPERPOWERS_TEST_CRASH_AT=claim-after-branch bash "$SDD_STATE" claim docs/plan.md 4 --session s1 >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-4" >/dev/null && ! grep -q '^Task 4: branch' "$wscl/progress.md"; then pass "the crash seam after the branch leaves the ledger line owed"; else fail "crash after branch (rc=$rc)"; fi
+out=$(run_state "$cl_a" claim docs/plan.md 4 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% owner=*}" = "status=held task=4" ] && grep -q "^Task 4: branch feat.$ws8cl.task-4 from " "$wscl/progress.md"; then pass "the retry after the branch crash appends the line"; else fail "retry after branch crash (rc=$rc: $out)"; fi
+# A losing claimant creates no branch; a takeover gets task-N.2 from the old head.
+# The dead session's work sits on the task branch, ahead of the integration branch.
+wk=$(git -C "$cl_a" commit-tree -p "$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-3")" -m "work on 3" "$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-3^{tree}")"); git -C "$cl_a" update-ref "refs/heads/feat.$ws8cl.task-3" "$wk"
+out=$(run_state "$cl_a" claim docs/plan.md 3 --session s2 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% from=*}" = "status=claimed task=3 takeover=1 branch=feat.$ws8cl.task-3.2" ] && [ "$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-3.2")" = "$wk" ] && [ "$wk" != "$(git -C "$cl_a" rev-parse feat)" ] && git -C "$cl_a" rev-parse -q --verify "feat.$ws8cl.task-3" >/dev/null; then pass "a takeover branches task-3.2 from the old branch head, not the integration head, and leaves the old branch"; else fail "takeover branch (rc=$rc: $out)"; fi
+# The SDD skill's review BASE is the task branch's fork point from the integration branch: after a takeover that is the original claim's base, so the old holder's commit stays in the review range.
+cl_base3=$(sed -n 's/^from=//p' "$wscl/claims/task-3/owner.history" | head -n 1); cl_mb3=$(git -C "$cl_a" merge-base "feat.$ws8cl.task-3.2" feat)
+if [ -n "$cl_base3" ] && [ "$cl_mb3" = "$cl_base3" ] && git -C "$cl_a" rev-list "$cl_mb3..feat.$ws8cl.task-3.2" | grep -qx "$wk"; then pass "a taken-over task branch forks from the integration branch at the original claim's base, so a review range from there holds the old holder's commit"; else fail "takeover review base (base=$cl_base3 merge-base=$cl_mb3 work=$wk)"; fi
+# Two sibling plans both claiming Task 1 create distinct branches.
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: Z\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$cl_a/docs/plan2.md"; git -C "$cl_a" add docs; git -C "$cl_a" commit -qm plan2
+wscl2=$(run_sdd_dir "$cl_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wscl2/progress.md"; run_state "$cl_a" register docs/plan2.md --session s3 --integration feat >/dev/null
+out=$(run_state "$cl_a" claim docs/plan2.md 1 --session s3 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out#*branch=}" != "${out#*branch=feat.$ws8cl.}" ] && git -C "$cl_a" rev-parse -q --verify "feat.$(basename "$wscl2" | sed 's/.*-//').task-1" >/dev/null; then pass "sibling plans' Task 1 branches carry their own ws8"; else fail "sibling branch names (rc=$rc: $out)"; fi
+# A plan without a plan line keeps today's claim: no branch.
+make_repo "$TEST_ROOT/cl0"; mkdir -p "$TEST_ROOT/cl0/docs"; printf '# P\n\n### Task 1: A\n\n**Risk tier:** standard\n' > "$TEST_ROOT/cl0/docs/plan.md"; git -C "$TEST_ROOT/cl0" add docs; git -C "$TEST_ROOT/cl0" commit -qm plan
+ws0=$(ws_path "$TEST_ROOT/cl0" "$TEST_ROOT/cl0/docs/plan.md"); mkdir -p "$ws0"; printf '# SDD ledger — plan: docs/plan.md\n' > "$ws0/progress.md"
+out=$(run_state "$TEST_ROOT/cl0" claim docs/plan.md 1 --session s9 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=none" ]; then pass "a claim without a plan line creates no branch"; else fail "no plan line (rc=$rc: $out)"; fi
+# Review fixtures: pre-upgrade owner records, containment, takeover retry, leftovers.
+printf '# R\n\n**Spec:** docs/spec.md\n' > "$cl_a/docs/plan3.md"
+for t in 1 2 3 4 5 6 7 8 9; do printf '\n### Task %s: T\n\n**Risk tier:** standard\n\n**Depends on:** none\n' "$t" >> "$cl_a/docs/plan3.md"; done
+git -C "$cl_a" add docs; git -C "$cl_a" commit -qm plan3
+wscl3=$(run_sdd_dir "$cl_a" docs/plan3.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan3.md\n' > "$wscl3/progress.md"; run_state "$cl_a" register docs/plan3.md --session s4 --integration feat >/dev/null
+ws83=$(basename "$wscl3" | sed 's/.*-//'); H3=$(git -C "$cl_a" rev-parse feat)
+mkdir -p "$wscl3/claims/task-2" "$wscl3/claims/task-3"
+for t in 2 3; do printf 'session=sold\nworktree=%s\nbranch=main\nhost=h\ntime=2026-01-01T00:00:00Z\n' "$cl_a" > "$wscl3/claims/task-$t/owner"; done
+out=$(run_state "$cl_a" claim docs/plan3.md 2 --session sold 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=2 owner=sold own=1 branch=none" ]; then pass "an owner's re-claim of a pre-upgrade record has no task branch"; else fail "pre-upgrade own (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan3.md 3 --session s5 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(git -C "$cl_a" rev-parse "feat.$ws83.task-3.2")" = "$H3" ]; then pass "a takeover of a pre-upgrade record branches from the integration head"; else fail "pre-upgrade takeover (rc=$rc: $out)"; fi
+# A takeover retried after a crash between the record and the branch.
+run_state "$cl_a" claim docs/plan3.md 1 --session s4 >/dev/null 2>&1
+wk1=$(git -C "$cl_a" commit-tree -p "$H3" -m "work on 1" "$(git -C "$cl_a" rev-parse "feat^{tree}")"); git -C "$cl_a" update-ref "refs/heads/feat.$ws83.task-1" "$wk1"
+run_state "$cl_a" claim docs/plan3.md 1 --session s5 --takeover >/dev/null 2>&1
+git -C "$cl_a" branch -D "feat.$ws83.task-1.2" >/dev/null 2>&1; sed -i '' '/^Task 1: branch feat.[0-9a-f]*.task-1.2 /d' "$wscl3/progress.md" 2>/dev/null || sed -i '/^Task 1: branch .*task-1.2 /d' "$wscl3/progress.md"
+out=$(run_state "$cl_a" claim docs/plan3.md 1 --session s5 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% from=*}" = "status=held task=1 owner=s5 own=1 branch=feat.$ws83.task-1.2" ] && [ "$(git -C "$cl_a" rev-parse "feat.$ws83.task-1.2")" = "$wk1" ] && ! git -C "$cl_a" rev-parse -q --verify "feat.$ws83.task-1.3" >/dev/null && [ "$(grep -c '^--- superseded' "$wscl3/claims/task-1/owner.history")" = 1 ]; then pass "a retried takeover completes at the recorded base without superseding itself"; else fail "takeover retry (rc=$rc: $out)"; fi
+# A leftover branch past its base makes a fresh claim an error that names it.
+wk4=$(git -C "$cl_a" commit-tree -p "$H3" -m leftover "$(git -C "$cl_a" rev-parse "feat^{tree}")"); git -C "$cl_a" update-ref "refs/heads/feat.$ws83.task-4" "$wk4"
+out=$(run_state "$cl_a" claim docs/plan3.md 4 --session s4 2>&1); rc=$?
+case "$out" in *"feat.$ws83.task-4 already exists"*"status=error"*) lf=1 ;; *) lf=0 ;; esac
+out2=$(run_state "$cl_a" claim docs/plan3.md 4 --session s4 2>&1); rc2=$?
+if [ "$rc" -eq 2 ] && [ "$lf" = 1 ] && [ ! -d "$wscl3/claims/task-4" ] && [ "$rc2" -eq 2 ] && [ "$out2" = "$out" ]; then pass "a fresh claim refuses a leftover task branch before publishing, every time"; else fail "leftover branch (rc=$rc/$rc2: $out)"; fi
+# Containment: a hostile session id cannot reach the ledger, a symlinked activity directory receives nothing.
+cp "$wscl3/progress.md" "$TEST_ROOT/ledger3.before"
+out=$(run_state "$cl_a" claim docs/plan3.md 5 --session ../progress.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "${out##*$'\n'}" = "status=error" ] && grep -q '^# SDD ledger' "$wscl3/progress.md" && cmp -s "$wscl3/progress.md" <(cat "$TEST_ROOT/ledger3.before"; grep '^Task 5: branch' "$wscl3/progress.md"); then pass "a session id with .. cannot overwrite the ledger"; else fail "hostile session id (rc=$rc: $out)"; fi
+mkdir -p "$TEST_ROOT/outside-activity"; rm -rf "$wscl3/activity"; ln -s "$TEST_ROOT/outside-activity" "$wscl3/activity"
+out=$(run_state "$cl_a" claim docs/plan3.md 6 --session s4 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$(ls "$TEST_ROOT/outside-activity")" ]; then pass "an activity symlink receives no write"; else fail "activity symlink (rc=$rc: $out)"; fi
+rm -f "$wscl3/activity"
+# The temporary name is exclusive: a planted link at <sid>.new is never followed, and a link at the final path is refused.
+mkdir -p "$wscl3/activity"; printf keep > "$TEST_ROOT/victim-new"; ln -s "$TEST_ROOT/victim-new" "$wscl3/activity/s4.new"
+out=$(run_state "$cl_a" claim docs/plan3.md 7 --session s4 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(cat "$TEST_ROOT/victim-new")" = keep ] && [ -f "$wscl3/activity/s4" ] && [ ! -L "$wscl3/activity/s4" ]; then pass "a planted link at the old temporary name is not followed"; else fail "planted .new link (rc=$rc: $out)"; fi
+printf keep > "$TEST_ROOT/victim-final"; ln -s "$TEST_ROOT/victim-final" "$wscl3/activity/s7"
+out=$(run_state "$cl_a" claim docs/plan3.md 8 --session s7 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "${out##*$'\n'}" = "status=error" ] && [ "$(cat "$TEST_ROOT/victim-final")" = keep ]; then pass "a link at the final activity path is refused and its target is unchanged"; else fail "final activity link (rc=$rc: $out)"; fi
+rm -f "$wscl3/activity/s7"
+# An existing claim answers held even after an amendment adds an incomplete predecessor; only a takeover is blocked.
+run_state "$cl_a" claim docs/plan3.md 9 --session s4 >/dev/null 2>&1
+sed '$d' "$cl_a/docs/plan3.md" > "$TEST_ROOT/plan3.amend"; printf '**Depends on:** Task 8\n' >> "$TEST_ROOT/plan3.amend"
+cp "$TEST_ROOT/plan3.amend" "$cl_a/docs/plan3.md"; git -C "$cl_a" add docs; git -C "$cl_a" commit -qm amend
+out=$(run_state "$cl_a" claim docs/plan3.md 9 --session s4 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% branch=*}" = "status=held task=9 owner=s4 own=1" ]; then pass "the owner's re-claim stays held after an amendment adds a predecessor"; else fail "amended own (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan3.md 9 --session s6 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "${out%% since=*}" = "status=held task=9 owner=s4" ]; then pass "a competitor's claim stays held after an amendment adds a predecessor"; else fail "amended competitor (rc=$rc: $out)"; fi
+out=$(run_state "$cl_a" claim docs/plan3.md 9 --session s6 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "${out%% plan=*}" = "status=blocked task=9 waiting=8" ] && [ "$(sed -n 's/^session=//p' "$wscl3/claims/task-9/owner")" = s4 ]; then pass "a takeover is blocked by the new predecessor and the owner is unchanged"; else fail "amended takeover (rc=$rc: $out)"; fi
+# Recovery can bring in the registered ledger: the claim settles the plan line after recovery.
+make_pair ra; ra_a=$PAIR_A; ra_b=$PAIR_B
+mkdir -p "$ra_a/docs"; : > "$ra_a/docs/spec.md"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$ra_a/docs/plan.md"
+git -C "$ra_a" add docs; git -C "$ra_a" commit -qm plan; git -C "$ra_a" push -q origin main 2>/dev/null
+run_state "$ra_a" sync docs/plan.md >/dev/null 2>&1; git -C "$ra_a" push -q origin hyperpowers/state 2>/dev/null; git -C "$ra_b" pull -q origin main 2>/dev/null; run_state "$ra_b" sync docs/plan.md >/dev/null 2>&1
+wsra=$(run_sdd_dir "$ra_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsra/progress.md"
+run_state "$ra_a" register docs/plan.md --session s1 --integration main >/dev/null 2>&1
+run_state "$ra_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$ra_a" push -q origin hyperpowers/state 2>/dev/null
+( cd "$ra_b" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+ws8ra=$(basename "$wsra" | sed 's/.*-//'); Hra=$(git -C "$ra_b" rev-parse main)
+out=$(run_state "$ra_b" claim docs/plan.md 1 --session s2 2>/dev/null); rcc=$?
+if [ "$rc" -eq 99 ] && [ "$rcc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=main.$ws8ra.task-1 from=${Hra:0:7}" ] && git -C "$ra_b" rev-parse -q --verify "main.$ws8ra.task-1" >/dev/null; then pass "a claim that recovery brings a plan line to takes the pair and creates the branch"; else fail "recovery brings plan line (rc=$rc/$rcc: $out)"; fi
+# Without a plan line a parse error still refuses; only a plan with no headings stays claimable.
+mkplan() { # <name> <plan text>: a repository whose ledger has no plan line
+  make_repo "$TEST_ROOT/$1"; mkdir -p "$TEST_ROOT/$1/docs"; printf '%s' "$2" > "$TEST_ROOT/$1/docs/plan.md"
+  git -C "$TEST_ROOT/$1" add docs; git -C "$TEST_ROOT/$1" commit -qm plan
+  MP_WS=$(ws_path "$TEST_ROOT/$1" "$TEST_ROOT/$1/docs/plan.md"); mkdir -p "$MP_WS"; printf '# SDD ledger — plan: docs/plan.md\n' > "$MP_WS/progress.md"
+}
+mkplan ev1 $'# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n'
+out=$(run_state "$TEST_ROOT/ev1" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "${out%% plan=*}" = "status=invalid" ] && [ ! -d "$MP_WS/claims/task-1" ]; then pass "without a plan line a mixed-annotation plan refuses and writes nothing"; else fail "mixed annotation (rc=$rc: $out)"; fi
+mkplan ev2 $'# P\n\n### Task 1: A\n'
+out=$(run_state "$TEST_ROOT/ev2" claim docs/plan.md 5 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -d "$MP_WS/claims/task-5" ]; then pass "without a plan line a task the graph lacks refuses"; else fail "task not in plan (rc=$rc: $out)"; fi
+mkplan ev3 ''
+out=$(run_state "$TEST_ROOT/ev3" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=none" ]; then pass "an empty plan still claims without a dependency check"; else fail "empty plan (rc=$rc: $out)"; fi
+# Completion is a line that begins with the marker, not a mention inside another line.
+mkplan ev4 $'# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** Task 1\n'
+printf 'plan: amended abc1234 by s1: Task 1: complete\nscan: accepted-overlap x: Task 1: complete\n' >> "$MP_WS/progress.md"
+out=$(run_state "$TEST_ROOT/ev4" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=none" ]; then pass "the done check ignores a mention inside an amendment or scan line"; else fail "done ignores mentions (rc=$rc: $out)"; fi
+out=$(run_state "$TEST_ROOT/ev4" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "${out%% plan=*}" = "status=blocked task=2 waiting=1" ]; then pass "a mention of completion inside another line does not satisfy a dependency"; else fail "mention blocks (rc=$rc: $out)"; fi
+printf -- '- Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$MP_WS/progress.md"
+out=$(run_state "$TEST_ROOT/ev4" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2 branch=none" ]; then pass "a list-marked completion line satisfies the dependency"; else fail "marked completion (rc=$rc: $out)"; fi
+
+
+echo "next: the claimable frontier"
+make_pair nx; nx_a=$PAIR_A
+mkdir -p "$nx_a/docs"; : > "$nx_a/docs/spec.md"
+cat > "$nx_a/docs/plan.md" <<'PLAN'
+# P
+
+**Spec:** docs/spec.md
+
+### Task 1: A
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+### Task 2: B
+
+**Risk tier:** standard
+
+**Depends on:** Task 1
+
+### Task 3: C
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+### Task 4: D
+
+**Risk tier:** standard
+
+**Depends on:** Task 3
+
+### Task 5: E
+
+**Risk tier:** standard
+
+**Depends on:** Task 2, Task 4
+PLAN
+git -C "$nx_a" add docs; git -C "$nx_a" commit -qm plan; git -C "$nx_a" push -q origin main 2>/dev/null; git -C "$nx_a" switch -q -c feat
+run_state "$nx_a" sync docs/plan.md >/dev/null 2>&1; wsnx=$(run_sdd_dir "$nx_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsnx/progress.md"
+run_state "$nx_a" register docs/plan.md --session s1 --integration feat >/dev/null
+make_repo "$TEST_ROOT/foreign-nx"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 --code-repo "$TEST_ROOT/foreign-nx" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "next refuses a foreign --code-repo"; else fail "next wrong-repo (rc=$rc: $out)"; fi
+out=$(cd "$TEST_ROOT/foreign-nx" && bash "$SDD_STATE" next "$nx_a/docs/plan.md" --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "next run from a foreign repository without --code-repo is wrong-repo"; else fail "next foreign cwd (rc=$rc: $out)"; fi
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=1,3 own-blocked=none" ]; then pass "the frontier is the tasks with no incomplete predecessor, in plan order"; else fail "frontier (rc=$rc: $out)"; fi
+run_state "$nx_a" claim docs/plan.md 1 --session s1 >/dev/null; run_state "$nx_a" claim docs/plan.md 3 --session s2 >/dev/null
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=1 own-blocked=none" ]; then pass "this session's own claim is listed first and a held task is not listed"; else fail "own first (rc=$rc: $out)"; fi
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=2 own-blocked=none" ]; then pass "a completed predecessor opens its dependent"; else fail "dependent opens (rc=$rc: $out)"; fi
+run_state "$nx_a" claim docs/plan.md 2 --session s2 >/dev/null
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=held held=2@s2,3@s2 waiting=4,5" ]; then pass "every open task held or waiting on a held one reads held with holders"; else fail "none held (rc=$rc: $out)"; fi
+printf 'session s1: tasks 5\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=blocked waiting=5 excluded=2,3,4 held=2@s2,3@s2" ]; then pass "an assigned list narrows the frontier: a predecessor outside the list is an exclusion, and the holders are still named"; else fail "assigned blocked (rc=$rc: $out)"; fi
+sed -i '' '/^session s1: tasks 5$/d' "$wsnx/progress.md" 2>/dev/null || sed -i '/^session s1: tasks 5$/d' "$wsnx/progress.md"
+printf 'session s1: tasks 4\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=blocked waiting=4 excluded=2,3,5 held=2@s2,3@s2" ]; then pass "an allowed task whose held predecessor is outside the list waits on the exclusion"; else fail "allowed waiting-on-excluded (rc=$rc: $out)"; fi
+printf 'Task 3: complete (commits 3333333..4444444, review clean)\nTask 2: complete (commits 5555555..6666666, review clean)\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=4 own-blocked=none" ]; then pass "the assigned task becomes claimable when its predecessor completes"; else fail "assigned claimable (rc=$rc: $out)"; fi
+printf 'Task 4: complete (commits 7777777..8888888, review clean)\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=assigned-complete remaining=5" ]; then pass "a finished assigned list reports the remaining tasks"; else fail "assigned-complete (rc=$rc: $out)"; fi
+sed -i '' '/^session s1: tasks 4$/d' "$wsnx/progress.md" 2>/dev/null || sed -i '/^session s1: tasks 4$/d' "$wsnx/progress.md"
+printf 'session s2: tasks 1,2,3\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=assigned-complete remaining=5" ]; then pass "an excluded open task with complete predecessors is still excluded"; else fail "excluded (rc=$rc: $out)"; fi
+# own-blocked: an edge amended onto a claimed task; Task 7 behind it is a descendant of an own-blocked task and is neither offered nor named.
+run_state "$nx_a" claim docs/plan.md 5 --session s1 >/dev/null
+sed -i '' 's/^\*\*Depends on:\*\* Task 2, Task 4$/**Depends on:** Task 2, Task 4, Task 6/' "$nx_a/docs/plan.md" 2>/dev/null || sed -i 's/^\*\*Depends on:\*\* Task 2, Task 4$/**Depends on:** Task 2, Task 4, Task 6/' "$nx_a/docs/plan.md"
+printf '\n### Task 6: F\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 7: G\n\n**Risk tier:** standard\n\n**Depends on:** Task 5\n' >> "$nx_a/docs/plan.md"
+git -C "$nx_a" add docs; git -C "$nx_a" commit -qm amend
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=6 own-blocked=5" ]; then pass "a claimable task is offered, the own-blocked task is named, and its descendant is neither"; else fail "own-blocked with frontier (rc=$rc: $out)"; fi
+run_state "$nx_a" claim docs/plan.md 6 --session s2 >/dev/null
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=own-blocked task=5 waiting=6@s2" ]; then pass "an own claim whose new predecessor is held reads own-blocked"; else fail "own-blocked (rc=$rc: $out)"; fi
+printf 'Task 6: complete (commits 9999999..aaaaaaa, review clean)\nTask 5: complete (commits bbbbbbb..ccccccc, review clean)\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=7 own-blocked=none" ]; then pass "the descendant opens once the own-blocked task completes"; else fail "descendant opens (rc=$rc: $out)"; fi
+printf 'Task 7: complete (commits ddddddd..eeeeeee, review clean)\n' >> "$wsnx/progress.md"
+out=$(run_state "$nx_a" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=complete" ]; then pass "every task complete reads complete"; else fail "complete (rc=$rc: $out)"; fi
+# A plan line whose ref does not carry the plan file is an error, never a read of the worktree copy.
+printf '# U\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$nx_a/docs/unc.md"
+wsunc=$(run_sdd_dir "$nx_a" docs/unc.md 2>/dev/null); printf '# SDD ledger — plan: docs/unc.md\n' > "$wsunc/progress.md"
+run_state "$nx_a" register docs/unc.md --session s9 --integration feat >/dev/null
+err=$(run_state "$nx_a" next docs/unc.md --session s9 2>&1 >"$TEST_ROOT/nx.unc"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$(cat "$TEST_ROOT/nx.unc")" = "status=error" ] && printf '%s' "$err" | grep -q 'does not carry docs/unc.md'; then pass "a registered plan its ref does not carry is an error, not a worktree read"; else fail "uncommitted registered plan (rc=$rc: $(cat "$TEST_ROOT/nx.unc"): $err)"; fi
+rm -f "$nx_a/docs/unc.md"; rm -rf "$wsunc"
+# A heading that carries shell text is a parse error, and nothing runs it.
+nx_mark="$TEST_ROOT/nx.pwned"
+mkplan nxi "$(printf '# P\n\n### Task 1: A\n\n### Task 2:x$(touch %s)\n' "$nx_mark")"
+err=$(run_state "$TEST_ROOT/nxi" next docs/plan.md --session s1 2>&1 >"$TEST_ROOT/nx.inj"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$(sed 's/ plan=.*//' "$TEST_ROOT/nx.inj")" = "status=invalid" ] && [ ! -e "$nx_mark" ] && printf '%s' "$err" | grep -q 'malformed task heading'; then pass "a task heading carrying shell text is invalid and runs nothing"; else fail "heading injection (rc=$rc: $(cat "$TEST_ROOT/nx.inj"): $err; marker=$([ -e "$nx_mark" ] && echo made || echo none))"; fi
+# Own claims lead in heading order, then the rest in heading order.
+mkplan nxo $'# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** none\n\n### Task 3: C\n\n**Depends on:** none\n'
+nxo_ws=$MP_WS
+run_state "$TEST_ROOT/nxo" claim docs/plan.md 1 --session s1 >/dev/null; run_state "$TEST_ROOT/nxo" claim docs/plan.md 3 --session s1 >/dev/null
+out=$(run_state "$TEST_ROOT/nxo" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=1,3,2 own-blocked=none" ]; then pass "own claims lead in heading order, then the unclaimed tasks"; else fail "own claims order (rc=$rc: $out)"; fi
+# A session id is matched as text: s.1 does not read sx1's assignment.
+printf 'session sx1: tasks 1\n' >> "$nxo_ws/progress.md"
+out=$(run_state "$TEST_ROOT/nxo" next docs/plan.md --session s.1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=2 own-blocked=none" ]; then pass "a session id with a regex metacharacter does not pick up another session's assignment"; else fail "sid metacharacter (rc=$rc: $out)"; fi
+# A plan with no task headings has nothing to claim.
+mkplan nxe $'# P\n'
+out=$(run_state "$TEST_ROOT/nxe" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=complete" ]; then pass "a plan with no task headings reads complete"; else fail "empty graph (rc=$rc: $out)"; fi
+# Held outranks excluded among an allowed task's predecessors.
+mkplan nxp $'# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** none\n\n### Task 3: C\n\n**Depends on:** Task 1, Task 2\n'
+nxp_ws=$MP_WS
+run_state "$TEST_ROOT/nxp" claim docs/plan.md 2 --session s2 >/dev/null
+printf 'session s1: tasks 2,3\n' >> "$nxp_ws/progress.md"
+out=$(run_state "$TEST_ROOT/nxp" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=none reason=held held=2@s2 waiting=3" ]; then pass "a task waiting on both a held and an excluded predecessor reads held"; else fail "held over excluded (rc=$rc: $out)"; fi
+# An unreadable ledger is an error, never "not complete".
+chmod a-r "$nxp_ws/progress.md"
+out=$(run_state "$TEST_ROOT/nxp" next docs/plan.md --session s1 2>/dev/null); rc=$?
+chmod u+r "$nxp_ws/progress.md"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "an unreadable ledger is status=error"; else fail "unreadable ledger (rc=$rc: $out)"; fi
+# next recovers an interrupted sync under the lock before it classifies: a stale ledger must not offer a task the newer assignment line excludes.
+make_pair nr; nr_a=$PAIR_A; nr_b=$PAIR_B
+mkdir -p "$nr_a/docs"; : > "$nr_a/docs/spec.md"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 2: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$nr_a/docs/plan.md"
+git -C "$nr_a" add docs; git -C "$nr_a" commit -qm plan; git -C "$nr_a" push -q origin main 2>/dev/null
+run_state "$nr_a" sync docs/plan.md >/dev/null 2>&1; git -C "$nr_a" push -q origin hyperpowers/state 2>/dev/null; git -C "$nr_b" pull -q origin main 2>/dev/null; run_state "$nr_b" sync docs/plan.md >/dev/null 2>&1
+wsnr=$(run_sdd_dir "$nr_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsnr/progress.md"
+run_state "$nr_a" register docs/plan.md --session s1 --integration main >/dev/null 2>&1
+run_state "$nr_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$nr_a" push -q origin hyperpowers/state 2>/dev/null
+run_state "$nr_b" sync docs/plan.md >/dev/null 2>&1
+printf 'session s1: tasks 2\n' >> "$wsnr/progress.md"
+run_state "$nr_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$nr_a" push -q origin hyperpowers/state 2>/dev/null
+( cd "$nr_b" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+out=$(run_state "$nr_b" next docs/plan.md --session s1 2>/dev/null); rcn=$?
+if [ "$rc" -eq 99 ] && [ "$rcn" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=2 own-blocked=none" ]; then pass "next recovers an interrupted sync and offers only what the recovered assignment allows"; else fail "next after crashed sync (rc=$rc/$rcn: $out)"; fi
+# A crashed sync that was introducing the workspace leaves no ledger yet; next still recovers it and reports the frontier.
+make_pair nw; nw_a=$PAIR_A; nw_b=$PAIR_B
+mkdir -p "$nw_a/docs"; : > "$nw_a/docs/spec.md"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$nw_a/docs/plan.md"
+git -C "$nw_a" add docs; git -C "$nw_a" commit -qm plan; git -C "$nw_a" push -q origin main 2>/dev/null
+run_state "$nw_a" sync docs/plan.md >/dev/null 2>&1; git -C "$nw_a" push -q origin hyperpowers/state 2>/dev/null; git -C "$nw_b" pull -q origin main 2>/dev/null; run_state "$nw_b" sync docs/plan.md >/dev/null 2>&1
+wsnw=$(run_sdd_dir "$nw_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsnw/progress.md"
+run_state "$nw_a" register docs/plan.md --session s1 --integration main >/dev/null 2>&1
+run_state "$nw_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$nw_a" push -q origin hyperpowers/state 2>/dev/null
+( cd "$nw_b" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+wsnw_b=$(run_sdd_dir "$nw_b" docs/plan.md 2>/dev/null)
+nw_absent=0; [ ! -e "$wsnw_b/progress.md" ] && nw_absent=1
+out=$(run_state "$nw_b" next docs/plan.md --session s1 2>/dev/null); rcn=$?
+if [ "$rc" -eq 99 ] && [ "$nw_absent" -eq 1 ] && [ "$rcn" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=1 own-blocked=none" ] && [ ! -e "$(dirname "$(dirname "$wsnw_b")")/.sync-applying" ]; then pass "next recovers a crashed sync that was introducing the workspace and reports the frontier"; else fail "next after crashed first sync (rc=$rc/$rcn absent=$nw_absent: $out)"; fi
+# A claim directory whose owner is unreadable or has no session is an error, not an unclaimed task.
+mkplan nxk $'# P\n\n### Task 1: A\n\n**Depends on:** none\n'
+nxk_ws=$MP_WS
+mkdir -p "$nxk_ws/claims/task-1"; printf 'session=s2\n' > "$nxk_ws/claims/task-1/owner"; chmod 000 "$nxk_ws/claims/task-1/owner"
+out=$(run_state "$TEST_ROOT/nxk" next docs/plan.md --session s1 2>/dev/null); rc=$?
+chmod 600 "$nxk_ws/claims/task-1/owner"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "a claim whose owner file is unreadable is status=error"; else fail "unreadable owner (rc=$rc: $out)"; fi
+printf 'host=h\n' > "$nxk_ws/claims/task-1/owner"
+out=$(run_state "$TEST_ROOT/nxk" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "a claim whose owner file has no session is status=error"; else fail "ownerless claim (rc=$rc: $out)"; fi
+# The code-repository errors still print one status line.
+mkdir -p "$TEST_ROOT/nogit"
+out=$(cd "$TEST_ROOT/nogit" && bash "$SDD_STATE" next "$nx_a/docs/plan.md" --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "next outside any repository prints status=error"; else fail "nogit cwd (rc=$rc: $out)"; fi
+out=$(run_state "$nx_a" next docs/plan.md --session s1 --code-repo "$TEST_ROOT/does-not-exist" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "next with a missing --code-repo prints status=error"; else fail "missing code repo (rc=$rc: $out)"; fi
+# A registered plan whose task headings the parser does not read is never complete: next and the final claim refuse it, and no claim or lease is taken.
+nh_reg() { # <name> <plan text>: a plan repository on branch feat whose plan is registered; sets NH and NH_WS
+  NH="$TEST_ROOT/$1"; make_repo "$NH"; mkdir -p "$NH/docs"; : > "$NH/docs/spec.md"; printf '%s' "$2" > "$NH/docs/plan.md"
+  git -C "$NH" add docs; git -C "$NH" commit -qm plan; git -C "$NH" switch -q -c feat
+  NH_WS=$(run_sdd_dir "$NH" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$NH_WS/progress.md"
+  run_state "$NH" register docs/plan.md --session s1 --integration feat >/dev/null 2>&1
+}
+nh_refused() { # <label> <expected stderr fragment>: next and claim final both refuse, and neither a final claim nor a lease exists
+  out=$(run_state "$NH" next docs/plan.md --session s1 2>"$TEST_ROOT/nh.next.err"); rc=$?
+  if [ "$rc" -eq 2 ] && [ "${out%% plan=*}" = "status=invalid" ] && grep -qF "$2" "$TEST_ROOT/nh.next.err"; then pass "next refuses $1"; else fail "next on $1 (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/nh.next.err"))"; fi
+  out=$(run_state "$NH" claim docs/plan.md final --session s1 2>"$TEST_ROOT/nh.final.err"); rc=$?
+  if [ "$rc" -eq 2 ] && [ "${out%% plan=*}" = "status=invalid" ] && grep -qF "$2" "$TEST_ROOT/nh.final.err" && [ ! -e "$NH_WS/claims/final" ] && [ -z "$(ls "$STATE_ROOT/$(state_key "$NH")".final-* 2>/dev/null)" ]; then pass "claim final refuses $1 and takes no claim or lease"; else fail "claim final on $1 (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/nh.final.err"))"; fi
+}
+nh_reg nh2 $'# P\n\n**Spec:** docs/spec.md\n\n## Task 1: A\n\n**Depends on:** none\n\n## Task 2: B\n\n**Depends on:** Task 1\n'
+grep -q '^plan: integration feat ' "$NH_WS/progress.md" || fail "the level-2 plan registered"
+nh_refused "a registered plan with level-2 task headings" 'malformed task heading: ## Task 1: A'
+nh_reg nh4 $'# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\nThe first task.\n\n#### Task 5: E\n\nA task the parser would drop.\n'
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$NH_WS/progress.md"
+nh_refused "a stray level-4 task heading beside complete tasks" 'malformed task heading: #### Task 5: E'
+nh_reg nh0 $'# P\n\n**Spec:** docs/spec.md\n\nNo task headings here.\n'
+grep -q '^plan: integration feat ' "$NH_WS/progress.md" || fail "the headingless plan registered"
+nh_refused "a registered plan with no task headings" 'no task headings'
+
+
+echo "final: claim, lease, finish"
+make_pair fn; fn_a=$PAIR_A
+mkdir -p "$fn_a/docs"; : > "$fn_a/docs/spec.md"
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fn_a/docs/plan.md"
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fn_a/docs/plan2.md"
+git -C "$fn_a" add docs; git -C "$fn_a" commit -qm plans; git -C "$fn_a" push -q origin main 2>/dev/null; git -C "$fn_a" switch -q -c feature/foo
+run_state "$fn_a" sync docs/plan.md >/dev/null 2>&1; wsfn=$(run_sdd_dir "$fn_a" docs/plan.md 2>/dev/null); wsfn2=$(run_sdd_dir "$fn_a" docs/plan2.md 2>/dev/null)
+printf '# SDD ledger — plan: docs/plan.md\n' > "$wsfn/progress.md"; printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsfn2/progress.md"
+run_state "$fn_a" register docs/plan.md --session s1 --integration feature/foo >/dev/null; run_state "$fn_a" register docs/plan2.md --session s2 --integration feature/foo >/dev/null
+run_state "$fn_a" claim docs/plan.md 1 --session s1 >/dev/null
+out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "$out" = "status=blocked task=final waiting=1" ]; then pass "final is blocked while a task is open"; else fail "final blocked (rc=$rc: $out)"; fi
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsfn/progress.md"
+out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
+lease_fn=$(ls "$STATE_ROOT/$(state_key "$fn_a").final-"* 2>/dev/null | head -n 1)
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=claimed task=final" ] && [ -n "$lease_fn" ] && [ "$(sed -n 's/^branch=//p' "$lease_fn")" = "feature/foo" ] && [ "$(sed -n 's/^closing=//p' "$lease_fn")" = 0 ] && [ -d "$wsfn/claims/final" ]; then pass "final claims the plan and takes a slash-safe lease on the branch"; else fail "final claimed (rc=$rc: $out: $lease_fn)"; fi
+printf 'time=2026-01-01T00:00:00Z\n' >> "$lease_fn"
+out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=final owner=s1 own=1 lease=$(basename "$lease_fn")" ] && grep -q '^time=2026-01-01T00:00:00Z$' "$lease_fn"; then pass "the holder's repeated final claim leaves the lease untouched"; else fail "own final re-claim (rc=$rc: $out)"; fi
+rm -f "$wsfn/activity/s1"
+out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=held task=final owner=s1 own=1" ] && [ -f "$wsfn/activity/s1" ] && grep -q '^time=2026-01-01T00:00:00Z$' "$lease_fn"; then pass "the holder's repeat writes its activity again and still leaves the lease untouched"; else fail "own repeat activity (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" claim docs/plan.md final --session s3 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "${out%% since=*}" = "status=held task=final owner=s1" ]; then pass "a second session of the same plan sees final held"; else fail "final held (rc=$rc: $out)"; fi
+printf 'Task 1: complete (commits 3333333..4444444, review clean)\n' >> "$wsfn2/progress.md"
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "$out" = "status=held task=final lease=s1 plan=$(basename "$wsfn")" ] && [ -d "$wsfn2/claims/final" ]; then pass "a sibling plan's final waits for the branch lease and keeps its own claim"; else fail "sibling lease held (rc=$rc: $out)"; fi
+if [ -f "$wsfn2/activity/s2" ]; then pass "the claimant waiting for the lease writes its activity"; else fail "lease-waiting activity ($(ls "$wsfn2" 2>/dev/null | tr '\n' ' '))"; fi
+out=$(run_state "$fn_a" finish docs/plan2.md --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 11 ] && [ "$out" = "status=not-holder owner=s1" ] && [ -f "$wsfn2/progress.md" ] && [ -d "$wsfn2/claims/final" ]; then pass "finish refuses the final claimant still waiting for another plan's lease"; else fail "lease-waiting finish (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" finish docs/plan.md --session s3 2>/dev/null); rc=$?
+if [ "$rc" -eq 11 ] && [ "$out" = "status=not-holder owner=s1" ]; then pass "finish refuses a session that does not hold final"; else fail "finish not-holder (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" finish docs/plan.md --session s3 --force 2>/dev/null); rc=$?
+if [ "$rc" -eq 11 ]; then pass "--force does not bypass the final claim"; else fail "force bypass (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" lease docs/plan2.md --closing --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "$out" = "status=no-lease" ]; then pass "closing without the lease is no-lease"; else fail "closing no-lease (rc=$rc: $out)"; fi
+make_repo "$TEST_ROOT/foreign-fn"
+out=$(run_state "$fn_a" lease docs/plan.md --release --session s1 --code-repo "$TEST_ROOT/foreign-fn" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ -f "$lease_fn" ]; then pass "lease refuses a foreign --code-repo while the ledger exists"; else fail "lease wrong-repo (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" finish docs/plan.md --session s1 --code-repo "$TEST_ROOT/foreign-fn" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ -d "$wsfn" ]; then pass "finish refuses a foreign --code-repo before touching the workspace"; else fail "finish wrong-repo (rc=$rc: $out)"; fi
+out=$(cd "$TEST_ROOT/foreign-fn" && bash "$SDD_STATE" finish "$fn_a/docs/plan.md" --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ -d "$wsfn" ]; then pass "finish run from a foreign repository without --code-repo leaves the workspace intact"; else fail "finish foreign cwd (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" lease docs/plan.md --closing --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=sibling-open plan=$(basename "$wsfn2")" ] && [ "$(sed -n 's/^closing=//p' "$lease_fn")" = 0 ]; then pass "closing is refused while a sibling plan is open"; else fail "sibling-open (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" finish docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsfn" ] && [ -f "$lease_fn" ]; then pass "the holder finishes and the lease survives the workspace"; else fail "holder finishes (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ]; then pass "the lease still blocks the sibling after finish"; else fail "lease after finish (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" lease docs/plan.md --release --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && [ ! -f "$lease_fn" ]; then pass "release finds the lease by workspace and session with no workspace on disk"; else fail "release after finish (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" lease docs/plan.md --release --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=no-lease" ]; then pass "a second release is quiet"; else fail "second release (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=claimed task=final" ]; then pass "the sibling takes the lease once released"; else fail "sibling takes lease (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" lease docs/plan2.md --closing --session s2 2>/dev/null); rc=$?
+lease_fn2=$(ls "$STATE_ROOT/$(state_key "$fn_a").final-"* | head -n 1)
+if [ "$rc" -eq 0 ] && [ "$out" = "status=closing" ] && [ "$(sed -n 's/^closing=//p' "$lease_fn2")" = 1 ]; then pass "the last open plan may close the branch"; else fail "closing (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=held task=final owner=s2 own=1" ] && [ "$(sed -n 's/^closing=//p' "$lease_fn2")" = 1 ]; then pass "the holder's repeated final claim keeps closing=1"; else fail "own re-claim keeps closing (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s2 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=held task=final owner=s2 own=1" ] && [ "$(sed -n 's/^closing=//p' "$lease_fn2")" = 1 ] && [ ! -e "$wsfn2/claims/final/owner.history" ]; then pass "the holder's own takeover is the repeat and cannot reopen a closing branch"; else fail "own takeover keeps closing (rc=$rc: $out)"; fi
+# finish removed plan.md's workspace; a new session's Setup writes the ledger again before it registers.
+printf '# SDD ledger — plan: docs/plan.md\n' > "$(run_sdd_dir "$fn_a" docs/plan.md 2>/dev/null)/progress.md"
+out=$(run_state "$fn_a" register docs/plan.md --session s4 --integration feature/foo 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=branch-closing" ]; then pass "a registration on a closing branch is refused"; else fail "register branch-closing (rc=$rc: $out)"; fi
+printf '# R\n\n**Spec:** docs/spec2.md\n\n### Task 1: C\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fn_a/docs/plan3.md"; : > "$fn_a/docs/spec2.md"; git -C "$fn_a" add docs; git -C "$fn_a" commit -qm plan3
+wsfn3=$(run_sdd_dir "$fn_a" docs/plan3.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan3.md\nplan: integration feature/foo code-root %s plan-ref feature/foo plan-root %s spec docs/spec2.md\n' "$(git -C "$fn_a" rev-list --max-parents=0 HEAD | sort | head -n 1 | cut -c1-7)" "$(git -C "$fn_a" rev-list --max-parents=0 HEAD | sort | head -n 1 | cut -c1-7)" > "$wsfn3/progress.md"
+out=$(run_state "$fn_a" claim docs/plan3.md 1 --session s5 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=branch-closing" ]; then pass "a task claim on a closing branch is refused"; else fail "claim branch-closing (rc=$rc: $out)"; fi
+# A takeover of a dead holder's final and lease, on the explicit flag alone.
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s6 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ]; then pass "final is held for a stranger without the flag"; else fail "stranger held (rc=$rc: $out)"; fi
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s6 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(sed -n 's/^session=//p' "$lease_fn2")" = s6 ] && [ "$(sed -n 's/^session=//p' "$wsfn2/claims/final/owner")" = s6 ] && grep -q 'superseded' "$wsfn2/claims/final/owner.history"; then pass "a takeover moves the final claim and the lease on the flag alone"; else fail "final takeover (rc=$rc: $out)"; fi
+# s2 had closed the branch before s6 took over with the workspace present: the takeover must not reopen it to registrations or task claims.
+out=$(run_state "$fn_a" register docs/plan.md --session s4 --integration feature/foo 2>/dev/null); rc=$?
+out2=$(run_state "$fn_a" claim docs/plan3.md 1 --session s5 2>/dev/null); rc2=$?
+if [ "$(sed -n 's/^closing=//p' "$lease_fn2")" = 1 ] && grep -q '^session=s2$' "$lease_fn2.history" && [ "$rc" -eq 15 ] && [ "$out" = "status=branch-closing" ] && [ "$rc2" -eq 15 ] && [ "$out2" = "status=branch-closing" ]; then pass "a takeover of a closing branch's lease keeps closing=1, and registration and task claims stay refused"; else fail "takeover keeps closing (closing=$(sed -n 's/^closing=//p' "$lease_fn2") register rc=$rc: $out / claim rc=$rc2: $out2)"; fi
+# The race needs an open branch, so the closing=1 the takeover kept is reset by hand, as a holder that never closed would have left it.
+sed 's/^closing=.*/closing=0/' "$lease_fn2" > "$TEST_ROOT/fn.lease2" && mv -f "$TEST_ROOT/fn.lease2" "$lease_fn2"
+# The closing race: the closing pauses between its sibling check and its write while a sibling registers; the locks serialize them, so exactly one succeeds.
+rm -rf "$wsfn3"; wsfn3=$(run_sdd_dir "$fn_a" docs/plan3.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan3.md\n' > "$wsfn3/progress.md"
+co_fn=$(dirname "$(dirname "$wsfn2")")
+: > "$co_fn/.lease-before-close-pause"
+( cd "$fn_a" && HYPERPOWERS_TEST_PAUSE_AT=lease-before-close bash "$SDD_STATE" lease docs/plan2.md --closing --session s6 > "$TEST_ROOT/fn.close" 2>/dev/null; echo $? > "$TEST_ROOT/fn.closerc" ) &
+n=0; while [ ! -e "$co_fn/.lease-before-close-paused" ] && [ "$n" -lt 200 ]; do sleep 0.1; n=$((n + 1)); done
+fn_paused=0; [ -e "$co_fn/.lease-before-close-paused" ] && fn_paused=1
+( cd "$fn_a" && bash "$SDD_STATE" register docs/plan3.md --session s7 --integration feature/foo > "$TEST_ROOT/fn.reg" 2>/dev/null; echo $? > "$TEST_ROOT/fn.regrc" ) &
+# The pause holds until the register has finished or 5 s have passed: under the locks it cannot finish while the closing is paused, and without them it would register inside the window.
+n=0; while [ ! -s "$TEST_ROOT/fn.regrc" ] && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+rm -f "$co_fn/.lease-before-close-pause"; wait
+r1=$(cat "$TEST_ROOT/fn.closerc"); r2=$(cat "$TEST_ROOT/fn.regrc")
+if [ "$fn_paused" -eq 1 ] && { { [ "$r1" = 0 ] && [ "$r2" = 15 ]; } || { [ "$r1" = 15 ] && [ "$r2" = 0 ]; }; }; then pass "a sibling registering during the closing: exactly one of the two succeeds"; else fail "closing race (paused=$fn_paused rcs $r1 $r2: $(cat "$TEST_ROOT/fn.close") / $(cat "$TEST_ROOT/fn.reg"))"; fi
+rm -rf "$wsfn3"
+run_state "$fn_a" claim docs/plan2.md final --session s6 --release >/dev/null
+out=$(run_state "$fn_a" finish docs/plan2.md --session s6 2>/dev/null); rc=$?
+if [ "$rc" -eq 11 ] && [ "$out" = "status=no-final-claim" ] && [ -d "$wsfn2" ]; then pass "finish without a final claim is no-final-claim"; else fail "no-final-claim (rc=$rc: $out)"; fi
+# A record without its identifying field is an error naming the file, never an answer about an empty holder.
+mkdir -p "$wsfn2/claims/final"; printf 'host=h
+' > "$wsfn2/claims/final/owner"
+out=$(run_state "$fn_a" finish docs/plan2.md --session s6 2>"$TEST_ROOT/fn.own.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'claims/final/owner' "$TEST_ROOT/fn.own.err" && [ -d "$wsfn2" ]; then pass "finish treats a final claim whose owner names no session as an error"; else fail "sessionless final owner in finish (rc=$rc: $out)"; fi
+printf 'session=s6\nhost=h\n' > "$wsfn2/claims/final/owner"
+out=$(run_state "$fn_a" finish docs/plan2.md --session s6 2>/dev/null); rc=$?
+if [ "$rc" -eq 11 ] && [ "$out" = "status=not-holder owner=none" ] && [ -f "$wsfn2/progress.md" ]; then pass "finish refuses a registered plan's final claim that holds no lease"; else fail "final claim without lease (rc=$rc: $out)"; fi
+rm -rf "$wsfn2/claims/final"
+printf 'session=s1
+host=h
+branch=feature/foo
+time=2026-01-01T00:00:00Z
+closing=0
+' > "$lease_fn2"
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s6 2>"$TEST_ROOT/fn.lease.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "$(basename "$lease_fn2")" "$TEST_ROOT/fn.lease.err" && [ ! -d "$wsfn2/claims/final" ]; then pass "a lease without plan= is an error naming the file, and final is not published"; else fail "planless lease (rc=$rc: $out)"; fi
+printf 'host=h
+plan=%s
+branch=feature/foo
+time=2026-01-01T00:00:00Z
+closing=0
+' "$(basename "$wsfn")" > "$lease_fn2"
+out=$(run_state "$fn_a" claim docs/plan2.md final --session s6 2>"$TEST_ROOT/fn.lease.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "$(basename "$lease_fn2")" "$TEST_ROOT/fn.lease.err" && [ ! -d "$wsfn2/claims/final" ]; then pass "a lease without session= is an error naming the file, and final is not published"; else fail "sessionless lease (rc=$rc: $out)"; fi
+rm -f "$lease_fn2"
+# The plan in one repository and the code in another: the claim, the final, the closing, finish and the release after it name the code repository.
+make_repo "$TEST_ROOT/fsp"; make_repo "$TEST_ROOT/fsc"; fsp="$TEST_ROOT/fsp"; fsc="$TEST_ROOT/fsc"
+mkdir -p "$fsp/docs"; printf '# S\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fsp/docs/plan.md"; : > "$fsp/docs/spec.md"; git -C "$fsp" add docs; git -C "$fsp" commit -qm plan; git -C "$fsp" switch -q -c plans
+git -C "$fsc" switch -q -c feat
+wsfs=$(run_sdd_dir "$fsp" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsfs/progress.md"; ws8fs=$(basename "$wsfs" | sed 's/.*-//')
+run_state "$fsp" register docs/plan.md --session s1 --integration feat --code-repo "$fsc" >/dev/null
+out=$(run_state "$fsp" claim docs/plan.md 1 --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && git -C "$fsc" rev-parse -q --verify "feat.$ws8fs.task-1" >/dev/null && ! git -C "$fsp" rev-parse -q --verify "feat.$ws8fs.task-1" >/dev/null; then pass "a split claim creates the task branch in the code repository only"; else fail "split claim (rc=$rc: $out)"; fi
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsfs/progress.md"
+out=$(run_state "$fsp" claim docs/plan.md final --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=claimed task=final" ] && ls "$STATE_ROOT/$(state_key "$fsp").final-"* >/dev/null 2>&1; then pass "a split final claim leases the branch beside the plan repository's lock"; else fail "split final (rc=$rc: $out)"; fi
+printf '# S2\n\n**Spec:** docs/spec.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fsp/docs/plan2.md"; git -C "$fsp" add docs; git -C "$fsp" commit -qm plan2
+wsfs2=$(run_sdd_dir "$fsp" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsfs2/progress.md"
+run_state "$fsp" register docs/plan2.md --session s2 --integration feat --code-repo "$fsc" >/dev/null
+out=$(run_state "$fsp" lease docs/plan.md --closing --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=sibling-open plan=$(basename "$wsfs2")" ]; then pass "closing finds the sibling in the plan repository's state when the code lives elsewhere"; else fail "split sibling-open (rc=$rc: $out)"; fi
+# A registered sibling's task claim cannot land in the closing's window: the sibling is an open plan naming the branch, so the closing refuses before it pauses, and the claim goes through. A closing that pauses or hangs fails the bounded wait.
+co_fs=$(dirname "$(dirname "$wsfs")"); : > "$co_fs/.lease-before-close-pause"; rm -f "$TEST_ROOT/fs.closerc"
+( cd "$fsp" && HYPERPOWERS_TEST_PAUSE_AT=lease-before-close bash "$SDD_STATE" lease docs/plan.md --closing --session s1 --code-repo "$fsc" > "$TEST_ROOT/fs.close" 2>/dev/null; echo $? > "$TEST_ROOT/fs.closerc" ) &
+n=0; while [ ! -s "$TEST_ROOT/fs.closerc" ] && [ "$n" -lt 200 ]; do sleep 0.1; n=$((n + 1)); done
+fs_paused=0; [ -e "$co_fs/.lease-before-close-paused" ] && fs_paused=1
+rm -f "$co_fs/.lease-before-close-pause"; wait
+out=$(run_state "$fsp" claim docs/plan2.md 1 --session s2 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$fs_paused" -eq 0 ] && [ "$(cat "$TEST_ROOT/fs.closerc")" = 15 ] && [ "$(cat "$TEST_ROOT/fs.close")" = "status=sibling-open plan=$(basename "$wsfs2")" ] && [ "$rc" -eq 0 ] && [ "${out%% branch=*}" = "status=claimed task=1" ]; then pass "a registered sibling's claim never meets the closing window: the closing refuses first and the claim succeeds"; else fail "sibling claim vs closing (paused=$fs_paused close=$(cat "$TEST_ROOT/fs.closerc" 2>/dev/null) $(cat "$TEST_ROOT/fs.close" 2>/dev/null) / claim rc=$rc: $out)"; fi
+# A sibling's dossier that a crashed finish left renamed aside is still an open plan on the branch.
+tomb_fs="$(dirname "$wsfs2")/.removing-$(basename "$wsfs2")-4242"; mv "$wsfs2" "$tomb_fs"
+out=$(run_state "$fsp" lease docs/plan.md --closing --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=sibling-open plan=$(basename "$wsfs2")" ]; then pass "closing counts a sibling's interrupted-removal copy as open"; else fail "tomb sibling (rc=$rc: $out)"; fi
+rm -rf "$tomb_fs"
+out=$(run_state "$fsp" finish docs/plan.md --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=finished" ] && [ ! -d "$wsfs" ]; then pass "the split holder finishes"; else fail "split finish (rc=$rc: $out)"; fi
+out=$(run_state "$fsp" lease docs/plan.md --release --session s1 --code-repo "$fsc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && ! ls "$STATE_ROOT/$(state_key "$fsp").final-"* >/dev/null 2>&1; then pass "the release after finish works across repositories with no workspace on disk"; else fail "split release (rc=$rc: $out)"; fi
+# A plan line that only a crashed sync's recovery brings in is still compared with --code-repo: the closing recovers first, then refuses a foreign code repository and leaves closing= as it was.
+make_pair lc; lc_a=$PAIR_A; lc_b=$PAIR_B
+mkdir -p "$lc_a/docs"; : > "$lc_a/docs/spec.md"; printf '# L\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$lc_a/docs/plan.md"
+git -C "$lc_a" add docs; git -C "$lc_a" commit -qm plan; git -C "$lc_a" push -q origin main 2>/dev/null
+run_state "$lc_a" sync docs/plan.md >/dev/null 2>&1; git -C "$lc_a" push -q origin hyperpowers/state 2>/dev/null; git -C "$lc_b" pull -q origin main 2>/dev/null; run_state "$lc_b" sync docs/plan.md >/dev/null 2>&1
+wslc=$(run_sdd_dir "$lc_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wslc/progress.md"
+run_state "$lc_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$lc_a" push -q origin hyperpowers/state 2>/dev/null; run_state "$lc_b" sync docs/plan.md >/dev/null 2>&1
+run_state "$lc_a" register docs/plan.md --session s1 --integration main >/dev/null 2>&1
+run_state "$lc_a" snapshot docs/plan.md >/dev/null 2>&1; git -C "$lc_a" push -q origin hyperpowers/state 2>/dev/null
+( cd "$lc_b" && HYPERPOWERS_TEST_CRASH_AT=sync-after-update-ref bash "$SDD_STATE" sync docs/plan.md >/dev/null 2>&1 ); rc=$?
+wslc_b="$STATE_ROOT/$(state_key "$lc_b")/plans/$(basename "$wslc")"
+lc_stale=0; [ -f "$wslc_b/progress.md" ] && ! grep -q '^plan: ' "$wslc_b/progress.md" && lc_stale=1
+lease_lc="$STATE_ROOT/$(state_key "$lc_b").final-$(printf 'refs/heads/main' | git -C "$lc_b" hash-object --stdin | cut -c1-12)"
+printf 'session=s1\nhost=h\nplan=%s\nbranch=main\ntime=2026-01-01T00:00:00Z\nclosing=0\n' "$(basename "$wslc")" > "$lease_lc"
+out=$(run_state "$lc_b" lease docs/plan.md --closing --session s1 --code-repo "$TEST_ROOT/foreign-fn" 2>/dev/null); rcl=$?
+if [ "$rc" -eq 99 ] && [ "$lc_stale" -eq 1 ] && [ "$rcl" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ "$(sed -n 's/^closing=//p' "$lease_lc")" = 0 ] && grep -q '^plan: ' "$wslc_b/progress.md"; then pass "closing compares --code-repo with a plan line that arrives through recovery and leaves closing= unchanged"; else fail "closing after recovered plan line (rc=$rc/$rcl stale=$lc_stale: $out)"; fi
+# A holder that dies after finish and before releasing the lease: only an explicit takeover, found by the plan's workspace alone, moves the lease on.
+ft="$TEST_ROOT/ft"; make_repo "$ft"; git -C "$ft" switch -q -c feat
+mkdir -p "$ft/docs"; : > "$ft/docs/spec.md"; printf '# T\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$ft/docs/plan.md"; git -C "$ft" add docs; git -C "$ft" commit -qm plan
+wsft=$(run_sdd_dir "$ft" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsft/progress.md"
+run_state "$ft" register docs/plan.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsft/progress.md"
+run_state "$ft" claim docs/plan.md final --session s1 >/dev/null; run_state "$ft" finish docs/plan.md --session s1 >/dev/null
+# Only the lease exists yet: the history file appears with the takeover below.
+lease_ft=""; for ft_f in "$STATE_ROOT/$(state_key "$ft").final-"*; do [ -f "$ft_f" ] && lease_ft=$ft_f; done
+out=$(run_state "$ft" claim docs/plan.md final --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace task=final" ] && [ "$(sed -n 's/^session=//p' "$lease_ft")" = s1 ]; then pass "without --takeover a finished plan's final is no-workspace and the lease stays"; else fail "orphan final without takeover (rc=$rc: $out)"; fi
+out=$(run_state "$ft" claim docs/plan.md final --session s2 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=final lease=$(basename "$lease_ft") takeover=1" ] && [ "$(sed -n 's/^session=//p' "$lease_ft")" = s2 ] && [ "$(sed -n 's/^branch=//p' "$lease_ft")" = feat ] && grep -q '^session=s1$' "$lease_ft.history" && [ ! -d "$wsft" ]; then pass "a takeover after finish moves the lease by workspace alone and keeps the prior record"; else fail "orphan lease takeover (rc=$rc: $out)"; fi
+out=$(run_state "$ft" lease docs/plan.md --closing --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=closing" ] && [ "$(sed -n 's/^closing=//p' "$lease_ft")" = 1 ]; then pass "the new holder closes the branch"; else fail "takeover closing (rc=$rc: $out)"; fi
+out=$(run_state "$ft" lease docs/plan.md --release --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && [ ! -f "$lease_ft" ]; then pass "the new holder releases the lease"; else fail "takeover release (rc=$rc: $out)"; fi
+out=$(run_state "$ft" lease docs/plan.md --release --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=no-lease" ]; then pass "the dead holder's later release is no-lease"; else fail "old holder release (rc=$rc: $out)"; fi
+out=$(run_state "$ft" claim docs/plan.md final --session s3 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace task=final" ] && [ ! -d "$wsft" ]; then pass "a takeover with neither workspace nor lease is no-workspace"; else fail "takeover without lease (rc=$rc: $out)"; fi
+# Workspace names in the plan= field are encoded: a plan file name with a space.
+sp="$TEST_ROOT/sp-enc"; make_repo "$sp"; git -C "$sp" switch -q -c feat
+mkdir -p "$sp/docs"; : > "$sp/docs/spec.md"
+printf '# A\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$sp/docs/a plan.md"
+printf '# B\n\n**Spec:** docs/spec.md\n\n### Task 1: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$sp/docs/b.md"
+git -C "$sp" add docs; git -C "$sp" commit -qm plans
+wssa=$(run_sdd_dir "$sp" "docs/a plan.md" 2>/dev/null); wssb=$(run_sdd_dir "$sp" docs/b.md 2>/dev/null)
+printf '# SDD ledger — plan: docs/a plan.md\n' > "$wssa/progress.md"; printf '# SDD ledger — plan: docs/b.md\n' > "$wssb/progress.md"
+run_state "$sp" register "docs/a plan.md" --session s1 --integration feat >/dev/null; run_state "$sp" register docs/b.md --session s2 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wssa/progress.md"; printf 'Task 1: complete (commits 3333333..4444444, review clean)\n' >> "$wssb/progress.md"
+run_state "$sp" claim "docs/a plan.md" final --session s1 >/dev/null
+sp_enc=$(basename "$wssa" | sed 's/ /%20/g')
+out=$(run_state "$sp" claim docs/b.md final --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "$out" = "status=held task=final lease=s1 plan=$sp_enc" ] && [ "$sp_enc" != "$(basename "$wssa")" ]; then pass "the lease holder's workspace name is encoded in held"; else fail "encoded held plan (rc=$rc: $out)"; fi
+run_state "$sp" claim "docs/a plan.md" final --session s1 --release >/dev/null; run_state "$sp" claim docs/b.md final --session s2 >/dev/null
+out=$(run_state "$sp" lease docs/b.md --closing --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=sibling-open plan=$sp_enc" ]; then pass "the open sibling's workspace name is encoded in sibling-open"; else fail "encoded sibling-open (rc=$rc: $out)"; fi
+# The finishing compile removes the plan file (git rm, then the records commit) before the closing and the release: lease alone resolves the gone path through the nearest existing directory, with the workspace name of its repository-relative path; claim and next still refuse it.
+rp="$TEST_ROOT/rp"; make_repo "$rp"; git -C "$rp" switch -q -c feat
+mkdir -p "$rp/docs/plans"; : > "$rp/docs/spec.md"; : > "$rp/docs/plans/keep.md"
+printf '# R\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rp/docs/plans/r.md"
+git -C "$rp" add docs; git -C "$rp" commit -qm plan
+wsrp=$(run_sdd_dir "$rp" docs/plans/r.md 2>/dev/null); printf '# SDD ledger — plan: docs/plans/r.md\n' > "$wsrp/progress.md"
+run_state "$rp" register docs/plans/r.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsrp/progress.md"
+run_state "$rp" claim docs/plans/r.md final --session s1 >/dev/null; run_state "$rp" finish docs/plans/r.md --session s1 >/dev/null
+lease_rp=""; for rp_f in "$STATE_ROOT/$(state_key "$rp").final-"*; do [ -f "$rp_f" ] && lease_rp=$rp_f; done
+git -C "$rp" rm -q docs/plans/r.md; git -C "$rp" commit -qm records
+out=$(run_state "$rp" claim docs/plans/r.md 1 --session s1 2>"$TEST_ROOT/rp.claim.err"); rc=$?
+out2=$(run_state "$rp" next docs/plans/r.md --session s1 2>"$TEST_ROOT/rp.next.err"); rc2=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q 'plan file is not inside a git repository' "$TEST_ROOT/rp.claim.err" && [ "$rc2" -eq 2 ] && [ -z "$out2" ] && grep -q 'plan file is not inside a git repository' "$TEST_ROOT/rp.next.err"; then pass "claim and next still refuse a plan path whose file is gone"; else fail "claim/next on a removed plan (rc=$rc: $out; rc2=$rc2: $out2)"; fi
+out=$(run_state "$rp" lease docs/plans/r.md --closing --session s1 2>"$TEST_ROOT/rp.lease.err"); rc=$?
+if [ -n "$lease_rp" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=closing" ] && [ "$(sed -n 's/^closing=//p' "$lease_rp")" = 1 ]; then pass "closing resolves a plan path whose file the finishing compile removed"; else fail "closing after the plan's removal (rc=$rc: $out; $(cat "$TEST_ROOT/rp.lease.err"))"; fi
+out=$(run_state "$rp" lease docs/plans/r.md --release --session s1 2>/dev/null); rc=$?
+if [ -n "$lease_rp" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && [ ! -f "$lease_rp" ]; then pass "release resolves a plan path whose file the finishing compile removed"; else fail "release after the plan's removal (rc=$rc: $out)"; fi
+# The only plan in its directory: the removal takes the directory with it, and the release still finds the lease.
+rq="$TEST_ROOT/rq"; make_repo "$rq"; git -C "$rq" switch -q -c feat
+mkdir -p "$rq/docs/plans"; : > "$rq/docs/spec.md"
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$rq/docs/plans/q.md"
+git -C "$rq" add docs; git -C "$rq" commit -qm plan
+wsrq=$(run_sdd_dir "$rq" docs/plans/q.md 2>/dev/null); printf '# SDD ledger — plan: docs/plans/q.md\n' > "$wsrq/progress.md"
+run_state "$rq" register docs/plans/q.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsrq/progress.md"
+run_state "$rq" claim docs/plans/q.md final --session s1 >/dev/null; run_state "$rq" finish docs/plans/q.md --session s1 >/dev/null
+lease_rq=""; for rq_f in "$STATE_ROOT/$(state_key "$rq").final-"*; do [ -f "$rq_f" ] && lease_rq=$rq_f; done
+git -C "$rq" rm -q docs/plans/q.md; git -C "$rq" commit -qm records
+out=$(run_state "$rq" lease docs/plans/q.md --release --session s1 2>/dev/null); rc=$?
+if [ ! -d "$rq/docs/plans" ] && [ -n "$lease_rq" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && [ ! -f "$lease_rq" ]; then pass "release still works once the removal took the plans directory with it"; else fail "release without the plans directory (rc=$rc: $out; dir present: $([ -d "$rq/docs/plans" ] && echo yes || echo no))"; fi
+# The fallback is no wider than a removed file: a link at the plan path, and a path whose nearest existing directory is in no repository, are still refused.
+ln -s nowhere.md "$rq/docs/link.md"
+out=$(run_state "$rq" lease docs/link.md --release --session s1 2>/dev/null); rc=$?
+out2=$(run_state "$rq" lease "$TEST_ROOT/no-repo/plans/p.md" --release --session s1 2>/dev/null); rc2=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$rc2" -eq 2 ] && [ -z "$out2" ]; then pass "lease still refuses a link at the plan path and a path outside any repository"; else fail "lease fallback bounds (link rc=$rc: $out; outside rc=$rc2: $out2)"; fi
+# A plan committed in a linked worktree: the finishing skill hands lease the main checkout joined to the plan's repository-relative path, which outlives the worktree that Step 6 removes; the worktree's own absolute path would then resolve inside the main checkout's .worktrees directory.
+lw="$TEST_ROOT/lwrm"; make_repo "$lw"
+mkdir -p "$lw/docs/plans"; : > "$lw/docs/spec.md"; : > "$lw/docs/plans/keep.md"; git -C "$lw" add docs; git -C "$lw" commit -qm docs
+lw_w="$lw/.worktrees/w"; git -C "$lw" worktree add -q -b feat "$lw_w" 2>/dev/null
+printf '# W\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$lw_w/docs/plans/w.md"
+git -C "$lw_w" add docs; git -C "$lw_w" commit -qm plan
+wslw=$(run_sdd_dir "$lw_w" docs/plans/w.md 2>/dev/null); printf '# SDD ledger — plan: docs/plans/w.md\n' > "$wslw/progress.md"
+run_state "$lw_w" register docs/plans/w.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wslw/progress.md"
+run_state "$lw_w" claim docs/plans/w.md final --session s1 >/dev/null; run_state "$lw_w" finish docs/plans/w.md --session s1 >/dev/null
+lease_lw=""; for lw_f in "$STATE_ROOT/$(state_key "$lw").final-"*; do [ -f "$lw_f" ] && lease_lw=$lw_f; done
+git -C "$lw_w" rm -q docs/plans/w.md; git -C "$lw_w" commit -qm records
+git -C "$lw" worktree remove "$lw_w"
+out=$(run_state "$lw" lease "$lw/docs/plans/w.md" --closing --session s1 2>"$TEST_ROOT/lw.err"); rc=$?
+if [ ! -d "$lw_w" ] && [ -n "$lease_lw" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=closing" ] && [ "$(sed -n 's/^closing=//p' "$lease_lw")" = 1 ]; then pass "closing through the main checkout finds a removed worktree's lease"; else fail "closing after the worktree's removal (rc=$rc: $out; $(cat "$TEST_ROOT/lw.err"))"; fi
+out=$(run_state "$lw" lease "$lw/docs/plans/w.md" --release --session s1 2>/dev/null); rc=$?
+if [ -n "$lease_lw" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && [ ! -f "$lease_lw" ]; then pass "release through the main checkout deletes a removed worktree's lease"; else fail "release after the worktree's removal (rc=$rc: $out)"; fi
+# A restarted finish: the main checkout never had the plan's directory either.
+lv="$TEST_ROOT/lv"; make_repo "$lv"
+mkdir -p "$lv/docs"; : > "$lv/docs/spec.md"; git -C "$lv" add docs; git -C "$lv" commit -qm docs
+lv_w="$lv/.worktrees/v"; git -C "$lv" worktree add -q -b feat "$lv_w" 2>/dev/null
+mkdir -p "$lv_w/docs/plans"; printf '# V\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$lv_w/docs/plans/v.md"
+git -C "$lv_w" add docs; git -C "$lv_w" commit -qm plan
+wslv=$(run_sdd_dir "$lv_w" docs/plans/v.md 2>/dev/null); printf '# SDD ledger — plan: docs/plans/v.md\n' > "$wslv/progress.md"
+run_state "$lv_w" register docs/plans/v.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wslv/progress.md"
+run_state "$lv_w" claim docs/plans/v.md final --session s1 >/dev/null; run_state "$lv_w" finish docs/plans/v.md --session s1 >/dev/null
+lease_lv=""; for lv_f in "$STATE_ROOT/$(state_key "$lv").final-"*; do [ -f "$lv_f" ] && lease_lv=$lv_f; done
+git -C "$lv_w" rm -q docs/plans/v.md; git -C "$lv_w" commit -qm records
+git -C "$lv" worktree remove "$lv_w"
+out=$(run_state "$lv" lease "$lv/docs/plans/v.md" --release --session s1 2>/dev/null); rc=$?
+if [ ! -d "$lv/docs/plans" ] && [ -n "$lease_lv" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=released" ] && [ ! -f "$lease_lv" ]; then pass "release through the main checkout works when it never had the plan's directory"; else fail "release without the directory in the main checkout (rc=$rc: $out)"; fi
+
+
+echo "amend: the plan ref's only writer"
+make_pair am; am_a=$PAIR_A
+mkdir -p "$am_a/docs"; : > "$am_a/docs/spec.md"
+cat > "$am_a/docs/plan.md" <<'PLAN'
+# P
+
+**Spec:** docs/spec.md
+
+### Task 1: A
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+**Files:**
+- Modify: `src/x.sh`
+
+### Task 2: B
+
+**Risk tier:** standard
+
+**Depends on:** none
+
+**Files:**
+- Modify: `src/y.sh`
+PLAN
+git -C "$am_a" add docs; git -C "$am_a" commit -qm plan; git -C "$am_a" push -q origin main 2>/dev/null; git -C "$am_a" switch -q -c feat
+run_state "$am_a" sync docs/plan.md >/dev/null 2>&1; wsam=$(run_sdd_dir "$am_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsam/progress.md"; run_state "$am_a" register docs/plan.md --session s1 --integration feat >/dev/null
+base_am=$(git -C "$am_a" rev-parse feat:docs/plan.md); head_am=$(git -C "$am_a" rev-parse feat)
+sed 's/^- Modify: `src\/y.sh`$/- Modify: `src\/x.sh`/' "$am_a/docs/plan.md" > "$TEST_ROOT/am.cand1"
+make_repo "$TEST_ROOT/foreign-am"
+out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand1" --base "$base_am" --code-repo "$TEST_ROOT/foreign-am" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ "$(git -C "$am_a" rev-parse feat)" = "$head_am" ]; then pass "amend refuses a foreign --code-repo before anything moves"; else fail "amend wrong-repo (rc=$rc: $out)"; fi
+out=$(cd "$TEST_ROOT/foreign-am" && bash "$SDD_STATE" amend "$am_a/docs/plan.md" --from "$TEST_ROOT/am.cand1" --base "$base_am" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ "$(git -C "$am_a" rev-parse feat)" = "$head_am" ]; then pass "amend run from a foreign repository without --code-repo is wrong-repo"; else fail "amend foreign cwd (rc=$rc: $out)"; fi
+out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand1" --base "$base_am" 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && [ "${out%% plan=*}" = "status=conflicts" ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=src/x.sh' && [ "$(git -C "$am_a" rev-parse feat)" = "$head_am" ]; then pass "an amendment with an undeclared overlap publishes nothing"; else fail "amend conflicts (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# The session id from the environment goes into the amendment's ledger line: one with a newline would write a line of its own, so it is refused before anything moves.
+out=$(cd "$am_a" && HYPERPOWERS_SESSION_ID=$'s1\nTask 9: complete' bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/am.cand1" --base "$base_am" --accept 'tasks=1,2 path=src/x.sh' --message "x twice" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(git -C "$am_a" rev-parse feat)" = "$head_am" ] && ! grep -q '^Task 9: complete' "$wsam/progress.md"; then pass "amend refuses a session id with a newline before anything moves"; else fail "amend with a newline session id (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand1" --base "$base_am" --accept 'tasks=1,2 path=src/x.sh' --message "x twice" 2>/dev/null); rc=$?
+new_head=$(git -C "$am_a" rev-parse feat)
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$new_head" != "$head_am" ] && [ "$(git -C "$am_a" rev-parse "$new_head^")" = "$head_am" ] && [ "$(git -C "$am_a" show feat:docs/plan.md | grep -c 'src/x.sh')" = 2 ] && [ "$(git -C "$am_a" diff --name-only "$head_am" "$new_head")" = "docs/plan.md" ] && grep -q '^scan: accepted-overlap tasks=1,2 path=src/x.sh$' "$wsam/progress.md" && grep -q '^plan: amended [0-9a-f]\{7\} by .*: x twice$' "$wsam/progress.md" && { [ ! -d "$wsam/amends" ] || [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; }; then pass "an accepted amendment publishes one plan-only commit and its acceptance line"; else fail "amend accepted (rc=$rc: $out)"; fi
+# The first session's worktree has the plan ref checked out: the amendment is written into its index and file too, so git status there does not read it as reverted.
+nb_am=$(git -C "$am_a" rev-parse feat:docs/plan.md)
+if [ -z "$(git -C "$am_a" status --porcelain)" ] && [ "$(git -C "$am_a" rev-parse :docs/plan.md)" = "$nb_am" ] && [ "$(git -C "$am_a" hash-object docs/plan.md)" = "$nb_am" ]; then pass "the worktree on the plan ref holds the amended plan in its index and file"; else fail "worktree refreshed ($(git -C "$am_a" status --porcelain | tr '\n' '|'))"; fi
+out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand1" --base "$base_am" 2>/dev/null); rc=$?
+if [ "$rc" -eq 14 ] && [ "${out%% current=*}" = "status=stale base=${base_am:0:7}" ]; then pass "an amendment from an old base is stale"; else fail "stale (rc=$rc: $out)"; fi
+base2=$(git -C "$am_a" rev-parse feat:docs/plan.md)
+sed 's/^\*\*Depends on:\*\* none$/**Depends on:** Task 2/' "$TEST_ROOT/am.cand1" > "$TEST_ROOT/am.cycle"
+out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cycle" --base "$base2" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "${out%% *}" = "status=invalid" ] && [ "$(git -C "$am_a" rev-parse feat)" = "$new_head" ]; then pass "an invalid graph is refused before anything moves"; else fail "invalid (rc=$rc: $out)"; fi
+# A worktree on the plan ref whose copy is not the base would carry a revert of the amendment forward: refused, nothing moves, and the edit stays.
+sed 's/^### Task 1: A$/### Task 1: A0/' "$TEST_ROOT/am.cand1" > "$TEST_ROOT/am.edit"
+printf 'local edit\n' >> "$am_a/docs/plan.md"; edited_am=$(git -C "$am_a" hash-object docs/plan.md)
+out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.edit" --base "$base2" 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$am_a" ] && [ "$(git -C "$am_a" rev-parse feat)" = "$new_head" ] && [ "$(git -C "$am_a" hash-object docs/plan.md)" = "$edited_am" ] && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; then pass "a worktree on the plan ref with an edit to the plan refuses the amendment as checked-out"; else fail "edited worktree (rc=$rc: $out)"; fi
+git -C "$am_a" show feat:docs/plan.md > "$am_a/docs/plan.md"
+# A crash after the swap: the record carries a new acceptance the ledger lacks; deps --check and a fresh amendment in that window honour it; the retry finishes the lines.
+awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/w.sh`" }' "$TEST_ROOT/am.cand1" > "$TEST_ROOT/am.cand3"
+( cd "$am_a" && HYPERPOWERS_TEST_CRASH_AT=amend-after-swap bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/am.cand3" --base "$base2" --accept 'tasks=1,2 path=src/w.sh' --message "w twice" >/dev/null 2>&1 ); rc=$?
+rec=$(ls "$wsam/amends/" 2>/dev/null | head -n 1)
+if [ "$rc" -eq 99 ] && [ -n "$rec" ] && grep -q '^accept=tasks=1,2 path=src/w.sh$' "$wsam/amends/$rec" && [ "$(git -C "$am_a" show feat:docs/plan.md | grep -c 'src/w.sh')" = 2 ] && ! grep -q 'path=src/w.sh' "$wsam/progress.md"; then pass "the crash seam stops after the swap with the record in place"; else fail "crash after swap (rc=$rc rec=$rec)"; fi
+if [ "$(git -C "$am_a" rev-parse :docs/plan.md)" = "$base2" ] && [ "$(git -C "$am_a" hash-object docs/plan.md)" = "$base2" ]; then pass "a crash after the swap leaves the worktree on the plan ref at the base"; else fail "worktree after the crash ($(git -C "$am_a" status --porcelain | tr '\n' '|'))"; fi
+out=$(run_state "$am_a" deps docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ]; then pass "deps --check honours an acceptance that only the amendment record holds"; else fail "record acceptance honoured (rc=$rc: $out)"; fi
+# The base is the seven-character plan= token deps prints, as the skill text passes it.
+base2b=$(run_state "$am_a" deps docs/plan.md 2>/dev/null | sed -n 's/^status=deps plan=\([0-9a-f]*\) .*/\1/p')
+sed 's/^### Task 2: B$/### Task 2: B2/' "$TEST_ROOT/am.cand3" > "$TEST_ROOT/am.cand3b"
+out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3b" --base "$base2b" --message "rename" 2>/dev/null); rc=$?
+if [ "${#base2b}" = 7 ] && [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$am_a" show feat:docs/plan.md | grep -c 'Task 2: B2')" = 1 ]; then pass "a fresh amendment inside the crash window, from the seven-character plan= token, honours the surviving record's acceptance"; else fail "fresh amendment in the window (rc=$rc base=$base2b: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+if [ -z "$(git -C "$am_a" status --porcelain)" ] && [ "$(git -C "$am_a" rev-parse :docs/plan.md)" = "$(git -C "$am_a" rev-parse feat:docs/plan.md)" ]; then pass "an amendment in the crash window first brings the worktree to the published plan, then to its own"; else fail "worktree in the window ($(git -C "$am_a" status --porcelain | tr '\n' '|'))"; fi
+out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3b" --base 0000000 2>/dev/null); rc=$?
+if [ "$rc" -eq 14 ] && [ "${out%% current=*}" = "status=stale base=0000000" ]; then pass "a base no object matches is stale"; else fail "unknown base (rc=$rc: $out)"; fi
+out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3" --base "$base2" --accept 'tasks=1,2 path=src/w.sh' --message "w twice" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && grep -q '^scan: accepted-overlap tasks=1,2 path=src/w.sh$' "$wsam/progress.md" && grep -q ': w twice$' "$wsam/progress.md" && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; then pass "the retry completes the ledger lines and removes the record"; else fail "retry completes (rc=$rc: $out)"; fi
+# Refused under a held lease.
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\nTask 2: complete (commits 3333333..4444444, review clean)\n' >> "$wsam/progress.md"
+run_state "$am_a" claim docs/plan.md final --session s1 >/dev/null
+base3=$(git -C "$am_a" rev-parse feat:docs/plan.md)
+out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3" --base "$base3" 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=lease:s1" ]; then pass "an amendment is refused while the branch lease is held"; else fail "amend under lease (rc=$rc: $out)"; fi
+# Under a closing lease the refusal is branch-closing, before anything else.
+lease_am=$(ls "$STATE_ROOT/$(state_key "$am_a").final-"* | head -n 1)
+sed 's/^closing=.*/closing=1/' "$lease_am" > "$lease_am.new" && mv -f "$lease_am.new" "$lease_am"
+out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3" --base "$base3" 2>/dev/null); rc=$?
+if [ "$rc" -eq 15 ] && [ "$out" = "status=branch-closing" ]; then pass "a closing lease refuses an amendment as branch-closing"; else fail "amend branch-closing (rc=$rc: $out)"; fi
+run_state "$am_a" claim docs/plan.md final --session s1 --release >/dev/null
+# A lost compare-and-swap: a writer moves the plan ref between the record and the swap. A moved head with the same plan is recomputed; one whose plan changed is stale, and neither leaves a record.
+head3=$(git -C "$am_a" rev-parse feat)
+adv_am=$(git -C "$am_a" commit-tree "$(git -C "$am_a" rev-parse "feat^{tree}")" -p "$head3" -m "advance" 2>/dev/null)
+sed 's/^### Task 1: A$/### Task 1: A1/' "$TEST_ROOT/am.cand3" > "$TEST_ROOT/am.cand4"
+out=$(cd "$am_a" && HYPERPOWERS_TEST_WRITER_AT="amend-before-swap:$adv_am" bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/am.cand4" --base "$base3" --accept 'tasks=1,2 path=src/x.sh' --message "a1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$am_a" rev-parse "feat^")" = "$adv_am" ] && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; then pass "a lost swap is recomputed on the moved head"; else fail "amend lost swap (rc=$rc: $out parent=$(git -C "$am_a" rev-parse "feat^" 2>/dev/null))"; fi
+# That call restated an acceptance the ledger already held: allowed, since the overlap is the candidate's, and written once.
+if [ "$(grep -c '^scan: accepted-overlap tasks=1,2 path=src/x.sh$' "$wsam/progress.md")" = 1 ]; then pass "an acceptance the ledger already holds is allowed and not written twice"; else fail "restated acceptance ($(grep -c 'path=src/x.sh$' "$wsam/progress.md"))"; fi
+base4=$(git -C "$am_a" rev-parse feat:docs/plan.md)
+sed 's/^### Task 2: B$/### Task 2: B3/' "$TEST_ROOT/am.cand4" > "$TEST_ROOT/am.cand5"
+sed 's/^### Task 2: B$/### Task 2: B9/' "$TEST_ROOT/am.cand4" > "$TEST_ROOT/am.other"
+other_blob=$(git -C "$am_a" hash-object -w "$TEST_ROOT/am.other")
+other_tree=$(GIT_INDEX_FILE="$TEST_ROOT/am.index" sh -c 'git -C "$1" read-tree "$2" && git -C "$1" update-index --add --cacheinfo 100644,"$3",docs/plan.md && git -C "$1" write-tree' _ "$am_a" feat "$other_blob")
+other_commit=$(git -C "$am_a" commit-tree "$other_tree" -p "$(git -C "$am_a" rev-parse feat)" -m "other amendment")
+out=$(cd "$am_a" && HYPERPOWERS_TEST_WRITER_AT="amend-before-swap:$other_commit" bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/am.cand5" --base "$base4" --accept 'tasks=1,2 path=src/x.sh' --message "b3" 2>/dev/null); rc=$?
+if [ "$rc" -eq 14 ] && [ "${out%% current=*}" = "status=stale base=${base4:0:7}" ] && [ "$(git -C "$am_a" rev-parse feat)" = "$other_commit" ] && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; then pass "a swap lost to a plan change is stale and leaves no record behind"; else fail "lost swap stale (rc=$rc: $out)"; fi
+# An amendment record whose commit is not on the plan ref counts for nothing.
+awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/z.sh`" }' "$TEST_ROOT/am.cand5" > "$TEST_ROOT/am.cand6"
+dangling=$(git -C "$am_a" commit-tree "$(git -C "$am_a" rev-parse "feat^{tree}")" -p "$head3" -m dangling)
+mkdir -p "$wsam/amends"; printf 'base=%s\nblob=%s\ncommit=%s\naccept=tasks=1,2 path=src/z.sh\n' "$base4" "$(git -C "$am_a" hash-object "$TEST_ROOT/am.cand6")" "$dangling" > "$wsam/amends/unpublished"
+out=$(run_state "$am_a" deps --from "$TEST_ROOT/am.cand6" docs/plan.md --check 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=src/z.sh'; then pass "an amendment record whose commit is not on the plan ref suppresses nothing"; else fail "unpublished record (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+rm -f "$wsam/amends/unpublished"
+# The refusals and recoveries around the plain flow, in a repository of their own.
+make_pair ad; ad_a=$PAIR_A
+mkdir -p "$ad_a/docs"; : > "$ad_a/docs/spec.md"
+git -C "$am_a" show "$head_am:docs/plan.md" > "$ad_a/docs/plan.md"
+git -C "$ad_a" add docs; git -C "$ad_a" commit -qm plan; git -C "$ad_a" push -q origin main 2>/dev/null; git -C "$ad_a" switch -q -c feat
+run_state "$ad_a" sync docs/plan.md >/dev/null 2>&1; wsad=$(run_sdd_dir "$ad_a" docs/plan.md 2>/dev/null)
+b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md); h_ad=$(git -C "$ad_a" rev-parse feat)
+sed 's/^### Task 1: A$/### Task 1: A1/' "$ad_a/docs/plan.md" > "$TEST_ROOT/ad.c1"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c1" --base "$b_ad" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace" ] && [ ! -e "$wsad/progress.md" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ]; then pass "an amendment without a ledger is no-workspace and creates none"; else fail "amend no-workspace (rc=$rc: $out)"; fi
+printf '# SDD ledger — plan: docs/plan.md\n' > "$wsad/progress.md"; run_state "$ad_a" register docs/plan.md --session s1 --integration feat >/dev/null
+# An acceptance in any spelling but the ledger's would suppress a conflict now that every later check reports again.
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c1" --base "$b_ad" --accept 'conflict tasks=1,2 shares=src/x.sh' 2>/dev/null); rc=$?
+out2=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c1" --base "$b_ad" --accept "$(printf 'tasks=1,2 path=src/x.sh\nplan: amended')" 2>/dev/null); rc2=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && [ "$rc2" -eq 2 ] && [ -z "$out2" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ]; then pass "an --accept not spelled tasks=A,B path=P or interface=I is a usage error"; else fail "accept spelling (rc=$rc/$rc2: $out$out2)"; fi
+# The subject is written as a ledger line; a newline in it would write a second one.
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c1" --base "$b_ad" --message "$(printf 'x\nTask 1: complete')" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && ! grep -q '^Task 1: complete' "$wsad/progress.md" && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ]; then pass "a --message with a newline is a usage error"; else fail "newline message (rc=$rc: $out)"; fi
+# A relative --from is read from the caller's directory, for the hash and the parse alike.
+mkdir -p "$TEST_ROOT/ad-rel"; cp "$TEST_ROOT/ad.c1" "$TEST_ROOT/ad-rel/c1.md"
+out=$(cd "$TEST_ROOT/ad-rel" && bash "$SDD_STATE" amend "$ad_a/docs/plan.md" --from c1.md --base "$b_ad" --code-repo "$ad_a" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c1")" ]; then pass "a relative --from is read from the caller's directory"; else fail "relative --from (rc=$rc: $out)"; fi
+b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+# An acceptance matches a whole conflict line: with src/x.sh and src/x.shell both shared, accepting the first leaves the second.
+sed 's/^- Modify: `src\/y.sh`$/- Modify: `src\/x.sh`/' "$TEST_ROOT/ad.c1" | awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/x.shell`" }' > "$TEST_ROOT/ad.prefix"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.prefix" --base "$b_ad" --accept 'tasks=1,2 path=src/x.sh' 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && [ "$out" = "status=conflicts plan=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.prefix" | cut -c1-7) count=1
+conflict tasks=1,2 shares=src/x.shell" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$b_ad" ]; then pass "an acceptance suppresses only the whole conflict line it names"; else fail "whole-line accept (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# An abbreviation two objects share cannot be compared: node finds a blob whose id begins like the base's.
+pre_ad=${b_ad:0:4}
+node -e 'const c=require("crypto");const p=process.argv[1];for(let i=0;;i++){const s="x"+i+"\n";if(c.createHash("sha1").update("blob "+Buffer.byteLength(s)+"\0"+s).digest("hex").startsWith(p)){process.stdout.write(s);break;}}' "$pre_ad" > "$TEST_ROOT/ad.collide"
+git -C "$ad_a" hash-object -w "$TEST_ROOT/ad.collide" >/dev/null
+sed 's/^### Task 2: B$/### Task 2: B1/' "$TEST_ROOT/ad.c1" > "$TEST_ROOT/ad.c2"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c2" --base "$pre_ad" 2>"$TEST_ROOT/ad.amb.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'is ambiguous; pass the full blob id' "$TEST_ROOT/ad.amb.err" && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$b_ad" ]; then pass "an ambiguous --base is an error with the full-id command"; else fail "ambiguous base (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.amb.err"))"; fi
+# A lease without session= names no holder: an error naming the file, never a free branch.
+lease_ad="$STATE_ROOT/$(state_key "$ad_a").final-$(printf 'refs/heads/feat' | git -C "$ad_a" hash-object --stdin | cut -c1-12)"
+printf 'host=h\nplan=%s\nbranch=feat\ntime=t\nclosing=0\n' "$(basename "$wsad")" > "$lease_ad"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c2" --base "$b_ad" 2>"$TEST_ROOT/ad.lease.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "$lease_ad" "$TEST_ROOT/ad.lease.err" && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$b_ad" ]; then pass "a lease without session= refuses the amendment as an error naming the file"; else fail "sessionless lease (rc=$rc: $out)"; fi
+rm -f "$lease_ad"
+# A plan ref that does not carry the plan file is an error, not a stale base.
+h_ad=$(git -C "$ad_a" rev-parse feat); git -C "$ad_a" update-ref refs/heads/feat "$(git -C "$ad_a" rev-list --max-parents=0 feat)"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c2" --base "$b_ad" 2>"$TEST_ROOT/ad.carry.err"); rc=$?
+git -C "$ad_a" update-ref refs/heads/feat "$h_ad"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'does not carry docs/plan.md' "$TEST_ROOT/ad.carry.err" && [ -z "$(ls -A "$wsad/amends" 2>/dev/null)" ]; then pass "a plan ref without the plan file is an error"; else fail "plan ref without the plan (rc=$rc: $out)"; fi
+# A crash between the swap and the worktree refresh is finished by the same amend run again.
+( cd "$ad_a" && HYPERPOWERS_TEST_CRASH_AT=amend-after-swap bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/ad.c2" --base "$b_ad" --message c2 >/dev/null 2>&1 ); rc=$?
+n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c2")
+if [ "$rc" -eq 99 ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ "$(git -C "$ad_a" rev-parse :docs/plan.md)" = "$b_ad" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$b_ad" ]; then pass "after the crash the worktree still holds the base"; else fail "crash leaves the base (rc=$rc)"; fi
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c2" --base "$b_ad" --message c2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" rev-parse :docs/plan.md)" = "$n_ad" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "the retry refreshes the worktree and finishes the record"; else fail "retry refreshes (rc=$rc: $out: $(git -C "$ad_a" status --porcelain | tr '\n' '|'))"; fi
+# A refresh that fails after the swap keeps the record, so the same amend run again finishes it.
+b_ad=$n_ad; sed 's/^### Task 2: B1$/### Task 2: B2/' "$TEST_ROOT/ad.c2" > "$TEST_ROOT/ad.c3"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c3"); h_ad=$(git -C "$ad_a" rev-parse feat)
+# A lock held before the call is a refusal the refresh would make, so it is predicted before the swap, with nothing moved.
+: > "$ad_a/.git/index.lock"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c3" --base "$b_ad" --message c3 2>/dev/null); rc=$?
+rm -f "$ad_a/.git/index.lock"
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$ad_a" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a held index lock in the worktree on the plan ref is refused before the swap"; else fail "held index lock (rc=$rc: $out)"; fi
+# The same lock taken once the swap commits, by a reference-transaction hook, fails the refresh itself.
+hook_ad="$ad_a/.git/hooks/reference-transaction"; mark_ad="$TEST_ROOT/ad.lock-fired"
+printf '#!/bin/sh\nlines=$(cat)\n[ "$1" = committed ] || exit 0\ncase "$lines" in *" refs/heads/feat") ;; *) exit 0 ;; esac\n[ -e "%s" ] && exit 0\n: > "%s"\n: > "%s"\n' "$mark_ad" "$mark_ad" "$ad_a/.git/index.lock" > "$hook_ad"; chmod 755 "$hook_ad"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c3" --base "$b_ad" --message c3 2>"$TEST_ROOT/ad.refresh.err"); rc=$?
+rm -f "$hook_ad" "$ad_a/.git/index.lock"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -e "$mark_ad" ] && grep -qF "but the worktree $ad_a could not be refreshed" "$TEST_ROOT/ad.refresh.err" && grep -q 'run the same amend again' "$TEST_ROOT/ad.refresh.err" && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ -f "$wsad/amends/$n_ad" ]; then pass "a failed refresh after the swap is an error that keeps the record"; else fail "failed refresh (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.refresh.err"))"; fi
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c3" --base "$b_ad" --message c3 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && grep -q ': c3$' "$wsad/progress.md" && [ -z "$(ls -A "$wsad/amends")" ]; then pass "the retry after a failed refresh finishes it"; else fail "retry after failed refresh (rc=$rc: $out)"; fi
+# An update-ref that fails with the ref where it was is no lost race, and says so.
+b_ad=$n_ad; sed 's/^### Task 2: B2$/### Task 2: B3/' "$TEST_ROOT/ad.c3" > "$TEST_ROOT/ad.c4"; h_ad=$(git -C "$ad_a" rev-parse feat)
+: > "$ad_a/.git/refs/heads/feat.lock"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c4" --base "$b_ad" 2>"$TEST_ROOT/ad.ref.err"); rc=$?
+rm -f "$ad_a/.git/refs/heads/feat.lock"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "update-ref failed and the plan ref feat is unchanged at ${h_ad:0:7}" "$TEST_ROOT/ad.ref.err" && ! grep -q 'three attempts' "$TEST_ROOT/ad.ref.err" && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a failed update-ref on an unmoved ref is reported as such"; else fail "update-ref failure (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.ref.err"))"; fi
+# The same text amended again from another base is a new amendment, never a retry: it publishes, and the crashed record's acceptance reaches the ledger.
+b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+sed 's/^- Modify: `src\/y.sh`$/- Modify: `src\/x.sh`/' "$TEST_ROOT/ad.c3" > "$TEST_ROOT/ad.B"
+( cd "$ad_a" && HYPERPOWERS_TEST_CRASH_AT=amend-after-swap bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/ad.B" --base "$b_ad" --accept 'tasks=1,2 path=src/x.sh' --message B >/dev/null 2>&1 )
+bB_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+sed 's/^### Task 2: B2$/### Task 2: C/' "$TEST_ROOT/ad.B" > "$TEST_ROOT/ad.C"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.C" --base "$bB_ad" --message C 2>/dev/null); rc=$?
+bC_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.B" --base "$bC_ad" --message B-again 2>/dev/null); rcb=$?
+if [ "$rc" -eq 0 ] && [ "$rcb" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$out" = "${out% already=1}" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$bB_ad" ] && grep -q '^scan: accepted-overlap tasks=1,2 path=src/x.sh$' "$wsad/progress.md" && [ -z "$(ls -A "$wsad/amends")" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && run_state "$ad_a" deps docs/plan.md --check >/dev/null 2>&1; then pass "the same text from another base publishes as a new amendment and keeps the earlier acceptance"; else fail "same blob, other base (rc=$rc/$rcb: $out)"; fi
+# An interface name is keyed as written, spaces included, so its acceptance keeps them.
+awk '/^### Task 1:/ { t = 1 } /^### Task 2:/ { t = 2 } { print } /^\*\*Depends on:\*\*/ { if (t == 1) print "\n**Interfaces:**\n- Produces: `my api`"; if (t == 2) print "\n**Interfaces:**\n- Consumes: `my api`" }' "$TEST_ROOT/ad.B" > "$TEST_ROOT/ad.iface"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.iface" --base "$bB_ad" --accept 'tasks=1,2 interface=my api' --message iface 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && grep -q '^scan: accepted-overlap tasks=1,2 interface=my api$' "$wsad/progress.md" && run_state "$ad_a" deps docs/plan.md --check >/dev/null 2>&1; then pass "an interface acceptance whose name holds a space is accepted as written"; else fail "interface acceptance (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# An acceptance must name an overlap the candidate has: one for an overlap that does not exist yet would reach the ledger and clear that overlap, unasked, when a later amendment introduced it.
+h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+sed 's/^### Task 1: A1$/### Task 1: A2/' "$TEST_ROOT/ad.iface" > "$TEST_ROOT/ad.clean"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.clean" --base "$b_ad" --accept 'tasks=1,2 path=src/q.sh' 2>"$TEST_ROOT/ad.surplus.err"); rc=$?
+out2=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.clean" --base "$b_ad" --accept 'tasks=1,2 interface=no such api' 2>"$TEST_ROOT/ad.surplus2.err"); rc2=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "'tasks=1,2 path=src/q.sh' names no overlap" "$TEST_ROOT/ad.surplus.err" && [ "$rc2" -eq 2 ] && [ "$out2" = "status=error" ] && grep -qF "'tasks=1,2 interface=no such api' names no overlap" "$TEST_ROOT/ad.surplus2.err" && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && ! grep -q 'q.sh\|no such api' "$wsad/progress.md" && [ -z "$(ls -A "$wsad/amends")" ]; then pass "an acceptance, path or interface, that names no overlap of the candidate is refused with nothing published or recorded"; else fail "surplus acceptance (rc=$rc/$rc2: $out/$out2)"; fi
+# One surplus value refuses the whole call: the matched acceptance beside it is not recorded either.
+h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/m.sh`" }' "$TEST_ROOT/ad.iface" > "$TEST_ROOT/ad.mixed"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.mixed" --base "$b_ad" --accept 'tasks=1,2 path=src/m.sh' --accept 'tasks=1,2 path=src/q.sh' 2>"$TEST_ROOT/ad.mixed.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "'tasks=1,2 path=src/q.sh' names no overlap" "$TEST_ROOT/ad.mixed.err" && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && ! grep -q 'm.sh\|q.sh' "$wsad/progress.md" && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a matched acceptance beside a surplus one is refused whole"; else fail "mixed acceptances (rc=$rc: $out)"; fi
+h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/q.sh`" }' "$TEST_ROOT/ad.iface" > "$TEST_ROOT/ad.q"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.q" --base "$b_ad" 2>/dev/null); rc=$?
+if [ "$rc" -eq 1 ] && printf '%s\n' "$out" | grep -qx 'conflict tasks=1,2 shares=src/q.sh' && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ]; then pass "a later amendment that introduces the refused acceptance's overlap is reported as a conflict"; else fail "pre-accepted overlap (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# An edit to the checked-out plan between the check and the refresh, made by a reference-transaction hook when the swap commits: the refresh refuses instead of overwriting it, keeps the record and names the worktree.
+h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+sed 's/^### Task 1: A1$/### Task 1: A3/' "$TEST_ROOT/ad.iface" > "$TEST_ROOT/ad.c5"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c5")
+hook_ad="$ad_a/.git/hooks/reference-transaction"; mark_ad="$TEST_ROOT/ad.hook-fired"
+printf '#!/bin/sh\nlines=$(cat)\n[ "$1" = committed ] || exit 0\ncase "$lines" in *" refs/heads/feat") ;; *) exit 0 ;; esac\n[ -e "%s" ] && exit 0\n: > "%s"\nprintf "edit in the interval\\n" >> "%s"\n' "$mark_ad" "$mark_ad" "$ad_a/docs/plan.md" > "$hook_ad"; chmod 755 "$hook_ad"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c5" --base "$b_ad" --message c5 2>"$TEST_ROOT/ad.interval.err"); rc=$?
+rm -f "$hook_ad"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -e "$mark_ad" ] && grep -qF "but the worktree $ad_a could not be refreshed" "$TEST_ROOT/ad.interval.err" && grep -q '^edit in the interval$' "$ad_a/docs/plan.md" && [ "$(git -C "$ad_a" rev-parse :docs/plan.md)" = "$b_ad" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ -f "$wsad/amends/$n_ad" ]; then pass "an edit made between the check and the refresh is kept, and the call is an error that keeps the record"; else fail "edit in the interval (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.interval.err"))"; fi
+# Once the edit is settled (here, dropped), the same amend run again refreshes the worktree and finishes.
+git -C "$ad_a" show :docs/plan.md > "$ad_a/docs/plan.md"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c5" --base "$b_ad" --message c5 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "after the edit is settled the retry refreshes the worktree and finishes"; else fail "retry after the interval edit (rc=$rc: $out: $(git -C "$ad_a" status --porcelain | tr '\n' '|'))"; fi
+# A retry whose published commit a later commit has undone: a commit from the worktree a crash left at the base puts the base back on the plan ref. The plan is back at exactly the base, so the retry is no already=1; it finishes the record's ledger lines and goes on as a fresh amendment, which publishes again.
+b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+git -C "$ad_a" show feat:docs/plan.md | sed 's/^### Task 1: \(.*\)$/### Task 1: \1 again/' > "$TEST_ROOT/ad.c7"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c7")
+( cd "$ad_a" && HYPERPOWERS_TEST_CRASH_AT=amend-after-swap bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/ad.c7" --base "$b_ad" --message c7 >/dev/null 2>&1 ); rcc=$?
+git -C "$ad_a" commit -qm "commit from the worktree the crash left at the base"; r_ad=$(git -C "$ad_a" rev-parse feat)
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c7" --base "$b_ad" --message c7 2>/dev/null); rc=$?
+if [ "$rcc" -eq 99 ] && [ "$(git -C "$ad_a" rev-parse "$r_ad:docs/plan.md")" = "$b_ad" ] && [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$out" = "${out% already=1}" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ "$(git -C "$ad_a" rev-parse feat^)" = "$r_ad" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && [ "$(grep -c "^plan: amended ${n_ad:0:7} by .*: c7\$" "$wsad/progress.md")" = 1 ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a retry whose commit a later commit undid is no already=1 and publishes the candidate again"; else fail "retry after an undoing commit (rc=$rcc/$rc: $out)"; fi
+# A conflicted merge on another file in the worktree on the plan ref: git's own update refuses any index with an unmerged entry, so the refusal is predicted before the swap, with the ref and the merge left as they were.
+printf 'one\n' > "$ad_a/conf.txt"; git -C "$ad_a" add conf.txt; git -C "$ad_a" commit -qm conf; git -C "$ad_a" branch ad-side
+printf 'two\n' > "$ad_a/conf.txt"; git -C "$ad_a" commit -qam conf-feat
+side_ad=$(printf 'three\n' | git -C "$ad_a" hash-object -w --stdin)
+side_ad=$(GIT_INDEX_FILE="$TEST_ROOT/ad.side.index" sh -c 'git -C "$1" read-tree "$2" && git -C "$1" update-index --cacheinfo 100644,"$3",conf.txt && git -C "$1" write-tree' _ "$ad_a" ad-side "$side_ad")
+git -C "$ad_a" update-ref refs/heads/ad-side "$(git -C "$ad_a" commit-tree "$side_ad" -p ad-side -m conf-side)"
+git -C "$ad_a" merge -q ad-side >/dev/null 2>&1
+unm_ad=$(git -C "$ad_a" ls-files -u); h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+git -C "$ad_a" show feat:docs/plan.md | sed 's/^### Task 2: \(.*\)$/### Task 2: \1 merged/' > "$TEST_ROOT/ad.c6"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c6" --base "$b_ad" --message c6 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$ad_a" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && [ -n "$unm_ad" ] && [ -f "$ad_a/.git/MERGE_HEAD" ] && [ "$(git -C "$ad_a" ls-files -u)" = "$unm_ad" ] && [ "$(git -C "$ad_a" rev-parse :docs/plan.md)" = "$b_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a worktree on the plan ref mid conflicted merge on another file is refused before the swap, the merge untouched"; else fail "mid-merge worktree (rc=$rc: $out)"; fi
+git -C "$ad_a" merge --abort
+# A plan file deleted in the worktree on the plan ref before the call is refused before the swap, with nothing moved. The call comes from a session's own worktree on another branch, as a task's would: through the deleted copy it could not name the plan at all.
+h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+git -C "$ad_a" worktree add -q -b ad-other "$TEST_ROOT/ad-other" feat >/dev/null 2>&1
+git -C "$ad_a" show feat:docs/plan.md | sed 's/^### Task 2: \(.*\)$/### Task 2: \1 kept/' > "$TEST_ROOT/ad.c9"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c9")
+rm -f "$ad_a/docs/plan.md"
+out=$(run_state "$TEST_ROOT/ad-other" amend docs/plan.md --from "$TEST_ROOT/ad.c9" --base "$b_ad" --message c9 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$ad_a" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ] && [ ! -e "$ad_a/docs/plan.md" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a plan file deleted before the call is refused before the swap"; else fail "deleted before the call (rc=$rc: $out)"; fi
+git -C "$ad_a" show :docs/plan.md > "$ad_a/docs/plan.md"
+# The same deletion made once the swap commits, by a reference-transaction hook: git's update would recreate the file, so the refresh refuses instead, keeps the record and names the worktree; the file stays deleted.
+hook_ad="$ad_a/.git/hooks/reference-transaction"; mark_ad="$TEST_ROOT/ad.del-fired"
+printf '#!/bin/sh\nlines=$(cat)\n[ "$1" = committed ] || exit 0\ncase "$lines" in *" refs/heads/feat") ;; *) exit 0 ;; esac\n[ -e "%s" ] && exit 0\n: > "%s"\nrm -f "%s"\n' "$mark_ad" "$mark_ad" "$ad_a/docs/plan.md" > "$hook_ad"; chmod 755 "$hook_ad"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c9" --base "$b_ad" --message c9 2>"$TEST_ROOT/ad.del.err"); rc=$?
+rm -f "$hook_ad"
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -e "$mark_ad" ] && grep -qF "but the worktree $ad_a could not be refreshed" "$TEST_ROOT/ad.del.err" && [ ! -e "$ad_a/docs/plan.md" ] && [ "$(git -C "$ad_a" rev-parse feat:docs/plan.md)" = "$n_ad" ] && [ -f "$wsad/amends/$n_ad" ]; then pass "a deletion made between the check and the refresh stays deleted, and the call is an error that keeps the record"; else fail "deleted in the interval (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.del.err"))"; fi
+# Once the file is restored, the same amend run again refreshes the worktree and finishes.
+git -C "$ad_a" show :docs/plan.md > "$ad_a/docs/plan.md"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c9" --base "$b_ad" --message c9 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$ad_a" status --porcelain)" ] && [ "$(git -C "$ad_a" hash-object docs/plan.md)" = "$n_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "after the deleted file is restored the retry refreshes the worktree and finishes"; else fail "retry after the interval deletion (rc=$rc: $out: $(git -C "$ad_a" status --porcelain | tr '\n' '|'))"; fi
+# Path keys escape a literal percent first: an acceptance of src/a b, keyed src/a%20b, does not cover a later overlap on the distinct path src/a%20b, keyed src/a%2520b.
+h_ad=$(git -C "$ad_a" rev-parse feat); b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+git -C "$ad_a" show feat:docs/plan.md | awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/a b`" }' > "$TEST_ROOT/ad.ab1"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.ab1" --base "$b_ad" --accept 'tasks=1,2 path=src/a%20b' --message ab1 2>/dev/null); rc=$?
+b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md); h_ad=$(git -C "$ad_a" rev-parse feat)
+awk '{ print } /^- Modify: `src\/x.sh`$/ { print "- Modify: `src/a%20b`" }' "$TEST_ROOT/ad.ab1" > "$TEST_ROOT/ad.ab2"
+out2=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.ab2" --base "$b_ad" --message ab2 2>/dev/null); rc2=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && grep -q '^scan: accepted-overlap tasks=1,2 path=src/a%20b$' "$wsad/progress.md" && [ "$rc2" -eq 1 ] && [ "$out2" = "status=conflicts plan=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.ab2" | cut -c1-7) count=1
+conflict tasks=1,2 shares=src/a%2520b" ] && [ "$(git -C "$ad_a" rev-parse feat)" = "$h_ad" ]; then pass "an acceptance of src/a b does not suppress a later overlap on src/a%20b"; else fail "percent-encoded acceptance (rc=$rc/$rc2: $out / $(printf '%s' "$out2" | tr '\n' '|'))"; fi
+# A retry whose plan a later commit deleted from the plan ref: a ref without the plan is never already=1. The call finishes the record's ledger lines, then refuses as the fresh path does, with the ref left where it is. Last in this repository, which it leaves without a plan on feat.
+b_ad=$(git -C "$ad_a" rev-parse feat:docs/plan.md)
+git -C "$ad_a" show feat:docs/plan.md | sed 's/^### Task 1: \(.*\)$/### Task 1: \1 gone/' > "$TEST_ROOT/ad.c8"; n_ad=$(git -C "$ad_a" hash-object "$TEST_ROOT/ad.c8")
+( cd "$ad_a" && HYPERPOWERS_TEST_CRASH_AT=amend-after-swap bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/ad.c8" --base "$b_ad" --message c8 >/dev/null 2>&1 ); rcc=$?
+del_ad=$(GIT_INDEX_FILE="$TEST_ROOT/ad.del.index" sh -c 'git -C "$1" read-tree feat && git -C "$1" update-index --force-remove docs/plan.md && git -C "$1" write-tree' _ "$ad_a")
+del_ad=$(git -C "$ad_a" commit-tree "$del_ad" -p feat -m "delete the plan"); git -C "$ad_a" update-ref refs/heads/feat "$del_ad"
+out=$(run_state "$ad_a" amend docs/plan.md --from "$TEST_ROOT/ad.c8" --base "$b_ad" --message c8 2>"$TEST_ROOT/ad.gone.err"); rc=$?
+if [ "$rcc" -eq 99 ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'does not carry docs/plan.md' "$TEST_ROOT/ad.gone.err" && grep -q "^plan: amended ${n_ad:0:7} by .*: c8\$" "$wsad/progress.md" && [ "$(git -C "$ad_a" rev-parse feat)" = "$del_ad" ] && [ -z "$(ls -A "$wsad/amends")" ]; then pass "a retry whose plan a later commit deleted is no already=1: its ledger lines are finished and it refuses, the ref unmoved"; else fail "retry after the plan was deleted (rc=$rcc/$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/ad.gone.err"))"; fi
+# The plan in one repository and the code in another: the amendment moves the plan repository's ref, refreshes its checkout and leaves the code repository alone.
+make_repo "$TEST_ROOT/asp"; make_repo "$TEST_ROOT/asc"; asp="$TEST_ROOT/asp"; asc="$TEST_ROOT/asc"
+git -C "$asc" commit -q --amend --allow-empty -m "code root"
+mkdir -p "$asp/docs"; cp "$ad_a/docs/spec.md" "$asp/docs/spec.md"; git -C "$am_a" show "$head_am:docs/plan.md" > "$asp/docs/plan.md"
+git -C "$asp" add docs; git -C "$asp" commit -qm plan; git -C "$asp" switch -q -c plans; git -C "$asc" switch -q -c feat
+wsasp=$(run_sdd_dir "$asp" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsasp/progress.md"
+run_state "$asp" register docs/plan.md --session s1 --integration feat --code-repo "$asc" >/dev/null
+b_sp=$(git -C "$asp" rev-parse plans:docs/plan.md); h_sp=$(git -C "$asp" rev-parse plans); refs_sc=$(git -C "$asc" for-each-ref; git -C "$asc" rev-parse HEAD)
+sed 's/^### Task 2: B$/### Task 2: B-split/' "$asp/docs/plan.md" > "$TEST_ROOT/asp.c1"; n_sp=$(git -C "$asp" hash-object "$TEST_ROOT/asp.c1")
+out=$(run_state "$asp" amend docs/plan.md --from "$TEST_ROOT/asp.c1" --base "$b_sp" --code-repo "$asc" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$asp" rev-parse plans^)" = "$h_sp" ] && [ "$(git -C "$asp" rev-parse plans:docs/plan.md)" = "$n_sp" ] && [ "$(git -C "$asc" for-each-ref; git -C "$asc" rev-parse HEAD)" = "$refs_sc" ] && [ -z "$(git -C "$asc" status --porcelain)" ] && [ -z "$(git -C "$asp" status --porcelain)" ] && [ "$(git -C "$asp" rev-parse :docs/plan.md)" = "$n_sp" ] && [ "$(git -C "$asp" hash-object docs/plan.md)" = "$n_sp" ]; then pass "a split amendment publishes on the plan repository's ref, refreshes its checkout and leaves the code repository alone"; else fail "split amend (rc=$rc: $out)"; fi
+
+echo "merge-back: the integration ref's writer"
+make_pair mb; mb_a=$PAIR_A
+mkdir -p "$mb_a/docs" "$mb_a/src"; : > "$mb_a/docs/spec.md"; printf 'base\n' > "$mb_a/src/a.txt"; printf 'base\n' > "$mb_a/src/b.txt"
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 2: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 3: C\n\n**Risk tier:** standard\n\n**Depends on:** Task 1\n' > "$mb_a/docs/plan.md"
+git -C "$mb_a" add .; git -C "$mb_a" commit -qm base; git -C "$mb_a" push -q origin main 2>/dev/null; git -C "$mb_a" switch -q -c feat
+run_state "$mb_a" sync docs/plan.md >/dev/null 2>&1; wsmb=$(run_sdd_dir "$mb_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsmb/progress.md"; run_state "$mb_a" register docs/plan.md --session s1 --integration feat >/dev/null
+ws8mb=$(basename "$wsmb" | sed 's/.*-//')
+make_repo "$TEST_ROOT/foreign-mb"
+run_state "$mb_a" claim docs/plan.md 1 --session s1 >/dev/null; run_state "$mb_a" claim docs/plan.md 2 --session s2 >/dev/null
+# Session 1 works task 1 on its branch (fast-forward case).
+git -C "$mb_a" switch -q "feat.$ws8mb.task-1"; printf 'one\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "task 1"; t1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ]; then pass "merge-back refuses a commit no approval line names"; else fail "not-approved (rc=$rc: $out)"; fi
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" --code-repo "$TEST_ROOT/foreign-mb" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "merge-back refuses a foreign --code-repo"; else fail "merge-back wrong-repo (rc=$rc: $out)"; fi
+printf 'Task 1: approved %s\n' "${t1:0:7}" >> "$wsmb/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s2 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "$out" = "status=not-holder owner=s1" ]; then pass "merge-back refuses a session that does not hold the claim"; else fail "not-holder (rc=$rc: $out)"; fi
+git -C "$mb_a" switch -q feat
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "${out%% worktree=*}" = "status=checked-out" ]; then pass "merge-back refuses while the integration branch is checked out"; else fail "checked-out (rc=$rc: $out)"; fi
+git -C "$mb_a" switch -q --detach feat
+lease_mb="$STATE_ROOT/$(state_key "$mb_a").final-$(printf 'refs/heads/feat' | git -C "$mb_a" hash-object --stdin | cut -c1-12)"
+printf 'session=s9\nhost=h\nplan=other\nbranch=feat\ntime=2026-01-01T00:00:00Z\nclosing=0\n' > "$lease_mb"
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=lease:s9" ]; then pass "merge-back refuses while a final train holds the branch lease"; else fail "merge-back under lease (rc=$rc: $out)"; fi
+rm -f "$lease_mb"
+# A lease that names no holder is an error, never a free branch.
+printf 'host=h\nplan=other\nbranch=feat\n' > "$lease_mb"
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>"$TEST_ROOT/mb.lease.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "$(basename "$lease_mb")" "$TEST_ROOT/mb.lease.err" && [ "$(git -C "$mb_a" rev-parse feat)" != "$t1" ]; then pass "merge-back reads a lease without session= as an error naming the file"; else fail "merge-back sessionless lease (rc=$rc: $out)"; fi
+rm -f "$lease_mb"
+# A claim record without its session is an error, not an unclaimed task.
+cp "$wsmb/claims/task-1/owner" "$TEST_ROOT/mb.owner"; sed '/^session=/d' "$TEST_ROOT/mb.owner" > "$wsmb/claims/task-1/owner"
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>"$TEST_ROOT/mb.owner.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'claims/task-1/owner' "$TEST_ROOT/mb.owner.err"; then pass "merge-back reads a claim owner without session= as an error naming the file"; else fail "merge-back sessionless owner (rc=$rc: $out)"; fi
+cp "$TEST_ROOT/mb.owner" "$wsmb/claims/task-1/owner"
+# The integration branch checked out in a worktree whose path holds a space: named whole, encoded.
+git -C "$mb_a" worktree add -q "$TEST_ROOT/mb wt" feat 2>/dev/null
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$TEST_ROOT/mb%20wt" ]; then pass "merge-back names a checked-out worktree whose path holds a space whole and encoded"; else fail "checked-out spaced worktree (rc=$rc: $out)"; fi
+git -C "$mb_a" worktree remove --force "$TEST_ROOT/mb wt" 2>/dev/null
+printf '2026-01-01T00:00:00Z\n' > "$wsmb/activity/s1"
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=1 head=${t1:0:7}" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$t1" ] && grep -q "^Task 1: merged ${t1:0:7} into feat (from ${t1:0:7})$" "$wsmb/progress.md" && [ "$(sed -n 's/^proposed=//p' "$wsmb/merges/task-1")" = "$t1" ] && [ "$(cat "$wsmb/activity/s1")" != "2026-01-01T00:00:00Z" ]; then pass "a fast-forward merge-back moves the ref to the approved commit, records it and stamps activity"; else fail "fast-forward (rc=$rc: $out)"; fi
+out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=1 head=${t1:0:7} already=1" ] && [ "$(grep -c '^Task 1: merged' "$wsmb/progress.md")" = 1 ]; then pass "a repeated merge-back is idempotent"; else fail "already (rc=$rc: $out)"; fi
+# Session 2's task 2 branched before task 1 merged: a merge commit.
+git -C "$mb_a" switch -q "feat.$ws8mb.task-2"; printf 'two\n' > "$mb_a/src/b.txt"; git -C "$mb_a" commit -qam "task 2"; t2=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 2: approved %s\n' "${t2:0:7}" >> "$wsmb/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan.md 2 --session s2 --commit "$t2" 2>/dev/null); rc=$?
+hm=$(git -C "$mb_a" rev-parse feat)
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=2 head=${hm:0:7}" ] && [ "$(git -C "$mb_a" rev-parse "$hm^1")" = "$t1" ] && [ "$(git -C "$mb_a" rev-parse "$hm^2")" = "$t2" ] && [ "$(git -C "$mb_a" log -1 --format=%s "$hm")" = "Merge task 2: B" ] && [ "$(git -C "$mb_a" show feat:src/a.txt)" = one ] && [ "$(git -C "$mb_a" show feat:src/b.txt)" = two ]; then pass "a divergent merge-back makes one merge commit titled with the task"; else fail "merge commit (rc=$rc: $out)"; fi
+# Without its merge record, a retry names the first-parent commit whose second parent is the approved commit.
+mv "$wsmb/merges/task-2" "$TEST_ROOT/mb.rec2"
+out=$(run_state "$mb_a" merge-back docs/plan.md 2 --session s2 --commit "$t2" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=2 head=${hm:0:7} already=1" ] && [ "$(grep -c '^Task 2: merged' "$wsmb/progress.md")" = 1 ]; then pass "a retry without its merge record names the merge commit that published the approved one"; else fail "reconstructed merge (rc=$rc: $out)"; fi
+mv "$TEST_ROOT/mb.rec2" "$wsmb/merges/task-2"
+# The controller deletes a merged task's branch before its completion line: the owner's claim retry in that window recreates no branch and names nothing to check out.
+git -C "$mb_a" branch -D "feat.$ws8mb.task-2" >/dev/null 2>&1
+out=$(run_state "$mb_a" claim docs/plan.md 2 --session s2 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=2 owner=s2 own=1 branch=none merged=1" ] && ! git -C "$mb_a" rev-parse -q --verify "feat.$ws8mb.task-2" >/dev/null; then pass "the owner's retry of a merged task recreates no task branch and reports merged=1"; else fail "retry of a merged task (rc=$rc: $out: branch $(git -C "$mb_a" rev-parse -q --verify "feat.$ws8mb.task-2" 2>/dev/null || echo absent))"; fi
+# A holder that dies in the same window is taken over by another session: the takeover resumes the merged task, makes no task branch and deletes none. Task 2's branch is gone, task 1's is still there; both claims are put back afterwards for the checks below.
+cp -Rp "$wsmb/claims/task-1" "$TEST_ROOT/mb.claim1"; cp -Rp "$wsmb/claims/task-2" "$TEST_ROOT/mb.claim2"
+out=$(run_state "$mb_a" claim docs/plan.md 2 --session s-take --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2 takeover=1 branch=none merged=1" ] && [ "$(sed -n 's/^session=//p' "$wsmb/claims/task-2/owner")" = s-take ] && [ -z "$(sed -n 's/^branch=//p' "$wsmb/claims/task-2/owner")" ] && grep -q '^session=s2$' "$wsmb/claims/task-2/owner.history" && [ -z "$(git -C "$mb_a" for-each-ref "refs/heads/feat.$ws8mb.task-2*")" ] && [ -f "$wsmb/activity/s-take" ]; then pass "a takeover of a merged task whose branch is gone makes no task branch and reports merged=1"; else fail "takeover of a merged task, branch gone (rc=$rc: $out: refs $(git -C "$mb_a" for-each-ref --format='%(refname:short)' "refs/heads/feat.$ws8mb.task-2*" | tr '\n' ' '))"; fi
+out=$(run_state "$mb_a" claim docs/plan.md 1 --session s-take --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 takeover=1 branch=none merged=1" ] && [ "$(sed -n 's/^session=//p' "$wsmb/claims/task-1/owner")" = s-take ] && [ -z "$(sed -n 's/^branch=//p' "$wsmb/claims/task-1/owner")" ] && grep -q '^session=s1$' "$wsmb/claims/task-1/owner.history" && [ "$(git -C "$mb_a" rev-parse "feat.$ws8mb.task-1" 2>/dev/null)" = "$t1" ] && [ "$(git -C "$mb_a" for-each-ref --format='%(refname:short)' "refs/heads/feat.$ws8mb.task-1*")" = "feat.$ws8mb.task-1" ]; then pass "a takeover of a merged task leaves the old task branch as it was and makes no new one"; else fail "takeover of a merged task, branch present (rc=$rc: $out: refs $(git -C "$mb_a" for-each-ref --format='%(refname:short)' "refs/heads/feat.$ws8mb.task-1*" | tr '\n' ' '))"; fi
+rm -rf "$wsmb/claims/task-1" "$wsmb/claims/task-2"; mv "$TEST_ROOT/mb.claim1" "$wsmb/claims/task-1"; mv "$TEST_ROOT/mb.claim2" "$wsmb/claims/task-2"
+# A dependent whose predecessor is not complete is blocked even when approved.
+run_state "$mb_a" claim docs/plan.md 3 --session s1 >/dev/null 2>&1
+printf 'Task 1: complete (commits 1111111..%s, review clean)\n' "${t1:0:7}" >> "$wsmb/progress.md"
+run_state "$mb_a" claim docs/plan.md 3 --session s1 >/dev/null
+git -C "$mb_a" switch -q "feat.$ws8mb.task-3"; printf 'three\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "task 3"; t3=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 3: approved %s\n' "${t3:0:7}" >> "$wsmb/progress.md"
+sed -i '' 's/^Task 1: complete .*$/Task 1: pending/' "$wsmb/progress.md" 2>/dev/null || sed -i 's/^Task 1: complete .*$/Task 1: pending/' "$wsmb/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "$out" = "status=blocked waiting=1" ]; then pass "merge-back rechecks the predecessors against the authoritative graph"; else fail "blocked at merge-back (rc=$rc: $out)"; fi
+sed -i '' "s/^Task 1: pending$/Task 1: complete (commits 1111111..${t1:0:7}, review clean)/" "$wsmb/progress.md" 2>/dev/null || sed -i "s/^Task 1: pending$/Task 1: complete (commits 1111111..${t1:0:7}, review clean)/" "$wsmb/progress.md"
+# A conflict: a commit on the integration branch touches a.txt after task 3 branched and task 3 also edits it.
+git -C "$mb_a" switch -q feat; printf 'other\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "stranger edit"; git -C "$mb_a" switch -q --detach feat
+out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>/dev/null); rc=$?
+if [ "$rc" -eq 8 ] && [ "$out" = "status=conflict task=3 paths=src/a.txt" ] && [ "$(git -C "$mb_a" log -1 --format=%s feat)" = "stranger edit" ] && [ "$(sed -n 's/^kind=//p' "$wsmb/waiting/s1")" = merge ]; then pass "a conflict moves no ref and posts a merge waiting record"; else fail "conflict (rc=$rc: $out)"; fi
+# The record names the claim's worktree and task branch, never the caller's location: the same conflict run from an unrelated repository with --code-repo writes the same names, and a claim owner without branch= is an error.
+out=$(cd "$TEST_ROOT/foreign-mb" && bash "$SDD_STATE" merge-back "$mb_a/docs/plan.md" 3 --session s1 --commit "$t3" --code-repo "$mb_a" 2>/dev/null); rc=$?
+if [ "$rc" -eq 8 ] && [ "$(sed -n 's/^worktree=//p' "$wsmb/waiting/s1")" = "$(sed -n 's/^worktree=//p' "$wsmb/claims/task-3/owner")" ] && [ "$(sed -n 's/^worktree=//p' "$wsmb/waiting/s1")" = "$mb_a" ] && [ "$(sed -n 's/^branch=//p' "$wsmb/waiting/s1")" = "feat.$ws8mb.task-3" ]; then pass "the merge waiting record names the claim's worktree and task branch, not the caller's location"; else fail "waiting record names the claim (rc=$rc: $out: $(tr '\n' ' ' < "$wsmb/waiting/s1"))"; fi
+cp "$wsmb/claims/task-3/owner" "$TEST_ROOT/mb.owner3"; sed '/^branch=/d' "$TEST_ROOT/mb.owner3" > "$wsmb/claims/task-3/owner"
+out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>"$TEST_ROOT/mb.owner3.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'claims/task-3/owner' "$TEST_ROOT/mb.owner3.err" && [ "$(git -C "$mb_a" log -1 --format=%s feat)" = "stranger edit" ]; then pass "a conflict whose claim owner lacks branch= is an error naming the file"; else fail "conflict with an owner lacking branch= (rc=$rc: $out)"; fi
+cp "$TEST_ROOT/mb.owner3" "$wsmb/claims/task-3/owner"
+# Resolve on the task branch, re-approve, retry: the record is cleared.
+git -C "$mb_a" switch -q "feat.$ws8mb.task-3"; git -C "$mb_a" merge -q feat >/dev/null 2>&1; printf 'three\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "resolve" ; t3b=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 3: approved %s\n' "${t3b:0:7}" >> "$wsmb/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=${t3b:0:7}" ]; then pass "only the newest approved commit may merge"; else fail "newest approved (rc=$rc: $out)"; fi
+out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3b" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -f "$wsmb/waiting/s1" ] && [ "$(git -C "$mb_a" show feat:src/a.txt)" = three ]; then pass "the retry after resolution merges and clears the waiting record"; else fail "resolved merge (rc=$rc: $out)"; fi
+# Crash seams: after the record (nothing published), after the swap (bookkeeping on retry, after another task advanced), after the ledger line.
+run_state "$mb_a" claim docs/plan.md 2 --session s2 >/dev/null 2>&1
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: X\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 2: Y\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$mb_a/docs/plan2.md"
+# A first registration takes the plan ref from the current branch, so plan2 registers on feat before the worktree detaches.
+git -C "$mb_a" switch -q feat; git -C "$mb_a" add docs; git -C "$mb_a" commit -qm plan2
+wsmb2=$(run_sdd_dir "$mb_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsmb2/progress.md"; run_state "$mb_a" register docs/plan2.md --session s3 --integration feat >/dev/null; git -C "$mb_a" switch -q --detach feat
+ws8mb2=$(printf '%s' "$(basename "$wsmb2")" | sed 's/.*-//')
+run_state "$mb_a" claim docs/plan2.md 1 --session s3 >/dev/null; run_state "$mb_a" claim docs/plan2.md 2 --session s3 >/dev/null
+git -C "$mb_a" switch -q "feat.$ws8mb2.task-1"; printf 'x\n' > "$mb_a/src/x.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm x; x1=$(git -C "$mb_a" rev-parse HEAD)
+git -C "$mb_a" switch -q "feat.$ws8mb2.task-2"; printf 'y\n' > "$mb_a/src/y.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm y; y1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 1: approved %s\nTask 2: approved %s\n' "${x1:0:7}" "${y1:0:7}" >> "$wsmb2/progress.md"
+hbefore=$(git -C "$mb_a" rev-parse feat)
+( cd "$mb_a" && HYPERPOWERS_TEST_CRASH_AT=merge-back-after-record bash "$SDD_STATE" merge-back docs/plan2.md 1 --session s3 --commit "$x1" >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$hbefore" ] && [ -f "$wsmb2/merges/task-1" ]; then pass "a crash after the record publishes nothing"; else fail "crash after record (rc=$rc)"; fi
+( cd "$mb_a" && HYPERPOWERS_TEST_CRASH_AT=merge-back-after-swap bash "$SDD_STATE" merge-back docs/plan2.md 1 --session s3 --commit "$x1" >/dev/null 2>&1 ); rc=$?
+pub=$(sed -n 's/^proposed=//p' "$wsmb2/merges/task-1")
+if [ "$rc" -eq 99 ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$pub" ] && ! grep -q '^Task 1: merged' "$wsmb2/progress.md"; then pass "a crash after the swap leaves the ref moved and the ledger line owed"; else fail "crash after swap (rc=$rc)"; fi
+out=$(run_state "$mb_a" merge-back docs/plan2.md 2 --session s3 --commit "$y1" 2>/dev/null); rc=$?
+hadv=$(git -C "$mb_a" rev-parse feat)
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=2 head=${hadv:0:7}" ] && [ "$hadv" != "$pub" ] && [ "$(git -C "$mb_a" rev-parse "$hadv^1")" = "$pub" ]; then pass "another task's merge-back advances the head past the published commit"; else fail "advance by task 2 (rc=$rc: $out)"; fi
+out=$(run_state "$mb_a" merge-back docs/plan2.md 1 --session s3 --commit "$x1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=1 head=${pub:0:7} already=1" ] && grep -q "^Task 1: merged ${pub:0:7} into feat" "$wsmb2/progress.md"; then pass "the retry names the record's commit after another task advanced the head"; else fail "retry after advance (rc=$rc: $out)"; fi
+( cd "$mb_a" && HYPERPOWERS_TEST_CRASH_AT=merge-back-after-ledger bash "$SDD_STATE" merge-back docs/plan2.md 1 --session s3 --commit "$x1" >/dev/null 2>&1 ); rc=$?
+out=$(run_state "$mb_a" merge-back docs/plan2.md 1 --session s3 --commit "$x1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(grep -c '^Task 1: merged' "$wsmb2/progress.md")" = 1 ]; then pass "a retry after the ledger line appends nothing twice"; else fail "retry after ledger (rc=$rc: $out)"; fi
+# The lost compare-and-swap: a writer seam moves the integration ref between the merge record and the swap; the command recomputes against the moved head.
+printf '### Task 5: V\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 5"; git -C "$mb_a" switch -q --detach feat
+run_state "$mb_a" claim docs/plan2.md 5 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-5"; printf 'v\n' > "$mb_a/src/v.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm v; v1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 5: approved %s\n' "${v1:0:7}" >> "$wsmb2/progress.md"
+adv2=$(git -C "$mb_a" commit-tree "$(git -C "$mb_a" rev-parse "feat^{tree}")" -p "$(git -C "$mb_a" rev-parse feat)" -m "advance" 2>/dev/null)
+# The same session still owes the resolve route for task 2: its merge waiting record must outlive task 5's merge-back.
+mkdir -p "$wsmb2/waiting"; printf 'session=s3\ntask=2\nkind=merge\nsince=2026-01-01T00:00:00Z\nnote=merge-back conflict in src/y.txt\nworktree=%s\nbranch=feat\nhost=h\n' "$mb_a" > "$wsmb2/waiting/s3"
+out=$(cd "$mb_a" && HYPERPOWERS_TEST_WRITER_AT="merge-back-before-swap:$adv2" bash "$SDD_STATE" merge-back docs/plan2.md 5 --session s3 --commit "$v1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(sed -n 's/^base=//p' "$wsmb2/merges/task-5")" = "$adv2" ] && [ "$(git -C "$mb_a" rev-parse feat^1)" = "$adv2" ]; then pass "a lost swap is recomputed against the moved head"; else fail "lost swap recomputed (rc=$rc: $out base=$(sed -n 's/^base=//p' "$wsmb2/merges/task-5" 2>/dev/null))"; fi
+if [ "$(sed -n 's/^kind=//p' "$wsmb2/waiting/s3" 2>/dev/null)" = merge ] && [ "$(sed -n 's/^task=//p' "$wsmb2/waiting/s3" 2>/dev/null)" = 2 ]; then pass "a merge-back keeps the session's merge waiting record for another task"; else fail "waiting record for another task ($(tr '\n' ' ' < "$wsmb2/waiting/s3" 2>/dev/null))"; fi
+# A dependency amended onto a claimed task: task 6 is claimed with no predecessor, then an amendment on the plan ref makes it depend on task 2 and retitles it, while the worktree's copy keeps the old graph and title.
+printf '\n### Task 6: W\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 6"; git -C "$mb_a" switch -q --detach feat
+run_state "$mb_a" claim docs/plan2.md 6 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-6"; printf 'w\n' > "$mb_a/src/w.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm w; w1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 6: approved %s\n' "${w1:0:7}" >> "$wsmb2/progress.md"
+base6=$(git -C "$mb_a" rev-parse feat:docs/plan2.md); h6=$(git -C "$mb_a" rev-parse feat)
+git -C "$mb_a" show feat:docs/plan2.md | sed -e 's/^### Task 6: W$/### Task 6: W-renamed/' -e '/^### Task 6:/,$ s/^\*\*Depends on:\*\* none$/**Depends on:** Task 2/' > "$TEST_ROOT/mb.cand6"
+# The git floor: merge-back and amend need merge-tree --write-tree (2.38) and refuse an older git by name, before anything moves. The fake git is the sync section's, made here too when this section runs alone.
+if [ ! -x "$TEST_ROOT/fakegit/git" ]; then real_git=$(command -v git); mkdir -p "$TEST_ROOT/fakegit"; printf '#!/bin/sh\nif [ "$1" = --version ]; then echo "git version 2.30.2"; exit 0; fi\nexec "%s" "$@"\n' "$real_git" > "$TEST_ROOT/fakegit/git"; chmod 755 "$TEST_ROOT/fakegit/git"; fi
+out=$(cd "$mb_a" && PATH="$TEST_ROOT/fakegit:$PATH" bash "$SDD_STATE" amend docs/plan2.md --from "$TEST_ROOT/mb.cand6" --base "$base6" 2>"$TEST_ROOT/mb.floor-amend.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'git 2\.38 or newer' "$TEST_ROOT/mb.floor-amend.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h6" ]; then pass "amend refuses a git older than 2.38 by name"; else fail "amend git floor (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.floor-amend.err"))"; fi
+out=$(cd "$mb_a" && PATH="$TEST_ROOT/fakegit:$PATH" bash "$SDD_STATE" merge-back docs/plan2.md 6 --session s3 --commit "$w1" 2>"$TEST_ROOT/mb.floor-merge.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'git 2\.38 or newer' "$TEST_ROOT/mb.floor-merge.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h6" ] && ! grep -q '^Task 6: merged' "$wsmb2/progress.md"; then pass "merge-back refuses a git older than 2.38 by name"; else fail "merge-back git floor (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.floor-merge.err"))"; fi
+run_state "$mb_a" amend docs/plan2.md --from "$TEST_ROOT/mb.cand6" --base "$base6" --message "task 6 after task 2" >/dev/null 2>&1
+out=$(run_state "$mb_a" merge-back docs/plan2.md 6 --session s3 --commit "$w1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "$out" = "status=blocked waiting=2" ] && git -C "$mb_a" show feat:docs/plan2.md | grep -qx '\*\*Depends on:\*\* Task 2' && ! grep -qx '\*\*Depends on:\*\* Task 2' "$mb_a/docs/plan2.md" && [ "$(git -C "$mb_a" rev-parse feat)" != "$h6" ]; then pass "merge-back is blocked by a predecessor amended onto the plan ref while the worktree's copy keeps the old graph"; else fail "blocked by an amended edge (rc=$rc: $out)"; fi
+printf 'Task 2: complete (commits 1111111..%s, review clean)\n' "${y1:0:7}" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 6 --session s3 --commit "$w1" 2>/dev/null); rc=$?
+hw=$(git -C "$mb_a" rev-parse feat)
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=6 head=${hw:0:7}" ] && [ "$(git -C "$mb_a" log -1 --format=%s "$hw")" = "Merge task 6: W-renamed" ] && grep -qx '### Task 6: W' "$mb_a/docs/plan2.md"; then pass "the merge commit takes the task's title from the plan ref, not the worktree's copy"; else fail "title from the plan ref (rc=$rc: $out: $(git -C "$mb_a" log -1 --format=%s "$hw"))"; fi
+# Task 7 carries the approval-token, lost-swap and after-ledger checks.
+git -C "$mb_a" switch -q feat; printf '\n### Task 7: Z\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" commit -qam "plan2 task 7"; git -C "$mb_a" switch -q --detach feat
+run_state "$mb_a" claim docs/plan2.md 7 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-7"; printf 'z\n' > "$mb_a/src/z.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm z; z1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+h7=$(git -C "$mb_a" rev-parse feat)
+# The approval token is resolved to exactly one commit in the code repository, and full ids are compared. A token that names no commit is an error naming it, never not-approved.
+printf 'Task 7: approved 0000000\n' >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>"$TEST_ROOT/mb.tok.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q '0000000' "$TEST_ROOT/mb.tok.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "an approval token that names no commit is an error naming it"; else fail "unresolvable approval token (rc=$rc: $out)"; fi
+# A token naming an annotated tag of the commit is no commit id: git would peel it to the commit.
+git -C "$mb_a" tag -a -m "z tag" mb-z "$z1"; ztag=$(git -C "$mb_a" rev-parse mb-z)
+printf 'Task 7: approved %s\n' "${ztag:0:7}" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>"$TEST_ROOT/mb.tag.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "${ztag:0:7}" "$TEST_ROOT/mb.tag.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "an approval token naming a tag object rather than the commit is an error"; else fail "tag-object approval token (rc=$rc: $out)"; fi
+git -C "$mb_a" tag -d mb-z >/dev/null
+# A real seven-character collision: node searches commit messages for a benign commit and one with other content, both on the integration head, whose ids share a prefix (a birthday search, about 2^14 candidates each). With the approval naming that prefix, the token is ambiguous: an error, and neither commit is merged.
+mbt=$(git -C "$mb_a" rev-parse "$z1^{tree}")
+mbm=$( { git -C "$mb_a" ls-tree "$z1"; printf '100644 blob %s\tmal.txt\n' "$(printf 'malicious\n' | git -C "$mb_a" hash-object -w --stdin)"; } | git -C "$mb_a" mktree)
+node -e 'const c=require("crypto"),fs=require("fs");const [tb,tm,p,out]=process.argv.slice(1);const id="Test <test@example.com> 1700000000 +0000";const body=(t,m)=>"tree "+t+"\nparent "+p+"\nauthor "+id+"\ncommitter "+id+"\n\n"+m+"\n";const pre=s=>c.createHash("sha1").update("commit "+Buffer.byteLength(s)+"\0"+s).digest("hex").slice(0,7);const seen={b:new Map(),m:new Map()};for(let i=0;i<1048576;i++){for(const [k,t,o] of [["b",tb,"m"],["m",tm,"b"]]){const s=body(t,k+" "+i);const x=pre(s);if(seen[o].has(x)){fs.writeFileSync(out+"."+k,s);fs.writeFileSync(out+"."+o,body(o==="b"?tb:tm,o+" "+seen[o].get(x)));process.exit(0);}seen[k].set(x,i);}}process.exit(1);' "$mbt" "$mbm" "$h7" "$TEST_ROOT/mb.coll"
+zb=$(git -C "$mb_a" hash-object -t commit -w "$TEST_ROOT/mb.coll.b"); zm=$(git -C "$mb_a" hash-object -t commit -w "$TEST_ROOT/mb.coll.m"); zp=${zb:0:7}
+printf 'Task 7: approved %s\n' "$zp" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$zb" 2>"$TEST_ROOT/mb.amb.err"); rc=$?
+if [ "${zm:0:7}" = "$zp" ] && [ "$zm" != "$zb" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "$zp" "$TEST_ROOT/mb.amb.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ] && ! grep -q '^Task 7: merged' "$wsmb2/progress.md"; then pass "an approval token two commits share is an error, and neither is merged"; else fail "ambiguous approval token (rc=$rc: $out zb=$zb zm=$zm)"; fi
+# A ref named after the prefix shadows the ambiguous object prefix in git's revision lookup; the token is resolved among objects only, so the commit the ref names is not taken for the approved one.
+git -C "$mb_a" update-ref "refs/heads/$zp" "$zm"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$zm" 2>"$TEST_ROOT/mb.shadow.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "$zp" "$TEST_ROOT/mb.shadow.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ] && ! git -C "$mb_a" merge-base --is-ancestor "$zm" feat && ! grep -q '^Task 7: merged' "$wsmb2/progress.md"; then pass "an ambiguous approval token shadowed by a hex-named ref is an error, and the ref's commit is not merged"; else fail "ref-shadowed approval token (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.shadow.err"))"; fi
+git -C "$mb_a" update-ref -d "refs/heads/$zp"
+printf 'Task 7: approved %s\n' "${z1:0:7}" >> "$wsmb2/progress.md"
+# Three lost swaps: a git wrapper moves the integration ref ahead before each swap. The merge-back gives up after three attempts naming the head it expected and the one it found, and publishes nothing.
+mkdir -p "$TEST_ROOT/racegit"; : > "$TEST_ROOT/race.log"
+printf '#!/bin/sh\nreal="%s"\nif [ "$3" = update-ref ] && [ "$4" = -m ]; then case "$5" in "sdd merge-back task "*) tip=$("$real" -C "$2" rev-parse "$6") && adv=$("$real" -C "$2" commit-tree "$tip^{tree}" -p "$tip" -m race) && "$real" -C "$2" update-ref "$6" "$adv" "$tip" && echo "$adv" >> "%s" ;; esac; fi\nexec "$real" "$@"\n' "$(command -v git)" "$TEST_ROOT/race.log" > "$TEST_ROOT/racegit/git"; chmod 755 "$TEST_ROOT/racegit/git"
+out=$(cd "$mb_a" && PATH="$TEST_ROOT/racegit:$PATH" bash "$SDD_STATE" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>"$TEST_ROOT/mb.race.err"); rc=$?
+r2=$(sed -n 2p "$TEST_ROOT/race.log"); r3=$(sed -n 3p "$TEST_ROOT/race.log")
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(grep -c . "$TEST_ROOT/race.log")" = 3 ] && grep -qF "expected ${r2:0:7}, found ${r3:0:7}" "$TEST_ROOT/mb.race.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$r3" ] && ! git -C "$mb_a" merge-base --is-ancestor "$z1" feat && ! grep -q '^Task 7: merged' "$wsmb2/progress.md"; then pass "three lost swaps give up naming both heads and publish nothing"; else fail "three lost swaps (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.race.err"))"; fi
+# A crash after the ledger line on the first bookkeeping pass: one line, and the merge waiting record and the stale activity are left; the retry clears and stamps them without a second line.
+printf 'session=s3\ntask=7\nkind=merge\nsince=2026-01-01T00:00:00Z\nnote=merge-back conflict in src/z.txt\nworktree=%s\nbranch=feat.%s.task-7\nhost=h\n' "$mb_a" "$ws8mb2" > "$wsmb2/waiting/s3"; printf '2026-01-01T00:00:00Z\n' > "$wsmb2/activity/s3"
+( cd "$mb_a" && HYPERPOWERS_TEST_CRASH_AT=merge-back-after-ledger bash "$SDD_STATE" merge-back docs/plan2.md 7 --session s3 --commit "$z1" >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ "$(grep -c '^Task 7: merged' "$wsmb2/progress.md")" = 1 ] && git -C "$mb_a" merge-base --is-ancestor "$z1" feat && [ "$(sed -n 's/^task=//p' "$wsmb2/waiting/s3")" = 7 ] && [ "$(cat "$wsmb2/activity/s3")" = "2026-01-01T00:00:00Z" ]; then pass "a crash after the ledger line leaves one line, the merge waiting record and the stale activity"; else fail "crash after ledger, first pass (rc=$rc: $(grep -c '^Task 7: merged' "$wsmb2/progress.md") lines)"; fi
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% head=*}" = "status=merged task=7" ] && [ "${out##* }" = "already=1" ] && [ "$(grep -c '^Task 7: merged' "$wsmb2/progress.md")" = 1 ] && [ ! -f "$wsmb2/waiting/s3" ] && [ "$(cat "$wsmb2/activity/s3")" != "2026-01-01T00:00:00Z" ]; then pass "the retry after the ledger line clears the record and stamps activity without a second line"; else fail "retry after ledger, owed bookkeeping (rc=$rc: $out)"; fi
+# A replacement of the approved commit: after the approval, refs/replace swaps in a commit whose tree adds unreviewed content, and the integration head has moved, so the merge is computed. Merge-back reads the original objects: the published tree carries what was approved.
+printf '\n### Task 8: R\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 8"; git -C "$mb_a" switch -q --detach feat
+run_state "$mb_a" claim docs/plan2.md 8 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-8"; printf 'r\n' > "$mb_a/src/r.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm r; r1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+adv8=$(git -C "$mb_a" commit-tree "$(git -C "$mb_a" rev-parse "feat^{tree}")" -p "$(git -C "$mb_a" rev-parse feat)" -m "advance 8"); git -C "$mb_a" update-ref refs/heads/feat "$adv8"
+printf 'Task 8: approved %s\n' "${r1:0:7}" >> "$wsmb2/progress.md"
+rt=$( { git -C "$mb_a" ls-tree "$r1"; printf '100644 blob %s\tunreviewed.txt\n' "$(printf 'unreviewed\n' | git -C "$mb_a" hash-object -w --stdin)"; } | git -C "$mb_a" mktree)
+git -C "$mb_a" replace "$r1" "$(git -C "$mb_a" commit-tree "$rt" -p "$(git -C "$mb_a" rev-parse "$r1^")" -m r)"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 8 --session s3 --commit "$r1" 2>"$TEST_ROOT/mb.rep.err"); rc=$?
+hr=$(git -C "$mb_a" rev-parse feat)
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=8 head=${hr:0:7}" ] && [ "$(git -C "$mb_a" --no-replace-objects rev-parse "$hr^2")" = "$r1" ] && [ "$(git -C "$mb_a" --no-replace-objects show "$hr:src/r.txt")" = r ] && ! git -C "$mb_a" --no-replace-objects cat-file -e "$hr:unreviewed.txt" 2>/dev/null; then pass "a replace ref on the approved commit does not change the published tree"; else fail "replaced approved commit (rc=$rc: $out: $(git -C "$mb_a" --no-replace-objects ls-tree --name-only "$hr" | tr '\n' ' '))"; fi
+git -C "$mb_a" replace -d "$r1" >/dev/null
+# The session id is validated at merge-back's entry, as at claim's: an owner record planted with a slash-bearing session would otherwise let the merge land before a record write refused the id.
+printf '\n### Task 9: S\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 9"; git -C "$mb_a" switch -q --detach feat
+run_state "$mb_a" claim docs/plan2.md 9 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-9"; printf 's\n' > "$mb_a/src/s.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm s; s9=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 9: approved %s\n' "${s9:0:7}" >> "$wsmb2/progress.md"
+sed 's|^session=s3$|session=s3/x|' "$wsmb2/claims/task-9/owner" > "$TEST_ROOT/mb.owner9"; cp "$TEST_ROOT/mb.owner9" "$wsmb2/claims/task-9/owner"
+h9=$(git -C "$mb_a" rev-parse feat)
+out=$(run_state "$mb_a" merge-back docs/plan2.md 9 --session s3/x --commit "$s9" 2>"$TEST_ROOT/mb.sid.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'a session id must be one path entry' "$TEST_ROOT/mb.sid.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h9" ] && ! grep -q '^Task 9: merged' "$wsmb2/progress.md" && [ ! -e "$wsmb2/merges/task-9" ]; then pass "merge-back refuses a slash-bearing session id at its entry, before the merge"; else fail "merge-back session id at entry (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.sid.err"))"; fi
+
+echo "board: waiting records, activity and the board"
+make_pair bd; bd_a=$PAIR_A; bd_b=$PAIR_B
+mkdir -p "$bd_a/docs"; : > "$bd_a/docs/spec.md"
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 2: B\n\n**Risk tier:** standard\n\n**Depends on:** Task 1\n' > "$bd_a/docs/plan.md"
+git -C "$bd_a" add docs; git -C "$bd_a" commit -qm plan; git -C "$bd_a" push -q origin main 2>/dev/null; git -C "$bd_a" switch -q -c feat; git -C "$bd_a" push -q -u origin feat 2>/dev/null
+run_state "$bd_a" sync docs/plan.md >/dev/null 2>&1; wsbd=$(run_sdd_dir "$bd_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsbd/progress.md"; run_state "$bd_a" register docs/plan.md --session s1 --integration feat >/dev/null
+make_repo "$TEST_ROOT/foreign-bd"
+out=$(run_state "$bd_a" board docs/plan.md --code-repo "$TEST_ROOT/foreign-bd" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "board refuses a foreign --code-repo"; else fail "board wrong-repo (rc=$rc: $out)"; fi
+out=$(cd "$TEST_ROOT" && bash "$SDD_STATE" board "$bd_a/docs/plan.md" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q ' frontier=1$' && ! printf '%s\n' "$out" | grep -q '^leftover '; then pass "a board run outside any repository still computes the frontier and prints no leftovers"; else fail "board outside a repository (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --kind question --task 1 --note "which parser?" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=waiting kind=question" ] && [ "$(sed -n 's/^note=//p' "$wsbd/waiting/s1")" = "which parser?" ] && [ -f "$wsbd/activity/s1" ]; then pass "wait writes the record and the activity stamp"; else fail "wait writes (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --kind tasks --note "held: 1@s2" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(sed -n 's/^kind=//p' "$wsbd/waiting/s1")" = tasks ]; then pass "a second wait replaces the record"; else fail "wait replaces (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --kind question --note "$(printf 'two\nlines')" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(sed -n 's/^kind=//p' "$wsbd/waiting/s1")" = tasks ]; then pass "a note with a newline is refused and the record kept"; else fail "newline refused (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --clear 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=cleared" ] && [ ! -f "$wsbd/waiting/s1" ]; then pass "clear removes the record"; else fail "clear (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --clear 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=cleared" ]; then pass "clearing nothing is cleared"; else fail "clear nothing (rc=$rc: $out)"; fi
+# Records travel with snapshot and appear after sync on the other host.
+run_state "$bd_a" wait docs/plan.md --session s1 --kind gate --note "BLOCKED on round 3" >/dev/null
+run_state "$bd_a" claim docs/plan.md 1 --session s1 >/dev/null
+printf '2026-01-01T00:00:00Z\n' > "$wsbd/activity/s1"
+run_state "$bd_a" snapshot docs/plan.md --session s1 >/dev/null; git -C "$bd_a" push -q origin hyperpowers/state 2>/dev/null
+if [ "$(cat "$wsbd/activity/s1")" != "2026-01-01T00:00:00Z" ]; then pass "snapshot --session stamps activity"; else fail "snapshot --session stamps activity"; fi
+git -C "$bd_b" fetch -q origin 2>/dev/null; git -C "$bd_b" switch -q -c feat origin/feat 2>/dev/null
+run_state "$bd_b" sync docs/plan.md >/dev/null 2>&1; wsbdb=$(run_sdd_dir "$bd_b" docs/plan.md 2>/dev/null)
+if [ "$(sed -n 's/^kind=//p' "$wsbdb/waiting/s1" 2>/dev/null)" = gate ] && [ -f "$wsbdb/activity/s1" ]; then pass "waiting and activity records travel with the snapshot"; else fail "records travel ($(ls "$wsbdb" 2>/dev/null | tr '\n' ' '))"; fi
+# The board on host B: one session, one waiting record, the frontier, the held task.
+out=$(run_state "$bd_b" board docs/plan.md 2>/dev/null); rc=$?
+first=$(printf '%s\n' "$out" | sed -n 1p)
+if [ "$rc" -eq 0 ] && [ "${first%% sync=*}" = "status=board" ] && printf '%s' "$first" | grep -q ' sessions=1 waiting=1 frontier=none$' && printf '%s\n' "$out" | grep -q '^session s1 task=1 since=.* host=[^ ]* waiting=gate waiting-since=.* note=BLOCKED%20on%20round%203 silence=[0-9]* quiet-since=none$' && printf '%s\n' "$out" | grep -q '^held task=1 owner=s1 since='; then pass "the board lists the session with its host and silence, its wait, the held task and an empty frontier"; else fail "board lines (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# diverged: both hosts edit the same report and snapshot; B's board still prints, with sync=diverged.
+printf 'A\n' > "$wsbd/task-1-report.md"; run_state "$bd_a" snapshot docs/plan.md >/dev/null; git -C "$bd_a" push -q origin hyperpowers/state 2>/dev/null
+printf 'B\n' > "$wsbdb/task-1-report.md"; run_state "$bd_b" snapshot docs/plan.md >/dev/null
+out=$(run_state "$bd_b" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=diverged' && printf '%s\n' "$out" | grep -q '^session s1 '; then pass "a diverged state branch prints the local board with sync=diverged"; else fail "board diverged (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
+# quiet: a held claim, no waiting record, old activity.
+run_state "$bd_a" wait docs/plan.md --session s1 --clear >/dev/null; printf '2026-01-01T00:00:00Z\n' > "$wsbd/activity/s1"
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null)
+if printf '%s\n' "$out" | grep -q '^session s1 task=1 .* waiting=none .* silence=[0-9]\{6,\} quiet-since=2026-01-01T00:00:00Z$'; then pass "a silent holder is quiet since its last activity, with the silence in seconds"; else fail "quiet ($(printf '%s' "$out" | tr '\n' '|'))"; fi
+# Every sync outcome prints the local board with exit 0: offline (dead remote), plain, no-remote.
+git -C "$bd_a" remote set-url origin "$TEST_ROOT/does-not-exist.git"
+out=$(run_state "$bd_a" board docs/plan.md 2>"$TEST_ROOT/bd.err"); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=offline' && printf '%s\n' "$out" | grep -q '^session s1 '; then pass "a failed fetch prints the local board with sync=offline"; else fail "board offline (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
+git -C "$bd_a" remote set-url origin "$PAIR_REMOTE"
+make_repo "$TEST_ROOT/bd0"; mkdir -p "$TEST_ROOT/bd0/docs"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$TEST_ROOT/bd0/docs/plan.md"; git -C "$TEST_ROOT/bd0" add docs; git -C "$TEST_ROOT/bd0" commit -qm plan
+run_sdd_dir "$TEST_ROOT/bd0" docs/plan.md >/dev/null 2>&1
+out=$(run_state "$TEST_ROOT/bd0" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=no-remote'; then pass "a repository without a remote prints its board with sync=no-remote"; else fail "board no-remote (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
+# plain: a repository with a remote whose state fell back to the plain backend.
+make_pair bdp; bdp_a=$PAIR_A
+# A clone with a remote and no fetch stamp is refused as needs-sync before the worktree add the test hook fails, so the stamp comes first.
+printf 'origin hyperpowers/state %s\n' "$(fp "$bdp_a")" > "$STATE_ROOT/$(state_key "$bdp_a").fetched"
+ensure "$bdp_a" HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 >/dev/null 2>&1
+mkdir -p "$bdp_a/docs"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$bdp_a/docs/plan.md"; git -C "$bdp_a" add docs; git -C "$bdp_a" commit -qm plan
+wsbdp=$(run_sdd_dir "$bdp_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsbdp/progress.md"
+out=$(run_state "$bdp_a" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=plain'; then pass "a plain-backend repository prints its board with sync=plain"; else fail "board plain (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
+out=$(run_state "$bdp_a" snapshot docs/plan.md --session sp 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=plain" ] && [ -f "$wsbdp/activity/sp" ]; then pass "snapshot --session on the plain backend still stamps activity"; else fail "plain snapshot --session (rc=$rc: $out)"; fi
+# Leftover branches and siblings.
+git -C "$bd_a" branch "feat.$(basename "$wsbd" | sed 's/.*-//').task-9" feat
+printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: Z\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$bd_a/docs/plan2.md"; git -C "$bd_a" add docs; git -C "$bd_a" commit -qm plan2
+wsbd2=$(run_sdd_dir "$bd_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsbd2/progress.md"; run_state "$bd_a" register docs/plan2.md --session s2 --integration feat >/dev/null
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null)
+if printf '%s\n' "$out" | grep -q "^leftover branch=feat\..*\.task-9$" && printf '%s\n' "$out" | grep -q "^sibling plan=$(basename "$wsbd2") spec=docs/spec.md integration=feat$"; then pass "the board lists leftover task branches and sibling plans"; else fail "leftovers and siblings ($(printf '%s' "$out" | tr '\n' '|'))"; fi
+out=$(run_state "$bd_a" board --repo "$bd_a" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=board plans=2" ] && [ "$(printf '%s\n' "$out" | grep -c '^plan ws=.* spec=docs/spec.md integration=feat ')" = 2 ]; then pass "board --repo groups the repository's open plans"; else fail "board --repo (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\nTask 2: complete (commits 3333333..4444444, review clean)\n' >> "$wsbd/progress.md"
+run_state "$bd_a" claim docs/plan.md final --session s1 >/dev/null
+printf '2026-01-01T00:00:00Z\n' > "$wsbd/activity/s1"
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q "^session s1 task=final since=[^ ]* .* host=$(hostname) waiting=none .* silence=[0-9]\{6,\} quiet-since=2026-01-01T00:00:00Z$"; then pass "the board shows the final holder with its host and silence age"; else fail "final holder row (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+out=$(run_state "$bd_a" board --repo "$bd_a" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q "^lease branch=feat session=s1 plan=$(basename "$wsbd") closing=0 host=$(hostname) time=$(sed -n 's/^time=//p' "$(ls -d "$STATE_ROOT/$(state_key "$bd_a")".final-*)")$"; then pass "board --repo lists the branch leases with their holders, hosts and times"; else fail "board --repo leases (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# The lease's history beside it is no lease; a holder whose activity file is gone is quiet since its claim, the last activity the dossier records.
+bdl=$(ls -d "$STATE_ROOT/$(state_key "$bd_a")".final-*); cp "$bdl" "$bdl.history"
+out=$(run_state "$bd_a" board --repo "$bd_a" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | grep -c '^lease ')" = 1 ]; then pass "board --repo reads the lease and not its history"; else fail "board --repo lease history (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+rm -f "$bdl.history" "$wsbd/activity/s1"
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q "^session s1 task=final .* silence=none quiet-since=$(sed -n 's/^time=//p' "$wsbd/claims/final/owner")$"; then pass "a holder without an activity file is quiet since its claim"; else fail "quiet without activity (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+run_state "$bd_a" claim docs/plan.md final --session s1 --release >/dev/null
+# The record's fields: --task takes a number or final, a detached head is detached@<sha7>, the worktree is encoded; a session id never leaves waiting/.
+git -C "$bd_a" worktree add -q --detach "$TEST_ROOT/wt at bd" feat 2>/dev/null
+out=$(run_state "$TEST_ROOT/wt at bd" wait "$bd_a/docs/plan.md" --session s9 --kind handoff --task final --note "handed back" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=waiting kind=handoff" ] && [ "$(sed -n 's/^task=//p' "$wsbd/waiting/s9")" = final ] && [ "$(sed -n 's/^worktree=//p' "$wsbd/waiting/s9")" = "$(printf '%s' "$TEST_ROOT/wt at bd" | sed 's/ /%20/g')" ] && [ "$(sed -n 's/^branch=//p' "$wsbd/waiting/s9")" = "detached@$(git -C "$bd_a" rev-parse --short=7 feat)" ]; then pass "wait takes --task final and records a detached head and an encoded worktree"; else fail "wait from a detached worktree (rc=$rc: $out: $(tr '\n' '|' < "$wsbd/waiting/s9" 2>/dev/null))"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s9 --kind question --task 2x --note "x" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(sed -n 's/^kind=//p' "$wsbd/waiting/s9")" = handoff ]; then pass "a --task that is neither a number nor final is refused and the record kept"; else fail "wait --task refused (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session ../progress.md --clear 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$wsbd/progress.md" ]; then pass "a session id that leaves waiting/ is refused"; else fail "wait containment (rc=$rc: $out)"; fi
+# The session row takes its worktree from the session line even when the path holds " at ", and a session id is never expanded as a glob (the board runs where docs/ matches d*).
+printf 'session s9: mode worktree on side at %s started 2026-01-01T00:00:00Z\n' "$TEST_ROOT/wt at bd" >> "$wsbd/progress.md"
+run_state "$bd_a" wait docs/plan.md --session 'd*' --kind question --note "glob" >/dev/null 2>&1
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qF "session s9 task=none since=none worktree=$(printf '%s' "$TEST_ROOT/wt at bd" | sed 's/ /%20/g') branch=side host=$(hostname) waiting=handoff " && printf '%s\n' "$out" | grep -q '^session d\* task=none ' && ! printf '%s\n' "$out" | grep -q '^session docs '; then pass "the board parses a worktree holding \" at \" and never expands a session id"; else fail "board session ids (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# A session id may begin with a dot: the board lists it, and the per-plan board and board --repo count it alike.
+run_state "$bd_a" wait docs/plan.md --session .blocked --kind question --note "dot" >/dev/null 2>&1
+nwbd=$(find "$wsbd/waiting" -mindepth 1 -maxdepth 1 -type f | grep -c .)
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null); rc=$?
+nsbd=$(printf '%s\n' "$out" | sed -n '1s/.* sessions=\([0-9]*\) .*/\1/p')
+outr=$(run_state "$bd_a" board --repo "$bd_a" 2>/dev/null)
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q '^session \.blocked task=none .* waiting=question ' && printf '%s\n' "$out" | sed -n 1p | grep -q " waiting=$nwbd " && printf '%s\n' "$outr" | grep -q "^plan ws=$(basename "$wsbd") .* sessions=$nsbd waiting=$nwbd held="; then pass "a dot-named session is listed and counted by both boards"; else fail "dot-named session (rc=$rc: $(printf '%s' "$out" | tr '\n' '|') :: $(printf '%s' "$outr" | tr '\n' '|'))"; fi
+# No record writer makes a temporary file inside the workspace (a snapshot staging plans/<ws> would commit it): every mktemp a wait runs, for its record and its activity stamp, targets the state root beside the checkout.
+mkdir -p "$TEST_ROOT/shim"; : > "$TEST_ROOT/mktemp.log"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\nexec %s "$@"\n' "$TEST_ROOT/mktemp.log" "$(command -v mktemp)" > "$TEST_ROOT/shim/mktemp"; chmod +x "$TEST_ROOT/shim/mktemp"
+out=$(cd "$bd_a" && PATH="$TEST_ROOT/shim:$PATH" bash "$SDD_STATE" wait docs/plan.md --session s7 --kind question --note "shim" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=waiting kind=question" ] && [ "$(grep -cxF "$STATE_ROOT/.sdd-record.XXXXXX" "$TEST_ROOT/mktemp.log")" = 2 ] && ! grep -qF "$wsbd/" "$TEST_ROOT/mktemp.log"; then pass "wait makes its temporary files outside the workspace"; else fail "wait temporary files ($(tr '\n' '|' < "$TEST_ROOT/mktemp.log"))"; fi
+# An entry at a record's path that is not a regular file is refused, never renamed into, and the temporary file is removed.
+mkdir -p "$wsbd/waiting/s8" "$wsbd/activity/s6"
+out=$(run_state "$bd_a" wait docs/plan.md --session s8 --kind question --note "dir" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -z "$(ls -A "$wsbd/waiting/s8")" ] && [ -z "$(find "$STATE_ROOT" -maxdepth 1 -name '.sdd-record.*')" ]; then pass "a directory at the waiting record's path is refused"; else fail "waiting record over a directory (rc=$rc: $out: $(ls -A "$wsbd/waiting/s8" | tr '\n' ' '))"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s6 --clear 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -z "$(ls -A "$wsbd/activity/s6")" ] && [ -z "$(find "$STATE_ROOT" -maxdepth 1 -name '.sdd-record.*')" ]; then pass "a directory at the activity stamp's path is refused"; else fail "activity stamp over a directory (rc=$rc: $out: $(ls -A "$wsbd/activity/s6" | tr '\n' ' '))"; fi
+rmdir "$wsbd/waiting/s8" "$wsbd/activity/s6"
+# A classifier failure is no empty frontier: with the plan gone from its ref the board still prints its rows and frontier=none, exit 0, and repeats the classifier's status line and its stderr line.
+git -C "$bd_a" rm -q --cached docs/plan.md; git -C "$bd_a" commit -qm "drop the plan from its ref"
+out=$(run_state "$bd_a" board docs/plan.md 2>"$TEST_ROOT/bd.cls.err"); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q ' frontier=none$' && printf '%s\n' "$out" | grep -q '^session s1 ' && [ "$(grep -cx 'status=error' "$TEST_ROOT/bd.cls.err")" = 1 ] && [ "$(grep -c 'the plan ref feat does not carry docs/plan.md' "$TEST_ROOT/bd.cls.err")" = 1 ]; then pass "a classifier failure prints the board and repeats the classifier's lines on stderr"; else fail "classifier failure (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p) :: $(tr '\n' '|' < "$TEST_ROOT/bd.cls.err"))"; fi
+git -C "$bd_a" add docs/plan.md; git -C "$bd_a" commit -qm "restore the plan"
+# A non-success sync that explains itself on stderr (a foreign branch at the state name): its line is repeated exactly once and the local rows stay.
+git -C "$bd_a" push -q -f origin feat:hyperpowers/state 2>/dev/null
+out=$(run_state "$bd_a" board docs/plan.md 2>"$TEST_ROOT/bd.foreign.err"); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=foreign ' && printf '%s\n' "$out" | grep -q '^session s1 ' && [ "$(grep -c . "$TEST_ROOT/bd.foreign.err")" = 1 ] && grep -q 'is not a hyperpowers state branch' "$TEST_ROOT/bd.foreign.err"; then pass "a failed sync's stderr line is repeated once above the local board"; else fail "foreign sync replay (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p) :: $(tr '\n' '|' < "$TEST_ROOT/bd.foreign.err"))"; fi
+# No checkout and a failed sync: an empty table with the sync's status, exit 0, the sync's own stderr line once and no needs-sync line (a dead remote, then a foreign state branch).
+mkdir -p "$TEST_ROOT/hostC" "$TEST_ROOT/hostD"
+git clone -q --single-branch --branch main "$TEST_ROOT/bd.git" "$TEST_ROOT/hostC/bd" 2>/dev/null; git -C "$TEST_ROOT/hostC/bd" remote set-url origin "$TEST_ROOT/dead.git"
+out=$(run_state "$TEST_ROOT/hostC/bd" board docs/plan.md 2>"$TEST_ROOT/bd.c.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=board sync=offline-no-state sessions=0 waiting=0 frontier=none" ] && [ ! -s "$TEST_ROOT/bd.c.err" ]; then pass "a dead remote and no checkout print an empty board with exit 0"; else fail "board without a checkout, dead remote (rc=$rc: $out :: $(tr '\n' '|' < "$TEST_ROOT/bd.c.err"))"; fi
+git clone -q --single-branch --branch main "$TEST_ROOT/bd.git" "$TEST_ROOT/hostD/bd" 2>/dev/null
+out=$(run_state "$TEST_ROOT/hostD/bd" board docs/plan.md 2>"$TEST_ROOT/bd.d.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=board sync=foreign sessions=0 waiting=0 frontier=none" ] && [ "$(grep -c . "$TEST_ROOT/bd.d.err")" = 1 ] && grep -q 'is not a hyperpowers state branch' "$TEST_ROOT/bd.d.err"; then pass "a foreign state branch and no checkout print an empty board and the sync's line once"; else fail "board without a checkout, foreign (rc=$rc: $out :: $(tr '\n' '|' < "$TEST_ROOT/bd.d.err"))"; fi
+# The frontier is next's answer for a session assigned nothing and holding nothing, even beside a real session named board-reader (the first board's placeholder): neither its assignment line nor its claim applies.
+make_repo "$TEST_ROOT/bd3"; mkdir -p "$TEST_ROOT/bd3/docs"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 2: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$TEST_ROOT/bd3/docs/plan.md"; git -C "$TEST_ROOT/bd3" add docs; git -C "$TEST_ROOT/bd3" commit -qm plan
+wsbd3=$(run_sdd_dir "$TEST_ROOT/bd3" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\nsession board-reader: tasks 2\n' > "$wsbd3/progress.md"
+out=$(run_state "$TEST_ROOT/bd3" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=board sync=no-remote sessions=0 waiting=0 frontier=1,2" ]; then pass "another session's assignment line does not narrow the frontier"; else fail "frontier beside an assigned board-reader (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
+run_state "$TEST_ROOT/bd3" claim docs/plan.md 2 --session board-reader >/dev/null 2>&1
+out=$(run_state "$TEST_ROOT/bd3" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=board sync=no-remote sessions=1 waiting=0 frontier=1" ]; then pass "a task claimed by a session named board-reader is held, not claimable"; else fail "frontier beside a board-reader claim (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
+# A session id that is not a single path entry names no record: wait and the activity stamp of snapshot --session refuse it and make no directory for it (one would block session a's own records and show a phantom session).
+out=$(run_state "$bd_a" wait docs/plan.md --session a/b --kind question --note "nested" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd/waiting/a" ] && [ ! -e "$wsbd/activity/a" ]; then pass "wait refuses a session id holding a slash and makes no directory"; else fail "wait with a nested session id (rc=$rc: $out: $(ls -A "$wsbd/waiting" "$wsbd/activity" | tr '\n' ' '))"; fi
+out=$(run_state "$bd_a" snapshot docs/plan.md --session c/d 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd/activity/c" ]; then pass "snapshot --session refuses a session id holding a slash and makes no directory"; else fail "snapshot with a nested session id (rc=$rc: $out: $(ls -A "$wsbd/activity" | tr '\n' ' '))"; fi
+# A session id with a newline is one file name but two lines of the board's listing: wait, snapshot --session and claim refuse it before writing anything, and the board's counts stay.
+counts_bd() { run_state "$1" board docs/plan.md 2>/dev/null | sed -n '1s/.* \(sessions=[0-9]* waiting=[0-9]*\) .*/\1/p'; }
+before_bd=$(counts_bd "$bd_a")
+out=$(run_state "$bd_a" wait docs/plan.md --session $'a\nb' --kind question --note "newline" 2>"$TEST_ROOT/bd.nl.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(grep -c . "$TEST_ROOT/bd.nl.err")" = 1 ] && [ ! -e "$wsbd/waiting/"$'a\nb' ] && [ ! -e "$wsbd/activity/"$'a\nb' ] && [ -n "$before_bd" ] && [ "$(counts_bd "$bd_a")" = "$before_bd" ]; then pass "wait refuses a session id with a newline, writes no record and leaves the board's counts"; else fail "wait with a newline session id (rc=$rc: $out: $before_bd -> $(counts_bd "$bd_a") :: $(tr '\n' '|' < "$TEST_ROOT/bd.nl.err"))"; fi
+out=$(run_state "$bd_a" snapshot docs/plan.md --session $'c\nd' 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd/activity/"$'c\nd' ] && [ "$(counts_bd "$bd_a")" = "$before_bd" ]; then pass "snapshot --session refuses a session id with a newline and stamps nothing"; else fail "snapshot with a newline session id (rc=$rc: $out: $(ls -A "$wsbd/activity" | tr '\n' ' '))"; fi
+out=$(run_state "$TEST_ROOT/bd3" claim docs/plan.md 1 --session $'a\nb' 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd3/claims/task-1" ] && [ ! -e "$wsbd3/activity/"$'a\nb' ]; then pass "claim refuses a session id with a newline and publishes no claim"; else fail "claim with a newline session id (rc=$rc: $out: $(ls -A "$wsbd3/claims" | tr '\n' ' '))"; fi
+# A session line of the shape the SDD skill writes names the integration branch after the session's own: the row's branch is the session's alone, and the worktree is unchanged.
+printf 'session s10: mode worktree on detached integrating feat at %s started 2026-01-01T00:00:00Z\n' "$TEST_ROOT/wt at bd" >> "$wsbd/progress.md"
+out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qF "session s10 task=none since=none worktree=$(printf '%s' "$TEST_ROOT/wt at bd" | sed 's/ /%20/g') branch=detached host="; then pass "the board takes a session's own branch from a session line that names its integration branch"; else fail "board session line with integrating (rc=$rc: $(printf '%s\n' "$out" | grep '^session s10 '))"; fi
 
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

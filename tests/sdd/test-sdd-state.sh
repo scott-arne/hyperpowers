@@ -4376,7 +4376,7 @@ make_repo "$TEST_ROOT/foreign-bd"
 out=$(run_state "$bd_a" board docs/plan.md --code-repo "$TEST_ROOT/foreign-bd" 2>/dev/null); rc=$?
 if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "board refuses a foreign --code-repo"; else fail "board wrong-repo (rc=$rc: $out)"; fi
 out=$(cd "$TEST_ROOT" && bash "$SDD_STATE" board "$bd_a/docs/plan.md" 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q ' frontier=1$' && ! printf '%s\n' "$out" | grep -q '^leftover '; then pass "a board run outside any repository still computes the frontier and prints no leftovers"; else fail "board outside a repository (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q ' frontier=1$' && ! printf '%s\n' "$out" | grep -q '^leftover '; then pass "a board run outside any repository still computes the frontier and prints no leftovers"; else fail "board outside a repository (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
 out=$(run_state "$bd_a" wait docs/plan.md --session s1 --kind question --task 1 --note "which parser?" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=waiting kind=question" ] && [ "$(sed -n 's/^note=//p' "$wsbd/waiting/s1")" = "which parser?" ] && [ -f "$wsbd/activity/s1" ]; then pass "wait writes the record and the activity stamp"; else fail "wait writes (rc=$rc: $out)"; fi
 out=$(run_state "$bd_a" wait docs/plan.md --session s1 --kind tasks --note "held: 1@s2" 2>/dev/null); rc=$?
@@ -4404,7 +4404,7 @@ if [ "$rc" -eq 0 ] && [ "${first%% sync=*}" = "status=board" ] && printf '%s' "$
 printf 'A\n' > "$wsbd/task-1-report.md"; run_state "$bd_a" snapshot docs/plan.md >/dev/null; git -C "$bd_a" push -q origin hyperpowers/state 2>/dev/null
 printf 'B\n' > "$wsbdb/task-1-report.md"; run_state "$bd_b" snapshot docs/plan.md >/dev/null
 out=$(run_state "$bd_b" board docs/plan.md 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=diverged' && printf '%s\n' "$out" | grep -q '^session s1 '; then pass "a diverged state branch prints the local board with sync=diverged"; else fail "board diverged (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=diverged' && printf '%s\n' "$out" | grep -q '^session s1 '; then pass "a diverged state branch prints the local board with sync=diverged"; else fail "board diverged (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
 # quiet: a held claim, no waiting record, old activity.
 run_state "$bd_a" wait docs/plan.md --session s1 --clear >/dev/null; printf '2026-01-01T00:00:00Z\n' > "$wsbd/activity/s1"
 out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null)
@@ -4412,12 +4412,12 @@ if printf '%s\n' "$out" | grep -q '^session s1 task=1 .* waiting=none .* silence
 # Every sync outcome prints the local board with exit 0: offline (dead remote), plain, no-remote.
 git -C "$bd_a" remote set-url origin "$TEST_ROOT/does-not-exist.git"
 out=$(run_state "$bd_a" board docs/plan.md 2>"$TEST_ROOT/bd.err"); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=offline' && printf '%s\n' "$out" | grep -q '^session s1 '; then pass "a failed fetch prints the local board with sync=offline"; else fail "board offline (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=offline' && printf '%s\n' "$out" | grep -q '^session s1 '; then pass "a failed fetch prints the local board with sync=offline"; else fail "board offline (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
 git -C "$bd_a" remote set-url origin "$PAIR_REMOTE"
 make_repo "$TEST_ROOT/bd0"; mkdir -p "$TEST_ROOT/bd0/docs"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$TEST_ROOT/bd0/docs/plan.md"; git -C "$TEST_ROOT/bd0" add docs; git -C "$TEST_ROOT/bd0" commit -qm plan
 run_sdd_dir "$TEST_ROOT/bd0" docs/plan.md >/dev/null 2>&1
 out=$(run_state "$TEST_ROOT/bd0" board docs/plan.md 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=no-remote'; then pass "a repository without a remote prints its board with sync=no-remote"; else fail "board no-remote (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=no-remote'; then pass "a repository without a remote prints its board with sync=no-remote"; else fail "board no-remote (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
 # plain: a repository with a remote whose state fell back to the plain backend.
 make_pair bdp; bdp_a=$PAIR_A
 # A clone with a remote and no fetch stamp is refused as needs-sync before the worktree add the test hook fails, so the stamp comes first.
@@ -4426,7 +4426,7 @@ ensure "$bdp_a" HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 >/dev/null 2>&1
 mkdir -p "$bdp_a/docs"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$bdp_a/docs/plan.md"; git -C "$bdp_a" add docs; git -C "$bdp_a" commit -qm plan
 wsbdp=$(run_sdd_dir "$bdp_a" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsbdp/progress.md"
 out=$(run_state "$bdp_a" board docs/plan.md 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=plain'; then pass "a plain-backend repository prints its board with sync=plain"; else fail "board plain (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=plain'; then pass "a plain-backend repository prints its board with sync=plain"; else fail "board plain (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
 out=$(run_state "$bdp_a" snapshot docs/plan.md --session sp 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=plain" ] && [ -f "$wsbdp/activity/sp" ]; then pass "snapshot --session on the plain backend still stamps activity"; else fail "plain snapshot --session (rc=$rc: $out)"; fi
 # Leftover branches and siblings.
@@ -4487,12 +4487,12 @@ rmdir "$wsbd/waiting/s8" "$wsbd/activity/s6"
 # A classifier failure is no empty frontier: with the plan gone from its ref the board still prints its rows and frontier=none, exit 0, and repeats the classifier's status line and its stderr line.
 git -C "$bd_a" rm -q --cached docs/plan.md; git -C "$bd_a" commit -qm "drop the plan from its ref"
 out=$(run_state "$bd_a" board docs/plan.md 2>"$TEST_ROOT/bd.cls.err"); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q ' frontier=none$' && printf '%s\n' "$out" | grep -q '^session s1 ' && [ "$(grep -cx 'status=error' "$TEST_ROOT/bd.cls.err")" = 1 ] && [ "$(grep -c 'the plan ref feat does not carry docs/plan.md' "$TEST_ROOT/bd.cls.err")" = 1 ]; then pass "a classifier failure prints the board and repeats the classifier's lines on stderr"; else fail "classifier failure (rc=$rc: $(sed -n 1p <<<"$out") :: $(tr '\n' '|' < "$TEST_ROOT/bd.cls.err"))"; fi
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q ' frontier=none$' && printf '%s\n' "$out" | grep -q '^session s1 ' && [ "$(grep -cx 'status=error' "$TEST_ROOT/bd.cls.err")" = 1 ] && [ "$(grep -c 'the plan ref feat does not carry docs/plan.md' "$TEST_ROOT/bd.cls.err")" = 1 ]; then pass "a classifier failure prints the board and repeats the classifier's lines on stderr"; else fail "classifier failure (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p) :: $(tr '\n' '|' < "$TEST_ROOT/bd.cls.err"))"; fi
 git -C "$bd_a" add docs/plan.md; git -C "$bd_a" commit -qm "restore the plan"
 # A non-success sync that explains itself on stderr (a foreign branch at the state name): its line is repeated exactly once and the local rows stay.
 git -C "$bd_a" push -q -f origin feat:hyperpowers/state 2>/dev/null
 out=$(run_state "$bd_a" board docs/plan.md 2>"$TEST_ROOT/bd.foreign.err"); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=foreign ' && printf '%s\n' "$out" | grep -q '^session s1 ' && [ "$(grep -c . "$TEST_ROOT/bd.foreign.err")" = 1 ] && grep -q 'is not a hyperpowers state branch' "$TEST_ROOT/bd.foreign.err"; then pass "a failed sync's stderr line is repeated once above the local board"; else fail "foreign sync replay (rc=$rc: $(sed -n 1p <<<"$out") :: $(tr '\n' '|' < "$TEST_ROOT/bd.foreign.err"))"; fi
+if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | sed -n 1p | grep -q '^status=board sync=foreign ' && printf '%s\n' "$out" | grep -q '^session s1 ' && [ "$(grep -c . "$TEST_ROOT/bd.foreign.err")" = 1 ] && grep -q 'is not a hyperpowers state branch' "$TEST_ROOT/bd.foreign.err"; then pass "a failed sync's stderr line is repeated once above the local board"; else fail "foreign sync replay (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p) :: $(tr '\n' '|' < "$TEST_ROOT/bd.foreign.err"))"; fi
 # No checkout and a failed sync: an empty table with the sync's status, exit 0, the sync's own stderr line once and no needs-sync line (a dead remote, then a foreign state branch).
 mkdir -p "$TEST_ROOT/hostC" "$TEST_ROOT/hostD"
 git clone -q --single-branch --branch main "$TEST_ROOT/bd.git" "$TEST_ROOT/hostC/bd" 2>/dev/null; git -C "$TEST_ROOT/hostC/bd" remote set-url origin "$TEST_ROOT/dead.git"
@@ -4505,10 +4505,10 @@ if [ "$rc" -eq 0 ] && [ "$out" = "status=board sync=foreign sessions=0 waiting=0
 make_repo "$TEST_ROOT/bd3"; mkdir -p "$TEST_ROOT/bd3/docs"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 2: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$TEST_ROOT/bd3/docs/plan.md"; git -C "$TEST_ROOT/bd3" add docs; git -C "$TEST_ROOT/bd3" commit -qm plan
 wsbd3=$(run_sdd_dir "$TEST_ROOT/bd3" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\nsession board-reader: tasks 2\n' > "$wsbd3/progress.md"
 out=$(run_state "$TEST_ROOT/bd3" board docs/plan.md 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=board sync=no-remote sessions=0 waiting=0 frontier=1,2" ]; then pass "another session's assignment line does not narrow the frontier"; else fail "frontier beside an assigned board-reader (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=board sync=no-remote sessions=0 waiting=0 frontier=1,2" ]; then pass "another session's assignment line does not narrow the frontier"; else fail "frontier beside an assigned board-reader (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
 run_state "$TEST_ROOT/bd3" claim docs/plan.md 2 --session board-reader >/dev/null 2>&1
 out=$(run_state "$TEST_ROOT/bd3" board docs/plan.md 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=board sync=no-remote sessions=1 waiting=0 frontier=1" ]; then pass "a task claimed by a session named board-reader is held, not claimable"; else fail "frontier beside a board-reader claim (rc=$rc: $(sed -n 1p <<<"$out"))"; fi
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=board sync=no-remote sessions=1 waiting=0 frontier=1" ]; then pass "a task claimed by a session named board-reader is held, not claimable"; else fail "frontier beside a board-reader claim (rc=$rc: $(printf '%s\n' "$out" | sed -n 1p))"; fi
 # A session id that is not a single path entry names no record: wait and the activity stamp of snapshot --session refuse it and make no directory for it (one would block session a's own records and show a phantom session).
 out=$(run_state "$bd_a" wait docs/plan.md --session a/b --kind question --note "nested" 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$wsbd/waiting/a" ] && [ ! -e "$wsbd/activity/a" ]; then pass "wait refuses a session id holding a slash and makes no directory"; else fail "wait with a nested session id (rc=$rc: $out: $(ls -A "$wsbd/waiting" "$wsbd/activity" | tr '\n' ' '))"; fi

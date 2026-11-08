@@ -2901,6 +2901,22 @@ rm -f "$ws30/fragments.log"
 rm -rf "$ws30"
 out=$(run_state "$repo30" complete docs/plan.md 1 --commits 1111111..2222222 --session s30); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace" ]; then pass "complete without a ledger is no-workspace"; else fail "complete without a ledger is no-workspace (rc=$rc: $out)"; fi
+# complete takes its tasks from the authoritative plan's graph, as next and claim do: a heading only the working-tree copy carries, or one inside a fenced block of the committed plan, is no task.
+mkreg cmpa; cmpa=$MR_REPO; wscmpa=$MR_WS
+printf '\n### Task 9: only in the working tree\n\n**Depends on:** none\n' >> "$cmpa/docs/plan.md"
+out=$(run_state "$cmpa" complete docs/plan.md 9 --commits 1111111..2222222 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=unknown-task task=9 tasks=3" ] && ! grep -q '^Task 9: complete' "$wscmpa/progress.md"; then pass "complete refuses a task heading only the working-tree copy carries"; else fail "complete refuses a task heading only the working-tree copy carries (rc=$rc: $out)"; fi
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Depends on:** none\n\n```markdown\n### Task 9: a fixture heading\n```\n\n### Task 2: B\n\n**Depends on:** none\n\n### Task 3: C\n\n**Depends on:** none\n' > "$cmpa/docs/plan.md"
+git -C "$cmpa" commit -qam "a fixture heading in a fence"
+out=$(run_state "$cmpa" complete docs/plan.md 9 --commits 1111111..2222222 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=unknown-task task=9 tasks=3" ] && ! grep -q '^Task 9: complete' "$wscmpa/progress.md"; then pass "complete refuses a task heading inside a fenced block of the committed plan"; else fail "complete refuses a task heading inside a fenced block of the committed plan (rc=$rc: $out)"; fi
+out=$(run_state "$cmpa" complete docs/plan.md 2 --commits 1111111..2222222 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -Eq '^status=complete task=2 appended=1 snapshot=[0-9a-f]{7}$' && grep -qx 'Task 2: complete (commits 1111111..2222222, review clean)' "$wscmpa/progress.md"; then pass "complete accepts a task of the registered plan's graph"; else fail "complete accepts a task of the registered plan's graph (rc=$rc: $out)"; fi
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n' > "$cmpa/docs/plan.md"
+git -C "$cmpa" commit -qam "a plan with one task unannotated"
+blob_cmpa=$(git -C "$cmpa" rev-parse main:docs/plan.md | cut -c1-7)
+out=$(run_state "$cmpa" complete docs/plan.md 1 --commits 1111111..2222222 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=invalid plan=$blob_cmpa" ] && ! grep -q '^Task 1: complete' "$wscmpa/progress.md"; then pass "complete refuses a plan whose graph does not parse"; else fail "complete refuses a plan whose graph does not parse (rc=$rc: $out)"; fi
 # --- a job's scratch stays out of the state branch (stop guard, 2026-10-23) --
 make_pair p31
 mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan

@@ -1016,10 +1016,12 @@ take_lock_or_busy() {
 # --- complete ----------------------------------------------------------------
 # The one writer of a completion line. Idempotent: the line is appended once,
 # the snapshot runs every time, so a failed snapshot is retried by calling
-# complete again with the same arguments. The task number must be one of the
-# plan's headings, so a controller cannot complete a task that does not exist.
+# complete again with the same arguments. The task number must be a task of
+# the authoritative plan's graph, the one next and claim read, so a
+# controller cannot complete a task that does not exist: a heading that only
+# a worktree's copy carries, or one inside a fenced block, is no task.
 cmd_complete() {
-  local plan="" n="" commits="" sid="" total line out rc appended
+  local plan="" n="" commits="" sid="" total line out rc appended pair blob tmp graph
   while [ $# -gt 0 ]; do
     case "$1" in
       --commits) [ $# -ge 2 ] || usage; commits=$2; shift 2 ;;
@@ -1032,8 +1034,16 @@ cmd_complete() {
   case "$n" in ''|*[!0-9]*) usage ;; esac
   [[ "$commits" =~ ^[0-9a-f]{7}\.\.[0-9a-f]{7}$ ]] || usage
   resolve_plan "$plan"
-  total=$(grep -Ec '^### Task [0-9]+:' "$PLAN") || total=0
-  if ! grep -Eq "^### Task $n:" "$PLAN"; then echo "status=unknown-task task=$n tasks=$total"; return 2; fi
+  pair=$(authoritative_plan_blob) || { echo "status=error"; return 2; }
+  blob=${pair%% *}; tmp=${pair#* }
+  graph=$(hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
+  [ "$rc" -eq 0 ] || { echo "status=invalid plan=${blob:0:7}"; return 2; }
+  # Here-strings, not pipes: under pipefail a grep -q that stops reading early
+  # can fail the writer with SIGPIPE and turn a real task into an unknown one.
+  if ! grep -q "^task=$n " <<< "$graph"; then
+    total=$(grep -c . <<< "$graph")
+    echo "status=unknown-task task=$n tasks=$total"; return 2
+  fi
   take_lock_or_busy || return $?
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace"; return 2; fi

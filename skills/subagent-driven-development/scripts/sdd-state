@@ -481,10 +481,15 @@ ledger_has() { # <ledger> <grep args...>
 
 # ledger_marks_complete LEDGER N: 0 when the ledger records task N complete,
 # 1 when it does not, 2 on a read error. Only a record that begins with the
-# marker counts (ledger_task_complete).
+# marker counts (ledger_task_complete): after optional leading whitespace,
+# an optional "-" or "*" list marker with whitespace after it, and optional
+# "**", "__", "*" or "_" emphasis, "Task N: complete", an optional closing
+# "**", "__", "*" or "_", then the end of the line, whitespace, "(", "." or
+# ",". A quoted line ("> Task N: complete") and a longer word
+# ("Task N: complete-not-yet") do not count.
 ledger_marks_complete() { # <ledger> <n>
   [ -r "$1" ] || return 2
-  ledger_records "$1" | grep -Ec "^[[:space:]*_>-]*Task $2: complete([^[:alnum:]_]|\$)" >/dev/null; return "${PIPESTATUS[1]}"
+  ledger_records "$1" | grep -Ec "^[[:space:]]*([-*][[:space:]]+)?(\*\*|__|\*|_)?Task $2: complete(\*\*|__|\*|_)?([[:space:](.,]|\$)" >/dev/null; return "${PIPESTATUS[1]}"
 }
 
 # --- claim -------------------------------------------------------------------

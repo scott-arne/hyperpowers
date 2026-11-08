@@ -3607,6 +3607,25 @@ if [ "$rc" -eq 7 ] && [ "${out%% plan=*}" = "status=blocked task=2 waiting=1" ];
 printf -- '- Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$MP_WS/progress.md"
 out=$(run_state "$TEST_ROOT/ev4" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2 branch=none" ]; then pass "a list-marked completion line satisfies the dependency"; else fail "marked completion (rc=$rc: $out)"; fi
+# A quoted completion line and a longer word after the marker are not the marker.
+mkplan ev5 $'# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** Task 1\n'
+printf '> Task 1: complete (quoted)\nTask 1: complete-not-yet\n' >> "$MP_WS/progress.md"
+out=$(run_state "$TEST_ROOT/ev5" next docs/plan.md --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=1 own-blocked=none" ]; then pass "next reads neither a quoted completion line nor complete-not-yet as task 1 done"; else fail "next quoted or longer completion (rc=$rc: $out)"; fi
+out=$(run_state "$TEST_ROOT/ev5" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 7 ] && [ "${out%% plan=*}" = "status=blocked task=2 waiting=1" ]; then pass "a quoted completion line or complete-not-yet does not satisfy a dependency"; else fail "quoted or longer completion blocks (rc=$rc: $out)"; fi
+out=$(run_state "$TEST_ROOT/ev5" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=none" ]; then pass "the done check ignores a quoted completion line and complete-not-yet"; else fail "done ignores quoted or longer completion (rc=$rc: $out)"; fi
+# Emphasis and a star list marker around the marker still count.
+for ev_line in '**Task 1: complete**' '* Task 1: complete'; do
+  ev_name=ev6; [ "$ev_line" = '**Task 1: complete**' ] || ev_name=ev7
+  mkplan "$ev_name" $'# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** Task 1\n'
+  printf '%s\n' "$ev_line" >> "$MP_WS/progress.md"
+  out=$(run_state "$TEST_ROOT/$ev_name" next docs/plan.md --session s1 2>/dev/null); rc=$?
+  if [ "$rc" -eq 0 ] && [ "${out%% plan=*}" = "status=next tasks=2 own-blocked=none" ]; then pass "next reads $ev_line as task 1 done"; else fail "next $ev_line (rc=$rc: $out)"; fi
+  out=$(run_state "$TEST_ROOT/$ev_name" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+  if [ "$rc" -eq 0 ] && [ "$out" = "status=done task=1" ]; then pass "claim reads $ev_line as task 1 done"; else fail "claim $ev_line (rc=$rc: $out)"; fi
+done
 # A claim ends the wait its session posted: the stop guard allows a turn end on this session's record, so one a claim left behind would let a premature stop through later in the turn. A merge record names a conflict still owed for one task and stays; another session's record, and the record of a session whose claim is refused, are untouched.
 mkreg clw; clw=$MR_REPO; wsclw=$MR_WS
 run_state "$clw" wait docs/plan.md --session s1 --kind tasks --note "held: 1@s2" >/dev/null 2>&1

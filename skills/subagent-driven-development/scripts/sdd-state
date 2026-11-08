@@ -1772,9 +1772,11 @@ receipt_where() {
   if [ "$RECEIPT_PATH" = none ]; then printf 'an unmarked staging at %s' "$RECEIPT_STAGED"; else printf '%s' "$RECEIPT_PATH"; fi
 }
 # live_jobs <wsdir>: the tracked jobs under <wsdir>/jobs that may still be
-# running, comma-separated, read as the stop guard's liveJobs reads them. A
-# state of running or lost-unswept with no exit path is live, and so is a
-# meta.json that exists but cannot be read or parsed: its job may well be
+# running, comma-separated, each read as the stop guard's liveJobs reads a
+# job. The guard counts only the calling session's jobs; finish counts every
+# session's, because it deletes the workspace and every job's records with
+# it. A state of running or lost-unswept with no exit path is live, and so is
+# a meta.json that exists but cannot be read or parsed: its job may well be
 # running, and finish would delete its records under it. A directory with no
 # meta.json is an allocation in progress, and a dot-prefixed one is
 # tracked-job's staging; neither is a job.

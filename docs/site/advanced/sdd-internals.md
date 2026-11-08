@@ -1,6 +1,6 @@
 ---
 sources: skills/subagent-driven-development hooks/session-start hooks/hooks.json hooks/sdd-stop-guard hooks/lib/stop-guard.mjs docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md
-source-digest: 518cf1cc51e8
+source-digest: 1252d27dd77e
 ---
 # How subagent-driven development keeps its place
 
@@ -49,7 +49,7 @@ The ledger is the recovery map. The skill says that after compaction the control
 
 On resume, a task with a completion line is done and is never re-dispatched. A task with a `merged` line and no completion line resumes at its completion line and is never re-dispatched. A task whose last line is a fix round resumes at the next round. A task whose last line is its implementer identity is a dispatch in flight: the controller reconciles that agent first, resumes it by its recorded id where the harness allows, and dispatches a takeover only if it cannot be recovered. The controller appends to the ledger with a quoted heredoc when another session may be live, because an edit that rewrites the file would drop a line another session appended in between.
 
-The controller does not write the completion line by hand. `sdd-state complete PLAN_FILE N --commits <base7>..<head7>` appends it and snapshots the workspace, and the controller repeats the command until it prints `status=complete`. `busy` and `error` are retried. `unknown-task` (the number is not a task of the plan every session reads, the copy on the plan ref rather than the working tree's), `no-workspace`, and a usage error stop the run. A plan whose task graph does not parse prints `status=invalid`. After the pre-flight scan and before the final review, the controller runs `sdd-state snapshot` itself, so a hand-off or a crash loses at most the task in flight. A snapshot outcome of `none` or `error` stops the run until a snapshot succeeds.
+The controller does not write the completion line by hand. `sdd-state complete PLAN_FILE N --commits <base7>..<head7>` appends it and snapshots the workspace, and the controller repeats the command until it prints `status=complete`. `busy` and `error` are retried. `unknown-task` (the number is not a task of the plan every session reads, the copy on the plan ref rather than the working tree's), `no-workspace`, and a usage error stop the run. A plan whose task graph does not parse prints `status=invalid`: the run cannot continue until the plan at the plan ref parses again, so the controller surfaces it instead of retrying. After the pre-flight scan and before the final review, the controller runs `sdd-state snapshot` itself, so a hand-off or a crash loses at most the task in flight. A snapshot outcome of `none` or `error` stops the run until a snapshot succeeds.
 
 ## Several sessions on one plan
 
@@ -62,7 +62,7 @@ Several sessions can work one plan at once, and the sessions of sibling plans of
 - When `next` says `complete`, `sdd-state claim PLAN_FILE final --session <sid>` takes the final train. Its holder checks the integration branch out once, in its own worktree, under a lease on the branch, and runs the final review, the final Codex gate, and Finish. A session that finds the train held by another session, or by a sibling plan's lease, hands back.
 - `sdd-state amend PLAN_FILE --from <file> --base <blob>` changes a plan's task graph while the plan runs, and is how a conflict between tasks that the scan found gets settled. The plan ref, which every session reads, takes the edit; editing the plan file in one worktree does not.
 
-The waiting board lets you find the session that needs you among several. Before a session asks you a question, hands back BLOCKED, meets an empty frontier, or stops on a merge conflict, it posts a record with `sdd-state wait PLAN_FILE --session <sid> --kind <question|tasks|merge|gate|handoff> --note "<one line>"`, and clears it on resume with `--clear`. A successful claim also clears the session's record, unless the record names a merge conflict the session still has to resolve. `sdd-state board PLAN_FILE` prints one line per session, and a session that holds a claim and posts nothing shows as quiet after half an hour.
+The waiting board lets you find the session that needs you among several. Before a session asks you a question, hands back BLOCKED, meets an empty frontier, or stops on a merge conflict, it posts a record with `sdd-state wait PLAN_FILE --session <sid> --kind <question|tasks|merge|gate|handoff> --note "<one line>"`, and clears it on resume with `--clear`. A successful claim also clears the session's record, the owner's retry of its own claim included, unless the record names a merge conflict the session still has to resolve. `sdd-state board PLAN_FILE` prints one line per session, and a session that holds a claim and posts nothing shows as quiet after half an hour.
 
 ## Task briefs and review packages
 

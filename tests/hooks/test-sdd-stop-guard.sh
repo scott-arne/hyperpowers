@@ -92,7 +92,7 @@ if [ "$rc" -eq 0 ] && grep -q '"decision":"block"' "$TEST_ROOT/oddpath.out"; the
 
 echo "=== stop guard: waiting record ==="
 # A controller that has to wait on another session posts its waiting record
-# (sdd-state wait, or merge-back on not-holder) and hands back; the turn that
+# (sdd-state wait, or merge-back on a conflict) and hands back; the turn that
 # posted it may end. The workspace is made through the library, as sdd-state
 # makes it, so the record sdd-state wait publishes lands where the guard reads.
 wrepo="$TEST_ROOT/wrepo"; git init -q -b main "$wrepo"; git -C "$wrepo" config user.name t; git -C "$wrepo" config user.email t@example.com
@@ -113,7 +113,7 @@ wait_decide() {
       const discovery = g.discover({ sessionId, cwd, cacheRoot });
       const ws = discovery.workspace || "";
       const plan = g.planState({ workspace: ws, cwd, sessionId });
-      const jobs = g.liveJobs(ws);
+      const jobs = g.liveJobs(ws, sessionId);
       const read = g.refusalsBefore({ workspaceLog: ws + "/stop-guard.jsonl", mirrorLog: cacheRoot + "/hyperpowers/stop-guard/s-wait.jsonl", sessionId });
       const turn = { ok: true, tooLong: false, promptTs, lastAssistantText: "Task 1 is held by another session; waiting on it.", liveAgents: [], liveShells: [] };
       const d = g.decideStop({ discovery, plan, turn, jobs: jobs.live, jobsUnreadable: jobs.unreadable, refusals: read.refusals, refusalsUnreadable: read.unreadable, sessionId, ...(inject.length ? { waitingText: inject[0] } : {}) });

@@ -11,10 +11,10 @@
 #        decisions-compile --undo SPEC [--plan PLAN]
 #        decisions-compile --reindex RECORDS_DIR
 # Exit 2: an input problem (no spec, no decisions list, an unresolvable
-# filename collision, a change under decisions/ this compile does not own);
-# nothing has been written. Exit 3: a write failure
-# after validation; the files written so far are idempotent, so running the
-# same command again completes the write.
+# filename collision, a change under decisions/ this compile does not own,
+# notes that would replace another finish's notes); nothing has been
+# written. Exit 3: a write failure after validation; the files written so
+# far are idempotent, so running the same command again completes the write.
 # Exit 3: a git operation failed after the files were written; running the
 # same command again completes the staging.
 set -euo pipefail
@@ -394,8 +394,10 @@ render_record() {  # N -> the record text
         }
         {
           if ($0 ~ /^[[:space:]]*$/) { if (ns) text[ns] = text[ns] "\n" $0; blank = 1; next }
+          # The longest label wins: the labels of plans a.md and "a.md: b.md"
+          # both open the section of the second, which belongs to it alone.
           o = ""
-          if (blank) for (j = 1; j <= np; j++) if (index($0, prefix[j]) == 1) { o = prefix[j]; break }
+          if (blank) for (j = 1; j <= np; j++) if (index($0, prefix[j]) == 1 && length(prefix[j]) > length(o)) o = prefix[j]
           if (o != "") { owner[++ns] = o; text[ns] = $0 }
           else if (!ns) { owner[++ns] = first; text[ns] = first $0 }
           else text[ns] = text[ns] "\n" $0
@@ -411,6 +413,8 @@ render_record() {  # N -> the record text
           print out
         }')
     else
+      # The whole body is replaced, which is safe only because the pre-write
+      # checks refused a body that holds another finish's notes.
       notes_body=$(cat "$tmp/note-$n.txt")
     fi
   fi
@@ -585,8 +589,15 @@ outcome_entries() {  # existing line or empty -> its entries with this run's add
   if [ -n "$plan_rel" ]; then entry="$today ($(basename "$plan_rel"))"; else entry=$today; fi
   if [ -z "$entries" ]; then printf '%s' "$entry"; return; fi
   if [ -z "$plan_rel" ]; then printf '%s' "$entries"; return; fi
-  case "$entries" in *"($(basename "$plan_rel"))"*) printf '%s' "$entries"; return ;; esac
+  if outcome_names "$entries" "$(basename "$plan_rel")"; then printf '%s' "$entries"; return; fi
   printf '%s, %s' "$entries" "$entry"
+}
+# outcome_names ENTRIES NAME: 0 when one whole entry is "<date> (NAME)". A
+# substring test would read plan a.md as named by an entry for x(a.md)y.md.
+# The name is quoted, so a glob character in it stays literal.
+outcome_names() {
+  case ", $1," in *", "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]" ($2),"*) return 0 ;; esac
+  return 1
 }
 
 outcome_line() { printf '**Outcome:** implemented %s; %s decisions under %s/.' "$1" "$count" "$records_rel"; }
@@ -872,13 +883,34 @@ if [ -n "$plan_rel" ]; then
       fi
     done < <(recorded_plans "$records_dir/${files[n]}")
   done
-  if ! $plan_known; then
-    case "$(outcome_listed "$(outcome_current)")" in
-      *"($plan_base)"*) die2 "$spec_rel: plan $plan_rel has the file name its Outcome line already names for another plan ($plan_base); rename one of the plans" ;;
-    esac
+  if ! $plan_known && outcome_names "$(outcome_listed "$(outcome_current)")" "$plan_base"; then
+    die2 "$spec_rel: plan $plan_rel has the file name its Outcome line already names for another plan ($plan_base); rename one of the plans"
   fi
 fi
 [ -z "$notes" ] || load_notes "$notes"
+# A record's notes body is one section per plan, and render_record replaces
+# the whole body when a run has no other plan to merge with. Notes without
+# --plan would so replace every plan's section, and a plan's notes would
+# replace the notes a finish without a plan wrote, which no section names.
+# Only a record that receives a note in this run can be refused.
+if $notes_valid; then
+  for ((n = 1; n <= count; n++)); do
+    { [ "${existing[n]}" = 1 ] && [ -f "$tmp/note-$n.txt" ]; } || continue
+    rec_rel="$records_rel/${files[n]}"
+    rec_plans=""
+    while IFS= read -r p; do
+      [ -z "$p" ] || rec_plans="${rec_plans:+$rec_plans, }$p"
+    done < <(recorded_plans "$records_dir/${files[n]}")
+    if [ -z "$plan_rel" ]; then
+      [ -z "$rec_plans" ] || die2 "$spec_rel: decision $n: notes without --plan would replace the notes of every plan $rec_rel names ($rec_plans); pass --plan to say whose notes these are; nothing was written"
+    elif [ -z "$rec_plans" ]; then
+      case "$(existing_notes "$records_dir/${files[n]}")" in
+        ""|"Nothing recorded.") ;;
+        *) die2 "$spec_rel: decision $n: the notes in $rec_rel came from a finish without a plan, and the notes of plan $plan_rel would replace them; nothing was written" ;;
+      esac
+    fi
+  done
+fi
 
 # --- 3. dry run ---------------------------------------------------------------
 verb_lines=()

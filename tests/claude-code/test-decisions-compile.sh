@@ -2210,6 +2210,131 @@ expected_err=$(printf '%s\n%s' 'notes ignored: decision 1: a paragraph opens wit
 label_rec1=$(ls "$repo"/docs/hyperpowers/decisions/*first-decision*.md); label_rec2=$(ls "$repo"/docs/hyperpowers/decisions/*second-decision*.md); label_rec3=$(ls "$repo"/docs/hyperpowers/decisions/*third-decision*.md)
 if [ "$RC" -eq 0 ] && [ "$ERR" = "$expected_err" ] && [ "$(label_body "$label_rec1")" = "Nothing recorded." ] && [ "$(label_body "$label_rec2")" = "Nothing recorded." ] && [ "$(label_body "$label_rec3")" = "A changed three." ]; then pass "a paragraph shaped like a label with spaces in its file name is ignored the same way"; else fail "spaced label-shaped notes (rc $RC, err: $ERR; 1: $(label_body "$label_rec1" | tr '\n' '|'); 3: $(label_body "$label_rec3" | tr '\n' '|'))"; fi
 
+# --- 39. a finish never replaces another finish's notes ----------------------
+# Notes without --plan say nothing about whose they are, so they cannot go
+# into a record that names plans without replacing every plan's section; and
+# a plan's notes would replace the notes an earlier finish without a plan
+# wrote. Both are refused before anything is written.
+repo="$TEST_ROOT/noplan-after"
+make_repo "$repo"
+write_spec "$repo" after-design.md <<'EOF'
+# After
+
+## Decisions
+
+- First decision. Why it holds.
+- Second decision. Why it holds.
+EOF
+printf '# A\n\n**Spec:** docs/hyperpowers/specs/after-design.md\n' > "$repo/docs/hyperpowers/plans/a.md"
+printf '# B\n\n**Spec:** docs/hyperpowers/specs/after-design.md\n' > "$repo/docs/hyperpowers/plans/b.md"
+commit_all "$repo" "spec and plans"
+printf '# Decision notes: docs/hyperpowers/specs/after-design.md\n\n## Decision 1\nA changed one.\n' > "$TEST_ROOT/after-notes-a.md"
+printf '# Decision notes: docs/hyperpowers/specs/after-design.md\n\n## Decision 1\nB changed one.\n' > "$TEST_ROOT/after-notes-b.md"
+printf '# Decision notes: docs/hyperpowers/specs/after-design.md\n\n## Decision 1\nWhose notes are these?\n' > "$TEST_ROOT/after-notes-none.md"
+run_compile "$repo" docs/hyperpowers/specs/after-design.md --plan docs/hyperpowers/plans/a.md --notes "$TEST_ROOT/after-notes-a.md"
+commit_all "$repo" "records for a"
+COMPILE_DATE=2026-10-22 run_compile "$repo" docs/hyperpowers/specs/after-design.md --plan docs/hyperpowers/plans/b.md --notes "$TEST_ROOT/after-notes-b.md"
+commit_all "$repo" "records for b"
+after_sums=$(cd "$repo" && cksum docs/hyperpowers/specs/after-design.md docs/hyperpowers/decisions/*.md)
+run_compile "$repo" docs/hyperpowers/specs/after-design.md --notes "$TEST_ROOT/after-notes-none.md"
+case "$ERR" in *docs/hyperpowers/specs/after-design.md*docs/hyperpowers/decisions/2026-10-21-first-decision.md*docs/hyperpowers/plans/a.md*docs/hyperpowers/plans/b.md*--plan*) after_msg=1 ;; *) after_msg=0 ;; esac
+if [ "$RC" -eq 2 ] && [ "$after_msg" = 1 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ] && [ "$(cd "$repo" && cksum docs/hyperpowers/specs/after-design.md docs/hyperpowers/decisions/*.md)" = "$after_sums" ]; then pass "notes without --plan for a record that names plans exit 2, name the spec, the record and the plans, and write nothing"; else fail "notes without a plan after two plans (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'), notes: $(sed -n '/What implementation changed/,$p' "$repo/docs/hyperpowers/decisions/2026-10-21-first-decision.md" | tr '\n' '|'))"; fi
+run_compile "$repo" docs/hyperpowers/specs/after-design.md --notes "$TEST_ROOT/after-notes-none.md" --dry-run
+if [ "$RC" -eq 2 ]; then pass "the dry run refuses those notes too"; else fail "notes without a plan, dry run (rc $RC, out: $OUT)"; fi
+
+repo="$TEST_ROOT/plan-after-noplan"
+make_repo "$repo"
+write_spec "$repo" before-design.md <<'EOF'
+# Before
+
+## Decisions
+
+- First decision. Why it holds.
+- Second decision. Why it holds.
+EOF
+printf '# A\n\n**Spec:** docs/hyperpowers/specs/before-design.md\n' > "$repo/docs/hyperpowers/plans/a.md"
+commit_all "$repo" "spec and plan"
+printf '# Decision notes: docs/hyperpowers/specs/before-design.md\n\n## Decision 1\nNotes from a finish without a plan.\n' > "$TEST_ROOT/before-notes-none.md"
+printf '# Decision notes: docs/hyperpowers/specs/before-design.md\n\n## Decision 1\nA changed one.\n\n## Decision 2\nA changed two.\n' > "$TEST_ROOT/before-notes-a.md"
+printf '# Decision notes: docs/hyperpowers/specs/before-design.md\n\n## Decision 2\nA changed two.\n' > "$TEST_ROOT/before-notes-a2.md"
+run_compile "$repo" docs/hyperpowers/specs/before-design.md --notes "$TEST_ROOT/before-notes-none.md"
+commit_all "$repo" "records without a plan"
+before_sums=$(cd "$repo" && cksum docs/hyperpowers/specs/before-design.md docs/hyperpowers/decisions/*.md docs/hyperpowers/plans/a.md)
+COMPILE_DATE=2026-10-22 run_compile "$repo" docs/hyperpowers/specs/before-design.md --plan docs/hyperpowers/plans/a.md --notes "$TEST_ROOT/before-notes-a.md"
+case "$ERR" in *docs/hyperpowers/decisions/2026-10-21-first-decision.md*"without a plan"*docs/hyperpowers/plans/a.md*"nothing was written"*) before_msg=1 ;; *) before_msg=0 ;; esac
+if [ "$RC" -eq 2 ] && [ "$before_msg" = 1 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ] && [ "$(cd "$repo" && cksum docs/hyperpowers/specs/before-design.md docs/hyperpowers/decisions/*.md docs/hyperpowers/plans/a.md)" = "$before_sums" ]; then pass "a plan's notes for a record holding notes from a finish without a plan exit 2 and write nothing"; else fail "plan notes after notes without a plan (rc $RC, err: $ERR, status: $(git -C "$repo" status --porcelain -uall | tr '\n' ';'), notes: $(sed -n '/What implementation changed/,$p' "$repo/docs/hyperpowers/decisions/2026-10-21-first-decision.md" | tr '\n' '|'))"; fi
+# Only a record that would receive a note can refuse the run.
+COMPILE_DATE=2026-10-22 run_compile "$repo" docs/hyperpowers/specs/before-design.md --plan docs/hyperpowers/plans/a.md --notes "$TEST_ROOT/before-notes-a2.md"
+if [ "$RC" -eq 0 ] && [ "$(label_body "$repo/docs/hyperpowers/decisions/2026-10-21-first-decision.md")" = "Notes from a finish without a plan." ] && [ "$(label_body "$repo/docs/hyperpowers/decisions/2026-10-21-second-decision.md")" = "A changed two." ]; then pass "a plan whose notes skip that record finishes and leaves its notes alone"; else fail "plan notes for another record (rc $RC, err: $ERR, 1: $(label_body "$repo/docs/hyperpowers/decisions/2026-10-21-first-decision.md" | tr '\n' '|'), 2: $(label_body "$repo/docs/hyperpowers/decisions/2026-10-21-second-decision.md" | tr '\n' '|'))"; fi
+
+# --- 40. one plan's file name inside another's ----------------------------
+# A section belongs to the longest plan label it opens with, so plans named
+# a.md and "a.md: b.md" keep their own sections whichever re-runs.
+repo="$TEST_ROOT/nested-labels"
+make_repo "$repo"
+write_spec "$repo" nested-design.md <<'EOF'
+# Nested
+
+## Decisions
+
+- First decision. Why it holds.
+- Second decision. Why it holds.
+EOF
+printf '# A\n\n**Spec:** docs/hyperpowers/specs/nested-design.md\n' > "$repo/docs/hyperpowers/plans/a.md"
+printf '# AB\n\n**Spec:** docs/hyperpowers/specs/nested-design.md\n' > "$repo/docs/hyperpowers/plans/a.md: b.md"
+commit_all "$repo" "spec and plans"
+nested_rec1="$repo/docs/hyperpowers/decisions/2026-10-21-first-decision.md"
+nested_rec2="$repo/docs/hyperpowers/decisions/2026-10-21-second-decision.md"
+# nested_finish PLAN TAG DATE: finishes PLAN with notes "<TAG> one." and
+# "<TAG> two." and commits the result.
+nested_finish() {
+    printf '# Decision notes: docs/hyperpowers/specs/nested-design.md\n\n## Decision 1\n%s one.\n\n## Decision 2\n%s two.\n' "$2" "$2" > "$TEST_ROOT/nested-notes.md"
+    COMPILE_DATE=$3 run_compile "$repo" docs/hyperpowers/specs/nested-design.md --plan "docs/hyperpowers/plans/$1" --notes "$TEST_ROOT/nested-notes.md"
+    nested_rc=$RC
+    commit_all "$repo" "records for $1 ($2)"
+}
+# nested_check LABEL A B: both records hold exactly the a.md section with
+# notes A and the "a.md: b.md" section with notes B, in that order.
+nested_check() {
+    local want1 want2
+    want1=$(printf 'From a.md: %s one.\n\nFrom a.md: b.md: %s one.' "$2" "$3")
+    want2=$(printf 'From a.md: %s two.\n\nFrom a.md: b.md: %s two.' "$2" "$3")
+    if [ "$nested_rc" -eq 0 ] && [ "$(label_body "$nested_rec1")" = "$want1" ] && [ "$(label_body "$nested_rec2")" = "$want2" ]; then pass "$1"; else fail "$1 (rc $nested_rc, err: $ERR, 1: $(label_body "$nested_rec1" | tr '\n' '|'), 2: $(label_body "$nested_rec2" | tr '\n' '|'))"; fi
+}
+nested_finish a.md A1 2026-10-21
+nested_finish "a.md: b.md" B1 2026-10-22
+nested_check "plans a.md and \"a.md: b.md\" each get a section" A1 B1
+nested_finish a.md A2 2026-10-23
+nested_check "a re-run of a.md replaces its own section and keeps \"a.md: b.md\"'s" A2 B1
+nested_finish "a.md: b.md" B2 2026-10-23
+nested_check "a re-run of \"a.md: b.md\" after a.md's replaces its own section once" A2 B2
+nested_finish "a.md: b.md" B3 2026-10-24
+nested_check "a re-run of \"a.md: b.md\" first replaces only its own section" A2 B3
+nested_finish a.md A3 2026-10-24
+nested_check "a re-run of a.md after \"a.md: b.md\"'s keeps both sections" A3 B3
+
+# --- 41. the Outcome line matches a plan's file name whole -------------------
+repo="$TEST_ROOT/outcome-whole"
+make_repo "$repo"
+write_spec "$repo" whole-design.md <<'EOF'
+# Whole
+
+## Decisions
+
+- Only decision. Why it holds.
+EOF
+printf '# X\n\n**Spec:** docs/hyperpowers/specs/whole-design.md\n' > "$repo/docs/hyperpowers/plans/x(a.md)y.md"
+printf '# A\n\n**Spec:** docs/hyperpowers/specs/whole-design.md\n' > "$repo/docs/hyperpowers/plans/a.md"
+commit_all "$repo" "spec and plans"
+whole_spec="$repo/docs/hyperpowers/specs/whole-design.md"
+run_compile "$repo" docs/hyperpowers/specs/whole-design.md --plan "docs/hyperpowers/plans/x(a.md)y.md"
+commit_all "$repo" "records for x(a.md)y.md"
+COMPILE_DATE=2026-10-22 run_compile "$repo" docs/hyperpowers/specs/whole-design.md --plan docs/hyperpowers/plans/a.md
+if [ "$RC" -eq 0 ] && [ "$(sed -n 3p "$whole_spec")" = "**Outcome:** implemented 2026-10-21 (x(a.md)y.md), 2026-10-22 (a.md); 1 decisions under docs/hyperpowers/decisions/." ]; then pass "a plan whose file name sits inside a recorded plan's finishes and is appended to the Outcome line"; else fail "file name inside another (rc $RC, err: $ERR, got: $(sed -n 3p "$whole_spec"))"; fi
+commit_all "$repo" "records for a.md"
+COMPILE_DATE=2026-10-23 run_compile "$repo" docs/hyperpowers/specs/whole-design.md --plan docs/hyperpowers/plans/a.md
+if [ "$RC" -eq 0 ] && [ -z "$(git -C "$repo" status --porcelain -uall)" ]; then pass "a re-run of that plan finds its own entry and changes nothing"; else fail "re-run after a file name inside another (rc $RC, err: $ERR, got: $(sed -n 3p "$whole_spec"))"; fi
+
 # >>> later tasks append their checks above this line <<<
 
 if [ "$failures" -gt 0 ]; then

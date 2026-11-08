@@ -223,7 +223,7 @@ export function handbackThisTurn(ledgerText, sessionId, promptTs) {
 }
 
 // The waiting record a session publishes when it has to wait on another one
-// (sdd-state wait, or merge-back on not-holder) and hands back. It belongs to
+// (sdd-state wait, or merge-back on a conflict) and hands back. It belongs to
 // this turn when its since= (hp_utc_now, whole seconds) is at or after the
 // prompt's whole second. since= and never the mtime: a state-branch sync or
 // checkout rewrites an old record and gives it a fresh one. Fields are read as

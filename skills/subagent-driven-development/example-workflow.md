@@ -18,7 +18,7 @@ Task 1: Hook installation script (declared low)
 [scripts/sdd-state claim docs/hyperpowers/plans/feature-plan.md 1 --session 1f3a9c → status=claimed task=1 branch=feature-plan.1a2b3c4d.task-1 from=a1b2c3d]
 [git switch feature-plan.1a2b3c4d.task-1; Ledger: session 1f3a9c: mode worktree on feature-plan.1a2b3c4d.task-1 integrating feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
 [Run task-brief for Task 1; dispatch implementer with brief + report paths + context]
-[Ledger: Task 1: implementer subagent-01f3 (model sonnet, session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix rounds]
+[Ledger: Task 1: implementer subagent-01f3 (model sonnet, session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan.1a2b3c4d.task-1) — recorded for fix rounds]
 
 Implementer: "Before I begin - should the hook be installed at user or system level?"
 
@@ -39,7 +39,7 @@ Task reviewer: Spec ✅ - all requirements met, nothing extra.
 [Write tier-skips.md in this plan's workspace — Task 1's skip, one line]
 [Ledger: Task 1: approved d4e5f6a]
 [scripts/sdd-state merge-back docs/hyperpowers/plans/feature-plan.md 1 --session 1f3a9c --commit d4e5f6a → status=merged task=1 head=d4e5f6a]
-[git switch --detach d4e5f6a; git branch -D feature-plan.1a2b3c4d.task-1; Ledger: session 1f3a9c: mode worktree on detached integrating feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
+[git switch --detach d4e5f6a; git branch -d feature-plan.1a2b3c4d.task-1; Ledger: session 1f3a9c: mode worktree on detached integrating feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
 [scripts/sdd-state complete docs/hyperpowers/plans/feature-plan.md 1 --commits a1b2c3d..d4e5f6a → status=complete task=1 appended=1 snapshot=9e8d7c6]
 
 Task 2: Recovery modes (declared standard)
@@ -48,7 +48,7 @@ Task 2: Recovery modes (declared standard)
 [scripts/sdd-state claim docs/hyperpowers/plans/feature-plan.md 2 --session 1f3a9c → status=claimed task=2 branch=feature-plan.1a2b3c4d.task-2 from=d4e5f6a]
 [git switch feature-plan.1a2b3c4d.task-2; Ledger: session 1f3a9c: mode worktree on feature-plan.1a2b3c4d.task-2 integrating feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
 [Run task-brief for Task 2; dispatch implementer with brief + report paths + context]
-[Ledger: Task 2: implementer subagent-7c42 (model sonnet, session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan) — recorded for fix rounds]
+[Ledger: Task 2: implementer subagent-7c42 (model sonnet, session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan.1a2b3c4d.task-2) — recorded for fix rounds]
 
 Implementer: [No questions]
   - Added verify/repair modes
@@ -77,7 +77,7 @@ Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
 [Codex per-task gate over d4e5f6a..b7c8d9e — approved; that would have been round 2 of the same five]
 [Ledger: Task 2: approved b7c8d9e]
 [scripts/sdd-state merge-back docs/hyperpowers/plans/feature-plan.md 2 --session 1f3a9c --commit b7c8d9e → status=merged task=2 head=b7c8d9e]
-[git switch --detach b7c8d9e; git branch -D feature-plan.1a2b3c4d.task-2; Ledger: session 1f3a9c: mode worktree on detached integrating feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
+[git switch --detach b7c8d9e; git branch -d feature-plan.1a2b3c4d.task-2; Ledger: session 1f3a9c: mode worktree on detached integrating feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
 [scripts/sdd-state complete docs/hyperpowers/plans/feature-plan.md 2 --commits d4e5f6a..b7c8d9e → status=complete task=2 appended=1 snapshot=5d4c3b2]
 
 ...

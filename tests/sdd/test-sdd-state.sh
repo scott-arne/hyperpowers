@@ -593,6 +593,14 @@ git -C "$co_s2" add "plans/$(basename "$wsq")/progress.md"
 wait
 p_sha=$(sed -n 's/.*sha=\([0-9a-f]*\).*/\1/p' "$TEST_ROOT/s2.p"); q_sha=$(sed -n 's/.*sha=\([0-9a-f]*\).*/\1/p' "$TEST_ROOT/s2.q")
 if [ "$(git -C "$co_s2" rev-list --count hyperpowers/state)" -eq 3 ] && [ -n "$p_sha" ] && [ -n "$q_sha" ] && [ "$(git -C "$co_s2" show --name-only --format= "$p_sha" | grep -c .)" = 1 ] && git -C "$co_s2" show --name-only --format= "$p_sha" | grep -q "^plans/$(basename "$wsp")/" && [ "$(git -C "$co_s2" show --name-only --format= "$q_sha" | grep -c .)" = 1 ]; then pass "two concurrent snapshots of two plans both land, each with only its own directory"; else fail "two concurrent snapshots of two plans both land, each with only its own directory ($(cat "$TEST_ROOT/s2.p") / $(cat "$TEST_ROOT/s2.q"))"; fi
+# --code-repo, which SKILL.md has a controller pass to every call when the plan lives in another repository than the code: snapshot checks it against the plan line, as claim does, and otherwise does not use it. A foreign repository commits nothing.
+mkreg snapcr; snapcr=$MR_REPO; make_repo "$TEST_ROOT/foreign-snapcr"
+co_snapcr="$STATE_ROOT/$(state_key "$snapcr")"; root_snapcr=$(git -C "$snapcr" rev-list --max-parents=0 HEAD | cut -c1-7)
+tip_snapcr=$(git -C "$co_snapcr" rev-parse hyperpowers/state)
+out=$(run_state "$snapcr" snapshot docs/plan.md --code-repo "$TEST_ROOT/foreign-snapcr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-repo expected=$root_snapcr" ] && [ "$(git -C "$co_snapcr" rev-parse hyperpowers/state)" = "$tip_snapcr" ]; then pass "snapshot refuses a foreign --code-repo and commits nothing"; else fail "snapshot refuses a foreign --code-repo and commits nothing (rc=$rc: $out)"; fi
+out=$(run_state "$snapcr" snapshot docs/plan.md --code-repo "$snapcr" 2>/dev/null); rc=$?
+case "$out" in "status=snapshot sha="???????" files=1") pass "snapshot with the code repository's own --code-repo commits the ledger as without it" ;; *) fail "snapshot with the code repository's own --code-repo commits the ledger as without it (rc=$rc: $out)" ;; esac
 
 echo ""
 echo "=== claim ==="
@@ -1778,6 +1786,16 @@ run_state "$PAIR_A" finish docs/fin2.md --session s-a >/dev/null; git -C "$PAIR_
 if [ "$rc" -eq 99 ] && [ -f "$co_b/.sync-applying" ] && [ ! -d "$wsf2b" ] && ! ls -d "$co_b"/plans/.removing-* >/dev/null 2>&1 && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" != "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "the crash seam after the discard leaves the copy gone, the marker down and the ref at S"; else fail "the crash seam after the discard leaves the copy gone, the marker down and the ref at S (rc=$rc)"; fi
 out=$(run_state "$PAIR_B" sync docs/plan.md); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=up-to-date" ] && [ ! -f "$co_b/.sync-applying" ] && [ ! -d "$wsf2b" ] && [ "$(git -C "$co_b" rev-parse hyperpowers/state)" = "$(git -C "$co_b" rev-parse origin/hyperpowers/state)" ]; then pass "recovery after the discard moves the ref forward and the remote finish holds"; else fail "recovery after the discard moves the ref forward and the remote finish holds (rc=$rc: $out)"; fi
+# --code-repo on sync: with PLAN_FILE it is checked against the plan line, as claim checks it, and otherwise unused; a foreign repository is refused before the sync touches anything (the stamp a sync without a remote removes is still there). With --repo it is a usage error.
+mkreg synccr; synccr=$MR_REPO; make_repo "$TEST_ROOT/foreign-synccr"
+root_synccr=$(git -C "$synccr" rev-list --max-parents=0 HEAD | cut -c1-7); stamp_synccr="$STATE_ROOT/$(state_key "$synccr").fetched"
+printf 'origin hyperpowers/state none\n' > "$stamp_synccr"
+out=$(run_state "$synccr" sync docs/plan.md --code-repo "$TEST_ROOT/foreign-synccr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-repo expected=$root_synccr" ] && [ -f "$stamp_synccr" ]; then pass "sync refuses a foreign --code-repo before it touches anything"; else fail "sync refuses a foreign --code-repo before it touches anything (rc=$rc: $out)"; fi
+out=$(run_state "$synccr" sync docs/plan.md --code-repo "$synccr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=no-remote" ] && [ ! -e "$stamp_synccr" ]; then pass "sync with the code repository's own --code-repo syncs as without it"; else fail "sync with the code repository's own --code-repo syncs as without it (rc=$rc: $out)"; fi
+out=$(run_state "$synccr" sync --repo "$synccr" --code-repo "$synccr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "sync --repo with --code-repo is a usage error"; else fail "sync --repo with --code-repo is a usage error (rc=$rc: $out)"; fi
 echo ""
 echo ""
 echo "=== verify ==="
@@ -2917,6 +2935,17 @@ git -C "$cmpa" commit -qam "a plan with one task unannotated"
 blob_cmpa=$(git -C "$cmpa" rev-parse main:docs/plan.md | cut -c1-7)
 out=$(run_state "$cmpa" complete docs/plan.md 1 --commits 1111111..2222222 --session s1 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=invalid plan=$blob_cmpa" ] && ! grep -q '^Task 1: complete' "$wscmpa/progress.md"; then pass "complete refuses a plan whose graph does not parse"; else fail "complete refuses a plan whose graph does not parse (rc=$rc: $out)"; fi
+# --code-repo, which SKILL.md has a controller pass to every call when the plan lives in another repository than the code: complete and handback check it against the plan line, as claim does, and otherwise do not use it. A foreign repository writes no line.
+mkreg cmcr; cmcr=$MR_REPO; wscmcr=$MR_WS; make_repo "$TEST_ROOT/foreign-cmcr"
+root_cmcr=$(git -C "$cmcr" rev-list --max-parents=0 HEAD | cut -c1-7)
+out=$(run_state "$cmcr" complete docs/plan.md 1 --commits 1111111..2222222 --session s1 --code-repo "$TEST_ROOT/foreign-cmcr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-repo expected=$root_cmcr" ] && ! grep -q '^Task 1: complete' "$wscmcr/progress.md"; then pass "complete refuses a foreign --code-repo and writes no completion line"; else fail "complete refuses a foreign --code-repo and writes no completion line (rc=$rc: $out)"; fi
+out=$(run_state "$cmcr" complete docs/plan.md 1 --commits 1111111..2222222 --session s1 --code-repo "$cmcr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -Eq '^status=complete task=1 appended=1 snapshot=[0-9a-f]{7}$' && grep -qx 'Task 1: complete (commits 1111111..2222222, review clean)' "$wscmcr/progress.md"; then pass "complete with the code repository's own --code-repo completes as without it"; else fail "complete with the code repository's own --code-repo completes as without it (rc=$rc: $out)"; fi
+out=$(run_state "$cmcr" handback docs/plan.md --reason "a question only you can answer" --session s1 --code-repo "$TEST_ROOT/foreign-cmcr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "$out" = "status=wrong-repo expected=$root_cmcr" ] && ! grep -q '^handback ' "$wscmcr/progress.md"; then pass "handback refuses a foreign --code-repo and writes no hand-back line"; else fail "handback refuses a foreign --code-repo and writes no hand-back line (rc=$rc: $out)"; fi
+out=$(run_state "$cmcr" handback docs/plan.md --reason "a question only you can answer" --session s1 --code-repo "$cmcr" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=handback" ] && tail -n 1 "$wscmcr/progress.md" | grep -q '^handback s1 .*: a question only you can answer$'; then pass "handback with the code repository's own --code-repo hands back as without it"; else fail "handback with the code repository's own --code-repo hands back as without it (rc=$rc: $out)"; fi
 # --- a job's scratch stays out of the state branch (stop guard, 2026-10-23) --
 make_pair p31
 mkdir -p "$PAIR_A/docs"; : > "$PAIR_A/docs/plan.md"; git -C "$PAIR_A" add docs; git -C "$PAIR_A" commit -qm plan
@@ -4605,6 +4634,15 @@ out=$(run_state "$bd_a" wait docs/plan.md --session s1 --clear 2>/dev/null); rc=
 if [ "$rc" -eq 0 ] && [ "$out" = "status=cleared" ] && [ ! -f "$wsbd/waiting/s1" ]; then pass "clear removes the record"; else fail "clear (rc=$rc: $out)"; fi
 out=$(run_state "$bd_a" wait docs/plan.md --session s1 --clear 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=cleared" ]; then pass "clearing nothing is cleared"; else fail "clear nothing (rc=$rc: $out)"; fi
+# --code-repo on wait: checked against the plan line, as claim checks it, and otherwise unused. A foreign repository posts no record and clears none.
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --kind question --note "which parser?" --code-repo "$TEST_ROOT/foreign-bd" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ ! -e "$wsbd/waiting/s1" ]; then pass "wait refuses a foreign --code-repo and posts no record"; else fail "wait refuses a foreign --code-repo and posts no record (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --kind question --note "which parser?" --code-repo "$bd_a" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=waiting kind=question" ] && [ "$(sed -n 's/^kind=//p' "$wsbd/waiting/s1" 2>/dev/null)" = question ]; then pass "wait with the code repository's own --code-repo posts the record as without it"; else fail "wait with the code repository's own --code-repo posts the record as without it (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --clear --code-repo "$TEST_ROOT/foreign-bd" 2>/dev/null); rc=$?
+if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ] && [ -f "$wsbd/waiting/s1" ]; then pass "wait --clear refuses a foreign --code-repo and keeps the record"; else fail "wait --clear refuses a foreign --code-repo and keeps the record (rc=$rc: $out)"; fi
+out=$(run_state "$bd_a" wait docs/plan.md --session s1 --clear --code-repo "$bd_a" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=cleared" ] && [ ! -e "$wsbd/waiting/s1" ]; then pass "wait --clear with the code repository's own --code-repo clears as without it"; else fail "wait --clear with the code repository's own --code-repo clears as without it (rc=$rc: $out)"; fi
 # Records travel with snapshot and appear after sync on the other host. The claim comes first: a claim removes its session's own waiting record.
 run_state "$bd_a" claim docs/plan.md 1 --session s1 >/dev/null
 run_state "$bd_a" wait docs/plan.md --session s1 --kind gate --note "BLOCKED on round 3" >/dev/null

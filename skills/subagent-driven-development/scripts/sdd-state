@@ -4,23 +4,23 @@
 # docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md.
 #
 # Usage:
-#   sdd-state sync PLAN_FILE [--assume-absent]      (or: sync --repo DIR [--assume-absent])
+#   sdd-state sync PLAN_FILE [--assume-absent] [--code-repo DIR]      (or: sync --repo DIR [--assume-absent])
 #   sdd-state verify PLAN_FILE [--code-repo DIR]
-#   sdd-state snapshot PLAN_FILE [-m MSG] [--session SID]
+#   sdd-state snapshot PLAN_FILE [-m MSG] [--session SID] [--code-repo DIR]
 #   sdd-state handoff PLAN_FILE [--push] [--plan-untracked-ok] [--code-dirty-ok] [--code-repo DIR]
 #   sdd-state finish PLAN_FILE --session SID [--force] [--code-repo DIR]
 #   sdd-state import PLAN_FILE
 #   sdd-state prune [--receipts] [--days N] [--apply] [--repo DIR]
 #   sdd-state claim PLAN_FILE (N|final) --session SID [--takeover] [--release] [--code-repo DIR]
-#   sdd-state complete PLAN_FILE N --commits BASE..HEAD [--session SID]
-#   sdd-state handback PLAN_FILE --reason TEXT [--session SID]
+#   sdd-state complete PLAN_FILE N --commits BASE..HEAD [--session SID] [--code-repo DIR]
+#   sdd-state handback PLAN_FILE --reason TEXT [--session SID] [--code-repo DIR]
 #   sdd-state deps PLAN_FILE [--check] [--ledger FILE] [--from FILE] [--code-repo DIR]
 #   sdd-state register PLAN_FILE --session SID --integration BRANCH [--code-repo DIR]
 #   sdd-state next PLAN_FILE --session SID [--code-repo DIR]
 #   sdd-state lease PLAN_FILE (--release|--closing) --session SID [--code-repo DIR]
 #   sdd-state amend PLAN_FILE --from FILE --base BLOB [--accept SPEC ...] [--message SUBJECT] [--code-repo DIR]
 #   sdd-state merge-back PLAN_FILE N --session SID --commit SHA [--code-repo DIR]
-#   sdd-state wait PLAN_FILE --session SID (--kind KIND [--task N|final] --note TEXT | --clear)
+#   sdd-state wait PLAN_FILE --session SID (--kind KIND [--task N|final] --note TEXT | --clear) [--code-repo DIR]
 #   sdd-state board PLAN_FILE [--code-repo DIR]      (or: board --repo DIR)
 #
 # stdout: one line of space-separated key=value pairs, status= first; sync
@@ -64,23 +64,23 @@ NAMED_TOMB=0
 usage() {
   printf '%s\n' \
     'usage: sdd-state <subcommand> ...' \
-    '  sync PLAN_FILE [--assume-absent]   |   sync --repo DIR [--assume-absent]' \
+    '  sync PLAN_FILE [--assume-absent] [--code-repo DIR]   |   sync --repo DIR [--assume-absent]' \
     '  verify PLAN_FILE [--code-repo DIR]' \
-    '  snapshot PLAN_FILE [-m MSG] [--session SID]' \
+    '  snapshot PLAN_FILE [-m MSG] [--session SID] [--code-repo DIR]' \
     '  handoff PLAN_FILE [--push] [--plan-untracked-ok] [--code-dirty-ok] [--code-repo DIR]' \
     '  finish PLAN_FILE --session SID [--force] [--code-repo DIR]' \
     '  import PLAN_FILE' \
     '  prune [--receipts] [--days N] [--apply] [--repo DIR]' \
     '  claim PLAN_FILE (N|final) --session SID [--takeover] [--release] [--code-repo DIR]' \
-    '  complete PLAN_FILE N --commits BASE..HEAD [--session SID]' \
-    '  handback PLAN_FILE --reason TEXT [--session SID]' \
+    '  complete PLAN_FILE N --commits BASE..HEAD [--session SID] [--code-repo DIR]' \
+    '  handback PLAN_FILE --reason TEXT [--session SID] [--code-repo DIR]' \
     '  deps PLAN_FILE [--check] [--ledger FILE] [--from FILE] [--code-repo DIR]' \
     '  register PLAN_FILE --session SID --integration BRANCH [--code-repo DIR]' \
     '  next PLAN_FILE --session SID [--code-repo DIR]' \
     '  lease PLAN_FILE (--release|--closing) --session SID [--code-repo DIR]' \
     '  amend PLAN_FILE --from FILE --base BLOB [--accept SPEC ...] [--message SUBJECT] [--code-repo DIR]' \
     '  merge-back PLAN_FILE N --session SID --commit SHA [--code-repo DIR]' \
-    '  wait PLAN_FILE --session SID (--kind KIND [--task N|final] --note TEXT | --clear)' \
+    '  wait PLAN_FILE --session SID (--kind KIND [--task N|final] --note TEXT | --clear) [--code-repo DIR]' \
     '  board PLAN_FILE [--code-repo DIR]   |   board --repo DIR' >&2
   exit 2
 }
@@ -141,6 +141,18 @@ code_repo_arg() { # <value or empty> [<ledger>] -> physical path; refuses a repo
     fi
   fi
   printf '%s\n' "$code"
+}
+# <--code-repo value or empty> <ledger>: for a subcommand that never uses the
+# code repository. SKILL.md has a controller whose plan lives in another
+# repository pass --code-repo to every call, so one given is validated as
+# claim validates it, and a mistyped or wrong repository is refused rather
+# than ignored; an omitted one changes nothing. Prints the refusal's status
+# line and returns its exit code.
+code_repo_check() {
+  local out rc
+  [ -n "$1" ] || return 0
+  out=$(code_repo_arg "$1" "$2") && return 0
+  rc=$?; [ -z "$out" ] || printf '%s\n' "$out"; return "$rc"
 }
 # Reversible, unlike enc: percent first, then space, so "a b" and "a%20b"
 # stay distinct specs.
@@ -409,11 +421,12 @@ cmd_register() {
 
 # --- snapshot ----------------------------------------------------------------
 cmd_snapshot() {
-  local plan="" msg="" sid="" out rc n
+  local plan="" msg="" sid="" code="" out rc n
   while [ $# -gt 0 ]; do
     case "$1" in
       -m) [ $# -ge 2 ] || usage; msg=$2; shift 2 ;;
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
       -*) usage ;;
       *) plan=$1; shift ;;
     esac
@@ -421,6 +434,7 @@ cmd_snapshot() {
   [ -n "$plan" ] || usage
   [ -z "$sid" ] || sid_ok "$sid" || { echo "status=error"; return 2; }
   resolve_plan "$plan"
+  code_repo_check "$code" "$WSDIR/progress.md" || return $?
   # The plain backend commits nothing, but the board still reads the
   # activity stamp from the local workspace.
   if [ "$BACKEND" != branch ]; then
@@ -1021,11 +1035,12 @@ take_lock_or_busy() {
 # controller cannot complete a task that does not exist: a heading that only
 # a worktree's copy carries, or one inside a fenced block, is no task.
 cmd_complete() {
-  local plan="" n="" commits="" sid="" total line out rc appended pair blob tmp graph
+  local plan="" n="" commits="" sid="" code="" total line out rc appended pair blob tmp graph
   while [ $# -gt 0 ]; do
     case "$1" in
       --commits) [ $# -ge 2 ] || usage; commits=$2; shift 2 ;;
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
       -*) usage ;;
       *) if [ -z "$plan" ]; then plan=$1; elif [ -z "$n" ]; then n=$1; else usage; fi; shift ;;
     esac
@@ -1034,6 +1049,7 @@ cmd_complete() {
   case "$n" in ''|*[!0-9]*) usage ;; esac
   [[ "$commits" =~ ^[0-9a-f]{7}\.\.[0-9a-f]{7}$ ]] || usage
   resolve_plan "$plan"
+  code_repo_check "$code" "$WSDIR/progress.md" || return $?
   pair=$(authoritative_plan_blob) || { echo "status=error"; return 2; }
   blob=${pair%% *}; tmp=${pair#* }
   graph=$(hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
@@ -1069,11 +1085,12 @@ cmd_complete() {
 # The explicit hand-back the stop guard honours for the current turn: one
 # millisecond-stamped line, appended under the lock, no snapshot.
 cmd_handback() {
-  local plan="" reason="" sid=""
+  local plan="" reason="" sid="" code=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --reason) [ $# -ge 2 ] || usage; reason=$2; shift 2 ;;
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
       -*) usage ;;
       *) [ -z "$plan" ] || usage; plan=$1; shift ;;
     esac
@@ -1089,6 +1106,7 @@ cmd_handback() {
   # carrying it would read as a finished task.
   if printf '%s' "$reason" | grep -Eq 'Task [0-9]+: complete'; then echo "sdd-state: --reason must not contain a completion mark" >&2; return 2; fi
   resolve_plan "$plan"
+  code_repo_check "$code" "$WSDIR/progress.md" || return $?
   take_lock_or_busy || return $?
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace"; return 2; fi
@@ -2578,7 +2596,7 @@ merge_back_wait() {
 # goes through record_publish, in merge_back_wait's format. The note is one
 # line because the board prints it on one line and a human reads it there.
 cmd_wait() {
-  local plan="" sid="" kind="" task="" task_given=0 note="" clear=0 d top b
+  local plan="" sid="" kind="" task="" task_given=0 note="" clear=0 code="" d top b
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
@@ -2586,6 +2604,7 @@ cmd_wait() {
       --task) [ $# -ge 2 ] || usage; task=$2; task_given=1; shift 2 ;;
       --note) [ $# -ge 2 ] || usage; note=$2; shift 2 ;;
       --clear) clear=1; shift ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
       -*) usage ;;
       *) [ -z "$plan" ] || usage; plan=$1; shift ;;
     esac
@@ -2593,6 +2612,7 @@ cmd_wait() {
   [ -n "$plan" ] && [ -n "$sid" ] || usage
   sid_ok "$sid" || { echo "status=error"; return 2; }
   resolve_plan "$plan"
+  code_repo_check "$code" "$WSDIR/progress.md" || return $?
   d="$WSDIR/waiting"
   [ -f "$WSDIR/progress.md" ] || { echo "status=no-workspace"; return 2; }
   # The waiting directory arrives with a fetched state branch: a planted
@@ -3726,19 +3746,28 @@ apply_target() {
   esac
 }
 cmd_sync() {
-  local plan="" repo="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure url_before url_pin fp_before fp_after n nonce pin_count fetch_ref stale_ref old_remote
+  local plan="" repo="" code="" assume=0 stamp err rc S R target kind mt tree res had_co created="" ensure url_before url_pin fp_before fp_after n nonce pin_count fetch_ref stale_ref old_remote ledger
   REMOTE_FINISHED=""
   # remove_verified (Task 6) and recover_apply live in this file; sync, finish, handoff and snapshot share them.
   while [ $# -gt 0 ]; do
     case "$1" in
       --assume-absent) assume=1; shift ;;
       --repo) [ $# -ge 2 ] || usage; repo=$2; shift 2 ;;
+      --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
       -*) usage ;;
       *) plan=$1; shift ;;
     esac
   done
+  # --code-repo names the code repository of one plan; --repo syncs no plan.
+  [ -z "$code" ] || [ -z "$repo" ] || usage
   if [ -n "$plan" ]; then
     resolve_plan_basic "$plan"
+    # The checkout is not ensured before the fetch, so the plan line is read
+    # from the ledger where it already is on disk, if anywhere.
+    if [ -n "$code" ]; then
+      if [ "$(hp_backend "$PLAN_DIR")" = plain ]; then ledger="$(hp_plain_root "$PLAN_DIR")/plans/$WS/progress.md"; else ledger="$CO/plans/$WS/progress.md"; fi
+      code_repo_check "$code" "$ledger" || return $?
+    fi
   elif [ -n "$repo" ]; then
     PLAN_DIR=$(hp_physical_dir "$repo") || usage
     git -C "$PLAN_DIR" rev-parse --git-dir >/dev/null 2>&1 || { echo "sdd-state: not a git repository: $repo" >&2; exit 2; }

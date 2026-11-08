@@ -466,15 +466,17 @@ ledger_records() { # <ledger>
   hp_ledger_records "$@"
 }
 # ledger_has LEDGER GREP_ARGS...: a machine writer's idempotence check, 0
-# when one of the ledger's records matches. A fragment carrying the writer's
-# own text is no record, so it cannot suppress the line. A here-string, not
-# a pipe: grep -q stopping at the first match would fail the producer under
-# pipefail and read as no match.
+# when one of the ledger's records matches, 1 when none does, 2 when the
+# ledger cannot be read. A fragment carrying the writer's own text is no
+# record, so it cannot suppress the line. Only grep's own status is returned,
+# so a producer cut off by SIGPIPE cannot read as no match; no here-string,
+# which bash may write into a pipe before grep runs and which then deadlocks
+# a small pipe while this writer holds its locks.
 ledger_has() { # <ledger> <grep args...>
   local recs
   recs=$(ledger_records "$1") || return 2
   shift
-  grep -q "$@" <<< "$recs"
+  printf '%s\n' "$recs" | grep "$@" >/dev/null; return "${PIPESTATUS[1]}"
 }
 
 # ledger_marks_complete LEDGER N: 0 when the ledger records task N complete,
@@ -1065,12 +1067,13 @@ cmd_complete() {
   blob=${pair%% *}; tmp=${pair#* }
   graph=$(hp_plan_graph "$tmp"); rc=$?; rm -f "$tmp"
   [ "$rc" -eq 0 ] || { echo "status=invalid plan=${blob:0:7}"; return 2; }
-  # Here-strings, not pipes: under pipefail a grep -q that stops reading early
-  # can fail the writer with SIGPIPE and turn a real task into an unknown one.
-  if ! grep -q "^task=$n " <<< "$graph"; then
-    total=$(grep -c . <<< "$graph")
-    echo "status=unknown-task task=$n tasks=$total"; return 2
-  fi
+  # A case match, and a count by grep -c, which reads all of its input, so no
+  # producer is cut off by SIGPIPE; never a here-string, which bash may write
+  # into a pipe before the reader runs and which then deadlocks a small pipe.
+  case $'\n'"$graph"$'\n' in
+    *$'\n'"task=$n "*) ;;
+    *) total=$(printf '%s\n' "$graph" | grep -c .); echo "status=unknown-task task=$n tasks=$total"; return 2 ;;
+  esac
   take_lock_or_busy || return $?
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   if [ ! -f "$WSDIR/progress.md" ]; then hp_unlock; echo "status=no-workspace"; return 2; fi

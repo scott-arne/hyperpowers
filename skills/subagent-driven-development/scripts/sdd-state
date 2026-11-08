@@ -604,8 +604,10 @@ cmd_claim() {
     wt=$(sed -n 's/^worktree=//p' "$target/owner" 2>/dev/null)
     if [ -z "$owner" ]; then hp_unlock; echo "status=error"; return 2; fi
     if [ "$owner" = "$sid" ]; then
-      # The owner's retry completes whatever a crash left undone.
+      # The owner's retry completes whatever a crash left undone, the
+      # waiting record's removal included: re-claiming is resuming.
       claim_finish_own || { hp_unlock; echo "status=error"; return 2; }
+      claim_clear_wait || { hp_unlock; echo "status=error"; return 2; }
       hp_unlock; echo "status=held task=$n owner=$owner own=1${branch_out}"; return 0
     fi
     hp_unlock
@@ -693,6 +695,7 @@ cmd_claim() {
     if { [ "$own_lease" -eq 1 ] && { [ ! -d "$target" ] || [ "$owner" = "$sid" ]; }; } || { [ -z "$lease" ] && [ -d "$target" ] && [ "$owner" = "$sid" ]; }; then
       [ -d "$target" ] || publish_final_claim || { hp_unlock; echo "status=error"; return 2; }
       write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }
+      claim_clear_wait || { hp_unlock; echo "status=error"; return 2; }
       hp_unlock; echo "status=held task=final owner=$sid own=1 lease=$lease_out"; return 0
     fi
     if [ -d "$target" ] && [ "$owner" != "$sid" ]; then

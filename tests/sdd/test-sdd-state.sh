@@ -3626,6 +3626,13 @@ printf 'Task 2: merged 1234567 into main (from 1234567)\n' >> "$wsclw/progress.m
 run_state "$clw" wait docs/plan.md --session s4 --kind gate --note "BLOCKED on round 3" >/dev/null 2>&1
 out=$(run_state "$clw" claim docs/plan.md 2 --session s4 --takeover 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2 takeover=1 branch=none merged=1" ] && [ ! -e "$wsclw/waiting/s4" ] && [ "$(sed -n 's/^kind=//p' "$wsclw/waiting/s1" 2>/dev/null)" = merge ]; then pass "a takeover of a merged task removes its session's gate waiting record and leaves the old holder's merge record"; else fail "a takeover of a merged task removes its session's waiting record (rc=$rc: $out: $(ls -A "$wsclw/waiting" 2>/dev/null | tr '\n' ' '))"; fi
+# The owner's retry is a successful claim too: a first attempt that published the claim and then stopped (the crash seam after the rename) leaves the session's waiting record, and the retry that answers held own=1 removes it.
+mkreg clr; clr=$MR_REPO; wsclr=$MR_WS
+run_state "$clr" wait docs/plan.md --session s1 --kind tasks --note "held: 2@s2" >/dev/null 2>&1
+( cd "$clr" && HYPERPOWERS_TEST_CRASH_AT=claim-after-rename bash "$SDD_STATE" claim docs/plan.md 2 --session s1 >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -eq 99 ] && [ -f "$wsclr/claims/task-2/owner" ] && [ "$(sed -n 's/^kind=//p' "$wsclr/waiting/s1" 2>/dev/null)" = tasks ]; then pass "a claim stopped after its rename leaves its session's waiting record"; else fail "a claim stopped after its rename leaves its session's waiting record (rc=$rc)"; fi
+out=$(run_state "$clr" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% branch=*}" = "status=held task=2 owner=s1 own=1" ] && [ ! -e "$wsclr/waiting/s1" ]; then pass "the owner's retry removes its session's tasks waiting record"; else fail "the owner's retry removes its session's tasks waiting record (rc=$rc: $out: $(tr '\n' ' ' < "$wsclr/waiting/s1" 2>/dev/null))"; fi
 # The branch line goes through hp_ledger_append like every machine-written line: a fragment at the ledger's tail, here one carrying the very text the claim owes, is ended with its marker and kept in fragments.log, and cannot pass for the record.
 mkreg clf; clf=$MR_REPO; wsclf=$MR_WS; tabclf=$(printf '\t')
 refclf="main.$(basename "$wsclf" | sed 's/.*-//').task-1"; fromclf=$(git -C "$clf" rev-parse main | cut -c1-7)
@@ -3851,6 +3858,16 @@ out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$
 lease_fn=$(ls "$STATE_ROOT/$(state_key "$fn_a").final-"* 2>/dev/null | head -n 1)
 if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=claimed task=final" ] && [ -n "$lease_fn" ] && [ "$(sed -n 's/^branch=//p' "$lease_fn")" = "feature/foo" ] && [ "$(sed -n 's/^closing=//p' "$lease_fn")" = 0 ] && [ -d "$wsfn/claims/final" ]; then pass "final claims the plan and takes a slash-safe lease on the branch"; else fail "final claimed (rc=$rc: $out: $lease_fn)"; fi
 if [ "$rc" -eq 0 ] && [ ! -e "$wsfn/waiting/s1" ]; then pass "the final claim removes its session's tasks waiting record"; else fail "the final claim removes its session's tasks waiting record (rc=$rc: $(tr '\n' ' ' < "$wsfn/waiting/s1" 2>/dev/null))"; fi
+# The holder's repeat of claim final clears the record too: a final claim whose activity write failed after the claim and the lease were published (a directory stands where the wait wrote the activity stamp) leaves the session's waiting record, and the repeat that answers held own=1 removes it.
+mkreg clrf; clrf=$MR_REPO; wsclrf=$MR_WS
+printf 'Task %s: complete (commits 1111111..2222222, review clean)\n' 1 2 3 >> "$wsclrf/progress.md"
+run_state "$clrf" wait docs/plan.md --session s1 --kind tasks --note "final waits on the last review" >/dev/null 2>&1
+rm -f "$wsclrf/activity/s1"; mkdir "$wsclrf/activity/s1"
+out=$(run_state "$clrf" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -d "$wsclrf/claims/final" ] && [ "$(sed -n 's/^kind=//p' "$wsclrf/waiting/s1" 2>/dev/null)" = tasks ]; then pass "a final claim whose activity write fails leaves its session's waiting record"; else fail "a final claim whose activity write fails leaves its session's waiting record (rc=$rc: $out)"; fi
+rmdir "$wsclrf/activity/s1"
+out=$(run_state "$clrf" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=held task=final owner=s1 own=1" ] && [ ! -e "$wsclrf/waiting/s1" ] && [ -f "$wsclrf/activity/s1" ]; then pass "the holder's repeated final claim removes its session's tasks waiting record"; else fail "the holder's repeated final claim removes its session's tasks waiting record (rc=$rc: $out: $(tr '\n' ' ' < "$wsclrf/waiting/s1" 2>/dev/null))"; fi
 printf 'time=2026-01-01T00:00:00Z\n' >> "$lease_fn"
 out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=final owner=s1 own=1 lease=$(basename "$lease_fn")" ] && grep -q '^time=2026-01-01T00:00:00Z$' "$lease_fn"; then pass "the holder's repeated final claim leaves the lease untouched"; else fail "own final re-claim (rc=$rc: $out)"; fi

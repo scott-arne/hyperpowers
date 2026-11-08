@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# wait-exit — wait in the foreground for a background command's exit file.
+#
+# Finish runs the full suite after the SDD ledger is gone, so tracked-job is
+# not available to it. A suite longer than one foreground tool call runs in
+# the harness's tracked background option as
+#   <suite> > <dir>/suite.log 2>&1; echo $? > <dir>/suite.exit
+# and the session calls this helper until it prints `exited`. A foreground
+# wait keeps the turn open, which is what an editor such as Zed shows as the
+# session working; a turn ended to wait shows it idle.
+#
+# Usage: wait-exit FILE --max-ms N
+#   -> exited code=<n>   (exit 0 when n is 0, 1 otherwise)
+#   -> running           (exit 3: no exit code in FILE when the bound passed)
+# exit 2: usage.
+set -u
+
+usage() { echo 'usage: wait-exit FILE --max-ms N' >&2; exit 2; }
+
+[ $# -eq 3 ] || usage
+file=$1
+[ "$2" = "--max-ms" ] || usage
+max_ms=$3
+case "$max_ms" in ''|*[!0-9]*) usage ;; esac
+[ "$max_ms" -gt 0 ] || usage
+
+# read_code: the integer in FILE, or nothing while the file is absent, empty
+# or still being written.
+read_code() {
+  local text
+  [ -f "$file" ] || return 1
+  text=$(tr -d '[:space:]' < "$file" 2>/dev/null) || return 1
+  case "$text" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$text"
+}
+
+# The bound is read from the clock, never counted in polls: on a loaded host
+# a poll costs more than its sleep, and a counted 540000 ms bound ran past a
+# 600 s tool timeout. SECONDS has whole-second resolution, so the wait ends
+# up to a second early, never late.
+limit=$(( SECONDS + (max_ms + 999) / 1000 ))
+while :; do
+  if code=$(read_code); then
+    echo "exited code=$code"
+    [ "$code" -eq 0 ] && exit 0
+    exit 1
+  fi
+  [ "$SECONDS" -ge "$limit" ] && break
+  sleep 0.2
+done
+echo "running"
+exit 3

@@ -67,6 +67,16 @@ registrations() { git -C "$1" worktree list --porcelain | grep -c "^worktree $ST
 # created, without going through sdd-dir (Task 5 asserts sdd-dir prints it).
 # shellcheck source=/dev/null
 ws_path() { ( . "$LIB"; e=$(hp_ensure_checkout "$1") || exit 2; printf '%s/plans/%s\n' "${e#* }" "$(hp_plan_ws_name "$2")" ) ; }
+# mkreg <name>: a repository without a remote whose committed plan names a
+# spec and three independent tasks, with its ledger, the plan registered on
+# main (one repository holds the plan and the code). Sets MR_REPO and MR_WS.
+mkreg() {
+    MR_REPO="$TEST_ROOT/$1"; make_repo "$MR_REPO"; mkdir -p "$MR_REPO/docs"; : > "$MR_REPO/docs/spec.md"
+    printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** none\n\n### Task 3: C\n\n**Depends on:** none\n' > "$MR_REPO/docs/plan.md"
+    git -C "$MR_REPO" add docs; git -C "$MR_REPO" commit -qm plan
+    MR_WS=$(run_sdd_dir "$MR_REPO" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$MR_WS/progress.md"
+    run_state "$MR_REPO" register docs/plan.md --session s1 --integration main >/dev/null 2>&1
+}
 
 echo "=== creation ==="
 
@@ -3552,6 +3562,25 @@ if [ "$rc" -eq 7 ] && [ "${out%% plan=*}" = "status=blocked task=2 waiting=1" ];
 printf -- '- Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$MP_WS/progress.md"
 out=$(run_state "$TEST_ROOT/ev4" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2 branch=none" ]; then pass "a list-marked completion line satisfies the dependency"; else fail "marked completion (rc=$rc: $out)"; fi
+# A claim ends the wait its session posted: the stop guard allows a turn end on this session's record, so one a claim left behind would let a premature stop through later in the turn. A merge record names a conflict still owed for one task and stays; another session's record, and the record of a session whose claim is refused, are untouched.
+mkreg clw; clw=$MR_REPO; wsclw=$MR_WS
+run_state "$clw" wait docs/plan.md --session s1 --kind tasks --note "held: 1@s2" >/dev/null 2>&1
+run_state "$clw" wait docs/plan.md --session s2 --kind question --note "which parser?" >/dev/null 2>&1
+out=$(run_state "$clw" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% branch=*}" = "status=claimed task=1" ] && [ -f "$wsclw/claims/task-1/owner" ] && [ ! -e "$wsclw/waiting/s1" ]; then pass "a task claim removes its session's tasks waiting record"; else fail "a task claim removes its session's tasks waiting record (rc=$rc: $out: $(tr '\n' ' ' < "$wsclw/waiting/s1" 2>/dev/null))"; fi
+if [ "$(sed -n 's/^kind=//p' "$wsclw/waiting/s2" 2>/dev/null)" = question ]; then pass "a claim leaves another session's waiting record"; else fail "a claim leaves another session's waiting record ($(ls -A "$wsclw/waiting" 2>/dev/null | tr '\n' ' '))"; fi
+run_state "$clw" wait docs/plan.md --session s1 --kind merge --task 1 --note "merge-back conflict in src/a.txt" >/dev/null 2>&1
+out=$(run_state "$clw" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% branch=*}" = "status=claimed task=2" ] && [ "$(sed -n 's/^kind=//p' "$wsclw/waiting/s1" 2>/dev/null)" = merge ] && [ "$(sed -n 's/^task=//p' "$wsclw/waiting/s1" 2>/dev/null)" = 1 ]; then pass "a claim of another task keeps its session's merge waiting record"; else fail "a claim of another task keeps its session's merge waiting record (rc=$rc: $out: $(tr '\n' ' ' < "$wsclw/waiting/s1" 2>/dev/null))"; fi
+run_state "$clw" wait docs/plan.md --session s3 --kind tasks --note "held: 1@s1" >/dev/null 2>&1
+out=$(run_state "$clw" claim docs/plan.md 1 --session s3 2>/dev/null); rc=$?
+if [ "$rc" -eq 4 ] && [ "${out%% since=*}" = "status=held task=1 owner=s1" ] && [ "$(sed -n 's/^kind=//p' "$wsclw/waiting/s3" 2>/dev/null)" = tasks ]; then pass "a claim refused because another session holds the task leaves its session's waiting record"; else fail "a refused claim leaves its session's waiting record (rc=$rc: $out: $(ls -A "$wsclw/waiting" 2>/dev/null | tr '\n' ' '))"; fi
+out=$(run_state "$clw" claim docs/plan.md 1 --session s3 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% branch=*}" = "status=claimed task=1 takeover=1" ] && [ ! -e "$wsclw/waiting/s3" ]; then pass "a takeover removes its session's tasks waiting record"; else fail "a takeover removes its session's tasks waiting record (rc=$rc: $out: $(tr '\n' ' ' < "$wsclw/waiting/s3" 2>/dev/null))"; fi
+printf 'Task 2: merged 1234567 into main (from 1234567)\n' >> "$wsclw/progress.md"
+run_state "$clw" wait docs/plan.md --session s4 --kind gate --note "BLOCKED on round 3" >/dev/null 2>&1
+out=$(run_state "$clw" claim docs/plan.md 2 --session s4 --takeover 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2 takeover=1 branch=none merged=1" ] && [ ! -e "$wsclw/waiting/s4" ] && [ "$(sed -n 's/^kind=//p' "$wsclw/waiting/s1" 2>/dev/null)" = merge ]; then pass "a takeover of a merged task removes its session's gate waiting record and leaves the old holder's merge record"; else fail "a takeover of a merged task removes its session's waiting record (rc=$rc: $out: $(ls -A "$wsclw/waiting" 2>/dev/null | tr '\n' ' '))"; fi
 
 
 echo "next: the claimable frontier"
@@ -3762,9 +3791,11 @@ run_state "$fn_a" claim docs/plan.md 1 --session s1 >/dev/null
 out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
 if [ "$rc" -eq 7 ] && [ "$out" = "status=blocked task=final waiting=1" ]; then pass "final is blocked while a task is open"; else fail "final blocked (rc=$rc: $out)"; fi
 printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsfn/progress.md"
+run_state "$fn_a" wait docs/plan.md --session s1 --kind tasks --note "final waits on task 1" >/dev/null 2>&1
 out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
 lease_fn=$(ls "$STATE_ROOT/$(state_key "$fn_a").final-"* 2>/dev/null | head -n 1)
 if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=claimed task=final" ] && [ -n "$lease_fn" ] && [ "$(sed -n 's/^branch=//p' "$lease_fn")" = "feature/foo" ] && [ "$(sed -n 's/^closing=//p' "$lease_fn")" = 0 ] && [ -d "$wsfn/claims/final" ]; then pass "final claims the plan and takes a slash-safe lease on the branch"; else fail "final claimed (rc=$rc: $out: $lease_fn)"; fi
+if [ "$rc" -eq 0 ] && [ ! -e "$wsfn/waiting/s1" ]; then pass "the final claim removes its session's tasks waiting record"; else fail "the final claim removes its session's tasks waiting record (rc=$rc: $(tr '\n' ' ' < "$wsfn/waiting/s1" 2>/dev/null))"; fi
 printf 'time=2026-01-01T00:00:00Z\n' >> "$lease_fn"
 out=$(run_state "$fn_a" claim docs/plan.md final --session s1 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=final owner=s1 own=1 lease=$(basename "$lease_fn")" ] && grep -q '^time=2026-01-01T00:00:00Z$' "$lease_fn"; then pass "the holder's repeated final claim leaves the lease untouched"; else fail "own final re-claim (rc=$rc: $out)"; fi
@@ -4553,9 +4584,9 @@ out=$(run_state "$bd_a" wait docs/plan.md --session s1 --clear 2>/dev/null); rc=
 if [ "$rc" -eq 0 ] && [ "$out" = "status=cleared" ] && [ ! -f "$wsbd/waiting/s1" ]; then pass "clear removes the record"; else fail "clear (rc=$rc: $out)"; fi
 out=$(run_state "$bd_a" wait docs/plan.md --session s1 --clear 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=cleared" ]; then pass "clearing nothing is cleared"; else fail "clear nothing (rc=$rc: $out)"; fi
-# Records travel with snapshot and appear after sync on the other host.
-run_state "$bd_a" wait docs/plan.md --session s1 --kind gate --note "BLOCKED on round 3" >/dev/null
+# Records travel with snapshot and appear after sync on the other host. The claim comes first: a claim removes its session's own waiting record.
 run_state "$bd_a" claim docs/plan.md 1 --session s1 >/dev/null
+run_state "$bd_a" wait docs/plan.md --session s1 --kind gate --note "BLOCKED on round 3" >/dev/null
 printf '2026-01-01T00:00:00Z\n' > "$wsbd/activity/s1"
 run_state "$bd_a" snapshot docs/plan.md --session s1 >/dev/null; git -C "$bd_a" push -q origin hyperpowers/state 2>/dev/null
 if [ "$(cat "$wsbd/activity/s1")" != "2026-01-01T00:00:00Z" ]; then pass "snapshot --session stamps activity"; else fail "snapshot --session stamps activity"; fi

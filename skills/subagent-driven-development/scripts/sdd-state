@@ -549,6 +549,21 @@ cmd_claim() {
     [ "$mrc" -eq 1 ] || return 1
     if [ -n "$ref" ] && [ -n "$from" ]; then claim_finish_branch; else ref=""; from=""; branch_out=" branch=none"; fi
   }
+  # A claim ends the wait its session posted: the stop guard allows a turn
+  # end on this session's record, so one left behind would let a premature
+  # stop through later in the turn. A merge record stays: it names a conflict
+  # still owed for one task, which merge-back's bookkeeping clears when that
+  # task lands, and a session holding several claims must keep it. A record
+  # whose kind cannot be read is an error, never taken for one that is not a
+  # merge. Runs under the claim's lock.
+  claim_clear_wait() {
+    local w="$WSDIR/waiting/$sid" kind
+    hp_contained "$ROOT" "plans/$WS/waiting/$sid" || return 1
+    [ -f "$w" ] || return 0
+    kind=$(sed -n 's/^kind=//p' "$w") || return 1
+    [ "${kind%%$'\n'*}" != merge ] || return 0
+    rm -f "$w"
+  }
   # The plan line is only settled once recovery has run: finishing an
   # interrupted sync can bring in a registered ledger. Locks are taken for the
   # line as it stands, recovery runs under them, and the line is read again;
@@ -682,6 +697,7 @@ cmd_claim() {
     # The claim stands once published; a failed activity write is reported,
     # and the holder's retry answers held.
     write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }
+    claim_clear_wait || { hp_unlock; echo "status=error"; return 2; }
     hp_unlock
     if [ "$took" -eq 1 ]; then echo "status=claimed task=final lease=$lease_out takeover=1"; else echo "status=claimed task=final lease=$lease_out"; fi
   }
@@ -718,6 +734,7 @@ cmd_claim() {
     lclosing=$(sed -n 's/^closing=//p' "$lease" | head -n 1); [ "$lclosing" = 1 ] || lclosing=0
     rec=$(printf 'session=%s\nhost=%s\nplan=%s\nbranch=%s\ntime=%s\nclosing=%s' "$sid" "$(hostname)" "$WS" "$lbranch" "$(hp_utc_now)" "$lclosing")
     lease_supersede "$c" "$lease" "$rec" || { hp_unlock; echo "status=error"; return 2; }
+    claim_clear_wait || { hp_unlock; echo "status=error"; return 2; }
     hp_unlock; echo "status=claimed task=final lease=$(basename "$lease") takeover=1"
   }
   line=$(plan_line_of "$WSDIR/progress.md"); ref=""; from=""; pass=0
@@ -812,9 +829,11 @@ cmd_claim() {
     if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
     if [ "$mrc" -eq 0 ]; then
       write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }
+      claim_clear_wait || { hp_unlock; echo "status=error"; return 2; }
       hp_unlock; echo "status=claimed task=$n takeover=1 branch=none merged=1"; return 0
     fi
     claim_finish_branch strict || { hp_unlock; echo "status=error"; return 2; }
+    claim_clear_wait || { hp_unlock; echo "status=error"; return 2; }
     hp_unlock
     echo "status=claimed task=$n takeover=1${branch_out}"; return 0
   fi
@@ -825,6 +844,7 @@ cmd_claim() {
     if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
     if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = claim-after-rename ]; then hp_unlock; exit 99; fi
     claim_finish_branch strict || { hp_unlock; echo "status=error"; return 2; }
+    claim_clear_wait || { hp_unlock; echo "status=error"; return 2; }
     hp_unlock; echo "status=claimed task=$n${branch_out}"; return 0
   fi
   rm -rf "$tmp"

@@ -3626,6 +3626,16 @@ printf 'Task 2: merged 1234567 into main (from 1234567)\n' >> "$wsclw/progress.m
 run_state "$clw" wait docs/plan.md --session s4 --kind gate --note "BLOCKED on round 3" >/dev/null 2>&1
 out=$(run_state "$clw" claim docs/plan.md 2 --session s4 --takeover 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=2 takeover=1 branch=none merged=1" ] && [ ! -e "$wsclw/waiting/s4" ] && [ "$(sed -n 's/^kind=//p' "$wsclw/waiting/s1" 2>/dev/null)" = merge ]; then pass "a takeover of a merged task removes its session's gate waiting record and leaves the old holder's merge record"; else fail "a takeover of a merged task removes its session's waiting record (rc=$rc: $out: $(ls -A "$wsclw/waiting" 2>/dev/null | tr '\n' ' '))"; fi
+# The branch line goes through hp_ledger_append like every machine-written line: a fragment at the ledger's tail, here one carrying the very text the claim owes, is ended with its marker and kept in fragments.log, and cannot pass for the record.
+mkreg clf; clf=$MR_REPO; wsclf=$MR_WS; tabclf=$(printf '\t')
+refclf="main.$(basename "$wsclf" | sed 's/.*-//').task-1"; fromclf=$(git -C "$clf" rev-parse main | cut -c1-7)
+printf 'Task 1: branch %s from %s' "$refclf" "$fromclf" >> "$wsclf/progress.md"
+out=$(run_state "$clf" claim docs/plan.md 1 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=$refclf from=$fromclf" ] && [ "$(tail -c 1 "$wsclf/progress.md" | od -An -c | tr -d ' ')" = '\n' ] && [ "$(tail -n 1 "$wsclf/progress.md")" = "Task 1: branch $refclf from $fromclf" ] && grep -qxF "Task 1: branch $refclf from $fromclf${tabclf}#fragment" "$wsclf/progress.md" && grep -q " Task 1: branch $refclf from $fromclf\$" "$wsclf/fragments.log"; then pass "a claim lands its branch line as a record after a fragment carrying the same text and keeps the fragment"; else fail "a claim lands its branch line after a fragment carrying the same text (rc=$rc: $out: $(tail -n 2 "$wsclf/progress.md" | tr '\n\t' '|>'))"; fi
+out=$(HYPERPOWERS_TEST_FAIL_APPEND=1 run_state "$clf" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "a claim whose branch line is cut short reports status=error"; else fail "a claim whose branch line is cut short reports status=error (rc=$rc: $out)"; fi
+out=$(run_state "$clf" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=held task=2 owner=s1 own=1 branch=${refclf%-1}-2 from=$fromclf" ] && [ "$(tail -n 1 "$wsclf/progress.md")" = "Task 2: branch ${refclf%-1}-2 from $fromclf" ] && [ "$(tail -c 1 "$wsclf/progress.md" | od -An -c | tr -d ' ')" = '\n' ]; then pass "the owner's retry after a cut-short branch line lands the line as a record"; else fail "the owner's retry after a cut-short branch line lands the line (rc=$rc: $out: $(tail -n 2 "$wsclf/progress.md" | tr '\n\t' '|>'))"; fi
 
 
 echo "next: the claimable frontier"

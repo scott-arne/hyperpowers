@@ -414,7 +414,7 @@ cmd_register() {
   if ! git -C "$code" rev-parse -q --verify "refs/heads/$integration^{commit}" >/dev/null 2>&1; then
     hp_unlock; echo "sdd-state: the integration branch $integration does not exist in $code" >&2; echo "status=error"; return 2
   fi
-  printf 'plan: integration %s code-root %s plan-ref %s plan-root %s spec %s\n' "$integration" "${code_root:0:7}" "$plan_ref" "${plan_root:0:7}" "$spec" >> "$ledger" || { hp_unlock; echo "status=error"; return 2; }
+  hp_ledger_append "$ledger" "plan: integration $integration code-root ${code_root:0:7} plan-ref $plan_ref plan-root ${plan_root:0:7} spec $spec" || { hp_unlock; echo "status=error"; return 2; }
   hp_unlock
   echo "status=registered integration=$integration plan-ref=$plan_ref"
 }
@@ -464,6 +464,17 @@ cmd_snapshot() {
 # this script; every reader of completion lines still goes through here.
 ledger_records() { # <ledger>
   hp_ledger_records "$@"
+}
+# ledger_has LEDGER GREP_ARGS...: a machine writer's idempotence check, 0
+# when one of the ledger's records matches. A fragment carrying the writer's
+# own text is no record, so it cannot suppress the line. A here-string, not
+# a pipe: grep -q stopping at the first match would fail the producer under
+# pipefail and read as no match.
+ledger_has() { # <ledger> <grep args...>
+  local recs
+  recs=$(ledger_records "$1") || return 2
+  shift
+  grep -q "$@" <<< "$recs"
 }
 
 # ledger_marks_complete LEDGER N: 0 when the ledger records task N complete,
@@ -545,7 +556,7 @@ cmd_claim() {
     fi
     if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = claim-after-branch ]; then hp_unlock; exit 99; fi
     hp_contained "$ROOT" "plans/$WS/progress.md" || return 1
-    grep -q "^Task $n: branch $ref from ${from:0:7}$" "$WSDIR/progress.md" || printf 'Task %s: branch %s from %s\n' "$n" "$ref" "${from:0:7}" >> "$WSDIR/progress.md" || return 1
+    ledger_has "$WSDIR/progress.md" "^Task $n: branch $ref from ${from:0:7}$" || hp_ledger_append "$WSDIR/progress.md" "Task $n: branch $ref from ${from:0:7}" || return 1
     write_activity "$sid" || return 1
     branch_out=" branch=$ref from=${from:0:7}"
   }
@@ -2260,9 +2271,9 @@ amend_bookkeeping() {
   acc=$(sed -n 's/^accept=//p' "$record") || return 1
   while IFS= read -r a; do
     [ -n "$a" ] || continue
-    grep -qxF "scan: accepted-overlap $a" "$WSDIR/progress.md" || printf 'scan: accepted-overlap %s\n' "$a" >> "$WSDIR/progress.md" || return 1
+    ledger_has "$WSDIR/progress.md" -xF "scan: accepted-overlap $a" || hp_ledger_append "$WSDIR/progress.md" "scan: accepted-overlap $a" || return 1
   done <<< "$acc"
-  grep -q "^plan: amended ${blob:0:7} by " "$WSDIR/progress.md" || printf 'plan: amended %s by %s: %s\n' "${blob:0:7}" "$sid" "$msg" >> "$WSDIR/progress.md" || return 1
+  ledger_has "$WSDIR/progress.md" "^plan: amended ${blob:0:7} by " || hp_ledger_append "$WSDIR/progress.md" "plan: amended ${blob:0:7} by $sid: $msg" || return 1
   rm -f "$record"
 }
 # The conflict line each --accept value on stdin names, as hp_plan_overlaps
@@ -2570,7 +2581,7 @@ merge_back_bookkeeping() {
   local w="$WSDIR/waiting/$sid" mline
   mline="Task $n: merged ${published:0:7} into $integ (from ${sha:0:7})"
   hp_contained "$ROOT" "plans/$WS/progress.md" || return 1
-  grep -qxF "$mline" "$WSDIR/progress.md" || printf '%s\n' "$mline" >> "$WSDIR/progress.md" || return 1
+  ledger_has "$WSDIR/progress.md" -xF "$mline" || hp_ledger_append "$WSDIR/progress.md" "$mline" || return 1
   if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = merge-back-after-ledger ]; then hp_unlock; exit 99; fi
   hp_contained "$ROOT" "plans/$WS/waiting/$sid" || return 1
   if [ -f "$w" ] && [ "$(sed -n 's/^kind=//p' "$w" | head -n 1)" = merge ] && [ "$(sed -n 's/^task=//p' "$w" | head -n 1)" = "$n" ]; then rm -f "$w" || return 1; fi
@@ -4152,7 +4163,7 @@ cmd_verify() {
 # configured scan over every commit the push publishes, with a lease on the
 # remote tip the scan was computed against.
 cmd_handoff() {
-  local plan="" push=0 plan_ok=0 dirty_ok=0 code="" rel status_out dirty line code_root code_branch code_sha plan_root plan_sha plan_branch extra="" record ledger out rc sha cmd range patch err pushto remote_line remote_tip
+  local plan="" push=0 plan_ok=0 dirty_ok=0 code="" rel status_out dirty line code_root code_branch code_sha plan_root plan_sha plan_branch extra="" record plan_record="" ledger out rc sha cmd range patch err pushto remote_line remote_tip
   while [ $# -gt 0 ]; do
     case "$1" in
       --push) push=1; shift ;;
@@ -4203,12 +4214,13 @@ cmd_handoff() {
   if [ "$code" != "$REPO" ]; then
     plan_root=$(root_of "$REPO"); plan_sha=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
     [ -n "$plan_root" ] && [ -n "$plan_sha" ] || { echo "status=error"; return 2; }
-    record=$(printf '%s\nhandoff: plan root=%s %s@%s' "$record" "$plan_root" "$plan_branch" "$plan_sha")
+    plan_record="handoff: plan root=$plan_root $plan_branch@$plan_sha"
     extra=" plan=$plan_branch@${plan_sha:0:7}"
   fi
   # Everything that touches the dossier runs under the lock: an interrupted
-  # sync is finished first, the record goes in as one write, and the commit,
-  # the scan and the push follow with nothing else interleaving.
+  # sync is finished first, the record goes in (one hp_ledger_append per
+  # line, the plan line after the code line), and the commit, the scan and
+  # the push follow with nothing else interleaving.
   hp_lock "$PLAN_DIR" || return 2
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   # The dossier must be real files inside the checkout: a plans directory,
@@ -4219,7 +4231,8 @@ cmd_handoff() {
   mkdir -p "$WSDIR" || { hp_unlock; echo "status=error"; return 2; }
   ledger=$(ledger_path)
   if [ ! -f "$ledger" ]; then printf '%s%s\n' "$IDENTITY_PREFIX" "$rel" > "$ledger" || { hp_unlock; echo "status=error"; return 2; }; fi
-  printf '%s\n' "$record" >> "$ledger" || { hp_unlock; echo "status=error"; return 2; }
+  hp_ledger_append "$ledger" "$record" || { hp_unlock; echo "status=error"; return 2; }
+  [ -z "$plan_record" ] || hp_ledger_append "$ledger" "$plan_record" || { hp_unlock; echo "status=error"; return 2; }
   out=$(hp_commit_paths "$CO" "$BRANCH" "sdd $SLUG: handoff $(hp_utc_now)" "plans/$WS"); rc=$?
   [ "$rc" -eq 0 ] || { hp_unlock; echo "status=error"; return 2; }
   sha=$(git -C "$CO" rev-parse "refs/heads/$BRANCH")

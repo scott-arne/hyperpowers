@@ -461,7 +461,7 @@ function decide(e, ws, t) {
   const discovery = guard.discover({ sessionId: SID, cwd: e.repo, cacheRoot: e.cache });
   const plan = discovery.kind === 'ledger' ? guard.planState({ workspace: ws, cwd: e.repo, sessionId: SID }) : null;
   const read = discovery.kind === 'ledger' ? guard.refusalsBefore({ workspaceLog: join(ws, 'stop-guard.jsonl'), mirrorLog: mirrorOf(e), sessionId: SID }) : { refusals: 0, unreadable: null };
-  const jobsRead = discovery.kind === 'ledger' ? guard.liveJobs(ws) : { live: [], unreadable: [] };
+  const jobsRead = discovery.kind === 'ledger' ? guard.liveJobs(ws, SID) : { live: [], unreadable: [] };
   return guard.decideStop({ discovery, plan, turn: t, jobs: jobsRead.live, jobsUnreadable: jobsRead.unreadable, refusals: read.refusals, refusalsUnreadable: read.unreadable, sessionId: SID });
 }
 const input = (e, extra = {}) => JSON.stringify({ session_id: SID, transcript_path: join(e.root, 't.jsonl'), cwd: e.repo, hook_event_name: 'Stop', stop_hook_active: false, ...extra });
@@ -508,6 +508,21 @@ test('a live tracked agent allows; a live shell blocks with the live-shell messa
   mkdirSync(join(ws, 'jobs', 'soak-x-0001'), { recursive: true }); writeFileSync(join(ws, 'jobs', 'soak-x-0001', 'meta.json'), JSON.stringify({ name: 'soak', state: 'running' }));
   r = decide(e, ws, turn());
   assert.equal(r.reason, 'live-shell'); assert.match(r.message, /job\(s\) soak are live/);
+});
+test('liveJobs: only this session\'s live jobs count; a meta without a session field counts; another session\'s and this session\'s finished job do not', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1] });
+  const job = (name, meta) => { mkdirSync(join(ws, 'jobs', `${name}-x-0001`), { recursive: true }); writeFileSync(join(ws, 'jobs', `${name}-x-0001`, 'meta.json'), JSON.stringify({ name, ...meta })); };
+  job('theirs', { state: 'running', session: 'other-session' });
+  let r = decide(e, ws, turn());
+  assert.equal(r.reason, 'open-tasks'); assert.equal(r.decision, 'block');
+  job('done', { state: 'exited', session: SID });
+  assert.equal(decide(e, ws, turn()).reason, 'open-tasks');
+  job('mine', { state: 'running', session: SID });
+  r = decide(e, ws, turn());
+  assert.equal(r.reason, 'live-shell'); assert.match(r.message, /job\(s\) mine are live/);
+  assert.deepEqual(guard.liveJobs(ws, SID), { live: ['mine'], unreadable: [] });
+  job('legacy', { state: 'running' });
+  assert.deepEqual(guard.liveJobs(ws, SID), { live: ['legacy', 'mine'], unreadable: [] });
 });
 test('ambiguous, receipt and no-plan allow with their reasons', () => {
   const e = env(); const ws = workspaceFor(e); ledger(ws, e); ledger(workspaceFor(e, 'b-22222222'), e);

@@ -187,7 +187,10 @@ export function planState({ workspace, cwd, sessionId }) {
 // does not pin the session.
 // A record that exists but cannot be read is uncertainty, not absence: it is
 // returned as unreadable and main allows on it (hook-error with the detail).
-export function liveJobs(workspace) {
+// A live job counts only for the session that owns it (meta.json session=):
+// with several sessions on one plan, another session's job is not this turn's
+// to wait on. A meta without a session field cannot be attributed and counts.
+export function liveJobs(workspace, sessionId) {
   const jobs = join(workspace, 'jobs');
   const out = { live: [], unreadable: [] };
   let names;
@@ -201,6 +204,7 @@ export function liveJobs(workspace) {
     try { text = readFileSync(join(jobs, d, 'meta.json'), 'utf8'); } catch (err) { if (!absent(err)) out.unreadable.push(d); continue; }
     try {
       const m = JSON.parse(text);
+      if (m.session !== undefined && m.session !== sessionId) continue;
       if (LIVE_JOB_STATES.has(m.state) && !existsSync(join(jobs, d, 'exit'))) out.live.push(String(m.name || d));
     } catch { out.unreadable.push(d); }
   }
@@ -464,8 +468,10 @@ export function liveShellMessage(plan, state, names, sid) {
   return `SDD stop guard: plan ${plan} is not finished (${state}; job(s) ${list} are live). Job(s) ${list} are still running: watch them in the foreground with tracked-job wait, and report a lost-unswept job to your human partner with its pgid. ${handbackHint(sid)}`;
 }
 
-// Step D, in the spec's order. log-failed is decided at write time by
-// recordDecision, which is why it is absent here.
+// Step D, in the order of the 2026-10-23 spec, plus the waiting-record allow
+// after the hand-back line, which parallel development added after that spec.
+// log-failed is decided at write time by recordDecision, which is why it is
+// absent here.
 export function decideStop({ discovery, plan, turn, jobs, jobsUnreadable = [], refusals, refusalsUnreadable = null, sessionId, ledgerText = null, waitingText = null }) {
   if (discovery.kind !== 'ledger') {
     if (discovery.kind !== 'ambiguous') return { decision: 'allow', reason: 'no-ledger' };
@@ -670,7 +676,7 @@ export function main(stdinText, env = process.env) {
   const marker = workspace ? join(workspace, '.mirror-failed') : null;
   const plan = workspace ? planState({ workspace, cwd, sessionId }) : null;
   const turn = env.STOP_GUARD_TURN ? JSON.parse(env.STOP_GUARD_TURN) : readTurn(String(input.transcript_path || ''));
-  const jobsRead = workspace ? liveJobs(workspace) : { live: [], unreadable: [] };
+  const jobsRead = workspace ? liveJobs(workspace, sessionId) : { live: [], unreadable: [] };
   const jobs = jobsRead.live;
   const refusalsRead = workspace ? refusalsBefore({ workspaceLog, mirrorLog, sessionId }) : { refusals: 0, unreadable: null };
   const d = decideStop({ discovery, plan, turn, jobs, jobsUnreadable: jobsRead.unreadable, refusals: refusalsRead.refusals, refusalsUnreadable: refusalsRead.unreadable, sessionId });

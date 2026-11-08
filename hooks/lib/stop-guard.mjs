@@ -218,6 +218,35 @@ export function handbackThisTurn(ledgerText, sessionId, promptTs) {
   return false;
 }
 
+// The waiting record a session publishes when it has to wait on another one
+// (sdd-state wait, or merge-back on not-holder) and hands back. It belongs to
+// this turn when its since= (hp_utc_now, whole seconds) is at or after the
+// prompt's whole second. since= and never the mtime: a state-branch sync or
+// checkout rewrites an old record and gives it a fresh one. Fields are read as
+// the board reads them (sdd-state board_field): the first line naming one wins.
+const SINCE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+export function waitingThisTurn(recordText, sessionId, promptTs) {
+  const prompt = Date.parse(promptTs);
+  if (Number.isNaN(prompt)) return false;
+  const lines = String(recordText ?? '').split('\n');
+  const field = (name) => { const l = lines.find((x) => x.startsWith(`${name}=`)); return l === undefined ? null : l.slice(name.length + 1); };
+  const since = field('since');
+  if (field('session') !== sessionId || since === null || !SINCE.test(since)) return false;
+  return Date.parse(since) >= Math.floor(prompt / 1000) * 1000;
+}
+// The record's text, '' when there is none. The open does not block and the
+// descriptor is checked before the read, so a fifo or a directory at the path
+// is reported rather than waited on or read as an empty record. Throws for a
+// record that exists and cannot be read.
+function readRecord(path) {
+  let fd;
+  try { fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK); } catch (err) { if (absent(err)) return ''; throw err; }
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error(`not a regular file: ${path}`);
+    return readFileSync(fd, 'utf8');
+  } finally { closeSync(fd); }
+}
+
 // The last `max` lines of a log that belong to this session, in file order,
 // and what the read could not account for. The window is applied after the
 // session filter: another session's decisions on a shared plan log must not
@@ -437,7 +466,7 @@ export function liveShellMessage(plan, state, names, sid) {
 
 // Step D, in the spec's order. log-failed is decided at write time by
 // recordDecision, which is why it is absent here.
-export function decideStop({ discovery, plan, turn, jobs, jobsUnreadable = [], refusals, refusalsUnreadable = null, sessionId, ledgerText = null }) {
+export function decideStop({ discovery, plan, turn, jobs, jobsUnreadable = [], refusals, refusalsUnreadable = null, sessionId, ledgerText = null, waitingText = null }) {
   if (discovery.kind !== 'ledger') {
     if (discovery.kind !== 'ambiguous') return { decision: 'allow', reason: 'no-ledger' };
     // What discovery could not read, by path and nothing more: the entries
@@ -466,6 +495,15 @@ export function decideStop({ discovery, plan, turn, jobs, jobsUnreadable = [], r
     try { text = readFileSync(discovery.ledger, 'utf8'); } catch { return { decision: 'allow', reason: 'hook-error', state, detail: `ledger unreadable: ${discovery.ledger}` }; }
   }
   if (handbackThisTurn(text, sessionId, turn.promptTs)) return { decision: 'allow', reason: 'handback-line', state };
+  // A session waiting on another one hands back with its waiting record, not
+  // a hand-back line. A missing record is no record; one that exists and
+  // cannot be read says nothing about this turn, as with the ledger above.
+  let waiting = waitingText;
+  if (waiting === null || waiting === undefined) {
+    const record = join(discovery.workspace, 'waiting', sessionId);
+    try { waiting = readRecord(record); } catch { return { decision: 'allow', reason: 'hook-error', state, detail: `waiting record unreadable: ${record}` }; }
+  }
+  if (waitingThisTurn(waiting, sessionId, turn.promptTs)) return { decision: 'allow', reason: 'waiting-record', state };
   if (asksOrBlocks(turn.lastAssistantText || '')) return { decision: 'allow', reason: 'handback-text', state };
   if (refusals >= REFUSAL_CAP) return { decision: 'allow', reason: 'cap', state };
   const live = [...(turn.liveShells || []), ...jobs];

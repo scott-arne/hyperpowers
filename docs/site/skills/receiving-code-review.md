@@ -1,6 +1,6 @@
 ---
 sources: skills/receiving-code-review skills/requesting-code-review/SKILL.md skills/subagent-driven-development/SKILL.md
-source-digest: c9d220f19372
+source-digest: 71e057ee499b
 ---
 # receiving-code-review
 

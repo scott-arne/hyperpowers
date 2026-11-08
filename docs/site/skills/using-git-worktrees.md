@@ -1,6 +1,6 @@
 ---
 sources: skills/using-git-worktrees skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/writing-plans/SKILL.md skills/finishing-a-development-branch/SKILL.md
-source-digest: 0a7e6087459b
+source-digest: 0611dd729cb4
 ---
 # using-git-worktrees
 
@@ -29,6 +29,8 @@ The agent announces that it is using the skill to settle where the work happens,
 3. **Create the worktree, if you chose one.** It prefers the harness's native worktree tool (a tool such as `EnterWorktree`, a `/worktree` command, or a `--worktree` flag), because native tools handle placement, branching, and cleanup. Only when no native tool exists does it run `git worktree add`. For that fallback it uses a directory you named, otherwise an existing `.worktrees/` or `worktrees/` directory, otherwise `.worktrees/` at the project root, and it checks that the directory is ignored by git, adding it to `.gitignore` and committing the change if it is not.
 4. **Run project setup.** It detects the project type from files such as `package.json`, `Cargo.toml`, `requirements.txt`, `pyproject.toml`, or `go.mod` and runs the matching install or build.
 5. **Verify a clean baseline.** It runs the project's tests. If they fail, it reports the failures and asks whether to proceed or investigate. If they pass, it reports ready.
+
+A later session of an SDD plan that is already running does not start on a new branch. It gets a worktree detached at the integration branch's head, named with its session id, because the integration branch is checked out nowhere while sessions work: each claim creates a task branch, and the worktree detaches again after each merge-back. An existing worktree, a native tool's worktree, or work in place gets `git switch --detach` to the integration branch before the session's first claim, and a session that finds itself inside another session's worktree leaves it and creates its own.
 
 The final report names the workspace (or the branch, when no worktree was created), the mode, the passing test count, and the feature it is ready to implement. The mode line is always present, because the calling skill records it.
 

@@ -1,6 +1,6 @@
 ---
 sources: skills/finishing-a-development-branch skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/subagent-driven-development/SKILL.md docs/hyperpowers/specs/2026-10-21-decision-records-design.md
-source-digest: c4be2b6ab235
+source-digest: c914e3a9e128
 ---
 # How decision records are made
 
@@ -26,11 +26,13 @@ decisions-compile --reindex RECORDS_DIR
 
 A record's filename is a date and a slug of the decision's title. Its content has these parts:
 
-- A title line and a header with the status (`accepted`, or `superseded by` a record), the spec and decision number it came from, and a `Recorded` line that includes the plan path when a plan was removed.
+- A title line and a header with the status (`accepted`, or `superseded by` a record), the spec and decision number it came from, and a `Recorded` line that includes the path of each plan removed at a finish.
 - A `## Decision` section holding the spec's item text.
 - A `## What implementation changed` section holding the extractor's note for that decision, or `Nothing recorded.` when there is none.
 
-The spec is the only source of a record's title and decision text. A re-run refreshes them and keeps the record's filename and recorded date. The compiler validates every input before it writes anything, and it never commits. It stages the records, the index, the spec, and the plan's deletion, and it writes the list of changed paths to the file named by `--paths-file`, which the finishing skill then commits in one records commit. Exit code 2 means an input problem and nothing was written. Exit code 3 means a write or git operation failed after validation, and the finishing skill reports the git failure and runs the same command again once the failure is cleared.
+The spec is the only source of a record's title and decision text. A re-run refreshes them and keeps the record's filename and recorded date.
+
+Sibling plans of one spec finish one after another, and each finish recompiles the spec. A second finish keeps the first plan on the record's `Recorded` line and adds its own, so the line names every plan once, in order. When both plans bring notes, each plan's notes are a paragraph that opens `From <plan file name>: `, and a later finish replaces only its own paragraph, so a re-run of either finish leaves the notes as they were. The compiler reserves that opening, and ignores a decision's note that starts a paragraph with it. Plans are told apart by file name, so the compiler refuses, before writing anything, a plan whose file name is one the spec already records for another plan. The compiler validates every input before it writes anything, and it never commits. It stages the records, the index, the spec, and the plan's deletion, and it writes the list of changed paths to the file named by `--paths-file`, which the finishing skill then commits in one records commit. Exit code 2 means an input problem and nothing was written. Exit code 3 means a write or git operation failed after validation, and the finishing skill reports the git failure and runs the same command again once the failure is cleared.
 
 `--dry-run` reports what would be written. Under subagent-driven development, the controller runs it at the start of a run, where the skill says it costs no cycle time, and writes the numbered listing into the ledger for the extractor's later dispatch. `--undo` backs out a compile when you choose to skip the records for a branch.
 
@@ -50,4 +52,4 @@ A reversal is a new record. A decision item with a `Supersedes:` line gets a `Su
 
 ## What happens to the plan and the spec
 
-The records commit removes the plan from the tree, on the feature branch before any merge. Each record names the plan's path, and git history keeps the plan itself. The spec stays. Until the records commit it is a working document whose decision list you can amend. From that commit on, the only line that changes is a `**Outcome:**` line near the top, which the compiler writes and rewrites. It states the implementation date and the number of records. The design rationale for these rules is in {source}`docs/hyperpowers/specs/2026-10-21-decision-records-design.md`.
+The records commit removes the plan from the tree, on the feature branch before any merge. Each record names the plan's path, and git history keeps the plan itself. The spec stays. Until the records commit it is a working document whose decision list you can amend. From that commit on, the only line that changes is a `**Outcome:**` line near the top, which the compiler writes and rewrites. It names each plan that implemented the spec with its date, and gives the number of records. The design rationale for these rules is in {source}`docs/hyperpowers/specs/2026-10-21-decision-records-design.md`.

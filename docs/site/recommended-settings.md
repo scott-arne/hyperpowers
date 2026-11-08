@@ -1,6 +1,6 @@
 ---
 sources: skills/writing-plans/SKILL.md README.md docs/hyperpowers/2026-11-03-cost-reduction-6-16-2-eval-evidence.md skills/brainstorming/SKILL.md skills/subagent-driven-development/SKILL.md skills/writing-skills/SKILL.md
-source-digest: 7ce66e7f2e6c
+source-digest: 689352a83e54
 ---
 
 # Recommended settings

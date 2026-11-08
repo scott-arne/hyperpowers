@@ -1,6 +1,6 @@
 ---
 sources: skills/writing-plans skills/brainstorming/SKILL.md skills/subagent-driven-development/SKILL.md docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md
-source-digest: 4c0d9223fb82
+source-digest: c4d5c8fa13c9
 ---
 # writing-plans
 
@@ -28,6 +28,8 @@ It writes for an implementer who has zero context for your codebase and, in the 
 
 Every plan starts with a header: a pointer to the spec, the goal, the architecture, the tech stack, a Global Constraints section holding the spec's project-wide requirements with exact values, and a Grounding section. Tasks are sized so that each carries its own test cycle and is worth a fresh reviewer's attention. Steps inside a task are single actions of two to five minutes: write the failing test, run it, write the minimal code, run it again, commit.
 
+Each task also declares a `**Depends on:**` line naming the tasks whose completion lines must exist before it may be claimed, `none` when there are none. The line says nothing about files, and the pre-flight scan checks declared independence against file and interface overlap separately. A plan with no such line on any task is read as serial. The Global Constraints section can name merge-expected files, such as a changelog every task touches, so two tasks that share only those are not counted as a conflict. A task without the line is a placeholder failure in the self-review.
+
 Each task also declares a risk tier on the line under its heading:
 
 - **high:** approval-authority code, concurrency or locking, security surfaces, destructive git operations, or durable-record writers.
@@ -49,6 +51,7 @@ An implementer who lacks context fills the gaps with guesses. A plan with exact 
 ## Pros
 
 - Each task is self-contained, so a fresh subagent can implement it from its own text.
+- The dependency lines let several sessions work independent tasks of one plan at the same time.
 - Citations to real code keep implementers from imitating patterns that are not in the repository.
 - Risk tiers let mechanical tasks skip the per-task Codex review while risky ones keep it.
 - The no-placeholder rule and the self-review catch gaps before execution starts, when they are cheapest to fix.

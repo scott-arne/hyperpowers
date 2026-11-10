@@ -1,6 +1,6 @@
 ---
 sources: skills/subagent-driven-development hooks/session-start hooks/hooks.json hooks/sdd-stop-guard hooks/lib/stop-guard.mjs docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md
-source-digest: 245fb21693a8
+source-digest: 5c95269c2daf
 ---
 # How subagent-driven development keeps its place
 

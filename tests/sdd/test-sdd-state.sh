@@ -4852,6 +4852,23 @@ b_an=$(git -C "$an" rev-parse feat:docs/plan.md)
 printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A2\n\n**Depends on:** none\n' > "$TEST_ROOT/an.cand"
 out=$(cd "$an" && bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/an.cand" --base "$b_an" --message nl 2>"$TEST_ROOT/an.err"); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ -z "$(git -C "$TEST_ROOT/an-wt" status --porcelain)" ]; then pass "a clean link whose target ends in a newline takes the refresh"; else fail "a clean link whose target ends in a newline takes the refresh (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/an.err"))"; fi
+# Path fields escape control characters: a worktree path holding a newline prints as %0A, so the status line stays one line; a space still prints as %20 and a % as itself.
+en="$TEST_ROOT/enc-repo"; make_repo "$en"; git -C "$en" switch -q -c feat
+mkdir -p "$en/docs"; : > "$en/docs/spec.md"; printf '# N\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$en/docs/plan.md"; git -C "$en" add docs; git -C "$en" commit -qm plan
+wsen=$(run_sdd_dir "$en" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsen/progress.md"
+run_state "$en" register docs/plan.md --session s1 --integration feat >/dev/null; git -C "$en" switch -q --detach
+sed 's/^### Task 1: A$/### Task 1: A1/' "$en/docs/plan.md" > "$TEST_ROOT/en.c1"; b_en=$(git -C "$en" rev-parse feat:docs/plan.md)
+# en_case <worktree dir> <expected worktree= field> <label>: a worktree on the plan ref with a local edit refuses the amendment as checked-out, naming it.
+en_case() {
+  git -C "$en" worktree add -q "$1" feat >/dev/null 2>&1
+  printf 'local edit\n' >> "$1/docs/plan.md"
+  out=$(cd "$en" && bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/en.c1" --base "$b_en" --message enc 2>/dev/null); rc=$?
+  if [ "$rc" -eq 13 ] && [ "$(printf '%s\n' "$out" | grep -c .)" = 1 ] && [ "$out" = "status=checked-out worktree=$2" ]; then pass "$3"; else fail "$3 (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+  git -C "$en" worktree remove --force "$1" >/dev/null 2>&1
+}
+en_case "$TEST_ROOT/enc"$'\n'"wt" "$TEST_ROOT/enc%0Awt" "a worktree path holding a newline prints as %0A and its status line stays one line"
+en_case "$TEST_ROOT/enc wt" "$TEST_ROOT/enc%20wt" "a worktree path holding a space still prints as %20"
+en_case "$TEST_ROOT/enc%wt" "$TEST_ROOT/enc%wt" "a worktree path holding % prints unchanged"
 echo "merge-back: the integration ref's writer"
 make_pair mb; mb_a=$PAIR_A
 mkdir -p "$mb_a/docs" "$mb_a/src"; : > "$mb_a/docs/spec.md"; printf 'base\n' > "$mb_a/src/a.txt"; printf 'base\n' > "$mb_a/src/b.txt"

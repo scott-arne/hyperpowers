@@ -119,11 +119,28 @@ resolve_plan() {
   WSDIR="$ROOT/plans/$WS"
 }
 ledger_path() { printf '%s/progress.md\n' "$WSDIR"; }
-# A path-valued stdout field that is read, never compared as a key: a space
-# becomes %20. It is not reversible (a path holding a literal %20 prints the
-# same), so the fields compared as keys, the shares= paths of deps --check
-# and amend and a plan line's spec=, take enc_spec's percent-first order.
-enc() { printf '%s' "$1" | sed 's/ /%20/g'; }
+# A path-valued stdout field that is read, never compared as a key: a
+# control character becomes %XX, since a newline would end the status line
+# and split it into lines of its own; a space becomes %20; a % and every
+# other byte stay as they are. It is not reversible (a path holding a
+# literal %20 prints the same), so the fields compared as keys, the shares=
+# paths of deps --check and amend and a plan line's spec=, take enc_spec's
+# percent-first order. The body runs in a subshell, which keeps its LC_ALL:
+# in the C locale a character is one byte, and only ASCII controls are
+# [[:cntrl:]], so UTF-8 bytes pass through.
+enc() (
+  LC_ALL=C
+  s=$1 out="" c=""
+  while [ -n "$s" ]; do
+    c=${s:0:1}; s=${s:1}
+    case "$c" in
+      ' ') out="$out%20" ;;
+      [[:cntrl:]]) out="$out$(printf '%%%02X' "'$c")" ;;
+      *) out="$out$c" ;;
+    esac
+  done
+  printf '%s' "$out"
+)
 # --code-repo DIR, or the cwd's toplevel: the repository that owns the
 # integration branch when the plan lives elsewhere. Exits 2 as verify does.
 code_repo_arg() { # <value or empty> [<ledger>] -> physical path; refuses a repository whose root is not the recorded code root

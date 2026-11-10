@@ -1693,7 +1693,9 @@ restore_tomb() {
 # With "takeover" the restore is strict: it never moves a workspace aside,
 # because the takeover claims on the strength of the plan being open, and a
 # workspace that appears at the path, even during the restore, makes the
-# plan someone else's to settle. The occupancy check comes first, so a copy
+# plan someone else's to settle. The copy is published with one rename(2),
+# which refuses what a shell mv would nest it into, so nothing is moved
+# back out afterwards. The occupancy check comes first, so a copy
 # beside an occupied path answers busy whether or not it would be restored.
 # Only then does it skip a copy that lacks a ledger or, on the branch
 # backend, that the branch no longer tracks: a copy whose removal was
@@ -1712,20 +1714,23 @@ restore_removed_copy() {
     fi
     if [ "$mode" = takeover ]; then
       # Test seam: HYPERPOWERS_TEST_WRITER_AT=claim-before-restore:<relpath>
-      # recreates the workspace between the occupancy check and the rename.
-      case "${HYPERPOWERS_TEST_WRITER_AT:-}" in claim-before-restore:*) mkdir -p "$WSDIR"; printf 'written before restore\n' > "$WSDIR/${HYPERPOWERS_TEST_WRITER_AT#*:}" ;; esac
-      # A directory that appeared in that interval makes the rename nest the
-      # copy inside it; the copy is lifted back out to its tomb and the new
-      # files stay where their writer put them.
-      if ! mv "$t" "$WSDIR" 2>/dev/null; then
-        { [ -e "$WSDIR" ] || [ -L "$WSDIR" ]; } || return 2
-      elif [ -e "$WSDIR/${t##*/}" ]; then
-        mv "$WSDIR/${t##*/}" "$t" || return 2
-      else
-        continue
-      fi
-      echo "sdd-state: a copy from an interrupted removal remains at $t; move its files back into $WSDIR or delete it" >&2
-      return 3
+      # recreates the workspace between the occupancy check and the rename;
+      # an empty <relpath> creates only the directory.
+      case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+        claim-before-restore:*)
+          mkdir -p "$WSDIR"
+          [ -z "${HYPERPOWERS_TEST_WRITER_AT#*:}" ] || printf 'written before restore\n' > "$WSDIR/${HYPERPOWERS_TEST_WRITER_AT#*:}" ;;
+      esac
+      # One rename(2) refuses a non-empty directory, a file or a link that
+      # took the path since the check, so the copy never nests; an empty
+      # directory is replaced, which loses nothing.
+      local rc=0
+      node -e 'const fs=require("fs");try{fs.renameSync(process.argv[1],process.argv[2]);}catch(e){process.exit(["EISDIR","ENOTEMPTY","EEXIST","ENOTDIR"].includes(e.code)?4:2);}' "$t" "$WSDIR" 2>/dev/null || rc=$?
+      case $rc in
+        0) continue ;;
+        4) echo "sdd-state: a copy from an interrupted removal remains at $t; move its files back into $WSDIR or delete it" >&2; return 3 ;;
+        *) return 2 ;;
+      esac
     fi
     restore_tomb "$WSDIR" "$t" || return 2
   done

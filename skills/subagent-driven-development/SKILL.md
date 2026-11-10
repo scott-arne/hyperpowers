@@ -79,7 +79,7 @@ digraph process {
         "Mark the task's todo complete (where kept)" [shape=box];
     }
 
-    "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" [shape=box];
+    "Setup: sync and workspace, read the plan line, branch question, ledger and session line, verify, read plan and spec, pre-flight review" [shape=box];
     "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)" [shape=diamond];
     "Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back" [shape=box];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [shape=box];
@@ -89,7 +89,7 @@ digraph process {
     "Final review clean: delete this plan's workspace" [shape=box];
     "Use hyperpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
-    "Setup: branch question, sync and workspace, ledger and session line, verify, read plan and spec, pre-flight review" -> "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)";
+    "Setup: sync and workspace, read the plan line, branch question, ledger and session line, verify, read plan and spec, pre-flight review" -> "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)";
     "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)" -> "Claim the first task next offers (scripts/sdd-state claim), git switch to its branch" [label="yes"];
     "Claim the first task next offers (scripts/sdd-state claim), git switch to its branch" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="claimed"];
     "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer asks questions?";

@@ -652,6 +652,8 @@ assert_contains "$SDD" "Read before you settle: run the \`sync\` and \`sdd-dir\`
 assert_contains "$SDD" "When the plan line names an integration branch, this is a later session of a running plan: hand using-git-worktrees that branch and your session id" "a later session hands using-git-worktrees the integration branch and its session id"
 assert_not_contains "$SDD" "Settle where the work happens first" "Setup no longer settles the worktree before it reads the plan line"
 assert_before "$SDD" "Read before you settle" "Then settle where the work happens" "the read comes before the worktree is settled"
+assert_contains "$SDD" "Setup: sync and workspace, read the plan line, branch question" "the process graph reads the plan line before the branch question"
+assert_not_contains "$SDD" "Setup: branch question, sync and workspace" "no process-graph label settles the branch before sync"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

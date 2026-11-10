@@ -2785,9 +2785,13 @@ cmd_merge_back() {
   local plan="" n="" sid="" sha="" code="" rc out line integ ref owner_f owner full approved approved_full
   local pair blob tmp graph title deps d waiting c lease lowner wt record H new mt mrc tree paths published t uerr cur o nc
   # A replace ref would have git read another commit's parents and tree under
-  # the approved id, and merge content nobody reviewed: every git call here,
-  # and in the helpers it calls, reads the objects as they were written.
-  local -x GIT_NO_REPLACE_OBJECTS=1
+  # the approved id, and merge content nobody reviewed; an info/grafts entry
+  # would fake ancestry and turn a divergent merge into a fast forward that
+  # drops the integration branch's own commits. Every git call here, and in
+  # the helpers it calls, reads the objects as they were written.
+  # GIT_GRAFT_FILE names a path that can never exist: /dev/null also disables
+  # grafts, but makes git print its graft-deprecation advice on every call.
+  local -x GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=/dev/null/no-grafts
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;

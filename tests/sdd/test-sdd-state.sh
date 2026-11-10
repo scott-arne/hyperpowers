@@ -4998,6 +4998,15 @@ sed 's|^session=s3$|session=s3/x|' "$wsmb2/claims/task-9/owner" > "$TEST_ROOT/mb
 h9=$(git -C "$mb_a" rev-parse feat)
 out=$(run_state "$mb_a" merge-back docs/plan2.md 9 --session s3/x --commit "$s9" 2>"$TEST_ROOT/mb.sid.err"); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'a session id must be one path entry' "$TEST_ROOT/mb.sid.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h9" ] && ! grep -q '^Task 9: merged' "$wsmb2/progress.md" && [ ! -e "$wsmb2/merges/task-9" ]; then pass "merge-back refuses a slash-bearing session id at its entry, before the merge"; else fail "merge-back session id at entry (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.sid.err"))"; fi
+# A graft cannot fake ancestry for merge-back: an info/grafts entry that makes the approved commit a child of the integration head would turn a divergent merge into a fast forward and drop the integration-only commit.
+printf '\n### Task 10: G\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 10"; git -C "$mb_a" switch -q --detach feat
+run_state "$mb_a" claim docs/plan2.md 10 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-10"; printf 'g\n' > "$mb_a/src/g.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm g; g1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+git -C "$mb_a" switch -q feat; printf 'integration only\n' > "$mb_a/src/io.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm "integration only"; hg=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 10: approved %s\n' "${g1:0:7}" >> "$wsmb2/progress.md"
+mkdir -p "$mb_a/.git/info"; printf '%s %s\n' "$g1" "$hg" > "$mb_a/.git/info/grafts"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 10 --session s3 --commit "$g1" 2>"$TEST_ROOT/mb.graft.err"); rc=$?
+rm -f "$mb_a/.git/info/grafts"; hm10=$(git -C "$mb_a" rev-parse feat)
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=10 head=${hm10:0:7}" ] && [ "$(git -C "$mb_a" rev-parse "$hm10^1")" = "$hg" ] && [ "$(git -C "$mb_a" rev-parse "$hm10^2" 2>/dev/null)" = "$g1" ] && [ "$(git -C "$mb_a" show "$hm10:src/io.txt" 2>/dev/null)" = "integration only" ] && ! grep -q 'grafts is deprecated' "$TEST_ROOT/mb.graft.err"; then pass "a graft cannot fake ancestry for merge-back: a divergent merge keeps both parents and the integration-only content"; else fail "a graft cannot fake ancestry for merge-back: a divergent merge keeps both parents and the integration-only content (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.graft.err"))"; fi
 
 echo "board: waiting records, activity and the board"
 make_pair bd; bd_a=$PAIR_A; bd_b=$PAIR_B

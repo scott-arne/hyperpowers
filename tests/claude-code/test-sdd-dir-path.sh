@@ -567,6 +567,27 @@ rc=0
 if [ "$rc" -eq 0 ]; then pass "a real range still produces a package"; else fail "a real range still produces a package (got rc=$rc)"; fi
 
 echo ""
+echo "Test: review-package reads the objects as they were written, without replace refs or grafts"
+raw="$TEST_ROOT/repo-raw"; make_repo "$raw"
+mkdir -p "$raw/docs"; echo plan > "$raw/docs/plan.md"; git -C "$raw" add -A; git -C "$raw" commit -qm base
+raw_base=$(git -C "$raw" rev-parse HEAD)
+printf 'first\n' > "$raw/one.txt"; git -C "$raw" add -A; git -C "$raw" commit -qm "raw work one"
+raw_one=$(git -C "$raw" rev-parse HEAD)
+printf 'second\n' > "$raw/two.txt"; git -C "$raw" add -A; git -C "$raw" commit -qm "raw work two"
+raw_head=$(git -C "$raw" rev-parse HEAD)
+raw_tree=$( { git -C "$raw" ls-tree "$raw_head"; printf '100644 blob %s\tunreviewed.txt\n' "$(printf 'unreviewed\n' | git -C "$raw" hash-object -w --stdin)"; } | git -C "$raw" mktree)
+git -C "$raw" replace "$raw_head" "$(git -C "$raw" commit-tree "$raw_tree" -p "$raw_one" -m "raw work two")"
+rc=0
+( cd "$raw" && bash "$REVIEW_PACKAGE" docs/plan.md "$raw_base" "$raw_head" "$TEST_ROOT/raw-replace.diff" ) >/dev/null 2>"$TEST_ROOT/raw-replace.err" || rc=$?
+if [ "$rc" -eq 0 ] && grep -q '^+second$' "$TEST_ROOT/raw-replace.diff" && ! grep -q unreviewed "$TEST_ROOT/raw-replace.diff" && ! grep -q 'grafts is deprecated' "$TEST_ROOT/raw-replace.err"; then pass "a replace ref on the head does not change the package"; else fail "a replace ref on the head does not change the package (rc=$rc)"; fi
+git -C "$raw" replace -d "$raw_head" >/dev/null
+mkdir -p "$raw/.git/info"; printf '%s %s\n' "$raw_head" "$raw_base" > "$raw/.git/info/grafts"
+rc=0
+( cd "$raw" && bash "$REVIEW_PACKAGE" docs/plan.md "$raw_base" "$raw_head" "$TEST_ROOT/raw-graft.diff" ) >/dev/null 2>"$TEST_ROOT/raw-graft.err" || rc=$?
+rm -f "$raw/.git/info/grafts"
+if [ "$rc" -eq 0 ] && grep -q ' raw work one$' "$TEST_ROOT/raw-graft.diff" && grep -q ' raw work two$' "$TEST_ROOT/raw-graft.diff" && grep -q '^+first$' "$TEST_ROOT/raw-graft.diff" && ! grep -q 'grafts is deprecated' "$TEST_ROOT/raw-graft.err"; then pass "a graft on the head does not hide commits from the package"; else fail "a graft on the head does not hide commits from the package (rc=$rc)"; fi
+
+echo ""
 echo "Test: helpers still work when an extractor has stripped their exec bits"
 make_repo "$TEST_ROOT/repo-nomode"
 mkdir -p "$TEST_ROOT/repo-nomode/docs"

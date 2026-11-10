@@ -5167,5 +5167,11 @@ rm -f "$TEST_ROOT/bd.rec.seam"
 out=$(cd "$bd_a" && HYPERPOWERS_TEST_SEAM_MARK="$TEST_ROOT/bd.rec.seam" HYPERPOWERS_TEST_WRITER_AT=record-publish-after-check bash "$SDD_STATE" wait docs/plan.md --session srec --kind question --note record 2>"$TEST_ROOT/bd.rec.err"); rc=$?
 if [ -f "$TEST_ROOT/bd.rec.seam" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -d "$wsbd/waiting/srec" ] && [ -z "$(ls -A "$wsbd/waiting/srec")" ] && grep -qF "waiting/srec is not a regular file; refusing to replace it" "$TEST_ROOT/bd.rec.err"; then pass "a directory created at a record's path after the check refuses the publish and holds no record"; else fail "a directory created at a record's path after the check refuses the publish and holds no record (rc=$rc: $out: $(ls -A "$wsbd/waiting/srec" 2>/dev/null | tr '\n' ' '))"; fi
 rm -rf "$wsbd/waiting/srec" "$wsbd/activity/srec"
+# A session id holding whitespace or a colon would split the ledger's session line and the board's parse of it: register and wait refuse it before writing anything.
+for sid_bad in 'a b' 'x: mode y'; do
+  out1=$(run_state "$bd_a" register docs/plan.md --session "$sid_bad" --integration feat 2>"$TEST_ROOT/bd.sid.err"); rc1=$?
+  out2=$(run_state "$bd_a" wait docs/plan.md --session "$sid_bad" --kind question --note sid 2>>"$TEST_ROOT/bd.sid.err"); rc2=$?
+  if [ "$rc1" -eq 2 ] && [ "$out1" = "status=error" ] && [ "$rc2" -eq 2 ] && [ "$out2" = "status=error" ] && [ "$(grep -c 'a session id must be one path entry without whitespace, a colon or control characters' "$TEST_ROOT/bd.sid.err")" = 2 ] && [ ! -e "$wsbd/waiting/$sid_bad" ] && [ ! -e "$wsbd/activity/$sid_bad" ]; then pass "register and wait refuse the session id '$sid_bad'"; else fail "register and wait refuse the session id '$sid_bad' (register rc=$rc1: $out1; wait rc=$rc2: $out2: $(tr '\n' '|' < "$TEST_ROOT/bd.sid.err"))"; fi
+done
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

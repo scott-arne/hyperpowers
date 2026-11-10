@@ -203,11 +203,13 @@ claim_task_branch_name() { # <integration> <ws8> <N> [<k>] -> <integration>.<ws8
 # board reads; a control character, a newline above all, splits the board's
 # line-by-line listing of those directories into phantom sessions, and the
 # owner record, the lease and amend's ledger line into lines of their own.
+# Whitespace or a colon would split the ledger's session line and the
+# board's parse of it, which reads the id up to the first ": mode ".
 # Every subcommand that writes the id calls this before its first side
 # effect.
 sid_ok() {
   case "$1" in
-    ''|.|..|*/*|*[[:cntrl:]]*) printf 'sdd-state: a session id must be one path entry without control characters: %q\n' "$1" >&2; return 1 ;;
+    ''|.|..|*/*|*[[:cntrl:]]*|*[[:space:]]*|*:*) printf 'sdd-state: a session id must be one path entry without whitespace, a colon or control characters: %q\n' "$1" >&2; return 1 ;;
   esac
 }
 # <dir under ROOT> <session id> <content>: publishes one of a session's own
@@ -340,6 +342,7 @@ cmd_register() {
     esac
   done
   [ -n "$plan" ] && [ -n "$sid" ] && [ -n "$integration" ] || usage
+  sid_ok "$sid" || { echo "status=error"; return 2; }
   resolve_plan "$plan"
   ledger=$(ledger_path)
   [ -f "$ledger" ] || { echo "sdd-state: no ledger at $ledger; Setup creates it before registering" >&2; echo "status=error"; return 2; }

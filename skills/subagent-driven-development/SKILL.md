@@ -489,9 +489,12 @@ sessions merge.
   dispatch it. `no-workspace` (exit 2): the workspace is gone (finished or
   pruned elsewhere); stop, run `sync`, and re-read the ledger before
   anything else. `error` (exit 2, the same exit as `no-workspace` and a
-  different problem): a read or a write failed, so the task is not claimed
-  and `sync` is not the answer; stop and show the stderr line. Any other
-  status stops the dispatch until `claim` succeeds; show its stderr line.
+  different problem): a read or a write failed, and the claim may already
+  have been published; only your own retry of the same claim (which then
+  answers `held own=1`) or a takeover clears it. Stop, show the stderr line,
+  and retry the same claim once its cause is fixed; `sync` is still not the
+  answer. Any other status stops the dispatch until `claim` succeeds; show
+  its stderr line.
 - Record the implementer's agent identity from the dispatch result in the
   ledger's task entry
   (`Task <N>: implementer <agent-id-or-name> (model <model>, session <sid>, worktree <path>, branch <name>)`) —

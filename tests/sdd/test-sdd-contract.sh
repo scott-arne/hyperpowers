@@ -468,6 +468,8 @@ assert_contains "$SDD" "never the checked-out plan file itself, which \`amend\` 
 assert_contains "$SDD" "scripts/sdd-state next PLAN_FILE --session <sid>" "next before every dispatch"
 assert_contains "$SDD" "A task held by another session is ordinary while next offers another" "a held task is ordinary with a frontier"
 assert_contains "$SDD" "\`held\` with your own session id (\`own=1\`, a resume after compaction) prints the same two fields" "the session's own claim resumes rather than reading as a lost race"
+assert_contains "$SDD" "the claim may already have been published; only your own retry of the same claim (which then answers \`held own=1\`) or a takeover clears it" "a claim's error may leave the claim published, cleared by the owner's retry or a takeover"
+assert_not_contains "$SDD" "so the task is not claimed" "no line says a claim's error leaves the task unclaimed"
 assert_contains "$SDD" "Task <N>: approved <full id>" "the approved line carries the full commit id"
 assert_contains "$SDD" "written with \`git rev-parse <head>\`" "the approved id is written with git rev-parse"
 assert_contains "$SDD" "merge-back compares the whole id, so a shortened id reads as no approval" "a shortened approval id reads as no approval"

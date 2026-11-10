@@ -25,6 +25,7 @@ Each check prints the line number and the line.
 |---|---|---|---|
 | `skills/subagent-driven-development/SKILL.md` | 133 | `Read before you settle` | `grep -nF 'Read before you settle' skills/subagent-driven-development/SKILL.md` |
 | `skills/subagent-driven-development/SKILL.md` | 138 | `When the plan line names` | `grep -nF 'When the plan line names' skills/subagent-driven-development/SKILL.md` |
+| `skills/subagent-driven-development/SKILL.md` | 82, 92 | `Setup: sync and workspace, read the plan line` | `grep -nF 'Setup: sync and workspace, read the plan line' skills/subagent-driven-development/SKILL.md` |
 | `skills/subagent-driven-development/SKILL.md` | 419 | `Record BASE right after` | `grep -nF 'Record BASE right after' skills/subagent-driven-development/SKILL.md` |
 | `skills/subagent-driven-development/SKILL.md` | 421 | `refs/heads/<integration branch>` | `grep -nF 'refs/heads/<integration branch>' skills/subagent-driven-development/SKILL.md` |
 | `skills/subagent-driven-development/SKILL.md` | 424 | `once the conflict route` | `grep -nF 'once the conflict route' skills/subagent-driven-development/SKILL.md` |

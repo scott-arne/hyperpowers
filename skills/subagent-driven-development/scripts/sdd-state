@@ -928,6 +928,10 @@ cmd_claim() {
     if ! printf -- '--- superseded at %s\n%s\n' "$(hp_utc_now)" "$prev" >> "$target/owner.history"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
     if ! mv -f "$target/owner.new" "$target/owner"; then rm -f "$target/owner.new"; hp_unlock; echo "status=error"; return 2; fi
     if [ "$(sed -n 's/^session=//p' "$target/owner" 2>/dev/null)" != "$sid" ]; then hp_unlock; echo "status=error"; return 2; fi
+    # Test seam: HYPERPOWERS_TEST_CRASH_AT=claim-takeover-after-rename stops a
+    # takeover after its owner rename, before the branch, the activity stamp
+    # and the waiting record's removal.
+    if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = claim-takeover-after-rename ]; then [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; hp_unlock; exit 99; fi
     if [ "$mrc" -eq 0 ]; then
       write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }
       claim_clear_wait || { hp_unlock; echo "status=error"; return 2; }

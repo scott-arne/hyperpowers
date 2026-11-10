@@ -3698,6 +3698,15 @@ run_state "$clr" wait docs/plan.md --session s1 --kind tasks --note "held: 2@s2"
 if [ "$rc" -eq 99 ] && [ -f "$wsclr/claims/task-2/owner" ] && [ "$(sed -n 's/^kind=//p' "$wsclr/waiting/s1" 2>/dev/null)" = tasks ]; then pass "a claim stopped after its rename leaves its session's waiting record"; else fail "a claim stopped after its rename leaves its session's waiting record (rc=$rc)"; fi
 out=$(run_state "$clr" claim docs/plan.md 2 --session s1 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% branch=*}" = "status=held task=2 owner=s1 own=1" ] && [ ! -e "$wsclr/waiting/s1" ]; then pass "the owner's retry removes its session's tasks waiting record"; else fail "the owner's retry removes its session's tasks waiting record (rc=$rc: $out: $(tr '\n' ' ' < "$wsclr/waiting/s1" 2>/dev/null))"; fi
+# A takeover stopped after its owner rename (the crash seam) leaves its session's tasks waiting record, and the retry, which answers held own=1, removes it.
+mkreg clt; clt=$MR_REPO; wsclt=$MR_WS
+run_state "$clt" claim docs/plan.md 2 --session s-a >/dev/null 2>&1
+run_state "$clt" wait docs/plan.md --session s-b --kind tasks --note "held: 2@s-a" >/dev/null 2>&1
+rm -f "$TEST_ROOT/clt.seam"
+( cd "$clt" && HYPERPOWERS_TEST_SEAM_MARK="$TEST_ROOT/clt.seam" HYPERPOWERS_TEST_CRASH_AT=claim-takeover-after-rename bash "$SDD_STATE" claim docs/plan.md 2 --session s-b --takeover >/dev/null 2>&1 ); rc=$?
+if [ -f "$TEST_ROOT/clt.seam" ] && [ "$rc" -eq 99 ] && [ "$(sed -n 's/^session=//p' "$wsclt/claims/task-2/owner")" = s-b ] && [ "$(sed -n 's/^kind=//p' "$wsclt/waiting/s-b" 2>/dev/null)" = tasks ]; then pass "a takeover stopped after its owner rename leaves its session's waiting record"; else fail "a takeover stopped after its owner rename leaves its session's waiting record (rc=$rc)"; fi
+out=$(run_state "$clt" claim docs/plan.md 2 --session s-b 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% branch=*}" = "status=held task=2 owner=s-b own=1" ] && [ ! -e "$wsclt/waiting/s-b" ]; then pass "the retry after a stopped takeover answers held own=1 and removes the record"; else fail "the retry after a stopped takeover answers held own=1 and removes the record (rc=$rc: $out)"; fi
 # The branch line goes through hp_ledger_append like every machine-written line: a fragment at the ledger's tail, here one carrying the very text the claim owes, is ended with its marker and kept in fragments.log, and cannot pass for the record.
 mkreg clf; clf=$MR_REPO; wsclf=$MR_WS; tabclf=$(printf '\t')
 refclf="main.$(basename "$wsclf" | sed 's/.*-//').task-1"; fromclf=$(git -C "$clf" rev-parse main | cut -c1-7)

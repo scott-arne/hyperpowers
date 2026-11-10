@@ -1692,10 +1692,14 @@ restore_tomb() {
 # takeover run it under the plan lock, the lock finish removes under.
 # With "takeover" the restore is strict: it never moves a workspace aside,
 # because the takeover claims on the strength of the plan being open, and a
-# workspace that appears at the path, even during the restore, makes the
-# plan someone else's to settle. The copy is published with one rename(2),
-# which refuses what a shell mv would nest it into, so nothing is moved
-# back out afterwards. The occupancy check comes first, so a copy
+# workspace that holds anything at the path, even one that appears during
+# the restore, makes the plan someone else's to settle. The copy is
+# published with one rename(2), which refuses a non-empty directory, a file
+# or a link at the path, so the copy never nests and nothing is moved back
+# out. An empty directory that appeared there after the check is replaced,
+# which loses nothing: a writer that then writes into the path writes into
+# the restored workspace, as it would a moment after any restore. The
+# occupancy check comes first, so a copy
 # beside an occupied path answers busy whether or not it would be restored.
 # Only then does it skip a copy that lacks a ledger or, on the branch
 # backend, that the branch no longer tracks: a copy whose removal was

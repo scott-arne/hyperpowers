@@ -519,6 +519,9 @@ assert_contains "$FIN" "ask your human partner which is the default before choos
 assert_contains "$FIN" "git push <remote> <branch>:<branch>" "the push names one remote and one refspec"
 # finishing-a-development-branch — plans that share a spec (parallel development, 2026-10-27)
 assert_contains "$FIN" "the compiler recompiles it, adding this plan to the Outcome line" "finishing recompiles a spec with an Outcome line"
+assert_contains "$FIN" "It refuses three cases, each with exit 2 and nothing written" "finishing names the compiler's refusals for a spec another plan finished"
+assert_contains "$FIN" "this plan has the file name of a plan the spec already records" "finishing names the file-name refusal"
+assert_not_contains "$FIN" "never refuses it" "finishing no longer says the compiler never refuses"
 assert_contains "$FIN" "merge withheld: plan <ws> is still open on this branch" "finishing withholds the merge while a sibling plan is open"
 assert_contains "$FIN" "sdd-state lease <plan> --closing --session <sid>" "finishing marks the branch closing before the merge"
 assert_contains "$FIN" "sdd-state lease <plan> --release --session <sid>" "finishing releases the lease last"

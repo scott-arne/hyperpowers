@@ -101,7 +101,11 @@ has no records: for it, this step is the test run alone.
    them), because a skip restores it from HEAD. A spec that already carries
    an Outcome line is a spec another plan finished first; the compiler
    recompiles it, adding this plan to the Outcome line and its notes as
-   their own paragraph, and never refuses it. When the hand-off names a
+   their own paragraph. It refuses three cases, each with exit 2 and nothing
+   written: this plan has the file name of a plan the spec already records;
+   notes from a finish without a plan would replace notes plans wrote; or
+   this plan's notes would replace notes a finish without a plan wrote. Show
+   the stderr line and stop. When the hand-off names a
    dossier (SDD), first record where the board and the lease find the plan,
    because the compile removes the plan file and can empty its directory,
    and Step 6 can remove this worktree. `PLAN_REPO` is the main checkout of

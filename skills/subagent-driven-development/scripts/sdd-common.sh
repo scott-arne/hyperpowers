@@ -154,16 +154,34 @@ hp_ledger_append() { # <ledger> <line>
 # of an interrupted write, never records, even when their prefix reads like
 # one. Every reader of a ledger line goes through here: sdd-state's
 # completion readers and tracked-job's once-key check. 2 when unreadable.
+# The ledger is read once and every decision comes from that one snapshot:
+# a second read could find a line appended in between, without its newline,
+# at the end of the file and take it for a record.
 hp_ledger_records() { # <ledger>
-  local last tab
+  local snap body tab
   tab=$(printf '\t')
   [ -r "$1" ] || return 2
-  last=$(tail -c 1 "$1" | od -An -c | tr -d ' ')
-  if [ "$last" = '\n' ]; then
-    grep -v "${tab}#fragment\$" "$1"
-  else
-    sed '$d' "$1" | grep -v "${tab}#fragment\$"
-  fi
+  # The sentinel keeps the trailing newlines the substitution would strip.
+  snap=$(cat -- "$1" && printf x) || return 2
+  snap=${snap%x}
+  # Test seam: HYPERPOWERS_TEST_WRITER_AT=ledger-records-after-read:<text>
+  # appends <text>, without a newline, to the ledger once the snapshot is
+  # taken. The marker file named by HYPERPOWERS_TEST_SEAM_MARK is the
+  # once-flag, since callers run this in substitutions that cannot clear
+  # the variable.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+    ledger-records-after-read:*)
+      if [ -n "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] && [ ! -e "$HYPERPOWERS_TEST_SEAM_MARK" ]; then
+        : > "$HYPERPOWERS_TEST_SEAM_MARK"
+        printf '%s' "${HYPERPOWERS_TEST_WRITER_AT#*:}" >> "$1"
+      fi ;;
+  esac
+  case "$snap" in
+    *$'\n') body=$snap ;;
+    *$'\n'*) body=${snap%"${snap##*$'\n'}"} ;;
+    *) body= ;;
+  esac
+  printf '%s' "$body" | grep -v "${tab}#fragment\$"
   return 0
 }
 

@@ -4967,6 +4967,10 @@ printf 'Task 7: approved %s' "$z1" >> "$wsmb2/progress.md"
 out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
 if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "a full-id approval line left unterminated at the ledger's end reads as no approval"; else fail "a full-id approval line left unterminated at the ledger's end reads as no approval (rc=$rc: $out)"; fi
 printf '\t#fragment\n' >> "$wsmb2/progress.md"
+# An approval line appended without its newline while the ledger is being read is a remnant of an interrupted write: the records come from the one read, so it is not one.
+out=$(cd "$mb_a" && HYPERPOWERS_TEST_SEAM_MARK="$TEST_ROOT/mb.recs.seam" HYPERPOWERS_TEST_WRITER_AT="ledger-records-after-read:Task 7: approved $z1" bash "$SDD_STATE" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ] && [ -e "$TEST_ROOT/mb.recs.seam" ]; then pass "an approval line appended without its newline while the ledger is read is not a record"; else fail "approval appended mid-read (rc=$rc: $out)"; fi
+printf '\t#fragment\n' >> "$wsmb2/progress.md"
 printf 'Task 7: approved %s\n' "$h7" >> "$wsmb2/progress.md"
 out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
 if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=${h7:0:7}" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "another commit's full id gives not-approved naming its seven characters"; else fail "another commit's full id gives not-approved naming its seven characters (rc=$rc: $out)"; fi

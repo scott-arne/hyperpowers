@@ -4119,6 +4119,20 @@ lease_fo=""; for fo_f in "$STATE_ROOT/$(state_key "$fo").final-"*; do [ -f "$fo_
 tomb_fo=""; for fo_f in "$(dirname "$wsfo")/.removing-$(basename "$wsfo")-"*; do [ -d "$fo_f" ] && tomb_fo=$fo_f; done
 out=$(run_state "$fo" claim docs/plan.md final --session s2 --takeover 2>"$TEST_ROOT/fo.err"); rc=$?
 if [ "$rcf" -eq 99 ] && [ -n "$tomb_fo" ] && [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -qF "a copy from an interrupted removal remains at $tomb_fo" "$TEST_ROOT/fo.err" && [ "$(sed -n 's/^session=//p' "$lease_fo")" = s1 ] && [ "$(sed -n 's/^session=//p' "$tomb_fo/claims/final/owner" 2>/dev/null)" = s1 ] && [ -f "$tomb_fo/progress.md" ] && [ -f "$wsfo/late.md" ] && [ -z "$(ls -d "$wsfo".reappeared-* 2>/dev/null)" ]; then pass "a takeover answers busy beside a recreated workspace even when the committed removal makes the copy ineligible"; else fail "a takeover answers busy beside a recreated workspace even when the committed removal makes the copy ineligible (finish rc=$rcf rc=$rc: $out: tomb=$tomb_fo: $(tr '\n' '|' < "$TEST_ROOT/fo.err"))"; fi
+# A copy beside a recreated workspace that holds a ledger answers busy too: the unlocked writer's progress.md must not let the takeover publish a second final claim.
+fl="$TEST_ROOT/fl"; make_repo "$fl"; git -C "$fl" switch -q -c feat
+mkdir -p "$fl/docs"; : > "$fl/docs/spec.md"; printf '# T\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fl/docs/plan.md"; git -C "$fl" add docs; git -C "$fl" commit -qm plan
+wsfl=$(run_sdd_dir "$fl" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsfl/progress.md"
+run_state "$fl" register docs/plan.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsfl/progress.md"
+run_state "$fl" claim docs/plan.md final --session s1 >/dev/null
+lease_fl=""; for fl_f in "$STATE_ROOT/$(state_key "$fl").final-"*; do [ -f "$fl_f" ] && lease_fl=$fl_f; done
+( cd "$fl" && HYPERPOWERS_TEST_CRASH_AT=remove-after-rename bash "$SDD_STATE" finish docs/plan.md --session s1 >/dev/null 2>&1 ); rcf=$?
+tomb_fl=""; for fl_f in "$(dirname "$wsfl")/.removing-$(basename "$wsfl")-"*; do [ -d "$fl_f" ] && tomb_fl=$fl_f; done
+mkdir -p "$wsfl"; cp "$tomb_fl/progress.md" "$wsfl/progress.md"
+ck_fl=$(cksum < "$wsfl/progress.md"); ck_tomb=$(cksum < "$tomb_fl/progress.md"); ck_owner=$(cksum < "$tomb_fl/claims/final/owner" 2>/dev/null)
+out=$(run_state "$fl" claim docs/plan.md final --session s2 --takeover 2>"$TEST_ROOT/fl.err"); rc=$?
+if [ "$rcf" -eq 99 ] && [ -n "$tomb_fl" ] && [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -qF "$tomb_fl" "$TEST_ROOT/fl.err" && [ "$(sed -n 's/^session=//p' "$lease_fl")" = s1 ] && [ -f "$tomb_fl/progress.md" ] && [ "$(cksum < "$tomb_fl/progress.md")" = "$ck_tomb" ] && [ "$(cksum < "$tomb_fl/claims/final/owner" 2>/dev/null)" = "$ck_owner" ] && [ "$(cksum < "$wsfl/progress.md")" = "$ck_fl" ] && [ "$(sed -n 's/^session=//p' "$wsfl/claims/final/owner" 2>/dev/null)" != s2 ] && [ -z "$(ls -d "$wsfl".reappeared-* 2>/dev/null)" ]; then pass "a takeover answers busy beside a recreated workspace that holds a ledger, publishing no second final claim"; else fail "a takeover answers busy beside a recreated workspace that holds a ledger, publishing no second final claim (finish rc=$rcf rc=$rc: $out: tomb=$tomb_fl: $(tr '\n' '|' < "$TEST_ROOT/fl.err"))"; fi
 # A takeover reads a missing or malformed closing= in the replaced lease as closing, at both takeover sites: an open plan's, and the orphan path after finish removed the workspace. A sibling's register on the branch then answers branch-closing.
 dc="$TEST_ROOT/dc"; make_repo "$dc"; git -C "$dc" switch -q -c feat
 mkdir -p "$dc/docs"; : > "$dc/docs/spec.md"

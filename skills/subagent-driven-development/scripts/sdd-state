@@ -786,8 +786,11 @@ cmd_claim() {
     # plan. A final-train takeover puts it back first, under the plan lock as
     # finish does, so the plan line read next is the restored one: the loop
     # settles again with it, and the takeover runs as one of an open plan.
-    # Beside a new workspace the copy is named and the claim is busy.
-    if [ "$n" = final ] && [ "$takeover" -eq 1 ] && [ ! -f "$WSDIR/progress.md" ]; then
+    # Beside any workspace at the path, with or without a ledger, the copy is
+    # named and the claim is busy: finish refuses beside such a copy, so a
+    # takeover in that state could never finish. The check runs on every final
+    # takeover; with no copy it returns 0 and the claim goes on.
+    if [ "$n" = final ] && [ "$takeover" -eq 1 ]; then
       restore_removed_copy takeover; rc=$?
       if [ "$rc" -eq 3 ]; then hp_unlock; echo "status=busy"; return 3; fi
       [ "$rc" -eq 0 ] || { hp_unlock; echo "status=error"; return 2; }

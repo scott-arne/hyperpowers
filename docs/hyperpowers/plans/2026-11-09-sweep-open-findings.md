@@ -2601,6 +2601,8 @@ bash <worktree>/tests/claude-code/test-sdd-dir-path.sh > <sw>/logs/t4.pkg.log 2>
 
 Then the verification block in `<sw>/verification-block.md` with prefix `t4` (changed scripts: `sdd-state`, `review-package`, `tests/claude-code/test-sdd-dir-path.sh`, `tests/sdd/test-sdd-contract.sh`). Report the three red runs with their FAIL labels, and the exempt tests: the 41-digit, fragment, unterminated and 40-digit-prefix approval tests (they pass at e62fdb5, which reads no full id as an approval; they pin the new reader). The full-id merges are not exempt: they are defect-caused red evidence (at e62fdb5 a full id is no seven-character token and answers `not-approved`).
 
+Correction (2026-11-10), decision 1 (The approval line carries the full commit id): merge-back takes the newest complete `Task <N>: approved` record first and then checks its token. A token that is not exactly the repository's id width (40 or 64 hex digits, followed by a non-hex character or the line's end) reads as no approval, `approved=none`, even when an older record holds a valid full id. Spec E7-b's "takes the newest record matching `^Task <N>: approved [0-9a-f]{W}([^0-9a-f]|$)`" skipped such a line and let the older record authorize, against this decision's "a shortened id reads as no approval" and the skill text's "the newest merges". The Task 4 Codex task gate found it in round 1; the user chose this reading.
+
 ### Task 5: Single findings
 
 **Risk tier:** high — `claim`'s lock order and `register`'s recorded root are concurrency and identity code, and the parser change decides which tasks exist.

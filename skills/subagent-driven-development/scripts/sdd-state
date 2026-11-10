@@ -2595,7 +2595,14 @@ amend_refresh_one() {
   amend_settle_asides "$w" "$2" "$3" "$e" || return 1
   if [ "${e#* }" = "$(git -C "$w" rev-parse -q --verify "$3:$rel" 2>/dev/null)" ]; then
     amend_wt_plan_clean "$w" || { amend_refresh_differs "$w"; return 1; }
+      # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-refresh-new-index-before-read-tree
+      # deletes the plan file between the clean check and read-tree, once.
+      case "${HYPERPOWERS_TEST_WRITER_AT:-}" in amend-refresh-new-index-before-read-tree) [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; rm -f "$p"; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
     git -C "$w" read-tree -m -u "$2" "$3" || { amend_refresh_settle "$w"; return 1; }
+    # With the index already at the new plan, git keeps the index as it is
+    # whatever the file looks like, so a deletion in the interval would
+    # pass; the file is checked again instead.
+    amend_wt_plan_clean "$w" || { amend_refresh_differs "$w"; return 1; }
     return 0
   fi
   aside=$(mktemp "$(dirname "$p")/.$(basename "$p").sdd-amend-XXXXXX" 2>/dev/null) || { amend_refresh_differs "$w"; return 1; }

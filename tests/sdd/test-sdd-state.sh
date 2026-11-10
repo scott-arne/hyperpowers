@@ -4644,6 +4644,15 @@ if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(g
 rm -f "$aside_aw"
 aw_retry late2
 if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$awt" status --porcelain)" ] && [ ! -e "$aw_jn" ] && [ ! -e "$wsaw/amends/$n_aw" ]; then pass "the same amend finishes once the changed copy is settled"; else fail "the same amend finishes once the changed copy is settled (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+# A worktree whose index already holds the new plan is checked again after git's update: a plan file deleted between the check and the update is an error, and the file is not written back.
+aw_amend idx HYPERPOWERS_TEST_CRASH_AT=amend-refresh-after-read-tree
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.idx")
+rm -f "$seam_aw"
+out=$(cd "$aw" && env HYPERPOWERS_TEST_SEAM_MARK="$seam_aw" HYPERPOWERS_TEST_WRITER_AT=amend-refresh-new-index-before-read-tree bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/aw.idx" --base "$aw_base" --message idx 2>"$TEST_ROOT/aw.err"); rc=$?
+if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$awt/docs/plan.md" ] && grep -qF "the worktree $awt could not be refreshed to it: its copy of docs/plan.md is missing or differs from its index entry" "$TEST_ROOT/aw.err" && [ -f "$wsaw/amends/$n_aw" ]; then pass "a plan file deleted before the update of an already-refreshed index is an error, the record kept"; else fail "a plan file deleted before the update of an already-refreshed index is an error, the record kept (seam=$([ -f "$seam_aw" ] && echo 1 || echo 0) rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+git -C "$awt" checkout-index -f -- docs/plan.md
+aw_retry idx
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$awt" status --porcelain)" ] && [ ! -e "$wsaw/amends/$n_aw" ]; then pass "the same amend finishes once the deleted file is restored"; else fail "the same amend finishes once the deleted file is restored (rc=$rc: $out)"; fi
 printf 'early\n' > "$awt/docs/.plan.md.sdd-amend-EARLY1"
 aw_amend early
 if [ "$rc" -eq 0 ] && [ "$(cat "$awt/docs/.plan.md.sdd-amend-EARLY1")" = early ] && [ "$(aw_asides)" = 0 ]; then pass "a file left at an earlier run's aside name stays untouched"; else fail "a file left at an earlier run's aside name stays untouched (rc=$rc: $out)"; fi

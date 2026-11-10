@@ -12,6 +12,7 @@ FIXP="$REPO_ROOT/skills/subagent-driven-development/fix-subagent-prompt.md"
 REREVW="$REPO_ROOT/skills/subagent-driven-development/re-review-prompt.md"
 WPLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
 FIN="$REPO_ROOT/skills/finishing-a-development-branch/SKILL.md"
+DNP="$REPO_ROOT/skills/finishing-a-development-branch/decision-notes-prompt.md"
 
 FAILURES=0
 
@@ -634,6 +635,8 @@ assert_contains "$WT" 'path="$LOCATION/<integration branch>-<session id>"' "usin
 assert_contains "$WT" "the later session compares \`git rev-parse --show-toplevel\` with the \`at <toplevel>\` of every other session's newest session line in the plan's ledger" "using-git-worktrees checks whose worktree a later session is in"
 assert_contains "$WT" "it must not detach, switch or claim there. It leaves that worktree" "using-git-worktrees keeps a later session out of another session's worktree"
 assert_contains "$WT" "creates its own, with a name that carries its session id" "using-git-worktrees names the later session's own worktree after its session id"
+
+assert_contains "$DNP" "You write implementation notes for a list of design decisions" "decision-notes-prompt keeps the opening sentence the dispatch guard recognizes the extractor by"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

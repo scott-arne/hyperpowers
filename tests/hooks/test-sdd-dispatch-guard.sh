@@ -9,7 +9,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 HOOK="$REPO_ROOT/hooks/sdd-dispatch-guard"
 LIB="$REPO_ROOT/skills/subagent-driven-development/scripts/sdd-common.sh"
 FAILURES=0
-TEST_ROOT=$(mktemp -d); TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P)
+# Fail closed: an empty TEST_ROOT would aim every later write at the filesystem
+# root, and under bash 3.2 `cd ""` succeeds and the EXIT trap would delete the
+# current directory.
+TEST_ROOT=$(mktemp -d) || { echo "cannot create a temporary directory" >&2; exit 1; }
+[ -n "$TEST_ROOT" ] || { echo "mktemp returned an empty path" >&2; exit 1; }
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P) || { echo "cannot resolve the temporary directory" >&2; exit 1; }
+[ -n "$TEST_ROOT" ] || { echo "the resolved temporary directory is empty" >&2; exit 1; }
 trap 'rm -rf "$TEST_ROOT"' EXIT
 pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
@@ -80,6 +86,16 @@ odd="$TEST_ROOT/plug#in %root"; mkdir -p "$odd"; cp -R "$REPO_ROOT/hooks" "$odd/
 payload Agent '{"prompt":"p","run_in_background":true}' | bash "$odd/hooks/sdd-dispatch-guard" > "$TEST_ROOT/oddpath.out" 2>/dev/null; rc=$?
 if [ "$rc" -eq 0 ] && grep -q '"permissionDecision":"deny"' "$TEST_ROOT/oddpath.out"; then pass "the guard still refuses from a plugin root whose path carries # and %"; else fail "the guard still refuses from a plugin root whose path carries # and % (rc=$rc)"; fi
 if cat "$TEST_ROOT"/*.out | grep -q '"permissionDecision":"allow"'; then fail "no output in this suite carries an allow"; else pass "no output in this suite carries an allow"; fi
+
+# The inner run must stop before any check runs. A shim stands in for mktemp
+# because macOS mktemp falls back to its own directory when TMPDIR is unusable.
+# DISPATCH_GUARD_NO_MKTEMP_CHECK keeps a broken guard from recursing.
+if [ -z "${DISPATCH_GUARD_NO_MKTEMP_CHECK:-}" ]; then
+  mkdir -p "$TEST_ROOT/failing-mktemp"
+  printf '#!/bin/sh\nexit 1\n' > "$TEST_ROOT/failing-mktemp/mktemp"; chmod +x "$TEST_ROOT/failing-mktemp/mktemp"
+  DISPATCH_GUARD_NO_MKTEMP_CHECK=1 PATH="$TEST_ROOT/failing-mktemp:$PATH" bash "$0" > "$TEST_ROOT/mktemp-fail.out" 2>&1; rc=$?
+  if [ "$rc" -ne 0 ] && ! grep -q '\[PASS\]' "$TEST_ROOT/mktemp-fail.out"; then pass "the suite exits before any check when mktemp fails"; else fail "the suite exits before any check when mktemp fails (rc=$rc)"; fi
+fi
 
 echo ""
 if [ "$FAILURES" -gt 0 ]; then echo "STATUS: FAILED ($FAILURES failures)"; exit 1; fi

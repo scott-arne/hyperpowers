@@ -4767,6 +4767,17 @@ if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -
 git -C "$aw" update-ref --no-deref refs/heads/feat "$c_aw"; git -C "$aw" update-ref -d refs/heads/aw-pub
 aw_retry crashrec
 if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && ! git -C "$aw" symbolic-ref -q refs/heads/feat >/dev/null 2>&1; then pass "the same amend finishes once the plan ref is direct again"; else fail "the same amend finishes once the plan ref is direct again (rc=$rc: $out)"; fi
+# The overlap scan checks the amendment records against the plan ref's commit as amend read it, not the ref by name again: a leftover record whose commit is on another branch carries an acceptance of a conflict this plan really has, and a plan ref switched to that branch for the scan and back after must not count it.
+hs_aba=$(git -C "$aw" rev-parse feat)
+git -C "$aw" update-ref refs/heads/aw-aba "$(git -C "$aw" commit-tree "$(git -C "$aw" rev-parse "feat^{tree}")" -p "$hs_aba" -m "off the plan ref")"
+git -C "$aw" show feat:docs/plan.md | awk '{ print } /^\*\*Depends on:\*\*/ { print ""; print "**Files:**"; print "- Modify: `src/aba.sh`" }' > "$TEST_ROOT/aw.aba"
+n_aba=$(git -C "$aw" hash-object "$TEST_ROOT/aw.aba")
+printf 'base=%s\nblob=%s\ncommit=%s\naccept=tasks=1,2 path=src/aba.sh\n' "$(git -C "$aw" rev-parse feat:docs/plan.md)" "$n_aba" "$(git -C "$aw" rev-parse aw-aba)" > "$wsaw/amends/leftover-aba"
+lg_awaba=$(cksum < "$wsaw/progress.md"); am_awaba=$(ls -A "$wsaw/amends" 2>/dev/null)
+rm -f "$seam_aw"
+out=$(cd "$aw" && env HYPERPOWERS_TEST_SEAM_MARK="$seam_aw" HYPERPOWERS_TEST_WRITER_AT=amend-overlaps-aba:aw-aba bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/aw.aba" --base "$(git -C "$aw" rev-parse feat:docs/plan.md)" --message aba 2>"$TEST_ROOT/aw.err"); rc=$?
+if [ -f "$seam_aw" ] && [ "$rc" -eq 1 ] && [ "$(printf '%s\n' "$out" | sed -n 1p)" = "status=conflicts plan=${n_aba:0:7} count=1" ] && [ "$(printf '%s\n' "$out" | sed -n 2p)" = "conflict tasks=1,2 shares=src/aba.sh" ] && [ "$(git -C "$aw" rev-parse refs/heads/feat)" = "$hs_aba" ] && ! git -C "$aw" symbolic-ref -q refs/heads/feat >/dev/null 2>&1 && [ "$(cksum < "$wsaw/progress.md")" = "$lg_awaba" ] && [ "$(ls -A "$wsaw/amends" 2>/dev/null)" = "$am_awaba" ]; then pass "amend's overlap scan does not count a leftover record's acceptance when the plan ref is switched to the branch carrying its commit"; else fail "amend's overlap scan does not count a leftover record's acceptance when the plan ref is switched to the branch carrying its commit (seam=$([ -f "$seam_aw" ] && echo 1 || echo 0) rc=$rc: $(printf '%s' "$out" | tr '\n' '|'): $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+rm -f "$wsaw/amends/leftover-aba"; git -C "$aw" update-ref -d refs/heads/aw-aba
 # The link variant: where the index holds a symbolic link, a regular file holding the link's target text hashes to the same blob, and is still no match. hp_plan_dir refuses a linked plan path, so the plan line is written by hand and the caller stays on main, where the plan is a regular file.
 al="$TEST_ROOT/al"; make_repo "$al"
 mkdir -p "$al/docs"; : > "$al/docs/spec.md"

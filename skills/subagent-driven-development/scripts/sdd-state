@@ -316,7 +316,7 @@ cmd_deps() {
     n=$(printf '%s\n' "$graph" | grep -c .)
     echo "status=deps plan=${blob:0:7} tasks=$n"; printf '%s\n' "$graph"; return 0
   fi
-  out=$(hp_plan_overlaps "$tmp" "$ledger" "$(dirname "$ledger")/amends" "$REPO" "$ref"); rc=$?
+  out=$(hp_plan_overlaps "$tmp" "$ledger" "$(dirname "$ledger")/amends" "$REPO" "refs/heads/$ref"); rc=$?
   [ -n "$from" ] || rm -f "$tmp"
   [ "$rc" -ne 2 ] || { echo "status=error"; return 2; }
   if [ "$rc" -eq 0 ]; then echo "status=clean plan=${blob:0:7}"; return 0; fi
@@ -2331,7 +2331,14 @@ $2"; shift 2 ;;
     amend_bookkeeping || { hp_unlock; echo "sdd-state: the plan ref carries ${commit:0:7}, but its ledger lines could not be written; run the same amend again to finish them" >&2; echo "status=error"; return 2; }
     if [ -z "$base_unknown" ] && [ "$rbase" = "$base" ] && [ -n "$cur" ] && [ "$cur" != "$rbase" ]; then hp_unlock; echo "status=amended head=${commit:0:7} plan=${blob:0:7} already=1"; return 0; fi
   fi
-  out=$(hp_plan_overlaps "$from" "$WSDIR/progress.md" "$WSDIR/amends" "$REPO" "$ref"); rc=$?
+  # The scan checks the amendment records against the commit read above, not
+  # the ref by name again.
+  # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-overlaps-aba:<branch> makes the
+  # plan ref a symbolic ref to that branch just before the scan and puts the
+  # commit it held back just after, once.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in amend-overlaps-aba:*) [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; git -C "$REPO" symbolic-ref "refs/heads/$ref" "refs/heads/${HYPERPOWERS_TEST_WRITER_AT#amend-overlaps-aba:}" ;; esac
+  out=$(hp_plan_overlaps "$from" "$WSDIR/progress.md" "$WSDIR/amends" "$REPO" "$pref"); rc=$?
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in amend-overlaps-aba:*) git -C "$REPO" update-ref --no-deref "refs/heads/$ref" "$pref"; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
   [ "$rc" -ne 2 ] || { hp_unlock; echo "status=error"; return 2; }
   # An --accept names a conflict the way hp_plan_overlaps keys it in the
   # ledger; whole-line matching keeps an accepted path from suppressing a

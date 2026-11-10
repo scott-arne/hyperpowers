@@ -348,10 +348,13 @@ hp_plan_graph() {
 # are two paths, and an acceptance of one must never cover the other.
 # Paths under "**Merge-expected files:**" in Global Constraints never conflict.
 # Accepted pairs are read from "scan: accepted-overlap" ledger lines and from
-# "accept=" lines in amendment records whose commit is on the plan ref (a
-# record a failed attempt left behind must not hide a conflict). Exit 1 when
-# any line was printed.
-hp_plan_overlaps() { # <plan text> [<ledger>] [<amends dir>] [<plan repo> <plan ref>]
+# "accept=" lines in amendment records whose commit is an ancestor of the
+# given revision, the plan ref's commit as the caller read it (a record a
+# failed attempt left behind must not hide a conflict). The revision is never
+# a ref name read again here: a ref switched to symbolic and back during the
+# scan would count a record the plan ref does not carry. Exit 1 when any line
+# was printed.
+hp_plan_overlaps() { # <plan text> [<ledger>] [<amends dir>] [<plan repo> <plan revision>]
   local f=$1 ledger=${2:-} amends=${3:-} graph accepted rec c
   graph=$(hp_plan_graph "$f") || return 2
   accepted=""
@@ -360,7 +363,7 @@ hp_plan_overlaps() { # <plan text> [<ledger>] [<amends dir>] [<plan repo> <plan 
     for rec in "$amends"/*; do
       [ -f "$rec" ] || continue
       c=$(sed -n 's/^commit=//p' "$rec"); [ -n "$c" ] || continue
-      git -C "$4" merge-base --is-ancestor "$c" "refs/heads/$5" 2>/dev/null || continue
+      git -C "$4" merge-base --is-ancestor "$c" "$5" 2>/dev/null || continue
       accepted="$accepted
 $(sed -n 's/^accept=//p' "$rec")"
     done

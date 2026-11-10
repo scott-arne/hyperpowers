@@ -2196,7 +2196,7 @@ direct_ref_commit() {
 # the swap and is refreshed after it, so its status never shows the amendment
 # reverted.
 cmd_amend() {
-  local plan="" from="" base="" msg="" code="" accepts="" rel ref P cur mode blob out rc tree commit n record t idx
+  local plan="" from="" base="" msg="" code="" accepts="" rel ref P pref cur mode blob out rc tree commit n record t idx
   local lease lowner line integ c sid full base_unknown="" errf rbase uerr wb a all sv
   # The spelling hp_plan_overlaps keys acceptances by: any other would
   # suppress a conflict here that every later check reports again. Paths
@@ -2289,8 +2289,19 @@ $2"; shift 2 ;;
   # A symbolic plan ref is refused before amend's first write: the
   # crash-window refresh, the bookkeeping and the record below all assume
   # the ref is the branch the plan line registered. The attempt loop checks
-  # again, as another writer can make it one meanwhile.
-  if git -C "$REPO" symbolic-ref -q "refs/heads/$ref" >/dev/null 2>&1; then hp_unlock; echo "sdd-state: the plan ref $ref is a symbolic ref; amend writes only a branch that holds a commit" >&2; echo "status=error"; return 2; fi
+  # again, as another writer can make it one meanwhile. The recovery below
+  # works from the commit this one read returns, never from a second read of
+  # the ref, which a ref made symbolic after the check would answer with the
+  # branch it names.
+  # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-symref-before-recovery:<branch>
+  # makes the plan ref a symbolic ref to that branch, once, before the read.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in amend-symref-before-recovery:*) [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; git -C "$REPO" symbolic-ref "refs/heads/$ref" "refs/heads/${HYPERPOWERS_TEST_WRITER_AT#amend-symref-before-recovery:}"; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
+  pref=$(direct_ref_commit "$REPO" "refs/heads/$ref"); rc=$?
+  case "$rc" in
+    0) ;;
+    3) hp_unlock; echo "sdd-state: the plan ref $ref is a symbolic ref; amend writes only a branch that holds a commit" >&2; echo "status=error"; return 2 ;;
+    *) hp_unlock; echo "sdd-state: the plan ref $ref does not exist" >&2; echo "status=error"; return 2 ;;
+  esac
   hp_contained "$ROOT" "plans/$WS/amends" || { hp_unlock; echo "status=error"; return 2; }
   mkdir -p "$WSDIR/amends" || { hp_unlock; echo "status=error"; return 2; }
   record="$WSDIR/amends/$blob"
@@ -2301,8 +2312,8 @@ $2"; shift 2 ;;
   # amend run again is finished this way, and so is any other amendment made
   # in that window, whose own check below would otherwise find the worktree
   # at the old base.
-  cur=$(git -C "$REPO" rev-parse -q --verify "refs/heads/$ref:$rel" 2>/dev/null) || cur=""
-  if [ -n "$cur" ] && [ -f "$WSDIR/amends/$cur" ] && commit=$(sed -n 's/^commit=//p' "$WSDIR/amends/$cur" | head -n 1) && [ -n "$commit" ] && git -C "$REPO" merge-base --is-ancestor "$commit" "refs/heads/$ref" 2>/dev/null; then
+  cur=$(git -C "$REPO" rev-parse -q --verify "$pref:$rel" 2>/dev/null) || cur=""
+  if [ -n "$cur" ] && [ -f "$WSDIR/amends/$cur" ] && commit=$(sed -n 's/^commit=//p' "$WSDIR/amends/$cur" | head -n 1) && [ -n "$commit" ] && git -C "$REPO" merge-base --is-ancestor "$commit" "$pref" 2>/dev/null; then
     amend_refresh "$commit^" "$commit" || { hp_unlock; echo "status=error"; return 2; }
   fi
   # A record whose commit is on the plan ref was published by a call that
@@ -2315,7 +2326,7 @@ $2"; shift 2 ;;
   # an undo that also edits the plan. Another base is a new amendment to the
   # same text, which goes on as a fresh one with the earlier acceptances
   # safely in the ledger.
-  if [ -f "$record" ] && commit=$(sed -n 's/^commit=//p' "$record" | head -n 1) && [ -n "$commit" ] && git -C "$REPO" merge-base --is-ancestor "$commit" "refs/heads/$ref" 2>/dev/null; then
+  if [ -f "$record" ] && commit=$(sed -n 's/^commit=//p' "$record" | head -n 1) && [ -n "$commit" ] && git -C "$REPO" merge-base --is-ancestor "$commit" "$pref" 2>/dev/null; then
     rbase=$(sed -n 's/^base=//p' "$record" | head -n 1)
     amend_bookkeeping || { hp_unlock; echo "sdd-state: the plan ref carries ${commit:0:7}, but its ledger lines could not be written; run the same amend again to finish them" >&2; echo "status=error"; return 2; }
     if [ -z "$base_unknown" ] && [ "$rbase" = "$base" ] && [ -n "$cur" ] && [ "$cur" != "$rbase" ]; then hp_unlock; echo "status=amended head=${commit:0:7} plan=${blob:0:7} already=1"; return 0; fi
@@ -2337,8 +2348,12 @@ $2"; shift 2 ;;
     # a symbolic ref is refused here: amend would otherwise move the branch
     # it names, which no plan line registered. Checked on every attempt, as
     # another writer can make it one between attempts.
-    if git -C "$REPO" symbolic-ref -q "refs/heads/$ref" >/dev/null 2>&1; then rm -f "$record"; hp_unlock; echo "sdd-state: the plan ref $ref is a symbolic ref; amend writes only a branch that holds a commit" >&2; echo "status=error"; return 2; fi
-    P=$(git -C "$REPO" rev-parse -q --verify "refs/heads/$ref^{commit}") || { hp_unlock; echo "status=error"; return 2; }
+    P=$(direct_ref_commit "$REPO" "refs/heads/$ref"); rc=$?
+    case "$rc" in
+      0) ;;
+      3) rm -f "$record"; hp_unlock; echo "sdd-state: the plan ref $ref is a symbolic ref; amend writes only a branch that holds a commit" >&2; echo "status=error"; return 2 ;;
+      *) hp_unlock; echo "status=error"; return 2 ;;
+    esac
     if ! cur=$(git -C "$REPO" rev-parse -q --verify "$P:$rel" 2>/dev/null); then
       rm -f "$record"; hp_unlock; echo "sdd-state: the plan ref $ref does not carry $rel" >&2; echo "status=error"; return 2
     fi

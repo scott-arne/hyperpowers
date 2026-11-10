@@ -4758,6 +4758,15 @@ git -C "$aw" update-ref --no-deref refs/heads/feat "$hs_aw"; git -C "$aw" update
 aw_amend sym2 HYPERPOWERS_TEST_WRITER_AT=amend-symref-before-swap:aw-other
 if [ -f "$seam_aw" ] && [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$aw" rev-parse aw-other)" = "$hs_aw" ] && ! git -C "$aw" symbolic-ref -q refs/heads/feat >/dev/null 2>&1 && [ "$(git -C "$aw" rev-parse "feat^")" = "$hs_aw" ]; then pass "a plan ref made symbolic after amend's check is overwritten as itself, the branch it pointed to unmoved"; else fail "a plan ref made symbolic after amend's check is overwritten as itself, the branch it pointed to unmoved (rc=$rc: $out aw-other=$(git -C "$aw" rev-parse aw-other))"; fi
 git -C "$aw" update-ref -d refs/heads/aw-other
+# The recovery reads the plan ref's commit from the same read as the symbolic check: a ref made symbolic between them would be read through, and an amendment found on the branch it names would be finished as if the plan ref carried it. No worktree has the plan ref checked out here.
+aw_amend crashrec HYPERPOWERS_TEST_CRASH_AT=amend-after-swap
+c_aw=$(git -C "$aw" rev-parse feat); git -C "$aw" update-ref refs/heads/aw-pub "$c_aw"; git -C "$aw" update-ref --no-deref refs/heads/feat "$c_aw^"
+lg_awpub=$(cksum < "$wsaw/progress.md"); am_awpub=$(ls -A "$wsaw/amends" 2>/dev/null)
+aw_amend crashrec HYPERPOWERS_TEST_WRITER_AT=amend-symref-before-recovery:aw-pub
+if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "the plan ref feat is a symbolic ref; amend writes only a branch that holds a commit" "$TEST_ROOT/aw.err" && [ "$(cksum < "$wsaw/progress.md")" = "$lg_awpub" ] && [ "$(ls -A "$wsaw/amends" 2>/dev/null)" = "$am_awpub" ] && [ -n "$am_awpub" ] && [ "$(git -C "$aw" rev-parse aw-pub)" = "$c_aw" ]; then pass "a plan ref made symbolic before amend's recovery reads it is refused before any write, never read through to an amendment on the branch it names"; else fail "a plan ref made symbolic before amend's recovery reads it is refused (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+git -C "$aw" update-ref --no-deref refs/heads/feat "$c_aw"; git -C "$aw" update-ref -d refs/heads/aw-pub
+aw_retry crashrec
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && ! git -C "$aw" symbolic-ref -q refs/heads/feat >/dev/null 2>&1; then pass "the same amend finishes once the plan ref is direct again"; else fail "the same amend finishes once the plan ref is direct again (rc=$rc: $out)"; fi
 # The link variant: where the index holds a symbolic link, a regular file holding the link's target text hashes to the same blob, and is still no match. hp_plan_dir refuses a linked plan path, so the plan line is written by hand and the caller stays on main, where the plan is a regular file.
 al="$TEST_ROOT/al"; make_repo "$al"
 mkdir -p "$al/docs"; : > "$al/docs/spec.md"

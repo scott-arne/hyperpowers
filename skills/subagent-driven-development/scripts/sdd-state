@@ -301,23 +301,31 @@ cmd_deps() {
   ref=$(plan_ref_of_ledger "$ledger"); [ -n "$ref" ] || ref=$(git -C "$REPO" branch --show-current 2>/dev/null)
   if [ -n "$from" ]; then
     [ -f "$from" ] || { echo "sdd-state: no such file: $from" >&2; echo "status=error"; return 2; }
-    # One absolute path for the hash and the parse: git -C "$REPO" would
-    # otherwise resolve a relative --from against the plan repository while the
-    # parser reads it from the caller's directory.
+    # One absolute path for the attributes the hash applies: git -C "$REPO"
+    # would otherwise resolve a relative --from against the plan repository.
     from=$(cd "$(dirname "$from")" 2>/dev/null && pwd -P)/$(basename "$from")
-    tmp=$from; blob=$(git -C "$REPO" hash-object "$from") || { echo "status=error"; return 2; }
+    # The file is read once, into a private copy that is hashed and parsed,
+    # so a concurrent edit cannot pair one plan= with another text's graph or
+    # a false clean. --path keeps the attributes the file's own path selects,
+    # so plan= stays the id amend computes for the same file.
+    tmp=$(mktemp "${TMPDIR:-/tmp}/sdd-plan.XXXXXX") || { echo "status=error"; return 2; }
+    cp "$from" "$tmp" || { rm -f "$tmp"; echo "status=error"; return 2; }
+    # Test seam: HYPERPOWERS_TEST_WRITER_AT=deps-from-after-copy:<file>
+    # replaces the --from file with <file> right after it was read, once.
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in deps-from-after-copy:*) [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; cp "${HYPERPOWERS_TEST_WRITER_AT#deps-from-after-copy:}" "$from"; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
+    blob=$(git -C "$REPO" hash-object --path="$from" -- "$tmp") || { rm -f "$tmp"; echo "status=error"; return 2; }
   else
     pair=$(authoritative_plan_blob) || { echo "status=error"; return 2; }
     blob=${pair%% *}; tmp=${pair#* }
   fi
-  if ! graph=$(hp_plan_graph "$tmp"); then [ -n "$from" ] || rm -f "$tmp"; echo "status=invalid plan=${blob:0:7}"; return 2; fi
+  if ! graph=$(hp_plan_graph "$tmp"); then rm -f "$tmp"; echo "status=invalid plan=${blob:0:7}"; return 2; fi
   if [ "$check" -eq 0 ]; then
-    [ -n "$from" ] || rm -f "$tmp"
+    rm -f "$tmp"
     n=$(printf '%s\n' "$graph" | grep -c .)
     echo "status=deps plan=${blob:0:7} tasks=$n"; printf '%s\n' "$graph"; return 0
   fi
   out=$(hp_plan_overlaps "$tmp" "$ledger" "$(dirname "$ledger")/amends" "$REPO" "refs/heads/$ref"); rc=$?
-  [ -n "$from" ] || rm -f "$tmp"
+  rm -f "$tmp"
   [ "$rc" -ne 2 ] || { echo "status=error"; return 2; }
   if [ "$rc" -eq 0 ]; then echo "status=clean plan=${blob:0:7}"; return 0; fi
   n=$(printf '%s\n' "$out" | grep -c .)
@@ -2224,7 +2232,7 @@ $2"; shift 2 ;;
   sid=$(hp_session_id); [ -n "$sid" ] || sid=unknown
   sid_ok "$sid" || { echo "status=error"; return 2; }
   [ -f "$from" ] || { echo "sdd-state: no such file: $from" >&2; echo "status=error"; return 2; }
-  # One absolute path for the hash and the parse, as deps takes it: git -C
+  # One absolute path for the hash and the parse: git -C
   # "$REPO" would otherwise resolve a relative --from against the plan
   # repository while the parser reads it from the caller's directory.
   from=$(cd "$(dirname "$from")" 2>/dev/null && pwd -P)/$(basename "$from")

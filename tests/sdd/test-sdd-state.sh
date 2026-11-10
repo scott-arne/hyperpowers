@@ -3160,6 +3160,12 @@ dep_bad headsub '/^### Task 2:/ { print "### Task 2:$(true)"; next } { print }' 
 dep_bad level2 '{ sub(/^### Task /, "## Task "); print }' 'malformed task heading: ## Task 1: A'
 dep_bad level4 '{ print } END { print ""; print "#### Task 5: E" }' 'malformed task heading: #### Task 5: E'
 dep_bad twice '/^\*\*Depends on:\*\* Task 1$/ { print; print ""; print "**Depends on:** none"; next } { print }' 'malformed dependency line: task 2: none'
+# deps --from reads its file once, into a private copy it hashes and parses: a writer that replaces the file after the copy changes neither plan= nor the graph.
+printf '# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** Task 1\n' > "$dp/docs/dep.from1.md"
+printf '# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depends on:** none\n\n### Task 3: C\n\n**Depends on:** none\n' > "$TEST_ROOT/dep.from2"
+b_from1=$(git -C "$dp" hash-object docs/dep.from1.md); rm -f "$TEST_ROOT/dep.seam"
+out=$(cd "$dp" && HYPERPOWERS_TEST_SEAM_MARK="$TEST_ROOT/dep.seam" HYPERPOWERS_TEST_WRITER_AT="deps-from-after-copy:$TEST_ROOT/dep.from2" bash "$SDD_STATE" deps --from docs/dep.from1.md docs/plan.md 2>/dev/null); rc=$?
+if [ -f "$TEST_ROOT/dep.seam" ] && [ "$rc" -eq 0 ] && [ "$out" = "$(printf 'status=deps plan=%s tasks=2\ntask=1 depends=none\ntask=2 depends=1' "${b_from1:0:7}")" ] && cmp -s "$dp/docs/dep.from1.md" "$TEST_ROOT/dep.from2"; then pass "deps --from hashes and parses one copy of its file, whatever happens to the file after the copy"; else fail "deps --from hashes and parses one copy of its file, whatever happens to the file after the copy (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
 # The Global Constraints scope ends at the first task heading, so a task's prose cannot widen the allowlist.
 cat > "$dp/docs/gcscope.md" <<'GCSCOPE'
 # Plan

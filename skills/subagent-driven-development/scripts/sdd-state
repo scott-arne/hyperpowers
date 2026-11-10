@@ -127,9 +127,15 @@ ledger_path() { printf '%s/progress.md\n' "$WSDIR"; }
 # paths of deps --check and amend and a plan line's spec=, take enc_spec's
 # percent-first order. The body runs in a subshell, which keeps its LC_ALL:
 # in the C locale a character is one byte, and only ASCII controls are
-# [[:cntrl:]], so UTF-8 bytes pass through.
+# [[:cntrl:]], so UTF-8 bytes pass through. The per-byte loop is quadratic in
+# bash, and a value with no control character, the common case, needs only
+# the space substitution.
 enc() (
   LC_ALL=C
+  case "$1" in
+    *[[:cntrl:]]*) ;;
+    *) printf '%s' "${1// /%20}"; exit 0 ;;
+  esac
   s=$1 out="" c=""
   while [ -n "$s" ]; do
     c=${s:0:1}; s=${s:1}

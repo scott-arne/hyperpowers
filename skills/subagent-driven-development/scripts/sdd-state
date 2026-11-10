@@ -2905,6 +2905,9 @@ cmd_merge_back() {
       if [ "$mrc" -eq 1 ]; then
         paths=$(enc "$(printf '%s\n' "$mt" | awk 'NR == 1 { next } $0 == "" { stop = 1 } !stop { print }' | paste -sd, -)")
         merge_back_wait "$paths" || { hp_unlock; echo "sdd-state: merging ${sha:0:7} into $integ conflicts in $paths, but the waiting record could not be written" >&2; echo "status=error"; return 2; }
+        # A session stopped on a conflict is alive, as one that ran wait is:
+        # the stamp beside the record keeps the board from reading it idle.
+        write_activity "$sid" || { hp_unlock; echo "sdd-state: merging ${sha:0:7} into $integ conflicts in $paths, and the waiting record was written, but the activity stamp could not be" >&2; echo "status=error"; return 2; }
         hp_unlock; echo "status=conflict task=$n paths=$paths"; return 8
       fi
       [ "$mrc" -eq 0 ] || { hp_unlock; echo "sdd-state: git merge-tree could not merge ${sha:0:7} into $integ at ${H:0:7}" >&2; echo "status=error"; return 2; }

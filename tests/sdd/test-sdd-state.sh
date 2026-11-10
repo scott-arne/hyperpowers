@@ -4856,9 +4856,17 @@ if [ "$rc" -eq 7 ] && [ "$out" = "status=blocked waiting=1" ]; then pass "merge-
 sed -i '' "s/^Task 1: pending$/Task 1: complete (commits 1111111..${t1:0:7}, review clean)/" "$wsmb/progress.md" 2>/dev/null || sed -i "s/^Task 1: pending$/Task 1: complete (commits 1111111..${t1:0:7}, review clean)/" "$wsmb/progress.md"
 # A conflict: a commit on the integration branch touches a.txt after task 3 branched and task 3 also edits it.
 git -C "$mb_a" switch -q feat; printf 'other\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "stranger edit"; git -C "$mb_a" switch -q --detach feat
+mkdir -p "$wsmb/activity"; printf '2026-01-01T00:00:00Z\n' > "$wsmb/activity/s1"
 pts_mb=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>/dev/null); rc=$?
 if [ "$rc" -eq 8 ] && [ "$out" = "status=conflict task=3 paths=src/a.txt" ] && [ "$(git -C "$mb_a" log -1 --format=%s feat)" = "stranger edit" ] && [ "$(sed -n 's/^kind=//p' "$wsmb/waiting/s1")" = merge ]; then pass "a conflict moves no ref and posts a merge waiting record"; else fail "conflict (rc=$rc: $out)"; fi
+# A merge-back that stops on a conflict stamps the session's activity beside its waiting record, as wait does; a stamp that cannot be written is an error that still names the conflict.
+st_mb=$(cat "$wsmb/activity/s1" 2>/dev/null)
+if [ -n "$st_mb" ] && [ "$st_mb" != "2026-01-01T00:00:00Z" ]; then pass "a merge-back conflict stamps the session's activity"; else fail "a merge-back conflict stamps the session's activity (stamp: $st_mb)"; fi
+rm -f "$wsmb/activity/s1" "$wsmb/waiting/s1"; mkdir "$wsmb/activity/s1"
+out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>"$TEST_ROOT/mb.act.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qxF "sdd-state: merging ${t3:0:7} into feat conflicts in src/a.txt, and the waiting record was written, but the activity stamp could not be" "$TEST_ROOT/mb.act.err" && [ "$(sed -n 's/^kind=//p' "$wsmb/waiting/s1")" = merge ] && [ "$(git -C "$mb_a" log -1 --format=%s feat)" = "stranger edit" ]; then pass "a conflict whose activity stamp cannot be written is an error naming the conflict, with the waiting record written"; else fail "a conflict whose activity stamp cannot be written is an error naming the conflict, with the waiting record written (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.act.err"))"; fi
+rmdir "$wsmb/activity/s1"
 # The stop guard reads that real record as this turn's for its session, against a prompt stamped before the merge-back ran, and as no record for another session. The module path travels in the environment, as the stop guard suite passes it.
 guard_mb() { STOP_GUARD_MODULE="$REPO_ROOT/hooks/lib/stop-guard.mjs" node --input-type=module -e 'import { readFileSync } from "node:fs"; import { pathToFileURL } from "node:url"; const { waitingThisTurn } = await import(pathToFileURL(process.env.STOP_GUARD_MODULE).href); const [record, session, promptTs] = process.argv.slice(1); process.stdout.write(String(waitingThisTurn(readFileSync(record, "utf8"), session, promptTs)));' "$wsmb/waiting/s1" "$1" "$pts_mb" 2>&1; }
 gs1=$(guard_mb s1); gs2=$(guard_mb s2)

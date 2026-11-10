@@ -778,6 +778,17 @@ cmd_claim() {
     if [ "$pass" -gt 3 ]; then echo "sdd-state: the plan line has not settled after three passes" >&2; echo "status=error"; return 2; fi
     claim_take_locks || return $?
     recover_apply || { hp_unlock; echo "status=error"; return 2; }
+    # A finish killed after its rename-aside left this plan's workspace at
+    # plans/.removing-<ws>-<pid>, which the other readers count as an open
+    # plan. A final-train takeover puts it back first, under the plan lock as
+    # finish does, so the plan line read next is the restored one: the loop
+    # settles again with it, and the takeover runs as one of an open plan.
+    # Beside a new workspace the copy is named and the claim is busy.
+    if [ "$n" = final ] && [ "$takeover" -eq 1 ] && [ ! -f "$WSDIR/progress.md" ]; then
+      restore_removed_copy; rc=$?
+      if [ "$rc" -eq 3 ]; then hp_unlock; echo "status=busy"; return 3; fi
+      [ "$rc" -eq 0 ] || { hp_unlock; echo "status=error"; return 2; }
+    fi
     again=$(plan_line_of "$WSDIR/progress.md")
     [ "$again" != "$line" ] || break
     hp_unlock
@@ -1590,6 +1601,23 @@ restore_tomb() {
   fi
   return 0
 }
+# Puts back a copy an interrupted removal left at plans/.removing-<ws>-<pid>
+# for this workspace (WSDIR). 0 when it was restored or there was none; 3
+# when a workspace stands at the path, the copy named on stderr for a human
+# to merge or delete; 2 when the restore failed. finish and a final-train
+# takeover run it under the plan lock, the lock finish removes under.
+restore_removed_copy() {
+  local t
+  for t in "$(dirname "$WSDIR")/.removing-$(basename "$WSDIR")-"*; do
+    [ -d "$t" ] || continue
+    if [ -d "$WSDIR" ]; then
+      echo "sdd-state: a copy from an interrupted removal remains at $t; move its files back into $WSDIR or delete it" >&2
+      return 3
+    fi
+    restore_tomb "$WSDIR" "$t" || return 2
+  done
+  return 0
+}
 # <tomb>: delete a verified copy. A copy that survives the deletion is named;
 # the caller decides whether what remains goes back.
 discard_tomb() {
@@ -1803,7 +1831,7 @@ live_jobs() { # <wsdir>
   printf '%s' "${list#,}"
 }
 cmd_finish() {
-  local plan="" force=0 sid="" code="" open live last commit rc t owner out line c lease lowner lplan
+  local plan="" force=0 sid="" code="" open live last commit rc owner out line c lease lowner lplan
   while [ $# -gt 0 ]; do
     case "$1" in
       --force) force=1; shift ;;
@@ -1824,14 +1852,9 @@ cmd_finish() {
   # plans/.removing-<ws>-<pid>. With the path free the copy comes back and
   # finish proceeds; beside a new workspace it is named for a human to
   # merge or delete, and finish refuses.
-  for t in "$(dirname "$WSDIR")/.removing-$(basename "$WSDIR")-"*; do
-    [ -d "$t" ] || continue
-    if [ -d "$WSDIR" ]; then
-      echo "sdd-state: a copy from an interrupted removal remains at $t; move its files back into $WSDIR or delete it" >&2
-      hp_unlock; echo "status=busy"; return 3
-    fi
-    restore_tomb "$WSDIR" "$t" || { hp_unlock; echo "status=error"; return 2; }
-  done
+  restore_removed_copy; rc=$?
+  if [ "$rc" -eq 3 ]; then hp_unlock; echo "status=busy"; return 3; fi
+  [ "$rc" -eq 0 ] || { hp_unlock; echo "status=error"; return 2; }
   [ -d "$WSDIR" ] || { hp_unlock; echo "status=none"; return 0; }
   hp_contained "$ROOT" "plans/$WS" || { hp_unlock; echo "status=error"; return 2; }
   # A session working in the wrong repository must not delete this

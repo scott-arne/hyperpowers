@@ -4065,6 +4065,23 @@ out=$(run_state "$ft" lease docs/plan.md --release --session s1 2>/dev/null); rc
 if [ "$rc" -eq 0 ] && [ "$out" = "status=no-lease" ]; then pass "the dead holder's later release is no-lease"; else fail "old holder release (rc=$rc: $out)"; fi
 out=$(run_state "$ft" claim docs/plan.md final --session s3 --takeover 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=no-workspace task=final" ] && [ ! -d "$wsft" ]; then pass "a takeover with neither workspace nor lease is no-workspace"; else fail "takeover without lease (rc=$rc: $out)"; fi
+# A finish killed after its rename-aside leaves the plan's workspace at plans/.removing-<ws>-<pid>, which the other readers count as an open plan. A final-train takeover puts it back first and takes the plan over as an open one; beside a new workspace it names the copy and answers busy, the lease unmoved.
+fk="$TEST_ROOT/fk"; make_repo "$fk"; git -C "$fk" switch -q -c feat
+mkdir -p "$fk/docs"; : > "$fk/docs/spec.md"; printf '# T\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fk/docs/plan.md"; git -C "$fk" add docs; git -C "$fk" commit -qm plan
+wsfk=$(run_sdd_dir "$fk" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsfk/progress.md"
+run_state "$fk" register docs/plan.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsfk/progress.md"
+run_state "$fk" claim docs/plan.md final --session s1 >/dev/null
+lease_fk=""; for fk_f in "$STATE_ROOT/$(state_key "$fk").final-"*; do [ -f "$fk_f" ] && lease_fk=$fk_f; done
+( cd "$fk" && HYPERPOWERS_TEST_CRASH_AT=remove-after-rename bash "$SDD_STATE" finish docs/plan.md --session s1 >/dev/null 2>&1 ); rcf=$?
+tomb_fk=""; for fk_f in "$(dirname "$wsfk")/.removing-$(basename "$wsfk")-"*; do [ -d "$fk_f" ] && tomb_fk=$fk_f; done
+out=$(run_state "$fk" claim docs/plan.md final --session s2 --takeover 2>/dev/null); rc=$?
+if [ "$rcf" -eq 99 ] && [ -n "$tomb_fk" ] && [ -n "$lease_fk" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=final lease=$(basename "$lease_fk") takeover=1" ] && [ -f "$wsfk/progress.md" ] && [ ! -e "$tomb_fk" ] && [ "$(sed -n 's/^session=//p' "$wsfk/claims/final/owner" 2>/dev/null)" = s2 ] && [ "$(sed -n 's/^session=//p' "$lease_fk")" = s2 ]; then pass "a final-train takeover after a finish killed past its rename-aside puts the plan back and takes it over"; else fail "a final-train takeover after a finish killed past its rename-aside puts the plan back and takes it over (finish rc=$rcf tomb=$tomb_fk rc=$rc: $out)"; fi
+fk_t2="$(dirname "$wsfk")/.removing-$(basename "$wsfk")-4343"
+mv "$wsfk" "$fk_t2"; mkdir "$wsfk"
+out=$(run_state "$fk" claim docs/plan.md final --session s3 --takeover 2>"$TEST_ROOT/fk.busy.err"); rc=$?
+if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -qF "a copy from an interrupted removal remains at $fk_t2" "$TEST_ROOT/fk.busy.err" && [ -d "$fk_t2" ] && [ "$(sed -n 's/^session=//p' "$lease_fk")" = s2 ]; then pass "beside a new workspace the killed finish's copy is named and the takeover is busy, the lease unmoved"; else fail "beside a new workspace the killed finish's copy is named and the takeover is busy, the lease unmoved (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/fk.busy.err"))"; fi
+rmdir "$wsfk"; mv "$fk_t2" "$wsfk"
 # Workspace names in the plan= field are encoded: a plan file name with a space.
 sp="$TEST_ROOT/sp-enc"; make_repo "$sp"; git -C "$sp" switch -q -c feat
 mkdir -p "$sp/docs"; : > "$sp/docs/spec.md"

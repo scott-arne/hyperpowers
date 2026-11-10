@@ -4082,6 +4082,28 @@ mv "$wsfk" "$fk_t2"; mkdir "$wsfk"
 out=$(run_state "$fk" claim docs/plan.md final --session s3 --takeover 2>"$TEST_ROOT/fk.busy.err"); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -qF "a copy from an interrupted removal remains at $fk_t2" "$TEST_ROOT/fk.busy.err" && [ -d "$fk_t2" ] && [ "$(sed -n 's/^session=//p' "$lease_fk")" = s2 ]; then pass "beside a new workspace the killed finish's copy is named and the takeover is busy, the lease unmoved"; else fail "beside a new workspace the killed finish's copy is named and the takeover is busy, the lease unmoved (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/fk.busy.err"))"; fi
 rmdir "$wsfk"; mv "$fk_t2" "$wsfk"
+# A takeover reads a missing or malformed closing= in the replaced lease as closing, at both takeover sites: an open plan's, and the orphan path after finish removed the workspace. A sibling's register on the branch then answers branch-closing.
+dc="$TEST_ROOT/dc"; make_repo "$dc"; git -C "$dc" switch -q -c feat
+mkdir -p "$dc/docs"; : > "$dc/docs/spec.md"
+printf '# T\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$dc/docs/plan.md"; cp "$dc/docs/plan.md" "$dc/docs/plan2.md"; git -C "$dc" add docs; git -C "$dc" commit -qm plans
+wsdc=$(run_sdd_dir "$dc" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsdc/progress.md"
+wsdc2=$(run_sdd_dir "$dc" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wsdc2/progress.md"
+run_state "$dc" register docs/plan.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsdc/progress.md"
+run_state "$dc" claim docs/plan.md final --session s1 >/dev/null
+lease_dc=""; for dc_f in "$STATE_ROOT/$(state_key "$dc").final-"*; do case "$dc_f" in *.history) ;; *) [ -f "$dc_f" ] && lease_dc=$dc_f ;; esac; done
+# dc_case <taker> <sed expression applied to the lease> <label>
+dc_case() {
+  sed "$2" "$lease_dc" > "$lease_dc.new" && mv -f "$lease_dc.new" "$lease_dc"
+  out=$(run_state "$dc" claim docs/plan.md final --session "$1" --takeover 2>/dev/null); rc=$?
+  out2=$(run_state "$dc" register docs/plan2.md --session s9 --integration feat 2>/dev/null); rc2=$?
+  if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=claimed task=final" ] && [ "$(sed -n 's/^session=//p' "$lease_dc")" = "$1" ] && [ "$(sed -n 's/^closing=//p' "$lease_dc")" = 1 ] && [ "$rc2" -eq 15 ] && [ "$out2" = "status=branch-closing" ]; then pass "$3"; else fail "$3 (rc=$rc: $out; closing=$(sed -n 's/^closing=//p' "$lease_dc"); register rc=$rc2: $out2)"; fi
+}
+dc_case s2 '/^closing=/d' "a takeover of an open plan keeps a missing closing= as closing"
+dc_case s3 's/^closing=.*/closing=yes/' "a takeover of an open plan keeps a malformed closing= as closing"
+rm -rf "$wsdc"
+dc_case s4 '/^closing=/d' "a takeover after finish keeps a missing closing= as closing"
+dc_case s5 's/^closing=.*/closing=yes/' "a takeover after finish keeps a malformed closing= as closing"
 # Workspace names in the plan= field are encoded: a plan file name with a space.
 sp="$TEST_ROOT/sp-enc"; make_repo "$sp"; git -C "$sp" switch -q -c feat
 mkdir -p "$sp/docs"; : > "$sp/docs/spec.md"

@@ -720,8 +720,10 @@ cmd_claim() {
       # A takeover keeps the replaced lease's closing=: once the closing has
       # found the branch free of open plans, a new holder must not reopen it
       # to registrations and task claims while the branch can still be
-      # deleted under them.
-      if [ "$lease_prev" -eq 1 ]; then lclosing=$(sed -n 's/^closing=//p' "$lease" | head -n 1); [ "$lclosing" = 1 ] || lclosing=0; fi
+      # deleted under them. Only an exact 0 reads as open: a missing or
+      # damaged value reads as closing, so a damaged lease never reopens a
+      # branch being torn down.
+      if [ "$lease_prev" -eq 1 ]; then lclosing=$(sed -n 's/^closing=//p' "$lease" | head -n 1); [ "$lclosing" = 0 ] || lclosing=1; fi
       rec=$(printf 'session=%s\nhost=%s\nplan=%s\nbranch=%s\ntime=%s\nclosing=%s' "$sid" "$(hostname)" "$WS" "$integ" "$(hp_utc_now)" "$lclosing")
       if [ "$lease_prev" -eq 1 ]; then
         lease_supersede "$c" "$lease" "$rec" || { hp_unlock; echo "status=error"; return 2; }
@@ -753,8 +755,9 @@ cmd_claim() {
   # integration branch waits behind it. The lease is found by this plan's
   # workspace alone, because the stopped session's identity is what the
   # caller lacks, and moves to the caller with the prior record kept beside
-  # it. Its closing= is kept, so a branch the holder had marked closing is
-  # not reopened to sibling registrations by the takeover. Nothing else is
+  # it. Its closing= is kept, and only an exact 0 reads as open, so a branch
+  # the holder had marked closing, or whose lease is damaged, is not reopened
+  # to sibling registrations by the takeover. Nothing else is
   # published: recreating the workspace would undo the finish. Runs under
   # the plan repository's lock, which every lease operation also holds.
   claim_final_orphan() {
@@ -766,7 +769,7 @@ cmd_claim() {
     if [ "$lowner" = "$sid" ]; then hp_unlock; echo "status=held task=final owner=$sid own=1 lease=$(basename "$lease")"; return 0; fi
     lbranch=$(sed -n 's/^branch=//p' "$lease" | head -n 1)
     [ -n "$lbranch" ] || { hp_unlock; echo "sdd-state: the lease $lease names no branch" >&2; echo "status=error"; return 2; }
-    lclosing=$(sed -n 's/^closing=//p' "$lease" | head -n 1); [ "$lclosing" = 1 ] || lclosing=0
+    lclosing=$(sed -n 's/^closing=//p' "$lease" | head -n 1); [ "$lclosing" = 0 ] || lclosing=1
     rec=$(printf 'session=%s\nhost=%s\nplan=%s\nbranch=%s\ntime=%s\nclosing=%s' "$sid" "$(hostname)" "$WS" "$lbranch" "$(hp_utc_now)" "$lclosing")
     lease_supersede "$c" "$lease" "$rec" || { hp_unlock; echo "status=error"; return 2; }
     claim_clear_wait || { hp_unlock; echo "status=error"; return 2; }

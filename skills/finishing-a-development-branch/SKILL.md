@@ -275,9 +275,12 @@ dossier (SDD), run `bash <this skill's directory>/../subagent-driven-development
 Step 1 before the compile, where the dossier lives, which is not the code
 repository when the plan lives elsewhere. When it lists
 another open plan whose `integration=` is this branch, the merge option is
-withheld: present the three-option menu with option 1 replaced by the line
-`1. (merge withheld: plan <ws> is still open on this branch)` and accept
-only options 2 and 3; say which plan is open, and a pull request's
+withheld. The withheld-merge line replaces option 1 only in a menu that
+offers a merge: present the three-option menu with option 1 replaced by the
+line `1. (merge withheld: plan <ws> is still open on this branch)` and
+accept only options 2 and 3. The two-option menus (mode `current-branch` on
+the default branch, and a detached HEAD) have no merge option and are shown
+unchanged. In every menu, say which plan is open, and a pull request's
 description states that another plan is still open on the branch.
 
 **Normal repo and named-branch worktree — present exactly these 3 options:**

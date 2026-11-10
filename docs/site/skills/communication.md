@@ -1,6 +1,6 @@
 ---
 sources: skills/communication skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/using-hyperpowers/SKILL.md skills/finishing-a-development-branch/SKILL.md skills/dispatching-parallel-agents/SKILL.md skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/receiving-code-review/SKILL.md skills/requesting-code-review/SKILL.md skills/systematic-debugging/SKILL.md skills/profiling-performance/SKILL.md skills/optimizing-performance/SKILL.md
-source-digest: d7d524616461
+source-digest: de7260325e15
 ---
 # communication
 

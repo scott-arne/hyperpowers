@@ -3492,6 +3492,19 @@ git -C "$e2c" switch -q main
 out1=$(run_state "$e2p" verify docs/plan.md --code-repo "$e2c" 2>/dev/null); rc1=$?
 out2=$(run_state "$e2p" next docs/plan.md --session s1 --code-repo "$e2c" 2>/dev/null); rc2=$?
 if [ "$rc" -eq 0 ] && grep -q "^plan: integration main code-root ${ra_e2:0:7} " "$wse2/progress.md" && [ "$rc1" -eq 0 ] && [ "$out1" = "status=ok tasks=0" ] && [ "$rc2" -eq 0 ] && [ "${out2%% plan=*}" = "status=next tasks=1 own-blocked=none" ]; then pass "register records the integration branch's code root, not the checkout's HEAD, and verify and next accept the integration checkout"; else fail "register records the integration branch's code root, not the checkout's HEAD, and verify and next accept the integration checkout (register rc=$rc: $out; verify rc=$rc1: $out1; next rc=$rc2: $out2; $(grep '^plan: ' "$wse2/progress.md"))"; fi
+# register reads the integration branch's root under the lock: a branch created while register is paused before its write, with the code checkout on an unrelated orphan history, records the branch's root and not the checkout's.
+f1p="$TEST_ROOT/f1p"; make_repo "$f1p"; git -C "$f1p" switch -q -c plans
+mkdir -p "$f1p/docs"; : > "$f1p/docs/spec.md"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Depends on:** none\n' > "$f1p/docs/plan.md"; git -C "$f1p" add docs; git -C "$f1p" commit -qm plan
+f1c="$TEST_ROOT/f1c"; make_repo "$f1c"; git -C "$f1c" commit -q --amend --allow-empty -m "code root"; ra_f1=$(git -C "$f1c" rev-parse main)
+git -C "$f1c" switch -q --orphan side; git -C "$f1c" commit -q --allow-empty -m "side root"; rs_f1=$(git -C "$f1c" rev-parse side)
+wsf1=$(run_sdd_dir "$f1p" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsf1/progress.md"
+co_f1=$(dirname "$(dirname "$wsf1")"); : > "$co_f1/.register-before-write-pause"
+( cd "$f1p" && HYPERPOWERS_TEST_PAUSE_AT=register-before-write bash "$SDD_STATE" register docs/plan.md --session s1 --integration feat1 --code-repo "$f1c" > "$TEST_ROOT/f1.out" 2>/dev/null; echo $? > "$TEST_ROOT/f1.rc" ) &
+n=0; while [ ! -e "$co_f1/.register-before-write-paused" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+f1_seen=0; [ -e "$co_f1/.register-before-write-paused" ] && f1_seen=1
+git -C "$f1c" branch feat1 main
+rm -f "$co_f1/.register-before-write-pause"; wait
+if [ "$f1_seen" -eq 1 ] && [ "$(cat "$TEST_ROOT/f1.rc")" = 0 ] && [ "$(cat "$TEST_ROOT/f1.out")" = "status=registered integration=feat1 plan-ref=plans" ] && grep -q "^plan: integration feat1 code-root ${ra_f1:0:7} " "$wsf1/progress.md"; then pass "register reads the integration branch's root under the lock, so a branch created while it is paused records its own root"; else fail "register reads the integration branch's root under the lock (seen=$f1_seen rc=$(cat "$TEST_ROOT/f1.rc" 2>/dev/null): $(cat "$TEST_ROOT/f1.out" 2>/dev/null); orphan=${rs_f1:0:7}; $(grep '^plan: ' "$wsf1/progress.md"))"; fi
 
 echo "claim: dependencies and branches"
 make_pair cl; cl_a=$PAIR_A

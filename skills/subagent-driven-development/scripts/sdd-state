@@ -356,7 +356,7 @@ cmd_deps() {
 # repositories' locks, so two Setups cannot both pass and write conflicting
 # lines.
 cmd_register() {
-  local plan="" sid="" integration="" code="" ledger line spec espec same_repo plan_ref plan_root code_root d other ospec field lease rc mine cur t
+  local plan="" sid="" integration="" code="" ledger line spec espec same_repo plan_ref plan_root code_root int_head d other ospec field lease rc mine cur t
   while [ $# -gt 0 ]; do
     case "$1" in
       --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
@@ -385,16 +385,6 @@ cmd_register() {
   if [ "$(git -C "$code" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=code"; return 12; fi
   if [ "$same_repo" -eq 0 ] && [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=plan"; return 12; fi
   plan_root=$(root_of "$REPO")
-  # The code root names the repository that owns the integration branch, so
-  # it is read from that branch when it exists: the code checkout may stand
-  # on an unrelated history (an orphan branch), whose root verify and next
-  # would refuse once the integration branch is checked out. A branch not
-  # created yet falls back to the checkout's HEAD.
-  if git -C "$code" rev-parse -q --verify "refs/heads/$integration^{commit}" >/dev/null 2>&1; then
-    code_root=$(root_of "$code" "refs/heads/$integration")
-  else
-    code_root=$(root_of "$code")
-  fi
   hp_lock_pair "$PLAN_DIR" "$code" || return 2
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   # The ledger is appended to below; a workspace or ledger swapped for a link
@@ -405,6 +395,16 @@ cmd_register() {
     while [ -e "$CO/.register-before-write-pause" ]; do sleep 0.1; done
     rm -f "$CO/.register-before-write-paused"
   fi
+  # The code root names the repository that owns the integration branch, so
+  # it is read from that branch: the code checkout may stand on an unrelated
+  # history (an orphan branch), whose root verify and next would refuse once
+  # the integration branch is checked out. The branch is read once, as a
+  # commit id, and only under the lock: read before it, a branch created or
+  # rewritten in between would record the checkout's root or a stale one. A
+  # missing branch falls back to the checkout's HEAD for the comparison of a
+  # re-registration; a first registration refuses it below.
+  int_head=$(git -C "$code" rev-parse -q --verify "refs/heads/$integration^{commit}" 2>/dev/null)
+  if [ -n "$int_head" ]; then code_root=$(root_of "$code" "$int_head"); else code_root=$(root_of "$code"); fi
   # The closing check comes first: a branch being torn down admits nothing,
   # not even a session of a plan already registered on it.
   lease=$(hp_lease_key "$PLAN_DIR" "$integration")
@@ -459,8 +459,13 @@ cmd_register() {
   # With one repository the plan ref is the integration branch itself, so a
   # mistyped --integration would record a line that verify then rejects.
   if [ "$same_repo" -eq 1 ] && [ "$cur" != "$integration" ]; then hp_unlock; echo "status=wrong-branch expected=$cur"; return 9; fi
-  if ! git -C "$code" rev-parse -q --verify "refs/heads/$integration^{commit}" >/dev/null 2>&1; then
+  if [ -z "$int_head" ]; then
     hp_unlock; echo "sdd-state: the integration branch $integration does not exist in $code" >&2; echo "status=error"; return 2
+  fi
+  # The root appended below came from int_head, so the branch must still name
+  # it: a branch that moved since would make the recorded root a stale one.
+  if [ "$(git -C "$code" rev-parse -q --verify "refs/heads/$integration^{commit}" 2>/dev/null)" != "$int_head" ]; then
+    hp_unlock; echo "sdd-state: the integration branch $integration moved while register ran; run register again" >&2; echo "status=error"; return 2
   fi
   hp_ledger_append "$ledger" "plan: integration $integration code-root ${code_root:0:7} plan-ref $plan_ref plan-root ${plan_root:0:7} spec $spec" || { hp_unlock; echo "status=error"; return 2; }
   hp_unlock

@@ -12,7 +12,13 @@ export const REFUSAL_CAP = 2;
 export const TAIL_CAP = 16 * 1024 * 1024;
 export const TAIL_CHUNK = 512 * 1024;
 export const LIVE_JOB_STATES = new Set(['running', 'lost-unswept']);
-const COMPLETE = (n) => new RegExp(`(^|[^A-Za-z0-9])Task ${n}: complete`);
+// A record marks task n complete by sdd-state's rule (hp_complete_ere in
+// sdd-common.sh): the marker begins the line, with at most a list marker or
+// emphasis around it, so a quoted line, a longer word and a mention inside a
+// line do not count. The class is the ASCII whitespace [[:space:]] means
+// under LC_ALL=C; the parity table in tests/hooks/test-sdd-stop-guard.sh
+// holds the two equal.
+export const completePattern = (n) => new RegExp(String.raw`^[ \t\v\f\r]*([-*][ \t\v\f\r]+)?(\*\*|__|\*|_)?Task ${n}: complete(\*\*|__|\*|_)?([ \t\v\f\r(.,]|$)`);
 const TASK_HEADING = /^### Task (\d+):/gm;
 const HANDBACK = /^handback (\S+) (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z): /;
 const FRAGMENT = '\t#fragment';
@@ -177,7 +183,7 @@ export function planState({ workspace, cwd, sessionId }) {
   }
   if (planText === null) return { plan: rel, unreadable: true };
   const tasks = [...new Set([...planText.matchAll(TASK_HEADING)].map((x) => Number(x[1])))];
-  const done = tasks.filter((n) => { const re = COMPLETE(n); return records.some((l) => re.test(l)); }).length;
+  const done = tasks.filter((n) => { const re = completePattern(n); return records.some((l) => re.test(l)); }).length;
   return { plan: rel, total: tasks.length, open: tasks.length - done };
 }
 

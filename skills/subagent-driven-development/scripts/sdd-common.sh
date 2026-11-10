@@ -185,6 +185,18 @@ hp_ledger_records() { # <ledger>
   return 0
 }
 
+# hp_complete_ere N: prints the ERE a ledger record must match to mark task
+# N complete: after optional leading whitespace, an optional "-" or "*" list
+# marker with whitespace after it, and optional "**", "__", "*" or "_"
+# emphasis, "Task N: complete", an optional closing "**", "__", "*" or "_",
+# then the end of the line, whitespace, "(", "." or ",". The stop guard's
+# completePattern (hooks/lib/stop-guard.mjs) is the same rule in JS, held
+# equal by the parity table in tests/hooks/test-sdd-stop-guard.sh; callers
+# grep with LC_ALL=C, so [[:space:]] is the ASCII set that JS class lists.
+hp_complete_ere() { # <n>
+  printf '^[[:space:]]*([-*][[:space:]]+)?(\\*\\*|__|\\*|_)?Task %s: complete(\\*\\*|__|\\*|_)?([[:space:](.,]|$)' "$1"
+}
+
 # <UTC timestamp as hp_utc_now prints> -> seconds since the epoch; GNU date
 # reads -d, BSD date needs -j -f. The shape is checked first because GNU -d
 # also takes "yesterday" and BSD -f ignores trailing characters, and a value

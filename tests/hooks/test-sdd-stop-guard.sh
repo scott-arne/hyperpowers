@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The stop guard: the node unit matrix, then the bash wrapper's own behavior
 # (registration, exit 0 everywhere, the hook-error line without node, the
-# waiting record, the bash/node key parity) and the benchmark.
+# waiting record, the bash/node key and completion-pattern parity) and the benchmark.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -190,6 +190,37 @@ echo "=== stop guard: key parity ==="
 # the import callback ran (and block outright on a terminal).
 nodekey=$(STOP_GUARD_MODULE="$REPO_ROOT/hooks/lib/stop-guard.mjs" node -e 'import(process.env.STOP_GUARD_MODULE).then(m=>process.stdout.write(m.cloneKey(process.argv[1])||""))' "$repo")
 if [ -n "$key" ] && [ "$key" = "$nodekey" ]; then pass "cloneKey agrees with hp_key"; else fail "cloneKey agrees with hp_key ($key vs $nodekey)"; fi
+
+echo "=== stop guard: completion-pattern parity ==="
+# hp_complete_ere and completePattern are one rule in two languages: each row runs through both, for task 1, and both must give the expected answer. printf %b writes the escapes (a tab, a carriage return, a vertical tab, a form feed) into the line.
+ere=$(bash -c '. "$1"; hp_complete_ere 1' _ "$LIB")
+pi=0
+parity_row() { # <yes|no> <line, with printf %b escapes>
+  local f got_sh got_js
+  pi=$((pi + 1)); f="$TEST_ROOT/parity.$pi"; printf '%b\n' "$2" > "$f"
+  if [ -n "$ere" ] && LC_ALL=C grep -Eq "$ere" "$f"; then got_sh=yes; else got_sh=no; fi
+  got_js=$(STOP_GUARD_MODULE="$REPO_ROOT/hooks/lib/stop-guard.mjs" node -e 'import(process.env.STOP_GUARD_MODULE).then(m=>{const l=require("fs").readFileSync(process.argv[1],"utf8").replace(/\n$/,"");process.stdout.write(m.completePattern(1).test(l)?"yes":"no")})' "$f" 2>/dev/null)
+  if [ "$got_sh" = "$1" ] && [ "$got_js" = "$1" ]; then pass "completion parity: $2 -> $1"; else fail "completion parity: $2 -> $1 (bash $got_sh, node ${got_js:-error})"; fi
+}
+parity_row yes 'Task 1: complete (commits 1111111..2222222, review clean)'
+parity_row yes '- Task 1: complete (commits 1111111..2222222, review clean)'
+parity_row yes '* Task 1: complete'
+parity_row yes '**Task 1: complete**'
+parity_row yes '__Task 1: complete__'
+parity_row yes '*Task 1: complete*'
+parity_row yes '_Task 1: complete_'
+parity_row yes 'Task 1: complete.'
+parity_row yes 'Task 1: complete,'
+parity_row yes 'Task 1: complete\t(x)'
+parity_row yes 'Task 1: complete\r'
+parity_row yes '\vTask 1: complete'
+parity_row yes '\fTask 1: complete'
+parity_row no '-Task 1: complete'
+parity_row no '> Task 1: complete (quoted)'
+parity_row no 'Task 1: complete-not-yet'
+parity_row no 'Task 1: completed'
+parity_row no 'Task 10: complete'
+parity_row no 'see Task 1: complete'
 
 echo ""
 if [ "$FAILURES" -gt 0 ]; then echo "STATUS: FAILED ($FAILURES failures)"; exit 1; fi

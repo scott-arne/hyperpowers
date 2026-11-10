@@ -91,6 +91,11 @@ test('planState: open and total from the plan and the ledger; the plan resolves 
   writeFileSync(join(ws, 'progress.md'), readFileSync(join(ws, 'progress.md'), 'utf8') + 'note: xTask 3: complete is prose, not a completion\n');
   assert.equal(guard.planState({ workspace: ws, cwd: e.repo, sessionId: SID }).open, 1);
 });
+test('planState: a mention of the marker inside a line is no completion', () => {
+  const e = env(); const ws = workspaceFor(e);
+  ledger(ws, e, { tasksDone: [1, 2], extra: ['see Task 3: complete'] });
+  assert.equal(guard.planState({ workspace: ws, cwd: e.repo, sessionId: SID }).open, 1);
+});
 test('planState: a missing plan, or a ledger without the session line, is unreadable', () => {
   const e = env(); const ws = workspaceFor(e); ledger(ws, e, { sid: 'other' });
   assert.equal(guard.planState({ workspace: ws, cwd: tmpdir(), sessionId: SID }).unreadable, true);

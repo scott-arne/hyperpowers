@@ -668,6 +668,8 @@ bash <sw>/run-slices.sh <worktree> plainfix finish final-head finaltail claim2 >
 
 Then the verification block in `<sw>/verification-block.md` with prefix `t1` (changed script: `sdd-state`). Expected: every slice passes and the block's expectations hold. Report: the two red runs with their FAIL labels; no exempt tests in this task.
 
+Correction (2026-11-09), decision 5 (A final-train takeover restores a killed finish's copy first): the takeover runs its copy check on every final takeover, not only when `progress.md` is missing. A copy beside any workspace at the path, with or without a ledger, answers `busy` with the copy named, as finish does. A copy comes back only when the path is free, the copy holds `progress.md` and, on the branch backend, the state branch still tracks `plans/<ws>`; any other copy stays where it is and the claim takes the orphan path. The takeover never moves a workspace aside. The Task 1 Codex task gate found these cases in rounds 1 to 3; the round-3 change was applied beyond the task's five-round cap at the user's direction, checked by a scoped re-review and the covering slices only.
+
 ### Task 2: Amend
 
 **Risk tier:** high — amend writes the plan ref and other worktrees' files and indexes after a compare-and-swap: concurrency code and worktree writes.

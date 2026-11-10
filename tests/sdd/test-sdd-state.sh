@@ -4240,11 +4240,22 @@ dc_case() {
   out2=$(run_state "$dc" register docs/plan2.md --session s9 --integration feat 2>/dev/null); rc2=$?
   if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=claimed task=final" ] && [ "$(sed -n 's/^session=//p' "$lease_dc")" = "$1" ] && [ "$(sed -n 's/^closing=//p' "$lease_dc")" = 1 ] && [ "$rc2" -eq 15 ] && [ "$out2" = "status=branch-closing" ]; then pass "$3"; else fail "$3 (rc=$rc: $out; closing=$(sed -n 's/^closing=//p' "$lease_dc"); register rc=$rc2: $out2)"; fi
 }
+# dc_open <taker> <label>: the converse, an intact closing=0 lease. Only the
+# exact 0 reads as open, so a takeover that wrote closing=1 unconditionally
+# would shut every sibling plan out of the branch and pass the rows above.
+dc_open() {
+  sed 's/^closing=.*/closing=0/' "$lease_dc" > "$lease_dc.new" && mv -f "$lease_dc.new" "$lease_dc"
+  out=$(run_state "$dc" claim docs/plan.md final --session "$1" --takeover 2>/dev/null); rc=$?
+  out2=$(run_state "$dc" register docs/plan2.md --session s9 --integration feat 2>/dev/null); rc2=$?
+  if [ "$rc" -eq 0 ] && [ "${out%% lease=*}" = "status=claimed task=final" ] && [ "$(sed -n 's/^session=//p' "$lease_dc")" = "$1" ] && [ "$(sed -n 's/^closing=//p' "$lease_dc")" = 0 ] && [ "$rc2" -eq 0 ]; then pass "$2"; else fail "$2 (rc=$rc: $out; closing=$(sed -n 's/^closing=//p' "$lease_dc"); register rc=$rc2: $out2)"; fi
+}
 dc_case s2 '/^closing=/d' "a takeover of an open plan keeps a missing closing= as closing"
 dc_case s3 's/^closing=.*/closing=yes/' "a takeover of an open plan keeps a malformed closing= as closing"
+dc_open s6 "a takeover of an open plan keeps an intact closing=0 open to a sibling register"
 rm -rf "$wsdc"
 dc_case s4 '/^closing=/d' "a takeover after finish keeps a missing closing= as closing"
 dc_case s5 's/^closing=.*/closing=yes/' "a takeover after finish keeps a malformed closing= as closing"
+dc_open s7 "a takeover after finish keeps an intact closing=0 open to a sibling register"
 # Workspace names in the plan= field are encoded: a plan file name with a space.
 sp="$TEST_ROOT/sp-enc"; make_repo "$sp"; git -C "$sp" switch -q -c feat
 mkdir -p "$sp/docs"; : > "$sp/docs/spec.md"

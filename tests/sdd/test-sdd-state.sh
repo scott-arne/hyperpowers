@@ -3558,6 +3558,13 @@ make_repo "$TEST_ROOT/cl0"; mkdir -p "$TEST_ROOT/cl0/docs"; printf '# P\n\n### T
 ws0=$(ws_path "$TEST_ROOT/cl0" "$TEST_ROOT/cl0/docs/plan.md"); mkdir -p "$ws0"; printf '# SDD ledger — plan: docs/plan.md\n' > "$ws0/progress.md"
 out=$(run_state "$TEST_ROOT/cl0" claim docs/plan.md 1 --session s9 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=1 branch=none" ]; then pass "a claim without a plan line creates no branch"; else fail "no plan line (rc=$rc: $out)"; fi
+# From outside any repository, a claim of a plan without a plan line checks the current directory's repository as next does, and answers what next answers there, publishing nothing.
+make_repo "$TEST_ROOT/cl0n"; mkdir -p "$TEST_ROOT/cl0n/docs"; printf '# P\n\n### Task 1: A\n\n**Risk tier:** standard\n' > "$TEST_ROOT/cl0n/docs/plan.md"; git -C "$TEST_ROOT/cl0n" add docs; git -C "$TEST_ROOT/cl0n" commit -qm plan
+ws0n=$(ws_path "$TEST_ROOT/cl0n" "$TEST_ROOT/cl0n/docs/plan.md"); mkdir -p "$ws0n"; printf '# SDD ledger — plan: docs/plan.md\n' > "$ws0n/progress.md"
+mkdir -p "$TEST_ROOT/norepo"
+outn=$(cd "$TEST_ROOT/norepo" && GIT_CEILING_DIRECTORIES="$TEST_ROOT" bash "$SDD_STATE" next "$TEST_ROOT/cl0n/docs/plan.md" --session s9 2>/dev/null); rcn=$?
+out=$(cd "$TEST_ROOT/norepo" && GIT_CEILING_DIRECTORIES="$TEST_ROOT" bash "$SDD_STATE" claim "$TEST_ROOT/cl0n/docs/plan.md" 1 --session s9 2>/dev/null); rc=$?
+if [ "$rc" -eq "$rcn" ] && [ "$out" = "$outn" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$ws0n/claims" ]; then pass "a claim without a plan line from outside any repository answers what next answers there"; else fail "a claim without a plan line from outside any repository answers what next answers there (claim rc=$rc: $out; next rc=$rcn: $outn)"; fi
 # Review fixtures: pre-upgrade owner records, containment, takeover retry, leftovers.
 printf '# R\n\n**Spec:** docs/spec.md\n' > "$cl_a/docs/plan3.md"
 for t in 1 2 3 4 5 6 7 8 9; do printf '\n### Task %s: T\n\n**Risk tier:** standard\n\n**Depends on:** none\n' "$t" >> "$cl_a/docs/plan3.md"; done

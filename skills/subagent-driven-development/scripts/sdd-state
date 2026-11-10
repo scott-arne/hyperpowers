@@ -580,19 +580,17 @@ cmd_claim() {
   # is durable and names this session, because a caller that believes it
   # owns a task it does not own duplicates work.
   # A claim with a plan line writes a code ref, so it holds both repositories'
-  # locks in the pair's order; without one it writes only state. A
-  # --code-repo is validated whenever it is given, so a mistyped directory is
-  # refused rather than silently ignored.
+  # locks in the pair's order; without one it writes only state. The code
+  # repository (--code-repo, or the current directory's) is checked first in
+  # both cases, as next checks it, so a claim from outside any repository or
+  # from a mistyped directory is refused rather than published.
   claim_take_locks() {
     integ=""
+    code=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
     if [ -n "$line" ]; then
       integ=$(plan_field "$line" integration)
-      code=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
       hp_lock_pair "$PLAN_DIR" "$code" || return 2
     else
-      if [ -n "$code" ]; then
-        code=$(code_repo_arg "$code" "$WSDIR/progress.md") || { rc=$?; [ -z "$code" ] || printf '%s\n' "$code"; return "$rc"; }
-      fi
       hp_lock "$PLAN_DIR" || return 2
     fi
   }

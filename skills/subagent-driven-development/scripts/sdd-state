@@ -215,21 +215,31 @@ sid_ok() {
 # and both directories arrive with a fetched state branch, so the id is
 # checked here too (sid_ok). Containment is checked at the write point, leaf
 # included, only the record's own directory is made, and an entry there
-# that is not a regular file is refused: a rename onto a directory would
-# move the record inside it and report success. The content goes to an
+# that is not a regular file is refused. The record is published with one
+# rename(2), through node's renameSync as claim publishes, which fails on a
+# directory created after the check (mv -f moved the record inside it and
+# reported success) and replaces a symbolic link rather than following it;
+# the check stays for its message. The content goes to an
 # exclusively created temporary file outside the tracked tree, beside the
 # checkout or plain root on the same filesystem, so the rename stays atomic
 # and a snapshot staging the workspace meanwhile (the record writers take no
 # lock) can commit neither a temporary name nor a half-written record.
 record_publish() {
-  local dest="$ROOT/$1/$2" t
+  local dest="$ROOT/$1/$2" t rc
   sid_ok "$2" || return 1
   hp_contained "$ROOT" "$1/$2" || return 1
   mkdir -p "$ROOT/$1" || return 1
   t=$(mktemp "$(dirname "$ROOT")/.sdd-record.XXXXXX") || return 1
   printf '%s\n' "$3" > "$t" || { rm -f "$t"; return 1; }
   if [ -e "$dest" ] && [ ! -f "$dest" ]; then rm -f "$t"; echo "sdd-state: $dest is not a regular file; refusing to replace it" >&2; return 1; fi
-  mv -f "$t" "$dest" || { rm -f "$t"; return 1; }
+  # Test seam: HYPERPOWERS_TEST_WRITER_AT=record-publish-after-check makes a
+  # directory at the destination after the check above, once.
+  case "${HYPERPOWERS_TEST_WRITER_AT:-}" in record-publish-after-check) [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; mkdir "$dest"; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
+  node -e 'const fs=require("fs");try{fs.renameSync(process.argv[1],process.argv[2]);}catch(e){process.exit(["EISDIR","ENOTEMPTY","EEXIST","ENOTDIR"].includes(e.code)?4:2);}' "$t" "$dest"; rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  rm -f "$t"
+  [ "$rc" -ne 4 ] || echo "sdd-state: $dest is not a regular file; refusing to replace it" >&2
+  return 1
 }
 write_activity() { # <sid>
   record_publish "plans/$WS/activity" "$1" "$(hp_utc_now)"

@@ -5140,5 +5140,10 @@ printf 'session s10: mode worktree on detached integrating feat at %s started 20
 out=$(run_state "$bd_a" board docs/plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -qF "session s10 task=none since=none worktree=$(printf '%s' "$TEST_ROOT/wt at bd" | sed 's/ /%20/g') branch=detached host="; then pass "the board takes a session's own branch from a session line that names its integration branch"; else fail "board session line with integrating (rc=$rc: $(printf '%s\n' "$out" | grep '^session s10 '))"; fi
 
+# A directory created at a record's path after record_publish's check: one rename(2) refuses it, where mv -f moved the record inside it and reported success.
+rm -f "$TEST_ROOT/bd.rec.seam"
+out=$(cd "$bd_a" && HYPERPOWERS_TEST_SEAM_MARK="$TEST_ROOT/bd.rec.seam" HYPERPOWERS_TEST_WRITER_AT=record-publish-after-check bash "$SDD_STATE" wait docs/plan.md --session srec --kind question --note record 2>"$TEST_ROOT/bd.rec.err"); rc=$?
+if [ -f "$TEST_ROOT/bd.rec.seam" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -d "$wsbd/waiting/srec" ] && [ -z "$(ls -A "$wsbd/waiting/srec")" ] && grep -qF "waiting/srec is not a regular file; refusing to replace it" "$TEST_ROOT/bd.rec.err"; then pass "a directory created at a record's path after the check refuses the publish and holds no record"; else fail "a directory created at a record's path after the check refuses the publish and holds no record (rc=$rc: $out: $(ls -A "$wsbd/waiting/srec" 2>/dev/null | tr '\n' ' '))"; fi
+rm -rf "$wsbd/waiting/srec" "$wsbd/activity/srec"
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

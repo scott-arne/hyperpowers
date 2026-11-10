@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -323,4 +323,30 @@ test('main: a symlink at the log path is not followed, and the refusal still pri
   symlinkSync(target, logOf(e));
   assert.deepEqual(run(e, 'Agent', BG), { stdout: deny(BG_TEXT(PLAN)), exitCode: 0 });
   assert.equal(readFileSync(target, 'utf8'), '');
+});
+
+test('benchmark: the step-2 path in-process and through the wrapper; a refusal over a 64 MB transcript', { skip: !process.env.DISPATCH_GUARD_BENCH }, () => {
+  const e = planned();
+  try {
+    // The median of five in-process calls is what a foreground dispatch pays
+    // for the decision; the wrapper process adds node start-up and the import,
+    // and its bound is a gross-regression check on a shared host.
+    const fg = payload(e, 'Agent', { prompt: 'p', run_in_background: false });
+    const reps = [];
+    for (let i = 0; i < 5; i++) { const t = process.hrtime.bigint(); dg.main(fg, { XDG_CACHE_HOME: e.cache }); reps.push(Number(process.hrtime.bigint() - t) / 1e6); }
+    const median = reps.sort((a, b) => a - b)[2];
+    console.log(`# bench step-2 in-process ${median.toFixed(2)} ms`); assert.ok(median < 5, `step-2 in-process took ${median} ms`);
+    const hook = fileURLToPath(new URL('../sdd-dispatch-guard', import.meta.url));
+    const t1 = Date.now();
+    const out = execFileSync(hook, [], { input: fg, env: { ...process.env, XDG_CACHE_HOME: e.cache }, encoding: 'utf8' });
+    const proc = Date.now() - t1;
+    console.log(`# bench step-2 process ${proc} ms`); assert.equal(out, ''); assert.ok(proc < 1000, `step-2 process took ${proc} ms`);
+    const big = join(e.root, 'big.jsonl'); const fd = openSync(big, 'w');
+    const filler = JSON.stringify(call(5, 'fx', 'Read', { file_path: 'x'.repeat(4000) })) + '\n';
+    for (let i = 0; i < Math.ceil(64 * 1024 * 1024 / filler.length); i++) writeSync(fd, filler);
+    writeSync(fd, jsonl(syncSession())); closeSync(fd);
+    e.transcript = big;
+    const t2 = Date.now(); const r = run(e, 'Agent', BG); const capped = Date.now() - t2;
+    console.log(`# bench capped-tail refusal ${capped} ms`); assert.equal(r.stdout, deny(BG_TEXT(PLAN))); assert.ok(capped < 2000, `capped-tail refusal took ${capped} ms`);
+  } finally { rmSync(e.root, { recursive: true, force: true }); }
 });

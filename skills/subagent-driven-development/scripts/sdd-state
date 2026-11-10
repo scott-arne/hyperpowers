@@ -446,9 +446,27 @@ cmd_snapshot() {
   resolve_plan "$plan"
   code_repo_check "$code" "$WSDIR/progress.md" || return $?
   # The plain backend commits nothing, but the board still reads the
-  # activity stamp from the local workspace.
+  # activity stamp from the local workspace. The stamp is written under the
+  # plan lock, as on the branch path, and the ledger is checked under it, so
+  # a finish that removed the workspace while this call waited for the lock
+  # does not have it recreated by the stamp's mkdir.
   if [ "$BACKEND" != branch ]; then
-    if [ -n "$sid" ] && [ -f "$WSDIR/progress.md" ]; then write_activity "$sid" || { echo "status=error"; return 2; }; fi
+    if [ -n "$sid" ]; then
+      hp_lock "$PLAN_DIR" || { echo "status=error"; return 2; }
+      if [ -f "$WSDIR/progress.md" ]; then
+        # Test seam: HYPERPOWERS_TEST_PAUSE_AT=snapshot-plain-before-stamp
+        # pauses under the lock, before the stamp, while
+        # $ROOT/.snapshot-plain-before-stamp-pause exists.
+        if [ "${HYPERPOWERS_TEST_PAUSE_AT:-}" = snapshot-plain-before-stamp ]; then
+          [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"
+          : > "$ROOT/.snapshot-plain-before-stamp-paused"
+          while [ -e "$ROOT/.snapshot-plain-before-stamp-pause" ]; do sleep 0.1; done
+          rm -f "$ROOT/.snapshot-plain-before-stamp-paused"
+        fi
+        write_activity "$sid" || { hp_unlock; echo "status=error"; return 2; }
+      fi
+      hp_unlock
+    fi
     echo "status=plain"; return 0
   fi
   [ -d "$WSDIR" ] || { echo "status=none"; return 0; }

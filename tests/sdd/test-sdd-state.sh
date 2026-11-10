@@ -578,6 +578,26 @@ if [ "$(git -C "$co_s1" log -1 --format=%s hyperpowers/state)" = "custom message
 out=$(run_state "$s1" snapshot docs/nonexistent-plan.md 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ -z "$out" ]; then pass "a plan file that does not exist is refused with exit 2"; else fail "a plan file that does not exist is refused with exit 2 (rc=$rc: $out)"; fi
 if [ "$(run_state "$rp" snapshot docs/plan.md 2>/dev/null)" = "status=plain" ]; then pass "snapshot under the plain backend reports plain"; else fail "snapshot under the plain backend reports plain"; fi
+# A plain-backend snapshot --session stamps activity under the plan lock, as the branch path does, so a finish that removed the workspace while it waited for the lock is not undone. The control proves the lock is held at the stamp; the race holds the lock first and removes the workspace before releasing it.
+rps="$TEST_ROOT/rps"; make_repo "$rps"; ensure "$rps" HYPERPOWERS_TEST_FAIL_WORKTREE_ADD=1 >/dev/null 2>&1
+mkdir -p "$rps/docs"; printf '# P\n\n### Task 1: A\n' > "$rps/docs/plan.md"; git -C "$rps" add docs; git -C "$rps" commit -qm plan
+wsrps=$(run_sdd_dir "$rps" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsrps/progress.md"
+root_rps="$XDG_CACHE_HOME/hyperpowers/sdd/$(state_key "$rps")"; lock_rps="$STATE_ROOT/$(state_key "$rps").lock"
+rm -f "$TEST_ROOT/rps.c.seam"; : > "$root_rps/.snapshot-plain-before-stamp-pause"
+( cd "$rps" && HYPERPOWERS_TEST_SEAM_MARK="$TEST_ROOT/rps.c.seam" HYPERPOWERS_TEST_PAUSE_AT=snapshot-plain-before-stamp bash "$SDD_STATE" snapshot docs/plan.md --session srps > "$TEST_ROOT/rps.c.out" 2>/dev/null; echo "$?" > "$TEST_ROOT/rps.c.rc" ) &
+n=0; while [ ! -e "$root_rps/.snapshot-plain-before-stamp-paused" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+rps_held=0; [ -d "$lock_rps" ] && rps_held=1
+rm -f "$root_rps/.snapshot-plain-before-stamp-pause"; wait
+if [ -f "$TEST_ROOT/rps.c.seam" ] && [ "$rps_held" = 1 ] && [ "$(cat "$TEST_ROOT/rps.c.rc")" = 0 ] && [ "$(cat "$TEST_ROOT/rps.c.out")" = "status=plain" ] && [ -f "$wsrps/activity/srps" ]; then pass "a plain-backend snapshot --session holds the plan lock while it stamps activity"; else fail "a plain-backend snapshot --session holds the plan lock while it stamps activity (held=$rps_held rc=$(cat "$TEST_ROOT/rps.c.rc"): $(cat "$TEST_ROOT/rps.c.out"))"; fi
+: > "$root_rps/.snapshot-plain-before-stamp-pause"; rm -f "$TEST_ROOT/rps.held" "$TEST_ROOT/rps.go" "$TEST_ROOT/rps.done"
+bash -c '. "$1"; hp_lock "$2" || exit 2; : > "$3.held"; while [ ! -e "$3.go" ]; do sleep 0.1; done; rm -rf "$4"; hp_unlock; : > "$3.done"' _ "$LIB" "$rps" "$TEST_ROOT/rps" "$wsrps" &
+n=0; while [ ! -e "$TEST_ROOT/rps.held" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+( cd "$rps" && HYPERPOWERS_TEST_PAUSE_AT=snapshot-plain-before-stamp bash "$SDD_STATE" snapshot docs/plan.md --session srps > "$TEST_ROOT/rps.out" 2>/dev/null; echo "$?" > "$TEST_ROOT/rps.rc" ) &
+n=0; while [ ! -e "$root_rps/.snapshot-plain-before-stamp-paused" ] && [ "$n" -lt 20 ]; do sleep 0.1; n=$((n + 1)); done
+: > "$TEST_ROOT/rps.go"
+n=0; while [ ! -e "$TEST_ROOT/rps.done" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+rm -f "$root_rps/.snapshot-plain-before-stamp-pause"; wait
+if [ -e "$TEST_ROOT/rps.done" ] && [ ! -e "$wsrps" ]; then pass "a plain-backend snapshot --session that waited on a finish's lock recreates no workspace"; else fail "a plain-backend snapshot --session that waited on a finish's lock recreates no workspace (rc=$(cat "$TEST_ROOT/rps.rc" 2>/dev/null): $(cat "$TEST_ROOT/rps.out" 2>/dev/null); $(ls -A "$wsrps" 2>/dev/null | tr '\n' ' '))"; fi
 
 # Two concurrent snapshots of two plans both land, each with only its own
 # directory, while a third session has staged an unrelated file in the

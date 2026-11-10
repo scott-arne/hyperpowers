@@ -2316,7 +2316,17 @@ $2"; shift 2 ;;
     # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-wt-before-swap:<sha>:<path>
     # adds a worktree at <path> with the plan ref checked out and then moves
     # the ref to <sha>, both after the scan and before the swap, once.
+    # amend-gone-before-swap:<sha>:<path> does the same and moves <path> to
+    # <path>.away before the ref moves, so that worktree's directory is
+    # missing when the swap fails.
     case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+      amend-gone-before-swap:*)
+        [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"
+        sv=${HYPERPOWERS_TEST_WRITER_AT#amend-gone-before-swap:}
+        git -C "$REPO" worktree add -q "${sv#*:}" "$ref" >/dev/null 2>&1
+        mv "${sv#*:}" "${sv#*:}.away"
+        git -C "$REPO" update-ref "refs/heads/$ref" "${sv%%:*}" 2>/dev/null
+        HYPERPOWERS_TEST_WRITER_AT="" ;;
       amend-wt-before-swap:*)
         [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"
         sv=${HYPERPOWERS_TEST_WRITER_AT#amend-wt-before-swap:}
@@ -2378,21 +2388,37 @@ amend_accept_lines() {
   sed '/^$/d' | sed 's/^tasks=\([0-9,]*\) path=\(.*\)$/conflict tasks=\1 shares=\2/; s/^tasks=\([0-9,]*\) interface=\(.*\)$/conflict tasks=\1 interface=\2 direction=consumer-first/'
 }
 # Fills AMEND_WT with the worktrees of the plan repository that have the plan
-# ref checked out, as git worktree list names them. A worktree whose
-# directory is gone holds no copy. Reads REPO and ref from cmd_amend.
+# ref checked out, as git worktree list names them, and AMEND_WT_GONE beside
+# it: 0 when the directory is there, 1 when it is missing, 2 when it is
+# missing and the worktree is locked, which git worktree prune leaves alone.
+# A missing one is kept: it would come back with the old plan staged against
+# the new head. Reads REPO and ref from cmd_amend.
 amend_ref_worktrees() {
-  local f wt="" all
-  AMEND_WT=()
+  local f wt="" on=0 locked=0 all
+  AMEND_WT=(); AMEND_WT_GONE=()
   all=$(mktemp "${TMPDIR:-/tmp}/sdd-amend-wt.XXXXXX") || return 1
   # -z, since a worktree path may hold a newline.
   if ! git -C "$REPO" worktree list --porcelain -z > "$all"; then rm -f "$all"; return 1; fi
   while IFS= read -r -d '' f; do
     case "$f" in
-      "worktree "*) wt=${f#worktree } ;;
-      "branch refs/heads/$ref") if [ -d "$wt" ]; then AMEND_WT[${#AMEND_WT[@]}]=$wt; fi ;;
+      "worktree "*) amend_wt_note; wt=${f#worktree }; on=0; locked=0 ;;
+      "branch refs/heads/$ref") on=1 ;;
+      locked|"locked "*) locked=1 ;;
+      '') amend_wt_note ;;
     esac
   done < "$all"
+  amend_wt_note
   rm -f "$all"
+}
+# Notes the worktree record just read when it has the plan ref checked out,
+# once. Reads wt, on and locked from amend_ref_worktrees.
+amend_wt_note() {
+  [ "$on" -eq 1 ] || return 0
+  AMEND_WT[${#AMEND_WT[@]}]=$wt
+  if [ -d "$wt" ]; then AMEND_WT_GONE[${#AMEND_WT_GONE[@]}]=0
+  elif [ "$locked" -eq 1 ]; then AMEND_WT_GONE[${#AMEND_WT_GONE[@]}]=2
+  else AMEND_WT_GONE[${#AMEND_WT_GONE[@]}]=1; fi
+  on=0
 }
 # <worktree> -> "<mode> <blob>" of the plan path's stage-0 index entry, or
 # nothing when the index holds no single such entry (absent, or conflicted).
@@ -2412,6 +2438,18 @@ amend_wt_index() {
 amend_wt_blocker() {
   local i=0 w e
   amend_ref_worktrees || return 1
+  # A registered worktree whose directory is gone blocks first, before any
+  # other is checked; a locked one needs git worktree unlock before git
+  # worktree prune removes it.
+  while [ "$i" -lt "${#AMEND_WT[@]}" ]; do
+    w=${AMEND_WT[$i]}
+    case "${AMEND_WT_GONE[$i]}" in
+      1) echo "sdd-state: the worktree $w has the plan ref $ref checked out but its directory is missing; restore it or run git worktree prune, then run the same amend again" >&2; printf '%s\n' "$w"; return 0 ;;
+      2) echo "sdd-state: the worktree $w has the plan ref $ref checked out but its directory is missing and the worktree is locked; restore it, or run git worktree unlock $w and then git worktree prune, then run the same amend again" >&2; printf '%s\n' "$w"; return 0 ;;
+    esac
+    i=$((i + 1))
+  done
+  i=0
   while [ "$i" -lt "${#AMEND_WT[@]}" ]; do
     w=${AMEND_WT[$i]}; i=$((i + 1))
     e=$(amend_wt_index "$w")
@@ -2426,6 +2464,11 @@ amend_wt_blocker() {
 # would be undone without a word.
 amend_wt_plan_clean() {
   { [ -e "$1/$rel" ] || [ -L "$1/$rel" ]; } && git -C "$1" diff-files --quiet -- ":(top,literal)$rel" 2>/dev/null
+}
+# <worktree>: the refresh error for a copy that is missing or differs from
+# its index entry, and for a worktree whose directory is gone.
+amend_refresh_differs() {
+  echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $1 could not be refreshed to it: its copy of $rel is missing or differs from its index entry; settle that copy, then run the same amend again" >&2
 }
 # <old commit> <new commit>: brings every worktree on the plan ref from the
 # old commit's plan to the new one's through git's own two-way update,
@@ -2443,10 +2486,14 @@ amend_refresh() {
   local i=0 w
   amend_ref_worktrees || { echo "sdd-state: the plan ref $ref carries the amendment, but the worktrees of $REPO could not be listed; run the same amend again" >&2; return 1; }
   while [ "$i" -lt "${#AMEND_WT[@]}" ]; do
-    w=${AMEND_WT[$i]}; i=$((i + 1))
+    w=${AMEND_WT[$i]}
+    # A directory that went missing since the scan cannot be refreshed: the
+    # missing-copy error, and the record stays for the same amend run again.
+    if [ "${AMEND_WT_GONE[$i]}" != 0 ]; then amend_refresh_differs "$w"; return 1; fi
+    i=$((i + 1))
     git -C "$w" update-index -q --refresh >/dev/null 2>&1
     if ! amend_wt_plan_clean "$w"; then
-      echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it: its copy of $rel is missing or differs from its index entry; settle that copy, then run the same amend again" >&2
+      amend_refresh_differs "$w"
       return 1
     fi
     if ! git -C "$w" read-tree -m -u "$1" "$2"; then

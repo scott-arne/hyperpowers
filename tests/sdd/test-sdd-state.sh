@@ -4563,6 +4563,30 @@ mv_aw=$(git -C "$aw" commit-tree "$(git -C "$aw" rev-parse "feat^{tree}")" -p "$
 aw_amend late "HYPERPOWERS_TEST_WRITER_AT=amend-wt-before-swap:$mv_aw:$TEST_ROOT/aw-late"
 if [ -f "$seam_aw" ] && [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$TEST_ROOT/aw-late" ] && grep -qF "the plan ref feat moved during the amendment while $TEST_ROOT/aw-late has it checked out" "$TEST_ROOT/aw.err" && [ "$(git -C "$aw" rev-parse feat)" = "$mv_aw" ] && [ -z "$(ls -A "$wsaw/amends" 2>/dev/null)" ]; then pass "a worktree that checks the plan ref out after the scan, before a lost swap, refuses the amendment by name"; else fail "a worktree that checks the plan ref out after the scan, before a lost swap, refuses the amendment by name (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
 git -C "$aw" worktree remove --force "$TEST_ROOT/aw-late" >/dev/null 2>&1
+# A registered worktree on the plan ref whose directory is gone blocks the amendment until it is restored or pruned; a locked one needs git worktree unlock before git worktree prune removes it.
+git -C "$aw" worktree add -q "$TEST_ROOT/aw-gone" feat >/dev/null 2>&1; mv "$TEST_ROOT/aw-gone" "$TEST_ROOT/aw-gone.away"
+h_aw=$(git -C "$aw" rev-parse feat)
+aw_amend gone
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$TEST_ROOT/aw-gone" ] && grep -qF "the worktree $TEST_ROOT/aw-gone has the plan ref feat checked out but its directory is missing; restore it or run git worktree prune, then run the same amend again" "$TEST_ROOT/aw.err" && [ "$(git -C "$aw" rev-parse feat)" = "$h_aw" ]; then pass "a worktree on the plan ref whose directory is missing refuses the amendment by name, the ref unmoved"; else fail "a worktree on the plan ref whose directory is missing refuses the amendment by name, the ref unmoved (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+git -C "$aw" worktree prune
+aw_retry gone
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ]; then pass "after git worktree prune the same amend succeeds"; else fail "after git worktree prune the same amend succeeds (rc=$rc: $out)"; fi
+rm -rf "$TEST_ROOT/aw-gone.away"
+git -C "$aw" worktree add -q "$TEST_ROOT/aw-lock" feat >/dev/null 2>&1; git -C "$aw" worktree lock "$TEST_ROOT/aw-lock"; mv "$TEST_ROOT/aw-lock" "$TEST_ROOT/aw-lock.away"
+h_aw=$(git -C "$aw" rev-parse feat)
+aw_amend locked
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$TEST_ROOT/aw-lock" ] && grep -qF "the worktree $TEST_ROOT/aw-lock has the plan ref feat checked out but its directory is missing and the worktree is locked; restore it, or run git worktree unlock $TEST_ROOT/aw-lock and then git worktree prune, then run the same amend again" "$TEST_ROOT/aw.err" && [ "$(git -C "$aw" rev-parse feat)" = "$h_aw" ]; then pass "a locked worktree whose directory is missing refuses with the unlock-and-prune line"; else fail "a locked worktree whose directory is missing refuses with the unlock-and-prune line (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+git -C "$aw" worktree prune
+aw_retry locked
+if [ "$rc" -eq 13 ] && [ "$(git -C "$aw" rev-parse feat)" = "$h_aw" ]; then pass "git worktree prune alone leaves a locked missing worktree refusing the amendment"; else fail "git worktree prune alone leaves a locked missing worktree refusing the amendment (rc=$rc: $out)"; fi
+git -C "$aw" worktree unlock "$TEST_ROOT/aw-lock"; git -C "$aw" worktree prune
+aw_retry locked
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ]; then pass "after git worktree unlock and git worktree prune the same amend succeeds"; else fail "after git worktree unlock and git worktree prune the same amend succeeds (rc=$rc: $out)"; fi
+mv2_aw=$(git -C "$aw" commit-tree "$(git -C "$aw" rev-parse "feat^{tree}")" -p "$(git -C "$aw" rev-parse feat)" -m "moved again by another writer")
+aw_amend lategone "HYPERPOWERS_TEST_WRITER_AT=amend-gone-before-swap:$mv2_aw:$TEST_ROOT/aw-lategone"
+if [ -f "$seam_aw" ] && [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$TEST_ROOT/aw-lategone" ] && grep -qF "the plan ref feat moved during the amendment while $TEST_ROOT/aw-lategone has it checked out" "$TEST_ROOT/aw.err" && [ "$(git -C "$aw" rev-parse feat)" = "$mv2_aw" ] && [ ! -e "$wsaw/amends/$(git -C "$aw" hash-object "$TEST_ROOT/aw.lategone")" ]; then pass "a worktree whose directory goes missing after the scan, before a lost swap, refuses the amendment by name"; else fail "a worktree whose directory goes missing after the scan, before a lost swap, refuses the amendment by name (seam=$([ -f "$seam_aw" ] && echo 1 || echo 0) rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+rm -rf "$TEST_ROOT/aw-lategone.away"; git -C "$aw" worktree prune
+rm -rf "$TEST_ROOT/aw-lock.away"
 echo "merge-back: the integration ref's writer"
 make_pair mb; mb_a=$PAIR_A
 mkdir -p "$mb_a/docs" "$mb_a/src"; : > "$mb_a/docs/spec.md"; printf 'base\n' > "$mb_a/src/a.txt"; printf 'base\n' > "$mb_a/src/b.txt"

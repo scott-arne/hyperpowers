@@ -188,6 +188,7 @@ assert_contains "$SDD_EXAMPLE_WORKFLOW" "Using hyperpowers:finishing-a-developme
   "example workflow runs through to the finishing handoff"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "implementer subagent-01f3 (model sonnet, session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan.1a2b3c4d.task-1) — recorded for fix rounds" \
   "example workflow records the implementer identity in the ledger"
+assert_before "$SDD_EXAMPLE_WORKFLOW" "[Resolve workspace: scripts/sdd-state sync" "[Setup: branch question answered: worktree]" "the example workflow resolves the workspace before the branch question"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Task 2: implementer subagent-7c42 (model sonnet, session 1f3a9c, worktree /repo/.worktrees/feature-plan, branch feature-plan.1a2b3c4d.task-2) — recorded for fix rounds" \
   "example workflow records the identity on the task that enters the fix loop"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Re-run the covering command myself: 8/8 — matches the report" \

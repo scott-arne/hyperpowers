@@ -3,8 +3,8 @@
 ```
 You: I'm using Subagent-Driven Development to execute this plan.
 
-[Setup: branch question answered: worktree]
 [Resolve workspace: scripts/sdd-state sync docs/hyperpowers/plans/feature-plan.md → status=absent; scripts/sdd-dir docs/hyperpowers/plans/feature-plan.md — no ledger inside, fresh start]
+[Setup: branch question answered: worktree]
 [Ledger: # SDD ledger — plan: docs/hyperpowers/plans/feature-plan.md]
 [Ledger: session 1f3a9c: mode worktree on feature-plan integrating feature-plan at /repo/.worktrees/feature-plan started 2026-10-20T10:00:00Z]
 [scripts/sdd-state register docs/hyperpowers/plans/feature-plan.md --session 1f3a9c --integration feature-plan → status=registered integration=feature-plan plan-ref=feature-plan]

@@ -4611,6 +4611,31 @@ if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ -x "$awt/docs/plan.md" ] && [ "$(gi
 chmod -x "$awt/docs/plan.md"
 aw_retry mode
 if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ]; then pass "the same amend finishes once the executable bit is restored"; else fail "the same amend finishes once the executable bit is restored (rc=$rc: $out)"; fi
+# A crash after the rename aside leaves the plan path empty and the copy aside; the journal names the copy, and the same amend run again puts it back and finishes.
+aw_jn="$wsaw/amends/.asides"
+aw_amend crash1 HYPERPOWERS_TEST_CRASH_AT=amend-refresh-after-aside
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.crash1")
+aside_aw=$(find "$awt/docs" -name '.plan.md.sdd-amend-*' ! -name '*EARLY1' | head -n 1)
+if [ -f "$seam_aw" ] && [ "$rc" -eq 99 ] && [ ! -e "$awt/docs/plan.md" ] && [ -n "$aside_aw" ] && grep -qF "$aside_aw" "$aw_jn" && [ -f "$wsaw/amends/$n_aw" ]; then pass "a crash after the rename aside leaves the plan path empty, the copy aside and journaled"; else fail "a crash after the rename aside leaves the plan path empty, the copy aside and journaled (rc=$rc: $out)"; fi
+aw_retry crash1
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ "$(git -C "$awt" hash-object docs/plan.md)" = "$n_aw" ] && [ -z "$(git -C "$awt" status --porcelain)" ] && [ "$(aw_asides)" = 0 ] && [ ! -e "$aw_jn" ] && [ ! -e "$wsaw/amends/$n_aw" ]; then pass "the same amend after a crash past the rename restores the copy, finishes the refresh and clears the journal"; else fail "the same amend after a crash past the rename restores the copy, finishes the refresh and clears the journal (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+# A crash after git wrote the new plan leaves the old copy aside; the retry removes it once it still matches the old plan.
+aw_amend crash2 HYPERPOWERS_TEST_CRASH_AT=amend-refresh-after-read-tree
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.crash2")
+aside_aw=$(find "$awt/docs" -name '.plan.md.sdd-amend-*' ! -name '*EARLY1' | head -n 1)
+if [ -f "$seam_aw" ] && [ "$rc" -eq 99 ] && [ "$(git -C "$awt" hash-object docs/plan.md)" = "$n_aw" ] && [ -n "$aside_aw" ] && grep -qF "$aside_aw" "$aw_jn"; then pass "a crash after git wrote the new plan leaves the old copy aside and journaled"; else fail "a crash after git wrote the new plan leaves the old copy aside and journaled (rc=$rc: $out)"; fi
+aw_retry crash2
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$awt" status --porcelain)" ] && [ "$(aw_asides)" = 0 ] && [ ! -e "$aw_jn" ] && [ ! -e "$wsaw/amends/$n_aw" ]; then pass "the same amend after a crash past git's write removes the old copy and clears the journal"; else fail "the same amend after a crash past git's write removes the old copy and clears the journal (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+# An edit that lands in the copy while the run is dead is put back with it and then refused like any other edit, never lost.
+aw_amend crash3 HYPERPOWERS_TEST_CRASH_AT=amend-refresh-after-aside
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.crash3")
+aside_aw=$(find "$awt/docs" -name '.plan.md.sdd-amend-*' ! -name '*EARLY1' | head -n 1)
+printf 'interval edit\n' >> "$aside_aw"
+aw_retry crash3
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(tail -n 1 "$awt/docs/plan.md")" = "interval edit" ] && grep -qF "the worktree $awt could not be refreshed to it: its copy of docs/plan.md is missing or differs from its index entry" "$TEST_ROOT/aw.err" && [ "$(aw_asides)" = 0 ] && [ ! -e "$aw_jn" ] && [ -f "$wsaw/amends/$n_aw" ]; then pass "an edit made in the copy while the run was dead is put back at the plan path and refused, the record kept"; else fail "an edit made in the copy while the run was dead is put back at the plan path and refused, the record kept (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+git -C "$awt" checkout-index -f -- docs/plan.md
+aw_retry crash3
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$awt" status --porcelain)" ]; then pass "the same amend finishes once the interval edit is settled"; else fail "the same amend finishes once the interval edit is settled (rc=$rc: $out)"; fi
 printf 'early\n' > "$awt/docs/.plan.md.sdd-amend-EARLY1"
 aw_amend early
 if [ "$rc" -eq 0 ] && [ "$(cat "$awt/docs/.plan.md.sdd-amend-EARLY1")" = early ] && [ "$(aw_asides)" = 0 ]; then pass "a file left at an earlier run's aside name stays untouched"; else fail "a file left at an earlier run's aside name stays untouched (rc=$rc: $out)"; fi

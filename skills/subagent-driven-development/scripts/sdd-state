@@ -367,7 +367,17 @@ cmd_register() {
   same_repo=0; [ "$(hp_key "$code")" = "$(hp_key "$REPO")" ] && same_repo=1
   if [ "$(git -C "$code" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=code"; return 12; fi
   if [ "$same_repo" -eq 0 ] && [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" = true ]; then echo "status=shallow-source repo=plan"; return 12; fi
-  plan_root=$(root_of "$REPO"); code_root=$(root_of "$code")
+  plan_root=$(root_of "$REPO")
+  # The code root names the repository that owns the integration branch, so
+  # it is read from that branch when it exists: the code checkout may stand
+  # on an unrelated history (an orphan branch), whose root verify and next
+  # would refuse once the integration branch is checked out. A branch not
+  # created yet falls back to the checkout's HEAD.
+  if git -C "$code" rev-parse -q --verify "refs/heads/$integration^{commit}" >/dev/null 2>&1; then
+    code_root=$(root_of "$code" "refs/heads/$integration")
+  else
+    code_root=$(root_of "$code")
+  fi
   hp_lock_pair "$PLAN_DIR" "$code" || return 2
   recover_apply || { hp_unlock; echo "status=error"; return 2; }
   # The ledger is appended to below; a workspace or ledger swapped for a link
@@ -4569,8 +4579,9 @@ cmd_sync() {
 
 # --- verify ------------------------------------------------------------------
 # The repository identity recorded at hand-off: the lexicographically
-# smallest root commit of HEAD, stable across clones and hosts.
-root_of() { git -C "$1" rev-list --max-parents=0 HEAD 2>/dev/null | sort | head -n 1; }
+# smallest root commit of a revision, HEAD unless one is given, stable
+# across clones and hosts.
+root_of() { git -C "$1" rev-list --max-parents=0 "${2:-HEAD}" 2>/dev/null | sort | head -n 1; }
 # <repo> <sha>: the commit exists, is unambiguous, and is reachable from HEAD.
 commit_present() {
   git -C "$1" cat-file -e "$2^{commit}" 2>/dev/null && git -C "$1" merge-base --is-ancestor "$2" HEAD 2>/dev/null

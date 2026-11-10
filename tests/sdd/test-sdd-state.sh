@@ -3466,6 +3466,17 @@ sleep 0.3
 sleep 0.3; rm -f "$XDG_CACHE_HOME"/hyperpowers/state/*.lock-pair-between-pause 2>/dev/null; wait
 k1=$(state_key "$TEST_ROOT/lk1"); k2=$(state_key "$TEST_ROOT/lk2"); lower=$k1; [ "$k1" \< "$k2" ] || lower=$k2
 if [ "$(basename "$(cat "$TEST_ROOT/lk.first")" .lock)" = "$lower" ] && [ "$(basename "$(cat "$TEST_ROOT/lk.second")" .lock)" = "$lower" ]; then pass "hp_lock_pair takes the lower key first whichever role each repository plays"; else fail "lock pair order ($(cat "$TEST_ROOT/lk.first") / $(cat "$TEST_ROOT/lk.second") lower=$lower)"; fi
+# register records the code root of the integration branch, not of the code checkout's HEAD: a checkout on an unrelated orphan branch at registration would otherwise leave a code root that verify and next refuse once the integration branch is checked out.
+e2p="$TEST_ROOT/e2p"; make_repo "$e2p"; git -C "$e2p" switch -q -c plans
+mkdir -p "$e2p/docs"; : > "$e2p/docs/spec.md"; printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Depends on:** none\n' > "$e2p/docs/plan.md"; git -C "$e2p" add docs; git -C "$e2p" commit -qm plan
+e2c="$TEST_ROOT/e2c"; make_repo "$e2c"; git -C "$e2c" commit -q --amend --allow-empty -m "code root"; ra_e2=$(git -C "$e2c" rev-parse main)
+git -C "$e2c" switch -q --orphan side; git -C "$e2c" commit -q --allow-empty -m "side root"
+wse2=$(run_sdd_dir "$e2p" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wse2/progress.md"
+out=$(run_state "$e2p" register docs/plan.md --session s1 --integration main --code-repo "$e2c" 2>/dev/null); rc=$?
+git -C "$e2c" switch -q main
+out1=$(run_state "$e2p" verify docs/plan.md --code-repo "$e2c" 2>/dev/null); rc1=$?
+out2=$(run_state "$e2p" next docs/plan.md --session s1 --code-repo "$e2c" 2>/dev/null); rc2=$?
+if [ "$rc" -eq 0 ] && grep -q "^plan: integration main code-root ${ra_e2:0:7} " "$wse2/progress.md" && [ "$rc1" -eq 0 ] && [ "$out1" = "status=ok tasks=0" ] && [ "$rc2" -eq 0 ] && [ "${out2%% plan=*}" = "status=next tasks=1 own-blocked=none" ]; then pass "register records the integration branch's code root, not the checkout's HEAD, and verify and next accept the integration checkout"; else fail "register records the integration branch's code root, not the checkout's HEAD, and verify and next accept the integration checkout (register rc=$rc: $out; verify rc=$rc1: $out1; next rc=$rc2: $out2; $(grep '^plan: ' "$wse2/progress.md"))"; fi
 
 echo "claim: dependencies and branches"
 make_pair cl; cl_a=$PAIR_A

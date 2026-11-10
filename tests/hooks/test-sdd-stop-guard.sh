@@ -222,6 +222,18 @@ parity_row no 'Task 1: completed'
 parity_row no 'Task 10: complete'
 parity_row no 'see Task 1: complete'
 
+# The same two rules at the id level: a zero-padded id is the digit string the plan wrote, so `01` matches `Task 01` and not `Task 1`.
+id_parity_row() { # <task id> <yes|no> <line>
+  local f got_sh got_js ere_id
+  pi=$((pi + 1)); f="$TEST_ROOT/parity.$pi"; printf '%s\n' "$3" > "$f"
+  ere_id=$(bash -c '. "$1"; hp_complete_ere "$2"' _ "$LIB" "$1")
+  if [ -n "$ere_id" ] && LC_ALL=C grep -Eq "$ere_id" "$f"; then got_sh=yes; else got_sh=no; fi
+  got_js=$(STOP_GUARD_MODULE="$REPO_ROOT/hooks/lib/stop-guard.mjs" node -e 'import(process.env.STOP_GUARD_MODULE).then(m=>{const l=require("fs").readFileSync(process.argv[1],"utf8").replace(/\n$/,"");process.stdout.write(m.completePattern(process.argv[2]).test(l)?"yes":"no")})' "$f" "$1" 2>/dev/null)
+  if [ "$got_sh" = "$2" ] && [ "$got_js" = "$2" ]; then pass "id-level completion parity: id $1, $3 -> $2"; else fail "id-level completion parity: id $1, $3 -> $2 (bash $got_sh, node ${got_js:-error})"; fi
+}
+id_parity_row 01 yes 'Task 01: complete'
+id_parity_row 01 no 'Task 1: complete'
+
 echo ""
 if [ "$FAILURES" -gt 0 ]; then echo "STATUS: FAILED ($FAILURES failures)"; exit 1; fi
 echo "STATUS: PASSED"

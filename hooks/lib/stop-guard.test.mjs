@@ -96,6 +96,23 @@ test('planState: a mention of the marker inside a line is no completion', () => 
   ledger(ws, e, { tasksDone: [1, 2], extra: ['see Task 3: complete'] });
   assert.equal(guard.planState({ workspace: ws, cwd: e.repo, sessionId: SID }).open, 1);
 });
+const withPlan = (e, ids) => writeFileSync(join(e.repo, 'docs', 'plan.md'), '# Plan\n\n' + ids.map((n) => `### Task ${n}: t\n\n`).join(''));
+test('planState: a zero-padded id is its own task, counted by the string the plan wrote', () => {
+  const e = env(); const ws = workspaceFor(e); withPlan(e, ['01', 2]);
+  ledger(ws, e, { tasksDone: ['01', 2] });
+  assert.equal(guard.planState({ workspace: ws, cwd: e.repo, sessionId: SID }).open, 0);
+});
+test('planState: Task 01 and Task 1 are two tasks, and Task 1 complete closes only one', () => {
+  const e = env(); const ws = workspaceFor(e); withPlan(e, ['01', 1]);
+  ledger(ws, e, { tasksDone: [1] });
+  const s = guard.planState({ workspace: ws, cwd: e.repo, sessionId: SID });
+  assert.equal(s.total, 2); assert.equal(s.open, 1);
+});
+test('planState: a task id longer than a double holds exactly is matched as written', () => {
+  const e = env(); const ws = workspaceFor(e); withPlan(e, ['12345678901234567890']);
+  ledger(ws, e, { tasksDone: ['12345678901234567890'] });
+  assert.equal(guard.planState({ workspace: ws, cwd: e.repo, sessionId: SID }).open, 0);
+});
 test('planState: a missing plan, or a ledger without the session line, is unreadable', () => {
   const e = env(); const ws = workspaceFor(e); ledger(ws, e, { sid: 'other' });
   assert.equal(guard.planState({ workspace: ws, cwd: tmpdir(), sessionId: SID }).unreadable, true);

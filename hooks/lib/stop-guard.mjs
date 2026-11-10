@@ -182,7 +182,9 @@ export function planState({ workspace, cwd, sessionId }) {
     try { planText = readFileSync(p, 'utf8'); break; } catch { /* the next root */ }
   }
   if (planText === null) return { plan: rel, unreadable: true };
-  const tasks = [...new Set([...planText.matchAll(TASK_HEADING)].map((x) => Number(x[1])))];
+  // Ids stay the strings the plan wrote, as sdd-state compares them: `01` and
+  // `1` are two tasks, and a Number would round a long digit string.
+  const tasks = [...new Set([...planText.matchAll(TASK_HEADING)].map((x) => x[1]))];
   const done = tasks.filter((n) => { const re = completePattern(n); return records.some((l) => re.test(l)); }).length;
   return { plan: rel, total: tasks.length, open: tasks.length - done };
 }

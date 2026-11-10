@@ -2148,7 +2148,7 @@ cmd_lease() {
 # reverted.
 cmd_amend() {
   local plan="" from="" base="" msg="" code="" accepts="" rel ref P cur mode blob out rc tree commit n record t idx
-  local lease lowner line integ c sid full base_unknown="" errf rbase uerr wb a all
+  local lease lowner line integ c sid full base_unknown="" errf rbase uerr wb a all sv
   # The spelling hp_plan_overlaps keys acceptances by: any other would
   # suppress a conflict here that every later check reports again. Paths
   # arrive encoded as conflict lines print them, a percent as %25 and then a
@@ -2313,6 +2313,17 @@ $2"; shift 2 ;;
     # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-before-swap:<sha> moves the
     # plan ref to <sha> after the record and before the swap, once.
     case "${HYPERPOWERS_TEST_WRITER_AT:-}" in amend-before-swap:*) git -C "$REPO" update-ref "refs/heads/$ref" "${HYPERPOWERS_TEST_WRITER_AT#amend-before-swap:}" 2>/dev/null; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
+    # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-wt-before-swap:<sha>:<path>
+    # adds a worktree at <path> with the plan ref checked out and then moves
+    # the ref to <sha>, both after the scan and before the swap, once.
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+      amend-wt-before-swap:*)
+        [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"
+        sv=${HYPERPOWERS_TEST_WRITER_AT#amend-wt-before-swap:}
+        git -C "$REPO" worktree add -q "${sv#*:}" "$ref" >/dev/null 2>&1
+        git -C "$REPO" update-ref "refs/heads/$ref" "${sv%%:*}" 2>/dev/null
+        HYPERPOWERS_TEST_WRITER_AT="" ;;
+    esac
     if uerr=$(git -C "$REPO" update-ref -m "sdd amend" "refs/heads/$ref" "$commit" "$P" 2>&1); then
       if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = amend-after-swap ]; then hp_unlock; exit 99; fi
       # The refresh comes before the bookkeeping, which removes the record:
@@ -2327,6 +2338,19 @@ $2"; shift 2 ;;
     if [ "$(git -C "$REPO" rev-parse -q --verify "refs/heads/$ref^{commit}" 2>/dev/null)" = "$P" ]; then
       rm -f "$record"; hp_unlock
       echo "sdd-state: update-ref failed and the plan ref $ref is unchanged at ${P:0:7}: $uerr" >&2; echo "status=error"; return 2
+    fi
+    # The ref moved: another writer published while this attempt ran, and a
+    # worktree on the plan ref was left at the old head by it. The refresh
+    # would bring only the plan over, so the writer's other changes would
+    # stay staged there as reverts. The list is read here, in this shell
+    # (amend_wt_blocker ran inside a command substitution), and after the
+    # failure, so a worktree that checked the ref out since this attempt's
+    # scan counts too; one that checks it out later gets the moved head.
+    amend_ref_worktrees || { rm -f "$record"; hp_unlock; echo "sdd-state: the worktrees of $REPO could not be listed" >&2; echo "status=error"; return 2; }
+    if [ "${#AMEND_WT[@]}" -gt 0 ]; then
+      rm -f "$record"; hp_unlock
+      echo "sdd-state: the plan ref $ref moved during the amendment while ${AMEND_WT[0]} has it checked out; bring that worktree to the new head, then run the same amend again" >&2
+      echo "status=checked-out worktree=$(enc "${AMEND_WT[0]}")"; return 13
     fi
   done
   rm -f "$record"

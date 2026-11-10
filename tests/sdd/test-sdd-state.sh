@@ -4330,12 +4330,17 @@ sed 's/^closing=.*/closing=1/' "$lease_am" > "$lease_am.new" && mv -f "$lease_am
 out=$(run_state "$am_a" amend docs/plan.md --from "$TEST_ROOT/am.cand3" --base "$base3" 2>/dev/null); rc=$?
 if [ "$rc" -eq 15 ] && [ "$out" = "status=branch-closing" ]; then pass "a closing lease refuses an amendment as branch-closing"; else fail "amend branch-closing (rc=$rc: $out)"; fi
 run_state "$am_a" claim docs/plan.md final --session s1 --release >/dev/null
-# A lost compare-and-swap: a writer moves the plan ref between the record and the swap. A moved head with the same plan is recomputed; one whose plan changed is stale, and neither leaves a record.
+# A lost compare-and-swap: a writer moves the plan ref between the record and the swap. While a worktree has the plan ref checked out the amendment is refused as checked-out, because that writer left the worktree at the old head; with none, a moved head with the same plan is recomputed, and one whose plan changed is stale. Neither leaves a record.
 head3=$(git -C "$am_a" rev-parse feat)
 adv_am=$(git -C "$am_a" commit-tree "$(git -C "$am_a" rev-parse "feat^{tree}")" -p "$head3" -m "advance" 2>/dev/null)
 sed 's/^### Task 1: A$/### Task 1: A1/' "$TEST_ROOT/am.cand3" > "$TEST_ROOT/am.cand4"
-out=$(cd "$am_a" && HYPERPOWERS_TEST_WRITER_AT="amend-before-swap:$adv_am" bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/am.cand4" --base "$base3" --accept 'tasks=1,2 path=src/x.sh' --message "a1" 2>/dev/null); rc=$?
-if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$am_a" rev-parse "feat^")" = "$adv_am" ] && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; then pass "a lost swap is recomputed on the moved head"; else fail "amend lost swap (rc=$rc: $out parent=$(git -C "$am_a" rev-parse "feat^" 2>/dev/null))"; fi
+idx_am=$(git -C "$am_a" ls-files -s)
+out=$(cd "$am_a" && HYPERPOWERS_TEST_WRITER_AT="amend-before-swap:$adv_am" bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/am.cand4" --base "$base3" --accept 'tasks=1,2 path=src/x.sh' --message "a1" 2>"$TEST_ROOT/am.lost.err"); rc=$?
+if [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$am_a" ] && grep -qF "the plan ref feat moved during the amendment while $am_a has it checked out; bring that worktree to the new head, then run the same amend again" "$TEST_ROOT/am.lost.err" && [ "$(git -C "$am_a" rev-parse feat)" = "$adv_am" ] && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ] && [ "$(git -C "$am_a" ls-files -s)" = "$idx_am" ]; then pass "a lost swap while a worktree has the plan ref checked out is refused as checked-out, the index untouched"; else fail "a lost swap while a worktree has the plan ref checked out is refused as checked-out, the index untouched (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/am.lost.err"))"; fi
+git -C "$am_a" switch -q --detach
+adv2_am=$(git -C "$am_a" commit-tree "$(git -C "$am_a" rev-parse "feat^{tree}")" -p "$(git -C "$am_a" rev-parse feat)" -m "advance again" 2>/dev/null)
+out=$(cd "$am_a" && HYPERPOWERS_TEST_WRITER_AT="amend-before-swap:$adv2_am" bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/am.cand4" --base "$base3" --accept 'tasks=1,2 path=src/x.sh' --message "a1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$am_a" rev-parse "feat^")" = "$adv2_am" ] && [ -z "$(ls -A "$wsam/amends" 2>/dev/null)" ]; then pass "a lost swap is recomputed on the moved head"; else fail "amend lost swap (rc=$rc: $out parent=$(git -C "$am_a" rev-parse "feat^" 2>/dev/null))"; fi
 # That call restated an acceptance the ledger already held: allowed, since the overlap is the candidate's, and written once.
 if [ "$(grep -c '^scan: accepted-overlap tasks=1,2 path=src/x.sh$' "$wsam/progress.md")" = 1 ]; then pass "an acceptance the ledger already holds is allowed and not written twice"; else fail "restated acceptance ($(grep -c 'path=src/x.sh$' "$wsam/progress.md"))"; fi
 base4=$(git -C "$am_a" rev-parse feat:docs/plan.md)
@@ -4533,6 +4538,31 @@ sed 's/^### Task 2: B$/### Task 2: B-split/' "$asp/docs/plan.md" > "$TEST_ROOT/a
 out=$(run_state "$asp" amend docs/plan.md --from "$TEST_ROOT/asp.c1" --base "$b_sp" --code-repo "$asc" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$asp" rev-parse plans^)" = "$h_sp" ] && [ "$(git -C "$asp" rev-parse plans:docs/plan.md)" = "$n_sp" ] && [ "$(git -C "$asc" for-each-ref; git -C "$asc" rev-parse HEAD)" = "$refs_sc" ] && [ -z "$(git -C "$asc" status --porcelain)" ] && [ -z "$(git -C "$asp" status --porcelain)" ] && [ "$(git -C "$asp" rev-parse :docs/plan.md)" = "$n_sp" ] && [ "$(git -C "$asp" hash-object docs/plan.md)" = "$n_sp" ]; then pass "a split amendment publishes on the plan repository's ref, refreshes its checkout and leaves the code repository alone"; else fail "split amend (rc=$rc: $out)"; fi
 
+# Amend and the worktrees on the plan ref: a lost swap while one has the ref checked out, a registered worktree whose directory is gone, and the refresh that moves the plan file aside before git writes the new plan.
+aw="$TEST_ROOT/aw"; make_repo "$aw"; git -C "$aw" switch -q -c feat
+mkdir -p "$aw/docs"; : > "$aw/docs/spec.md"
+printf '# W\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n\n### Task 2: B\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$aw/docs/plan.md"
+git -C "$aw" add docs; git -C "$aw" commit -qm plan
+wsaw=$(run_sdd_dir "$aw" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsaw/progress.md"
+run_state "$aw" register docs/plan.md --session s1 --integration feat >/dev/null
+git -C "$aw" switch -q --detach
+seam_aw="$TEST_ROOT/aw.seam"
+# aw_amend <label> [VAR=value...]: renames Task 2 to B-<label> in the plan ref's current plan, from that plan's blob; out, rc and aw.err hold the answer.
+aw_amend() {
+  local label=$1; shift
+  aw_base=$(git -C "$aw" rev-parse feat:docs/plan.md)
+  git -C "$aw" show feat:docs/plan.md | sed "s/^### Task 2: .*/### Task 2: B-$label/" > "$TEST_ROOT/aw.$label"
+  rm -f "$seam_aw"
+  out=$(cd "$aw" && env HYPERPOWERS_TEST_SEAM_MARK="$seam_aw" "$@" bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/aw.$label" --base "$aw_base" --message "$label" 2>"$TEST_ROOT/aw.err"); rc=$?
+}
+# aw_retry <label>: the same amend again, with the same --from and --base.
+aw_retry() {
+  out=$(cd "$aw" && bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/aw.$1" --base "$aw_base" --message "$1" 2>"$TEST_ROOT/aw.err"); rc=$?
+}
+mv_aw=$(git -C "$aw" commit-tree "$(git -C "$aw" rev-parse "feat^{tree}")" -p "$(git -C "$aw" rev-parse feat)" -m "moved by another writer")
+aw_amend late "HYPERPOWERS_TEST_WRITER_AT=amend-wt-before-swap:$mv_aw:$TEST_ROOT/aw-late"
+if [ -f "$seam_aw" ] && [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$TEST_ROOT/aw-late" ] && grep -qF "the plan ref feat moved during the amendment while $TEST_ROOT/aw-late has it checked out" "$TEST_ROOT/aw.err" && [ "$(git -C "$aw" rev-parse feat)" = "$mv_aw" ] && [ -z "$(ls -A "$wsaw/amends" 2>/dev/null)" ]; then pass "a worktree that checks the plan ref out after the scan, before a lost swap, refuses the amendment by name"; else fail "a worktree that checks the plan ref out after the scan, before a lost swap, refuses the amendment by name (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+git -C "$aw" worktree remove --force "$TEST_ROOT/aw-late" >/dev/null 2>&1
 echo "merge-back: the integration ref's writer"
 make_pair mb; mb_a=$PAIR_A
 mkdir -p "$mb_a/docs" "$mb_a/src"; : > "$mb_a/docs/spec.md"; printf 'base\n' > "$mb_a/src/a.txt"; printf 'base\n' > "$mb_a/src/b.txt"

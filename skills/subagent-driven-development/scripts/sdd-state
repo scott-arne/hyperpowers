@@ -2625,12 +2625,21 @@ amend_refresh_one() {
       case "${HYPERPOWERS_TEST_WRITER_AT:-}" in amend-refresh-after-rename) [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; printf 'created during the refresh\n' > "$w/$rel"; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
   why=differs
   if amend_aside_matches "$w" "$aside" "$e"; then
+      # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-refresh-after-check
+      # appends a line to the copy aside after the check, once, as a write
+      # through a descriptor opened before the rename would.
+      case "${HYPERPOWERS_TEST_WRITER_AT:-}" in amend-refresh-after-check) [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; printf 'written through an open descriptor\n' >> "$aside"; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
     if git -C "$w" read-tree -m -u "$2" "$3"; then
       # Test seam: HYPERPOWERS_TEST_CRASH_AT=amend-refresh-after-read-tree
       # stops the call once git has written the new plan, before the copy
       # aside is removed.
       if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = amend-refresh-after-read-tree ]; then [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; hp_unlock; exit 99; fi
-      rm -f "$aside"; amend_journal_drop "$aside"; return 0
+      # The copy is the same inode a writer that opened the plan before the
+      # rename still holds, so it is checked again: removing a copy that
+      # changed since the first check would lose that write unseen.
+      if amend_aside_matches "$w" "$aside" "$e"; then rm -f "$aside"; amend_journal_drop "$aside"; return 0; fi
+      echo "sdd-state: the plan ref $ref carries the amendment and the worktree $w now has the new plan, but its old copy at $aside changed during the refresh; keep what you need from it, remove it, then run the same amend again" >&2
+      return 1
     fi
     why=settle
   fi

@@ -4636,6 +4636,14 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(tail -n 1 "$awt/docs/p
 git -C "$awt" checkout-index -f -- docs/plan.md
 aw_retry crash3
 if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$awt" status --porcelain)" ]; then pass "the same amend finishes once the interval edit is settled"; else fail "the same amend finishes once the interval edit is settled (rc=$rc: $out)"; fi
+# A write that reaches the copy aside after its check, as through a descriptor opened before the rename, is never deleted with it: the copy is kept and named, and the record stays.
+aw_amend late2 HYPERPOWERS_TEST_WRITER_AT=amend-refresh-after-check
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.late2")
+aside_aw=$(find "$awt/docs" -name '.plan.md.sdd-amend-*' ! -name '*EARLY1' | head -n 1)
+if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(git -C "$awt" hash-object docs/plan.md)" = "$n_aw" ] && [ -n "$aside_aw" ] && [ "$(tail -n 1 "$aside_aw")" = "written through an open descriptor" ] && grep -qF "its old copy at $aside_aw changed during the refresh" "$TEST_ROOT/aw.err" && grep -qF "$aside_aw" "$aw_jn" && [ -f "$wsaw/amends/$n_aw" ]; then pass "a write to the copy aside after its check keeps the copy, names it and keeps the record"; else fail "a write to the copy aside after its check keeps the copy, names it and keeps the record (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+rm -f "$aside_aw"
+aw_retry late2
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$awt" status --porcelain)" ] && [ ! -e "$aw_jn" ] && [ ! -e "$wsaw/amends/$n_aw" ]; then pass "the same amend finishes once the changed copy is settled"; else fail "the same amend finishes once the changed copy is settled (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
 printf 'early\n' > "$awt/docs/.plan.md.sdd-amend-EARLY1"
 aw_amend early
 if [ "$rc" -eq 0 ] && [ "$(cat "$awt/docs/.plan.md.sdd-amend-EARLY1")" = early ] && [ "$(aw_asides)" = 0 ]; then pass "a file left at an earlier run's aside name stays untouched"; else fail "a file left at an earlier run's aside name stays untouched (rc=$rc: $out)"; fi

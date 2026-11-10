@@ -2470,36 +2470,101 @@ amend_wt_plan_clean() {
 amend_refresh_differs() {
   echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $1 could not be refreshed to it: its copy of $rel is missing or differs from its index entry; settle that copy, then run the same amend again" >&2
 }
+# <worktree>: the refresh error for a refusal git names itself.
+amend_refresh_settle() {
+  echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $1 could not be refreshed to it; settle what git names above in that worktree, then run the same amend again" >&2
+}
+# <worktree> <aside copy> <"mode blob">: succeeds when the copy set aside is
+# what the index entry records. The type follows the mode (a symbolic link
+# for 120000, a regular file otherwise); a link is compared by its whole
+# target text, trailing newlines included, as git stores a link (the x after
+# readlink keeps what $(...) would drop), and a regular file by its content
+# hashed with the plan path's attributes and by its executable bit, unless
+# core.fileMode is false, when git itself ignores that bit. A regular file
+# holding a link's target text hashes like the link and is still no match.
+amend_aside_matches() {
+  local emode=${3%% *} eblob=${3#* } t
+  if [ "$emode" = 120000 ]; then
+    { [ -L "$2" ] && t=$(readlink -n -- "$2" && printf x); } || return 1
+    [ "$(printf '%s' "${t%x}" | git -C "$1" hash-object --stdin 2>/dev/null)" = "$eblob" ]
+    return
+  fi
+  { [ -f "$2" ] && [ ! -L "$2" ]; } || return 1
+  [ "$(git -C "$1" hash-object --path="$rel" -- "$2" 2>/dev/null)" = "$eblob" ] || return 1
+  [ "$(git -C "$1" config --bool core.fileMode 2>/dev/null)" != false ] || return 0
+  if [ "$emode" = 100755 ]; then [ -x "$2" ]; else [ ! -x "$2" ]; fi
+}
+# <worktree> <old commit> <new commit>: one worktree's refresh through git's
+# own two-way update, read-tree -m -u, which touches only the plan here and
+# keeps the worktree's other changes. read-tree takes a missing file for an
+# unchanged one and writes it back, so the plan file is first moved aside,
+# with one rename onto a name this call created exclusively (never an
+# earlier run's copy), checked there against its index entry, and only then
+# is git asked to write the new plan into the empty path: a deletion made
+# meanwhile fails the rename, and an edit fails the check. A failure moves
+# the copy back with a hard link, which never replaces a file created at the
+# path meanwhile; when one was, both are named. ln -P links a symbolic link
+# itself, so a link comes back with its target byte for byte. A worktree whose index
+# already holds the new plan (an earlier refresh that a crash cut short)
+# needs no write, and is checked and updated in place.
+amend_refresh_one() {
+  local w=$1 p="$1/$rel" e aside why lt
+  e=$(amend_wt_index "$w")
+  [ -n "$e" ] || { amend_refresh_differs "$w"; return 1; }
+  if [ "${e#* }" = "$(git -C "$w" rev-parse -q --verify "$3:$rel" 2>/dev/null)" ]; then
+    amend_wt_plan_clean "$w" || { amend_refresh_differs "$w"; return 1; }
+    git -C "$w" read-tree -m -u "$2" "$3" || { amend_refresh_settle "$w"; return 1; }
+    return 0
+  fi
+  aside=$(mktemp "$(dirname "$p")/.$(basename "$p").sdd-amend-XXXXXX" 2>/dev/null) || { amend_refresh_differs "$w"; return 1; }
+      # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-refresh-before-rename:<delete|chmod|unlink>
+      # deletes the plan file, flips its executable bit, or replaces a
+      # symbolic link with a regular file holding its target text, right
+      # before the rename aside, once.
+      case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
+        amend-refresh-before-rename:*)
+          [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"
+          case "${HYPERPOWERS_TEST_WRITER_AT#amend-refresh-before-rename:}" in
+            delete) rm -f "$w/$rel" ;;
+            chmod) if [ -x "$w/$rel" ]; then chmod -x "$w/$rel"; else chmod +x "$w/$rel"; fi ;;
+            unlink) lt=$(readlink "$w/$rel"); rm -f "$w/$rel"; printf '%s' "$lt" > "$w/$rel" ;;
+          esac
+          HYPERPOWERS_TEST_WRITER_AT="" ;;
+      esac
+  if ! mv -f "$p" "$aside" 2>/dev/null; then rm -f "$aside"; amend_refresh_differs "$w"; return 1; fi
+      # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-refresh-after-rename
+      # creates a file at the plan path right after the rename aside, once.
+      case "${HYPERPOWERS_TEST_WRITER_AT:-}" in amend-refresh-after-rename) [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; printf 'created during the refresh\n' > "$w/$rel"; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
+  why=differs
+  if amend_aside_matches "$w" "$aside" "$e"; then
+    if git -C "$w" read-tree -m -u "$2" "$3"; then rm -f "$aside"; return 0; fi
+    why=settle
+  fi
+  if ln -P "$aside" "$p" 2>/dev/null; then
+    rm -f "$aside"
+    if [ "$why" = settle ]; then amend_refresh_settle "$w"; else amend_refresh_differs "$w"; fi
+    return 1
+  fi
+  echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it: a file appeared at $p while its copy was aside at $aside; keep the one you want at $p, then run the same amend again" >&2
+  return 1
+}
 # <old commit> <new commit>: brings every worktree on the plan ref from the
-# old commit's plan to the new one's through git's own two-way update,
-# read-tree -m -u. It touches only the paths the two commits differ in, the
-# plan alone here, keeps the worktree's other changes, and refuses rather
-# than overwrites a copy that is neither clean at the old blob nor already
-# the new one. A copy that is missing or differs from its index entry is
-# refused before git is asked, since git would write a deleted file back,
-# so an edit or a deletion made since the check survives. The index's stat
-# data is refreshed first, or a file rewritten with the same content would
-# be taken for an edit. A worktree that cannot be brought over is an error,
+# old commit's plan to the new one's, one worktree at a time
+# (amend_refresh_one). A worktree that cannot be brought over is an error,
 # never skipped: its index would keep the old plan staged against the new
-# head.
+# head; so is one whose directory has gone since the scan, and the record
+# stays for the same amend run again. The index's stat data is refreshed
+# first, or a file rewritten with the same content would be taken for an
+# edit.
 amend_refresh() {
   local i=0 w
   amend_ref_worktrees || { echo "sdd-state: the plan ref $ref carries the amendment, but the worktrees of $REPO could not be listed; run the same amend again" >&2; return 1; }
   while [ "$i" -lt "${#AMEND_WT[@]}" ]; do
     w=${AMEND_WT[$i]}
-    # A directory that went missing since the scan cannot be refreshed: the
-    # missing-copy error, and the record stays for the same amend run again.
     if [ "${AMEND_WT_GONE[$i]}" != 0 ]; then amend_refresh_differs "$w"; return 1; fi
     i=$((i + 1))
     git -C "$w" update-index -q --refresh >/dev/null 2>&1
-    if ! amend_wt_plan_clean "$w"; then
-      amend_refresh_differs "$w"
-      return 1
-    fi
-    if ! git -C "$w" read-tree -m -u "$1" "$2"; then
-      echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it; settle what git names above in that worktree, then run the same amend again" >&2
-      return 1
-    fi
+    amend_refresh_one "$w" "$1" "$2" || return 1
   done
 }
 

@@ -4587,6 +4587,60 @@ aw_amend lategone "HYPERPOWERS_TEST_WRITER_AT=amend-gone-before-swap:$mv2_aw:$TE
 if [ -f "$seam_aw" ] && [ "$rc" -eq 13 ] && [ "$out" = "status=checked-out worktree=$TEST_ROOT/aw-lategone" ] && grep -qF "the plan ref feat moved during the amendment while $TEST_ROOT/aw-lategone has it checked out" "$TEST_ROOT/aw.err" && [ "$(git -C "$aw" rev-parse feat)" = "$mv2_aw" ] && [ ! -e "$wsaw/amends/$(git -C "$aw" hash-object "$TEST_ROOT/aw.lategone")" ]; then pass "a worktree whose directory goes missing after the scan, before a lost swap, refuses the amendment by name"; else fail "a worktree whose directory goes missing after the scan, before a lost swap, refuses the amendment by name (seam=$([ -f "$seam_aw" ] && echo 1 || echo 0) rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
 rm -rf "$TEST_ROOT/aw-lategone.away"; git -C "$aw" worktree prune
 rm -rf "$TEST_ROOT/aw-lock.away"
+# The refresh moves the plan file aside and checks it there before git writes the new plan: a deletion fails the rename, a file created meanwhile is left alone, and a changed file is put back unchanged.
+awt="$TEST_ROOT/aw-wt"; git -C "$aw" worktree add -q "$awt" feat >/dev/null 2>&1
+aw_asides() { find "$awt/docs" -name '.plan.md.sdd-amend-*' ! -name '*EARLY1' | grep -c .; }
+aw_amend plain
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$awt" hash-object docs/plan.md)" = "$(git -C "$aw" rev-parse feat:docs/plan.md)" ] && [ -z "$(git -C "$awt" status --porcelain)" ] && [ "$(aw_asides)" = 0 ]; then pass "a refresh leaves the new plan in the worktree and no copy aside"; else fail "a refresh leaves the new plan in the worktree and no copy aside (rc=$rc: $out: $(git -C "$awt" status --porcelain | tr '\n' '|'))"; fi
+aw_amend del HYPERPOWERS_TEST_WRITER_AT=amend-refresh-before-rename:delete
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.del")
+if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e "$awt/docs/plan.md" ] && [ -f "$wsaw/amends/$n_aw" ] && grep -qF "the worktree $awt could not be refreshed to it: its copy of docs/plan.md is missing or differs from its index entry" "$TEST_ROOT/aw.err" && [ "$(aw_asides)" = 0 ]; then pass "a plan file deleted during the refresh stays deleted, the record kept"; else fail "a plan file deleted during the refresh stays deleted, the record kept (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+git -C "$awt" checkout-index -f -- docs/plan.md
+aw_retry del
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ "$(git -C "$awt" hash-object docs/plan.md)" = "$n_aw" ]; then pass "once the deleted file is restored the same amend finishes the refresh"; else fail "once the deleted file is restored the same amend finishes the refresh (rc=$rc: $out)"; fi
+aw_amend new HYPERPOWERS_TEST_WRITER_AT=amend-refresh-after-rename
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.new")
+aside_aw=$(find "$awt/docs" -name '.plan.md.sdd-amend-*' ! -name '*EARLY1' | head -n 1)
+if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ "$(cat "$awt/docs/plan.md")" = "created during the refresh" ] && [ -n "$aside_aw" ] && grep -qF "a file appeared at $awt/docs/plan.md while its copy was aside at $aside_aw" "$TEST_ROOT/aw.err" && [ -f "$wsaw/amends/$n_aw" ]; then pass "a file created at the plan path during the refresh is left alone, the copy kept aside and both named"; else fail "a file created at the plan path during the refresh is left alone, the copy kept aside and both named (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+rm -f "$awt/docs/plan.md"; [ -z "$aside_aw" ] || rm -f "$aside_aw"; git -C "$awt" checkout-index -f -- docs/plan.md
+aw_retry new
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ]; then pass "the same amend finishes once the created file is settled"; else fail "the same amend finishes once the created file is settled (rc=$rc: $out)"; fi
+aw_amend mode HYPERPOWERS_TEST_WRITER_AT=amend-refresh-before-rename:chmod
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.mode")
+if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ -x "$awt/docs/plan.md" ] && [ "$(git -C "$awt" hash-object docs/plan.md)" = "$(git -C "$awt" rev-parse :docs/plan.md)" ] && [ "$(aw_asides)" = 0 ] && [ -f "$wsaw/amends/$n_aw" ]; then pass "a plan file whose executable bit flipped during the refresh is put back unchanged"; else fail "a plan file whose executable bit flipped during the refresh is put back unchanged (rc=$rc: $out)"; fi
+chmod -x "$awt/docs/plan.md"
+aw_retry mode
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ]; then pass "the same amend finishes once the executable bit is restored"; else fail "the same amend finishes once the executable bit is restored (rc=$rc: $out)"; fi
+printf 'early\n' > "$awt/docs/.plan.md.sdd-amend-EARLY1"
+aw_amend early
+if [ "$rc" -eq 0 ] && [ "$(cat "$awt/docs/.plan.md.sdd-amend-EARLY1")" = early ] && [ "$(aw_asides)" = 0 ]; then pass "a file left at an earlier run's aside name stays untouched"; else fail "a file left at an earlier run's aside name stays untouched (rc=$rc: $out)"; fi
+rm -f "$awt/docs/.plan.md.sdd-amend-EARLY1"; git -C "$aw" worktree remove --force "$awt" >/dev/null 2>&1
+# The link variant: where the index holds a symbolic link, a regular file holding the link's target text hashes to the same blob, and is still no match. hp_plan_dir refuses a linked plan path, so the plan line is written by hand and the caller stays on main, where the plan is a regular file.
+al="$TEST_ROOT/al"; make_repo "$al"
+mkdir -p "$al/docs"; : > "$al/docs/spec.md"
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Depends on:** none\n' > "$al/docs/plan.md"; git -C "$al" add docs; git -C "$al" commit -qm plan
+git -C "$al" switch -q -c feat; rm "$al/docs/plan.md"; ln -s plan-target "$al/docs/plan.md"; printf 'plan-target' > "$al/docs/plan-target"; git -C "$al" add docs; git -C "$al" commit -qm "plan as a link"; git -C "$al" switch -q main
+wsal=$(run_sdd_dir "$al" docs/plan.md 2>/dev/null); r7_al=$(git -C "$al" rev-list --max-parents=0 HEAD | cut -c1-7)
+printf '# SDD ledger — plan: docs/plan.md\nplan: integration feat code-root %s plan-ref feat plan-root %s spec docs/spec.md\n' "$r7_al" "$r7_al" > "$wsal/progress.md"
+git -C "$al" worktree add -q "$TEST_ROOT/al-wt" feat >/dev/null 2>&1
+b_al=$(git -C "$al" rev-parse feat:docs/plan.md)
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A2\n\n**Depends on:** none\n' > "$TEST_ROOT/al.cand"
+rm -f "$TEST_ROOT/al.seam"
+out=$(cd "$al" && HYPERPOWERS_TEST_SEAM_MARK="$TEST_ROOT/al.seam" HYPERPOWERS_TEST_WRITER_AT=amend-refresh-before-rename:unlink bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/al.cand" --base "$b_al" --message link 2>"$TEST_ROOT/al.err"); rc=$?
+if [ -f "$TEST_ROOT/al.seam" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "but the worktree $TEST_ROOT/al-wt could not be refreshed to it" "$TEST_ROOT/al.err" && [ -f "$TEST_ROOT/al-wt/docs/plan.md" ] && [ ! -L "$TEST_ROOT/al-wt/docs/plan.md" ] && [ "$(cat "$TEST_ROOT/al-wt/docs/plan.md")" = plan-target ]; then pass "a regular file holding a link's target text where the index holds the link is no match, and it is put back unchanged"; else fail "a regular file holding a link's target text where the index holds the link is no match, and it is put back unchanged (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/al.err"))"; fi
+# A link whose target ends in a newline is compared whole: $(readlink) would drop the newline, read the clean link as changed, and put it back without it.
+an="$TEST_ROOT/an"; make_repo "$an"
+mkdir -p "$an/docs"; : > "$an/docs/spec.md"
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Depends on:** none\n' > "$an/docs/plan.md"; git -C "$an" add docs; git -C "$an" commit -qm plan
+t_an=$(printf 'plan-target\nx'); t_an=${t_an%x}
+git -C "$an" switch -q -c feat; rm "$an/docs/plan.md"; ln -s "$t_an" "$an/docs/plan.md"; printf '%s' "$t_an" > "$an/docs/$t_an"; git -C "$an" add docs; git -C "$an" commit -qm "plan as a link whose target ends in a newline"; git -C "$an" switch -q main
+wsan=$(run_sdd_dir "$an" docs/plan.md 2>/dev/null); r7_an=$(git -C "$an" rev-list --max-parents=0 HEAD | cut -c1-7)
+printf '# SDD ledger — plan: docs/plan.md\nplan: integration feat code-root %s plan-ref feat plan-root %s spec docs/spec.md\n' "$r7_an" "$r7_an" > "$wsan/progress.md"
+git -C "$an" worktree add -q "$TEST_ROOT/an-wt" feat >/dev/null 2>&1
+b_an=$(git -C "$an" rev-parse feat:docs/plan.md)
+printf '# P\n\n**Spec:** docs/spec.md\n\n### Task 1: A2\n\n**Depends on:** none\n' > "$TEST_ROOT/an.cand"
+out=$(cd "$an" && bash "$SDD_STATE" amend docs/plan.md --from "$TEST_ROOT/an.cand" --base "$b_an" --message nl 2>"$TEST_ROOT/an.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ -z "$(git -C "$TEST_ROOT/an-wt" status --porcelain)" ]; then pass "a clean link whose target ends in a newline takes the refresh"; else fail "a clean link whose target ends in a newline takes the refresh (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/an.err"))"; fi
 echo "merge-back: the integration ref's writer"
 make_pair mb; mb_a=$PAIR_A
 mkdir -p "$mb_a/docs" "$mb_a/src"; : > "$mb_a/docs/spec.md"; printf 'base\n' > "$mb_a/src/a.txt"; printf 'base\n' > "$mb_a/src/b.txt"

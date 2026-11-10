@@ -598,6 +598,8 @@ n=0; while [ ! -e "$root_rps/.snapshot-plain-before-stamp-paused" ] && [ "$n" -l
 n=0; while [ ! -e "$TEST_ROOT/rps.done" ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
 rm -f "$root_rps/.snapshot-plain-before-stamp-pause"; wait
 if [ -e "$TEST_ROOT/rps.done" ] && [ ! -e "$wsrps" ]; then pass "a plain-backend snapshot --session that waited on a finish's lock recreates no workspace"; else fail "a plain-backend snapshot --session that waited on a finish's lock recreates no workspace (rc=$(cat "$TEST_ROOT/rps.rc" 2>/dev/null): $(cat "$TEST_ROOT/rps.out" 2>/dev/null); $(ls -A "$wsrps" 2>/dev/null | tr '\n' ' '))"; fi
+out=$(run_state "$s1" snapshot docs/plan.md --session '' 2>/dev/null); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ]; then pass "snapshot refuses an empty --session"; else fail "snapshot refuses an empty --session (rc=$rc: $out)"; fi
 
 # Two concurrent snapshots of two plans both land, each with only its own
 # directory, while a third session has staged an unrelated file in the

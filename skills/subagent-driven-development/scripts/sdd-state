@@ -431,18 +431,20 @@ cmd_register() {
 
 # --- snapshot ----------------------------------------------------------------
 cmd_snapshot() {
-  local plan="" msg="" sid="" code="" out rc n
+  local plan="" msg="" sid="" sid_given=0 code="" out rc n
   while [ $# -gt 0 ]; do
     case "$1" in
       -m) [ $# -ge 2 ] || usage; msg=$2; shift 2 ;;
-      --session) [ $# -ge 2 ] || usage; sid=$2; shift 2 ;;
+      --session) [ $# -ge 2 ] || usage; sid=$2; sid_given=1; shift 2 ;;
       --code-repo) [ $# -ge 2 ] || usage; code=$2; shift 2 ;;
       -*) usage ;;
       *) plan=$1; shift ;;
     esac
   done
   [ -n "$plan" ] || usage
-  [ -z "$sid" ] || sid_ok "$sid" || { echo "status=error"; return 2; }
+  # A given --session is checked whatever its value: an empty one is no
+  # session id, not the absence of one.
+  [ "$sid_given" -eq 0 ] || sid_ok "$sid" || { echo "status=error"; return 2; }
   resolve_plan "$plan"
   code_repo_check "$code" "$WSDIR/progress.md" || return $?
   # The plain backend commits nothing, but the board still reads the

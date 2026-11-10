@@ -2849,15 +2849,17 @@ cmd_merge_back() {
   [ "$owner" = "$sid" ] || { hp_unlock; echo "status=not-holder owner=${owner:-none}"; return 4; }
   full=$(git -C "$code" rev-parse -q --verify "$sha^{commit}" 2>/dev/null) || { hp_unlock; echo "sdd-state: no such commit in $code: $sha" >&2; echo "status=error"; return 2; }
   sha=$full
-  # The newest approval record names the approved commit by its full id, as
-  # wide as this repository's ids (40 or 64 hex digits); a shorter or longer
-  # hex run is some other token and reads as no approval. Records come
+  # The newest approval record governs, and it names the approved commit by
+  # its full id, as wide as this repository's ids (40 or 64 hex digits). A
+  # shorter or longer hex run is some other token and reads as no approval,
+  # even when an older record holds a full id: the newest record is taken
+  # first and its token checked after, never the reverse. Records come
   # through ledger_records, so an interrupted approval write (an
   # unterminated last line, or a line ending in a fragment marker) never
   # authorizes a merge. The ids are compared whole: no prefix, abbreviation
   # or revision lookup stands between the line and the commit.
   recs=$(ledger_records "$WSDIR/progress.md") || { hp_unlock; echo "status=error"; return 2; }
-  approved=$(printf '%s\n' "$recs" | grep -E "^Task $n: approved [0-9a-f]{${#sha}}([^0-9a-f]|\$)" | tail -n 1 | cut -d' ' -f4 | cut -c1-"${#sha}")
+  approved=$(printf '%s\n' "$recs" | grep "^Task $n: approved " | tail -n 1 | grep -E "^Task $n: approved [0-9a-f]{${#sha}}([^0-9a-f]|\$)" | cut -d' ' -f4 | cut -c1-"${#sha}")
   [ -n "$approved" ] || { hp_unlock; echo "status=not-approved approved=none"; return 12; }
   [ "$approved" = "$sha" ] || { hp_unlock; echo "status=not-approved approved=${approved:0:7}"; return 12; }
   # The predecessors come from the authoritative plan, never a worktree copy:

@@ -4971,6 +4971,13 @@ printf '\t#fragment\n' >> "$wsmb2/progress.md"
 out=$(cd "$mb_a" && HYPERPOWERS_TEST_SEAM_MARK="$TEST_ROOT/mb.recs.seam" HYPERPOWERS_TEST_WRITER_AT="ledger-records-after-read:Task 7: approved $z1" bash "$SDD_STATE" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
 if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ] && [ -e "$TEST_ROOT/mb.recs.seam" ]; then pass "an approval line appended without its newline while the ledger is read is not a record"; else fail "approval appended mid-read (rc=$rc: $out)"; fi
 printf '\t#fragment\n' >> "$wsmb2/progress.md"
+# The newest approval record governs: a newer malformed token is no approval even when an older line holds the full id.
+printf 'Task 7: approved %s\nTask 7: approved %s\n' "$z1" "$z7" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "a newer seven-character approval line outweighs an older full-id one"; else fail "newer seven-character line (rc=$rc: $out)"; fi
+printf 'Task 7: approved %s\nTask 7: approved %s0\n' "$z1" "$z1" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "a newer 41-digit approval line outweighs an older full-id one"; else fail "newer 41-digit line (rc=$rc: $out)"; fi
 printf 'Task 7: approved %s\n' "$h7" >> "$wsmb2/progress.md"
 out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
 if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=${h7:0:7}" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "another commit's full id gives not-approved naming its seven characters"; else fail "another commit's full id gives not-approved naming its seven characters (rc=$rc: $out)"; fi

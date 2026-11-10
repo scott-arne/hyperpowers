@@ -3068,15 +3068,19 @@ cmd_wait() {
 # state whatever sync said, because an unreachable remote is no reason to
 # hide the local board. It takes no lock and writes nothing of its own.
 board_field() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1; }
-# <dir> [f] -> the name of every entry in it (with f, every regular file),
-# dot names included. record_publish makes its temporary files outside the
-# tracked tree, so every name in waiting/ or activity/ is a session's
-# record, and a session id may begin with a dot.
+# <dir> [f] -> the name of every entry in it that is a session id (with f,
+# every such regular file), dot names included. record_publish makes its
+# temporary files outside the tracked tree, so every such name in waiting/
+# or activity/ is a session's record, and a session id may begin with a dot.
 board_entries() {
   local f
   for f in "$1"/* "$1"/.*; do
     case "${f##*/}" in .|..) continue ;; esac
     if [ "${2:-}" = f ]; then [ -f "$f" ] || continue; else [ -e "$f" ] || continue; fi
+    # These directories arrive with a fetched state branch: a name that is
+    # no session id, one holding a newline above all, would print as
+    # phantom sessions in this one-name-per-line listing.
+    sid_ok "${f##*/}" || continue
     printf '%s\n' "${f##*/}"
   done
 }

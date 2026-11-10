@@ -5173,5 +5173,10 @@ for sid_bad in 'a b' 'x: mode y'; do
   out2=$(run_state "$bd_a" wait docs/plan.md --session "$sid_bad" --kind question --note sid 2>>"$TEST_ROOT/bd.sid.err"); rc2=$?
   if [ "$rc1" -eq 2 ] && [ "$out1" = "status=error" ] && [ "$rc2" -eq 2 ] && [ "$out2" = "status=error" ] && [ "$(grep -c 'a session id must be one path entry without whitespace, a colon or control characters' "$TEST_ROOT/bd.sid.err")" = 2 ] && [ ! -e "$wsbd/waiting/$sid_bad" ] && [ ! -e "$wsbd/activity/$sid_bad" ]; then pass "register and wait refuse the session id '$sid_bad'"; else fail "register and wait refuse the session id '$sid_bad' (register rc=$rc1: $out1; wait rc=$rc2: $out2: $(tr '\n' '|' < "$TEST_ROOT/bd.sid.err"))"; fi
 done
+# A waiting entry whose name holds a newline, as a fetched state branch can carry, is no session id: the board skips it instead of printing a row for each line of its name.
+mkdir -p "$wsbd/waiting"; printf 'session=a\n' > "$wsbd/waiting/"$'a\nb'
+out=$(run_state "$bd_a" board docs/plan.md 2>"$TEST_ROOT/bd.phantom.err"); rc=$?
+if [ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$out" | grep -cE '^session (a|b) ')" = 0 ] && grep -qF 'a session id must be one path entry' "$TEST_ROOT/bd.phantom.err"; then pass "a waiting entry whose name holds a newline shows no phantom sessions on the board"; else fail "a waiting entry whose name holds a newline shows no phantom sessions on the board (rc=$rc: $(printf '%s\n' "$out" | grep -E '^session (a|b) ' | tr '\n' '|'))"; fi
+rm -f "$wsbd/waiting/"$'a\nb'
 if [ "$failures" -gt 0 ]; then echo "STATUS: FAILED ($failures failures)"; exit 1; fi
 echo "STATUS: PASSED"

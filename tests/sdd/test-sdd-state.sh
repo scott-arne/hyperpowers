@@ -4990,6 +4990,10 @@ if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(
 printf 'Task 7: approved %s\n' "$h7" >> "$wsmb2/progress.md"
 out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
 if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=${h7:0:7}" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "another commit's full id gives not-approved naming its seven characters"; else fail "another commit's full id gives not-approved naming its seven characters (rc=$rc: $out)"; fi
+# An approval cut off after its full id, with the next append landing on the same line, is the id glued to that text; the id must end at whitespace or the line's end, so it is no approval.
+printf 'Task 7: approved %s' "$z1" >> "$wsmb2/progress.md"; printf 'Task 8: note\n' >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "a full-id approval glued to the next ledger append reads as no approval"; else fail "a full-id approval glued to the next ledger append reads as no approval (rc=$rc: $out)"; fi
 printf 'Task 7: approved %s\n' "$z1" >> "$wsmb2/progress.md"
 # Three lost swaps: a git wrapper moves the integration ref ahead before each swap. The merge-back gives up after three attempts naming the head it expected and the one it found, and publishes nothing.
 mkdir -p "$TEST_ROOT/racegit"; : > "$TEST_ROOT/race.log"
@@ -5063,7 +5067,8 @@ git -C "$s2r" switch -q "feat.$(basename "$ws2r" | sed 's/.*-//').task-1"; print
 printf 'Task 1: approved %s\n' "${s2c:0:40}" >> "$ws2r/progress.md"
 out=$(run_state "$s2r" merge-back docs/plan.md 1 --session s1 --commit "$s2c" 2>/dev/null); rc=$?
 if [ "${#s2c}" -eq 64 ] && [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(git -C "$s2r" rev-parse feat)" != "$s2c" ]; then pass "in a SHA-256 repository a 40-digit prefix of the commit's id reads as no approval"; else fail "in a SHA-256 repository a 40-digit prefix of the commit's id reads as no approval (len=${#s2c} rc=$rc: $out)"; fi
-printf 'Task 1: approved %s\n' "$s2c" >> "$ws2r/progress.md"
+# A note after a space still reads: the id ends at whitespace.
+printf 'Task 1: approved %s re-review clean\n' "$s2c" >> "$ws2r/progress.md"
 out=$(run_state "$s2r" merge-back docs/plan.md 1 --session s1 --commit "$s2c" 2>/dev/null); rc=$?
 if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=1 head=${s2c:0:7}" ] && [ "$(git -C "$s2r" rev-parse feat)" = "$s2c" ]; then pass "in a SHA-256 repository the 64-digit id merges"; else fail "in a SHA-256 repository the 64-digit id merges (rc=$rc: $out)"; fi
 

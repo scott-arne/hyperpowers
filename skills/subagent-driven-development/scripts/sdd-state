@@ -2888,9 +2888,13 @@ cmd_merge_back() {
   # through ledger_records, so an interrupted approval write (an
   # unterminated last line, or a line ending in a fragment marker) never
   # authorizes a merge. The ids are compared whole: no prefix, abbreviation
-  # or revision lookup stands between the line and the commit.
+  # or revision lookup stands between the line and the commit. The id must
+  # end at whitespace or the line's end: an approval cut off right after its
+  # id, with the next append landing on the same line, reads as the id
+  # glued to that text, and such a line is no approval. A note after a space
+  # (or a trailing CR) is fine.
   recs=$(ledger_records "$WSDIR/progress.md") || { hp_unlock; echo "status=error"; return 2; }
-  approved=$(printf '%s\n' "$recs" | grep "^Task $n: approved " | tail -n 1 | grep -E "^Task $n: approved [0-9a-f]{${#sha}}([^0-9a-f]|\$)" | cut -d' ' -f4 | cut -c1-"${#sha}")
+  approved=$(printf '%s\n' "$recs" | grep "^Task $n: approved " | tail -n 1 | grep -E "^Task $n: approved [0-9a-f]{${#sha}}([[:space:]]|\$)" | cut -d' ' -f4 | cut -c1-"${#sha}")
   [ -n "$approved" ] || { hp_unlock; echo "status=not-approved approved=none"; return 12; }
   [ "$approved" = "$sha" ] || { hp_unlock; echo "status=not-approved approved=${approved:0:7}"; return 12; }
   # The predecessors come from the authoritative plan, never a worktree copy:

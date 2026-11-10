@@ -3563,6 +3563,13 @@ if [ "$rc" -eq 0 ] && [ "${out%% from=*}" = "status=claimed task=3 takeover=1 br
 # The SDD skill's review BASE is the task branch's fork point from the integration branch: after a takeover that is the original claim's base, so the old holder's commit stays in the review range.
 cl_base3=$(sed -n 's/^from=//p' "$wscl/claims/task-3/owner.history" | head -n 1); cl_mb3=$(git -C "$cl_a" merge-base "feat.$ws8cl.task-3.2" feat)
 if [ -n "$cl_base3" ] && [ "$cl_mb3" = "$cl_base3" ] && git -C "$cl_a" rev-list "$cl_mb3..feat.$ws8cl.task-3.2" | grep -qx "$wk"; then pass "a taken-over task branch forks from the integration branch at the original claim's base, so a review range from there holds the old holder's commit"; else fail "takeover review base (base=$cl_base3 merge-base=$cl_mb3 work=$wk)"; fi
+# After the conflict route merges the integration branch into a taken-over task branch, the task branch's fork point from the integration branch is the merged integration head, and BASE..HEAD from there still lists the previous holder's commit.
+cl_feat0=$(git -C "$cl_a" rev-parse feat); cl_tb0=$(git -C "$cl_a" rev-parse "feat.$ws8cl.task-3.2")
+cl_adv=$(git -C "$cl_a" commit-tree -p "$cl_feat0" -m "integration advance" "$(git -C "$cl_a" rev-parse "feat^{tree}")"); git -C "$cl_a" update-ref refs/heads/feat "$cl_adv"
+cl_mrg=$(git -C "$cl_a" commit-tree -p "$cl_tb0" -p "$cl_adv" -m "merge feat into task 3" "$(git -C "$cl_a" rev-parse "$cl_tb0^{tree}")"); git -C "$cl_a" update-ref "refs/heads/feat.$ws8cl.task-3.2" "$cl_mrg"
+cl_mb3c=$(git -C "$cl_a" merge-base "feat.$ws8cl.task-3.2" refs/heads/feat)
+if [ "$cl_mb3c" = "$cl_adv" ] && [ "$(git -C "$cl_a" rev-list "$cl_mb3c..feat.$ws8cl.task-3.2" | grep -cx "$wk")" = 1 ]; then pass "after the conflict route merges the integration branch in, a taken-over task branch's BASE is the merged integration head and BASE..HEAD still lists the previous holder's commit"; else fail "after the conflict route merges the integration branch in, a taken-over task branch's BASE is the merged integration head and BASE..HEAD still lists the previous holder's commit (merge-base=$cl_mb3c advance=$cl_adv work=$wk)"; fi
+git -C "$cl_a" update-ref refs/heads/feat "$cl_feat0"; git -C "$cl_a" update-ref "refs/heads/feat.$ws8cl.task-3.2" "$cl_tb0"
 # Two sibling plans both claiming Task 1 create distinct branches.
 printf '# Q\n\n**Spec:** docs/spec.md\n\n### Task 1: Z\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$cl_a/docs/plan2.md"; git -C "$cl_a" add docs; git -C "$cl_a" commit -qm plan2
 wscl2=$(run_sdd_dir "$cl_a" docs/plan2.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan2.md\n' > "$wscl2/progress.md"; run_state "$cl_a" register docs/plan2.md --session s3 --integration feat >/dev/null

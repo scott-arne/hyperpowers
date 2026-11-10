@@ -2603,6 +2603,8 @@ Then the verification block in `<sw>/verification-block.md` with prefix `t4` (ch
 
 Correction (2026-11-10), decision 1 (The approval line carries the full commit id): merge-back takes the newest complete `Task <N>: approved` record first and then checks its token. A token that is not exactly the repository's id width (40 or 64 hex digits, followed by a non-hex character or the line's end) reads as no approval, `approved=none`, even when an older record holds a valid full id. Spec E7-b's "takes the newest record matching `^Task <N>: approved [0-9a-f]{W}([^0-9a-f]|$)`" skipped such a line and let the older record authorize, against this decision's "a shortened id reads as no approval" and the skill text's "the newest merges". The Task 4 Codex task gate found it in round 1; the user chose this reading.
 
+Correction (2026-11-10), decision 1 (The approval line carries the full commit id): the approval id must be followed by whitespace or the line's end, `^Task <N>: approved [0-9a-f]{W}([[:space:]]|$)`, where spec E7-b allowed any non-hex character after it. An approval cut off after its id, with the next append landing on the same line (`Task 7: approved <id>Task 8: ...`), is then no approval; a trailing note after a space still reads. The Task 4 Codex task gate found it in round 3; the change was applied beyond the task's five-round cap at the user's direction, checked by a scoped re-review and the covering slices only.
+
 ### Task 5: Single findings
 
 **Risk tier:** high — `claim`'s lock order and `register`'s recorded root are concurrency and identity code, and the parser change decides which tasks exist.

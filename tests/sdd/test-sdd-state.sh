@@ -4107,6 +4107,18 @@ out=$(run_state "$fc" claim docs/plan.md final --session s2 --takeover 2>/dev/nu
 tomb_fc=""; for fc_f in "$(dirname "$wsfc")/.removing-$(basename "$wsfc")-"*; do [ -d "$fc_f" ] && tomb_fc=$fc_f; done
 co_fc=$(dirname "$(dirname "$wsfc")")
 if [ "$rcf" -eq 99 ] && [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=final lease=$(basename "$lease_fc") takeover=1" ] && [ ! -e "$wsfc" ] && [ -f "$tomb_fc/progress.md" ] && ! git -C "$co_fc" cat-file -e "refs/heads/hyperpowers/state:plans/$(basename "$wsfc")" 2>/dev/null && [ "$(sed -n 's/^session=//p' "$lease_fc")" = s2 ]; then pass "a takeover leaves a killed finish's copy alone once the removal is committed and takes the orphan path"; else fail "a takeover leaves a killed finish's copy alone once the removal is committed and takes the orphan path (finish rc=$rcf rc=$rc: $out: tomb=$tomb_fc)"; fi
+# A copy beside an occupied path answers busy even when the takeover would not have restored it: the committed removal and a recreated workspace together.
+fo="$TEST_ROOT/fo"; make_repo "$fo"; git -C "$fo" switch -q -c feat
+mkdir -p "$fo/docs"; : > "$fo/docs/spec.md"; printf '# T\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fo/docs/plan.md"; git -C "$fo" add docs; git -C "$fo" commit -qm plan
+wsfo=$(run_sdd_dir "$fo" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsfo/progress.md"
+run_state "$fo" register docs/plan.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsfo/progress.md"
+run_state "$fo" claim docs/plan.md final --session s1 >/dev/null
+lease_fo=""; for fo_f in "$STATE_ROOT/$(state_key "$fo").final-"*; do [ -f "$fo_f" ] && lease_fo=$fo_f; done
+( cd "$fo" && HYPERPOWERS_TEST_WRITER_AT=finish-after-verify:late.md HYPERPOWERS_TEST_CRASH_AT=finish-after-commit bash "$SDD_STATE" finish docs/plan.md --session s1 >/dev/null 2>&1 ); rcf=$?
+tomb_fo=""; for fo_f in "$(dirname "$wsfo")/.removing-$(basename "$wsfo")-"*; do [ -d "$fo_f" ] && tomb_fo=$fo_f; done
+out=$(run_state "$fo" claim docs/plan.md final --session s2 --takeover 2>"$TEST_ROOT/fo.err"); rc=$?
+if [ "$rcf" -eq 99 ] && [ -n "$tomb_fo" ] && [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -qF "a copy from an interrupted removal remains at $tomb_fo" "$TEST_ROOT/fo.err" && [ "$(sed -n 's/^session=//p' "$lease_fo")" = s1 ] && [ "$(sed -n 's/^session=//p' "$tomb_fo/claims/final/owner" 2>/dev/null)" = s1 ] && [ -f "$tomb_fo/progress.md" ] && [ -f "$wsfo/late.md" ] && [ -z "$(ls -d "$wsfo".reappeared-* 2>/dev/null)" ]; then pass "a takeover answers busy beside a recreated workspace even when the committed removal makes the copy ineligible"; else fail "a takeover answers busy beside a recreated workspace even when the committed removal makes the copy ineligible (finish rc=$rcf rc=$rc: $out: tomb=$tomb_fo: $(tr '\n' '|' < "$TEST_ROOT/fo.err"))"; fi
 # A takeover reads a missing or malformed closing= in the replaced lease as closing, at both takeover sites: an open plan's, and the orphan path after finish removed the workspace. A sibling's register on the branch then answers branch-closing.
 dc="$TEST_ROOT/dc"; make_repo "$dc"; git -C "$dc" switch -q -c feat
 mkdir -p "$dc/docs"; : > "$dc/docs/spec.md"

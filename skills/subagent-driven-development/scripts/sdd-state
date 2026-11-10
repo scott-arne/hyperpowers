@@ -1612,20 +1612,22 @@ restore_tomb() {
 # With "takeover" the restore is strict: it never moves a workspace aside,
 # because the takeover claims on the strength of the plan being open, and a
 # workspace that appears at the path, even during the restore, makes the
-# plan someone else's to settle. It also restores only a copy that holds a
-# ledger and, on the branch backend, that the branch still tracks: a copy
-# whose removal was committed is leftover, not an open plan.
+# plan someone else's to settle. The occupancy check comes first, so a copy
+# beside an occupied path answers busy whether or not it would be restored.
+# Only then does it skip a copy that lacks a ledger or, on the branch
+# backend, that the branch no longer tracks: a copy whose removal was
+# committed is leftover, not an open plan.
 restore_removed_copy() {
   local mode=${1:-} t
   for t in "$(dirname "$WSDIR")/.removing-$(basename "$WSDIR")-"*; do
     [ -d "$t" ] || continue
-    if [ "$mode" = takeover ]; then
-      [ -f "$t/progress.md" ] || continue
-      if [ "$BACKEND" = branch ]; then git -C "$CO" cat-file -e "refs/heads/$BRANCH:plans/$WS" 2>/dev/null || continue; fi
-    fi
     if [ -d "$WSDIR" ] || { [ "$mode" = takeover ] && { [ -e "$WSDIR" ] || [ -L "$WSDIR" ]; }; }; then
       echo "sdd-state: a copy from an interrupted removal remains at $t; move its files back into $WSDIR or delete it" >&2
       return 3
+    fi
+    if [ "$mode" = takeover ]; then
+      [ -f "$t/progress.md" ] || continue
+      if [ "$BACKEND" = branch ]; then git -C "$CO" cat-file -e "refs/heads/$BRANCH:plans/$WS" 2>/dev/null || continue; fi
     fi
     if [ "$mode" = takeover ]; then
       # Test seam: HYPERPOWERS_TEST_WRITER_AT=claim-before-restore:<relpath>

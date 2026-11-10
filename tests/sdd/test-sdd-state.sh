@@ -4082,6 +4082,18 @@ mv "$wsfk" "$fk_t2"; mkdir "$wsfk"
 out=$(run_state "$fk" claim docs/plan.md final --session s3 --takeover 2>"$TEST_ROOT/fk.busy.err"); rc=$?
 if [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && grep -qF "a copy from an interrupted removal remains at $fk_t2" "$TEST_ROOT/fk.busy.err" && [ -d "$fk_t2" ] && [ "$(sed -n 's/^session=//p' "$lease_fk")" = s2 ]; then pass "beside a new workspace the killed finish's copy is named and the takeover is busy, the lease unmoved"; else fail "beside a new workspace the killed finish's copy is named and the takeover is busy, the lease unmoved (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/fk.busy.err"))"; fi
 rmdir "$wsfk"; mv "$fk_t2" "$wsfk"
+# Strict restore: a workspace recreated between the occupancy check and the rename answers busy and moves nothing aside.
+fr="$TEST_ROOT/fr"; make_repo "$fr"; git -C "$fr" switch -q -c feat
+mkdir -p "$fr/docs"; : > "$fr/docs/spec.md"; printf '# T\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fr/docs/plan.md"; git -C "$fr" add docs; git -C "$fr" commit -qm plan
+wsfr=$(run_sdd_dir "$fr" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsfr/progress.md"
+run_state "$fr" register docs/plan.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsfr/progress.md"
+run_state "$fr" claim docs/plan.md final --session s1 >/dev/null
+lease_fr=""; for fr_f in "$STATE_ROOT/$(state_key "$fr").final-"*; do [ -f "$fr_f" ] && lease_fr=$fr_f; done
+( cd "$fr" && HYPERPOWERS_TEST_CRASH_AT=remove-after-rename bash "$SDD_STATE" finish docs/plan.md --session s1 >/dev/null 2>&1 ); rcf=$?
+out=$(cd "$fr" && HYPERPOWERS_TEST_WRITER_AT="claim-before-restore:late.md" bash "$SDD_STATE" claim docs/plan.md final --session s2 --takeover 2>"$TEST_ROOT/fr.err"); rc=$?
+tomb_fr=""; for fr_f in "$(dirname "$wsfr")/.removing-$(basename "$wsfr")-"*; do [ -d "$fr_f" ] && tomb_fr=$fr_f; done
+if [ "$rcf" -eq 99 ] && [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$(sed -n 's/^session=//p' "$lease_fr")" = s1 ] && [ "$(sed -n 's/^session=//p' "$tomb_fr/claims/final/owner" 2>/dev/null)" = s1 ] && [ "$(cat "$wsfr/late.md" 2>/dev/null)" = "written before restore" ] && [ -z "$(ls -d "$wsfr".reappeared-* 2>/dev/null)" ] && [ -f "$tomb_fr/progress.md" ] && grep -qF "a copy from an interrupted removal remains at $tomb_fr" "$TEST_ROOT/fr.err"; then pass "a takeover whose workspace is recreated during the restore answers busy, moves nothing aside and leaves the lease and owner"; else fail "a takeover whose workspace is recreated during the restore answers busy, moves nothing aside and leaves the lease and owner (finish rc=$rcf rc=$rc: $out: tomb=$tomb_fr: $(tr '\n' '|' < "$TEST_ROOT/fr.err"))"; fi
 # A takeover reads a missing or malformed closing= in the replaced lease as closing, at both takeover sites: an open plan's, and the orphan path after finish removed the workspace. A sibling's register on the branch then answers branch-closing.
 dc="$TEST_ROOT/dc"; make_repo "$dc"; git -C "$dc" switch -q -c feat
 mkdir -p "$dc/docs"; : > "$dc/docs/spec.md"

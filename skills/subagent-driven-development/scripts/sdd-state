@@ -2796,8 +2796,8 @@ amend_refresh() {
 # controller's detach and branch deletion follow this command and are its
 # own idempotent steps.
 cmd_merge_back() {
-  local plan="" n="" sid="" sha="" code="" rc out line integ ref owner_f owner full approved approved_full
-  local pair blob tmp graph title deps d waiting c lease lowner wt record H new mt mrc tree paths published t uerr cur o nc
+  local plan="" n="" sid="" sha="" code="" rc out line integ ref owner_f owner full approved recs
+  local pair blob tmp graph title deps d waiting c lease lowner wt record H new mt mrc tree paths published t uerr cur
   # A replace ref would have git read another commit's parents and tree under
   # the approved id, and merge content nobody reviewed; an info/grafts entry
   # would fake ancestry and turn a divergent merge into a fast forward that
@@ -2849,24 +2849,17 @@ cmd_merge_back() {
   [ "$owner" = "$sid" ] || { hp_unlock; echo "status=not-holder owner=${owner:-none}"; return 4; }
   full=$(git -C "$code" rev-parse -q --verify "$sha^{commit}" 2>/dev/null) || { hp_unlock; echo "sdd-state: no such commit in $code: $sha" >&2; echo "status=error"; return 2; }
   sha=$full
-  # The newest approval line names the approved commit; a longer hex run is
-  # some other token, not a seven-character abbreviation.
-  approved=$(grep -E "^Task $n: approved [0-9a-f]{7}([^0-9a-f]|\$)" "$WSDIR/progress.md" | tail -n 1 | cut -d' ' -f4 | cut -c1-7)
+  # The newest approval record names the approved commit by its full id, as
+  # wide as this repository's ids (40 or 64 hex digits); a shorter or longer
+  # hex run is some other token and reads as no approval. Records come
+  # through ledger_records, so an interrupted approval write (an
+  # unterminated last line, or a line ending in a fragment marker) never
+  # authorizes a merge. The ids are compared whole: no prefix, abbreviation
+  # or revision lookup stands between the line and the commit.
+  recs=$(ledger_records "$WSDIR/progress.md") || { hp_unlock; echo "status=error"; return 2; }
+  approved=$(printf '%s\n' "$recs" | grep -E "^Task $n: approved [0-9a-f]{${#sha}}([^0-9a-f]|\$)" | tail -n 1 | cut -d' ' -f4 | cut -c1-"${#sha}")
   [ -n "$approved" ] || { hp_unlock; echo "status=not-approved approved=none"; return 12; }
-  # The token is resolved to one commit here and the full ids compared: a
-  # prefix comparison would pass any commit that shares the approved one's
-  # seven characters. It is looked up among objects only, never as a
-  # revision, where a ref named like the token wins over an ambiguous object
-  # prefix and a tag object's id is peeled to the commit it tags. Exactly one
-  # commit must carry it; an approval that cannot be resolved is an error,
-  # never read as no approval.
-  approved_full=""; nc=0
-  for o in $(git -C "$code" rev-parse --disambiguate="$approved" 2>/dev/null); do
-    [ "$(git -C "$code" cat-file -t "$o" 2>/dev/null)" = commit ] || continue
-    approved_full=$o; nc=$((nc + 1))
-  done
-  [ "$nc" -eq 1 ] || { hp_unlock; echo "sdd-state: the approval line's token $approved for task $n does not name exactly one commit in $code" >&2; echo "status=error"; return 2; }
-  [ "$sha" = "$approved_full" ] || { hp_unlock; echo "status=not-approved approved=$approved"; return 12; }
+  [ "$approved" = "$sha" ] || { hp_unlock; echo "status=not-approved approved=${approved:0:7}"; return 12; }
   # The predecessors come from the authoritative plan, never a worktree copy:
   # an amendment may have added an edge to a task claimed before it.
   pair=$(authoritative_plan_blob) || { hp_unlock; echo "status=error"; return 2; }

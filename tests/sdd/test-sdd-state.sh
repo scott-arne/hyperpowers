@@ -4799,7 +4799,7 @@ out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>
 if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ]; then pass "merge-back refuses a commit no approval line names"; else fail "not-approved (rc=$rc: $out)"; fi
 out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" --code-repo "$TEST_ROOT/foreign-mb" 2>/dev/null); rc=$?
 if [ "$rc" -eq 9 ] && [ "${out%% expected=*}" = "status=wrong-repo" ]; then pass "merge-back refuses a foreign --code-repo"; else fail "merge-back wrong-repo (rc=$rc: $out)"; fi
-printf 'Task 1: approved %s\n' "${t1:0:7}" >> "$wsmb/progress.md"
+printf 'Task 1: approved %s\n' "$t1" >> "$wsmb/progress.md"
 out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s2 --commit "$t1" 2>/dev/null); rc=$?
 if [ "$rc" -eq 4 ] && [ "$out" = "status=not-holder owner=s1" ]; then pass "merge-back refuses a session that does not hold the claim"; else fail "not-holder (rc=$rc: $out)"; fi
 git -C "$mb_a" switch -q feat
@@ -4833,7 +4833,7 @@ out=$(run_state "$mb_a" merge-back docs/plan.md 1 --session s1 --commit "$t1" 2>
 if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=1 head=${t1:0:7} already=1" ] && [ "$(grep -c '^Task 1: merged' "$wsmb/progress.md")" = 1 ]; then pass "a repeated merge-back is idempotent"; else fail "already (rc=$rc: $out)"; fi
 # Session 2's task 2 branched before task 1 merged: a merge commit.
 git -C "$mb_a" switch -q "feat.$ws8mb.task-2"; printf 'two\n' > "$mb_a/src/b.txt"; git -C "$mb_a" commit -qam "task 2"; t2=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
-printf 'Task 2: approved %s\n' "${t2:0:7}" >> "$wsmb/progress.md"
+printf 'Task 2: approved %s\n' "$t2" >> "$wsmb/progress.md"
 out=$(run_state "$mb_a" merge-back docs/plan.md 2 --session s2 --commit "$t2" 2>/dev/null); rc=$?
 hm=$(git -C "$mb_a" rev-parse feat)
 if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=2 head=${hm:0:7}" ] && [ "$(git -C "$mb_a" rev-parse "$hm^1")" = "$t1" ] && [ "$(git -C "$mb_a" rev-parse "$hm^2")" = "$t2" ] && [ "$(git -C "$mb_a" log -1 --format=%s "$hm")" = "Merge task 2: B" ] && [ "$(git -C "$mb_a" show feat:src/a.txt)" = one ] && [ "$(git -C "$mb_a" show feat:src/b.txt)" = two ]; then pass "a divergent merge-back makes one merge commit titled with the task"; else fail "merge commit (rc=$rc: $out)"; fi
@@ -4858,7 +4858,7 @@ run_state "$mb_a" claim docs/plan.md 3 --session s1 >/dev/null 2>&1
 printf 'Task 1: complete (commits 1111111..%s, review clean)\n' "${t1:0:7}" >> "$wsmb/progress.md"
 run_state "$mb_a" claim docs/plan.md 3 --session s1 >/dev/null
 git -C "$mb_a" switch -q "feat.$ws8mb.task-3"; printf 'three\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "task 3"; t3=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
-printf 'Task 3: approved %s\n' "${t3:0:7}" >> "$wsmb/progress.md"
+printf 'Task 3: approved %s\n' "$t3" >> "$wsmb/progress.md"
 sed -i '' 's/^Task 1: complete .*$/Task 1: pending/' "$wsmb/progress.md" 2>/dev/null || sed -i 's/^Task 1: complete .*$/Task 1: pending/' "$wsmb/progress.md"
 out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>/dev/null); rc=$?
 if [ "$rc" -eq 7 ] && [ "$out" = "status=blocked waiting=1" ]; then pass "merge-back rechecks the predecessors against the authoritative graph"; else fail "blocked at merge-back (rc=$rc: $out)"; fi
@@ -4889,7 +4889,7 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'claims/task-3/owne
 cp "$TEST_ROOT/mb.owner3" "$wsmb/claims/task-3/owner"
 # Resolve on the task branch, re-approve, retry: the record is cleared.
 git -C "$mb_a" switch -q "feat.$ws8mb.task-3"; git -C "$mb_a" merge -q feat >/dev/null 2>&1; printf 'three\n' > "$mb_a/src/a.txt"; git -C "$mb_a" commit -qam "resolve" ; t3b=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
-printf 'Task 3: approved %s\n' "${t3b:0:7}" >> "$wsmb/progress.md"
+printf 'Task 3: approved %s\n' "$t3b" >> "$wsmb/progress.md"
 out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3" 2>/dev/null); rc=$?
 if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=${t3b:0:7}" ]; then pass "only the newest approved commit may merge"; else fail "newest approved (rc=$rc: $out)"; fi
 out=$(run_state "$mb_a" merge-back docs/plan.md 3 --session s1 --commit "$t3b" 2>/dev/null); rc=$?
@@ -4904,7 +4904,7 @@ ws8mb2=$(printf '%s' "$(basename "$wsmb2")" | sed 's/.*-//')
 run_state "$mb_a" claim docs/plan2.md 1 --session s3 >/dev/null; run_state "$mb_a" claim docs/plan2.md 2 --session s3 >/dev/null
 git -C "$mb_a" switch -q "feat.$ws8mb2.task-1"; printf 'x\n' > "$mb_a/src/x.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm x; x1=$(git -C "$mb_a" rev-parse HEAD)
 git -C "$mb_a" switch -q "feat.$ws8mb2.task-2"; printf 'y\n' > "$mb_a/src/y.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm y; y1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
-printf 'Task 1: approved %s\nTask 2: approved %s\n' "${x1:0:7}" "${y1:0:7}" >> "$wsmb2/progress.md"
+printf 'Task 1: approved %s\nTask 2: approved %s\n' "$x1" "$y1" >> "$wsmb2/progress.md"
 hbefore=$(git -C "$mb_a" rev-parse feat)
 ( cd "$mb_a" && HYPERPOWERS_TEST_CRASH_AT=merge-back-after-record bash "$SDD_STATE" merge-back docs/plan2.md 1 --session s3 --commit "$x1" >/dev/null 2>&1 ); rc=$?
 if [ "$rc" -eq 99 ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$hbefore" ] && [ -f "$wsmb2/merges/task-1" ]; then pass "a crash after the record publishes nothing"; else fail "crash after record (rc=$rc)"; fi
@@ -4922,7 +4922,7 @@ if [ "$rc" -eq 0 ] && [ "$(grep -c '^Task 1: merged' "$wsmb2/progress.md")" = 1 
 # The lost compare-and-swap: a writer seam moves the integration ref between the merge record and the swap; the command recomputes against the moved head.
 printf '### Task 5: V\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 5"; git -C "$mb_a" switch -q --detach feat
 run_state "$mb_a" claim docs/plan2.md 5 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-5"; printf 'v\n' > "$mb_a/src/v.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm v; v1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
-printf 'Task 5: approved %s\n' "${v1:0:7}" >> "$wsmb2/progress.md"
+printf 'Task 5: approved %s\n' "$v1" >> "$wsmb2/progress.md"
 adv2=$(git -C "$mb_a" commit-tree "$(git -C "$mb_a" rev-parse "feat^{tree}")" -p "$(git -C "$mb_a" rev-parse feat)" -m "advance" 2>/dev/null)
 # The same session still owes the resolve route for task 2: its merge waiting record must outlive task 5's merge-back.
 mkdir -p "$wsmb2/waiting"; printf 'session=s3\ntask=2\nkind=merge\nsince=2026-01-01T00:00:00Z\nnote=merge-back conflict in src/y.txt\nworktree=%s\nbranch=feat\nhost=h\n' "$mb_a" > "$wsmb2/waiting/s3"
@@ -4932,7 +4932,7 @@ if [ "$(sed -n 's/^kind=//p' "$wsmb2/waiting/s3" 2>/dev/null)" = merge ] && [ "$
 # A dependency amended onto a claimed task: task 6 is claimed with no predecessor, then an amendment on the plan ref makes it depend on task 2 and retitles it, while the worktree's copy keeps the old graph and title.
 printf '\n### Task 6: W\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 6"; git -C "$mb_a" switch -q --detach feat
 run_state "$mb_a" claim docs/plan2.md 6 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-6"; printf 'w\n' > "$mb_a/src/w.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm w; w1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
-printf 'Task 6: approved %s\n' "${w1:0:7}" >> "$wsmb2/progress.md"
+printf 'Task 6: approved %s\n' "$w1" >> "$wsmb2/progress.md"
 base6=$(git -C "$mb_a" rev-parse feat:docs/plan2.md); h6=$(git -C "$mb_a" rev-parse feat)
 git -C "$mb_a" show feat:docs/plan2.md | sed -e 's/^### Task 6: W$/### Task 6: W-renamed/' -e '/^### Task 6:/,$ s/^\*\*Depends on:\*\* none$/**Depends on:** Task 2/' > "$TEST_ROOT/mb.cand6"
 # The git floor: merge-back and amend need merge-tree --write-tree (2.38) and refuse an older git by name, before anything moves. The fake git is the sync section's, made here too when this section runs alone.
@@ -4952,30 +4952,25 @@ if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=6 head=${hw:0:7}" ] && [ "$
 git -C "$mb_a" switch -q feat; printf '\n### Task 7: Z\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" commit -qam "plan2 task 7"; git -C "$mb_a" switch -q --detach feat
 run_state "$mb_a" claim docs/plan2.md 7 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-7"; printf 'z\n' > "$mb_a/src/z.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm z; z1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
 h7=$(git -C "$mb_a" rev-parse feat)
-# The approval token is resolved to exactly one commit in the code repository, and full ids are compared. A token that names no commit is an error naming it, never not-approved.
-printf 'Task 7: approved 0000000\n' >> "$wsmb2/progress.md"
-out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>"$TEST_ROOT/mb.tok.err"); rc=$?
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q '0000000' "$TEST_ROOT/mb.tok.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "an approval token that names no commit is an error naming it"; else fail "unresolvable approval token (rc=$rc: $out)"; fi
-# A token naming an annotated tag of the commit is no commit id: git would peel it to the commit.
-git -C "$mb_a" tag -a -m "z tag" mb-z "$z1"; ztag=$(git -C "$mb_a" rev-parse mb-z)
-printf 'Task 7: approved %s\n' "${ztag:0:7}" >> "$wsmb2/progress.md"
-out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>"$TEST_ROOT/mb.tag.err"); rc=$?
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "${ztag:0:7}" "$TEST_ROOT/mb.tag.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "an approval token naming a tag object rather than the commit is an error"; else fail "tag-object approval token (rc=$rc: $out)"; fi
-git -C "$mb_a" tag -d mb-z >/dev/null
-# A real seven-character collision: node searches commit messages for a benign commit and one with other content, both on the integration head, whose ids share a prefix (a birthday search, about 2^14 candidates each). With the approval naming that prefix, the token is ambiguous: an error, and neither commit is merged.
-mbt=$(git -C "$mb_a" rev-parse "$z1^{tree}")
-mbm=$( { git -C "$mb_a" ls-tree "$z1"; printf '100644 blob %s\tmal.txt\n' "$(printf 'malicious\n' | git -C "$mb_a" hash-object -w --stdin)"; } | git -C "$mb_a" mktree)
-node -e 'const c=require("crypto"),fs=require("fs");const [tb,tm,p,out]=process.argv.slice(1);const id="Test <test@example.com> 1700000000 +0000";const body=(t,m)=>"tree "+t+"\nparent "+p+"\nauthor "+id+"\ncommitter "+id+"\n\n"+m+"\n";const pre=s=>c.createHash("sha1").update("commit "+Buffer.byteLength(s)+"\0"+s).digest("hex").slice(0,7);const seen={b:new Map(),m:new Map()};for(let i=0;i<1048576;i++){for(const [k,t,o] of [["b",tb,"m"],["m",tm,"b"]]){const s=body(t,k+" "+i);const x=pre(s);if(seen[o].has(x)){fs.writeFileSync(out+"."+k,s);fs.writeFileSync(out+"."+o,body(o==="b"?tb:tm,o+" "+seen[o].get(x)));process.exit(0);}seen[k].set(x,i);}}process.exit(1);' "$mbt" "$mbm" "$h7" "$TEST_ROOT/mb.coll"
-zb=$(git -C "$mb_a" hash-object -t commit -w "$TEST_ROOT/mb.coll.b"); zm=$(git -C "$mb_a" hash-object -t commit -w "$TEST_ROOT/mb.coll.m"); zp=${zb:0:7}
-printf 'Task 7: approved %s\n' "$zp" >> "$wsmb2/progress.md"
-out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$zb" 2>"$TEST_ROOT/mb.amb.err"); rc=$?
-if [ "${zm:0:7}" = "$zp" ] && [ "$zm" != "$zb" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "$zp" "$TEST_ROOT/mb.amb.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ] && ! grep -q '^Task 7: merged' "$wsmb2/progress.md"; then pass "an approval token two commits share is an error, and neither is merged"; else fail "ambiguous approval token (rc=$rc: $out zb=$zb zm=$zm)"; fi
-# A ref named after the prefix shadows the ambiguous object prefix in git's revision lookup; the token is resolved among objects only, so the commit the ref names is not taken for the approved one.
-git -C "$mb_a" update-ref "refs/heads/$zp" "$zm"
-out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$zm" 2>"$TEST_ROOT/mb.shadow.err"); rc=$?
-if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q "$zp" "$TEST_ROOT/mb.shadow.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ] && ! git -C "$mb_a" merge-base --is-ancestor "$zm" feat && ! grep -q '^Task 7: merged' "$wsmb2/progress.md"; then pass "an ambiguous approval token shadowed by a hex-named ref is an error, and the ref's commit is not merged"; else fail "ref-shadowed approval token (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.shadow.err"))"; fi
-git -C "$mb_a" update-ref -d "refs/heads/$zp"
-printf 'Task 7: approved %s\n' "${z1:0:7}" >> "$wsmb2/progress.md"
+# The approval line names the approved commit by its full id, as wide as this repository's ids, and merge-back compares the ids whole: a seven-character token, a longer hex run, a fragment and an unterminated last line all read as no approval, and another commit's full id is not-approved naming it.
+z7=${z1:0:7}
+printf 'Task 7: approved %s\n' "$z7" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "a seven-character approval line reads as no approval"; else fail "a seven-character approval line reads as no approval (rc=$rc: $out)"; fi
+printf 'Task 7: approved %s0\n' "$z1" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "a 41-digit token reads as no approval"; else fail "a 41-digit token reads as no approval (rc=$rc: $out)"; fi
+printf 'Task 7: approved %s\t#fragment\n' "$z1" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "a full-id approval line ending in a #fragment marker reads as no approval"; else fail "a full-id approval line ending in a #fragment marker reads as no approval (rc=$rc: $out)"; fi
+printf 'Task 7: approved %s' "$z1" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "a full-id approval line left unterminated at the ledger's end reads as no approval"; else fail "a full-id approval line left unterminated at the ledger's end reads as no approval (rc=$rc: $out)"; fi
+printf '\t#fragment\n' >> "$wsmb2/progress.md"
+printf 'Task 7: approved %s\n' "$h7" >> "$wsmb2/progress.md"
+out=$(run_state "$mb_a" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>/dev/null); rc=$?
+if [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=${h7:0:7}" ] && [ "$(git -C "$mb_a" rev-parse feat)" = "$h7" ]; then pass "another commit's full id gives not-approved naming its seven characters"; else fail "another commit's full id gives not-approved naming its seven characters (rc=$rc: $out)"; fi
+printf 'Task 7: approved %s\n' "$z1" >> "$wsmb2/progress.md"
 # Three lost swaps: a git wrapper moves the integration ref ahead before each swap. The merge-back gives up after three attempts naming the head it expected and the one it found, and publishes nothing.
 mkdir -p "$TEST_ROOT/racegit"; : > "$TEST_ROOT/race.log"
 printf '#!/bin/sh\nreal="%s"\nif [ "$3" = update-ref ] && [ "$4" = --no-deref ] && [ "$5" = -m ]; then case "$6" in "sdd merge-back task "*) tip=$("$real" -C "$2" rev-parse "$7") && adv=$("$real" -C "$2" commit-tree "$tip^{tree}" -p "$tip" -m race) && "$real" -C "$2" update-ref "$7" "$adv" "$tip" && echo "$adv" >> "%s" ;; esac; fi\nexec "$real" "$@"\n' "$(command -v git)" "$TEST_ROOT/race.log" > "$TEST_ROOT/racegit/git"; chmod 755 "$TEST_ROOT/racegit/git"
@@ -4992,7 +4987,7 @@ if [ "$rc" -eq 0 ] && [ "${out%% head=*}" = "status=merged task=7" ] && [ "${out
 printf '\n### Task 8: R\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 8"; git -C "$mb_a" switch -q --detach feat
 run_state "$mb_a" claim docs/plan2.md 8 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-8"; printf 'r\n' > "$mb_a/src/r.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm r; r1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
 adv8=$(git -C "$mb_a" commit-tree "$(git -C "$mb_a" rev-parse "feat^{tree}")" -p "$(git -C "$mb_a" rev-parse feat)" -m "advance 8"); git -C "$mb_a" update-ref refs/heads/feat "$adv8"
-printf 'Task 8: approved %s\n' "${r1:0:7}" >> "$wsmb2/progress.md"
+printf 'Task 8: approved %s\n' "$r1" >> "$wsmb2/progress.md"
 rt=$( { git -C "$mb_a" ls-tree "$r1"; printf '100644 blob %s\tunreviewed.txt\n' "$(printf 'unreviewed\n' | git -C "$mb_a" hash-object -w --stdin)"; } | git -C "$mb_a" mktree)
 git -C "$mb_a" replace "$r1" "$(git -C "$mb_a" commit-tree "$rt" -p "$(git -C "$mb_a" rev-parse "$r1^")" -m r)"
 out=$(run_state "$mb_a" merge-back docs/plan2.md 8 --session s3 --commit "$r1" 2>"$TEST_ROOT/mb.rep.err"); rc=$?
@@ -5002,7 +4997,7 @@ git -C "$mb_a" replace -d "$r1" >/dev/null
 # The session id is validated at merge-back's entry, as at claim's: an owner record planted with a slash-bearing session would otherwise let the merge land before a record write refused the id.
 printf '\n### Task 9: S\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 9"; git -C "$mb_a" switch -q --detach feat
 run_state "$mb_a" claim docs/plan2.md 9 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-9"; printf 's\n' > "$mb_a/src/s.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm s; s9=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
-printf 'Task 9: approved %s\n' "${s9:0:7}" >> "$wsmb2/progress.md"
+printf 'Task 9: approved %s\n' "$s9" >> "$wsmb2/progress.md"
 sed 's|^session=s3$|session=s3/x|' "$wsmb2/claims/task-9/owner" > "$TEST_ROOT/mb.owner9"; cp "$TEST_ROOT/mb.owner9" "$wsmb2/claims/task-9/owner"
 h9=$(git -C "$mb_a" rev-parse feat)
 out=$(run_state "$mb_a" merge-back docs/plan2.md 9 --session s3/x --commit "$s9" 2>"$TEST_ROOT/mb.sid.err"); rc=$?
@@ -5011,7 +5006,7 @@ if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -q 'a session id must 
 printf '\n### Task 10: G\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 10"; git -C "$mb_a" switch -q --detach feat
 run_state "$mb_a" claim docs/plan2.md 10 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-10"; printf 'g\n' > "$mb_a/src/g.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm g; g1=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
 git -C "$mb_a" switch -q feat; printf 'integration only\n' > "$mb_a/src/io.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm "integration only"; hg=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
-printf 'Task 10: approved %s\n' "${g1:0:7}" >> "$wsmb2/progress.md"
+printf 'Task 10: approved %s\n' "$g1" >> "$wsmb2/progress.md"
 mkdir -p "$mb_a/.git/info"; printf '%s %s\n' "$g1" "$hg" > "$mb_a/.git/info/grafts"
 out=$(run_state "$mb_a" merge-back docs/plan2.md 10 --session s3 --commit "$g1" 2>"$TEST_ROOT/mb.graft.err"); rc=$?
 rm -f "$mb_a/.git/info/grafts"; hm10=$(git -C "$mb_a" rev-parse feat)
@@ -5019,7 +5014,7 @@ if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=10 head=${hm10:0:7}" ] && [
 # A symbolic integration ref: merge-back refuses one, and its swap never writes through one made symbolic after that check, so the branch it points to never moves.
 printf '\n### Task 11: Y\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 11"; git -C "$mb_a" switch -q --detach feat
 run_state "$mb_a" claim docs/plan2.md 11 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-11"; printf 'y\n' > "$mb_a/src/y11.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm y; y11=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
-printf 'Task 11: approved %s\n' "${y11:0:7}" >> "$wsmb2/progress.md"
+printf 'Task 11: approved %s\n' "$y11" >> "$wsmb2/progress.md"
 h11=$(git -C "$mb_a" rev-parse feat); git -C "$mb_a" update-ref refs/heads/mb-other "$h11"; git -C "$mb_a" symbolic-ref refs/heads/feat refs/heads/mb-other
 lg_mbsym=$(cksum < "$wsmb2/progress.md")
 out=$(run_state "$mb_a" merge-back docs/plan2.md 11 --session s3 --commit "$y11" 2>"$TEST_ROOT/mb.sym.err"); rc=$?
@@ -5029,6 +5024,19 @@ rm -f "$TEST_ROOT/mb.sym.seam"
 out=$(cd "$mb_a" && HYPERPOWERS_TEST_SEAM_MARK="$TEST_ROOT/mb.sym.seam" HYPERPOWERS_TEST_WRITER_AT=merge-back-symref-before-swap:mb-other bash "$SDD_STATE" merge-back docs/plan2.md 11 --session s3 --commit "$y11" 2>/dev/null); rc=$?
 if [ -f "$TEST_ROOT/mb.sym.seam" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=11 head=${y11:0:7}" ] && [ "$(git -C "$mb_a" rev-parse mb-other)" = "$h11" ] && ! git -C "$mb_a" symbolic-ref -q refs/heads/feat >/dev/null 2>&1 && [ "$(git -C "$mb_a" rev-parse feat)" = "$y11" ]; then pass "an integration ref made symbolic after merge-back's check is overwritten as itself, the branch it pointed to unmoved"; else fail "an integration ref made symbolic after merge-back's check is overwritten as itself, the branch it pointed to unmoved (rc=$rc: $out mb-other=$(git -C "$mb_a" rev-parse mb-other))"; fi
 git -C "$mb_a" update-ref -d refs/heads/mb-other
+# In a SHA-256 repository the approval names the 64-digit id: a 40-digit prefix of it is no approval, and the full id merges.
+s2r="$TEST_ROOT/s2r"; git init -q -b main --object-format=sha256 "$s2r"; git -C "$s2r" config user.name "Test Bot"; git -C "$s2r" config user.email "test@example.com"
+mkdir -p "$s2r/docs" "$s2r/src"; : > "$s2r/docs/spec.md"; printf '# S\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$s2r/docs/plan.md"; printf 'base\n' > "$s2r/src/a.txt"; git -C "$s2r" add docs src; git -C "$s2r" commit -qm base; git -C "$s2r" switch -q -c feat
+ws2r=$(run_sdd_dir "$s2r" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$ws2r/progress.md"
+run_state "$s2r" register docs/plan.md --session s1 --integration feat >/dev/null; git -C "$s2r" switch -q --detach
+run_state "$s2r" claim docs/plan.md 1 --session s1 >/dev/null
+git -C "$s2r" switch -q "feat.$(basename "$ws2r" | sed 's/.*-//').task-1"; printf 'one\n' > "$s2r/src/a.txt"; git -C "$s2r" commit -qam one; s2c=$(git -C "$s2r" rev-parse HEAD); git -C "$s2r" switch -q --detach feat
+printf 'Task 1: approved %s\n' "${s2c:0:40}" >> "$ws2r/progress.md"
+out=$(run_state "$s2r" merge-back docs/plan.md 1 --session s1 --commit "$s2c" 2>/dev/null); rc=$?
+if [ "${#s2c}" -eq 64 ] && [ "$rc" -eq 12 ] && [ "$out" = "status=not-approved approved=none" ] && [ "$(git -C "$s2r" rev-parse feat)" != "$s2c" ]; then pass "in a SHA-256 repository a 40-digit prefix of the commit's id reads as no approval"; else fail "in a SHA-256 repository a 40-digit prefix of the commit's id reads as no approval (len=${#s2c} rc=$rc: $out)"; fi
+printf 'Task 1: approved %s\n' "$s2c" >> "$ws2r/progress.md"
+out=$(run_state "$s2r" merge-back docs/plan.md 1 --session s1 --commit "$s2c" 2>/dev/null); rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=1 head=${s2c:0:7}" ] && [ "$(git -C "$s2r" rev-parse feat)" = "$s2c" ]; then pass "in a SHA-256 repository the 64-digit id merges"; else fail "in a SHA-256 repository the 64-digit id merges (rc=$rc: $out)"; fi
 
 echo "board: waiting records, activity and the board"
 make_pair bd; bd_a=$PAIR_A; bd_b=$PAIR_B

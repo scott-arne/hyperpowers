@@ -787,13 +787,10 @@ fix-loop finding is addressed or declined, and the per-task Codex gate
 approved or was skipped by tier — in this order, each step idempotent on a
 resume:
 
-- Append `Task <N>: approved <sha7>` with the head the reviewers saw (every
-  later approval of the same task appends a new line; the newest is what
-  merges). `<sha7>` is exactly the first seven characters of the full id:
-  write it with `git rev-parse <head> | cut -c1-7`, never
-  `git rev-parse --short`, which prints more than seven characters in a large
-  repository, and merge-back accepts exactly seven, so a longer token reads
-  as no approval.
+- Append `Task <N>: approved <full id>` with the head the reviewers saw,
+  written with `git rev-parse <head>` (every later approval of the same task
+  appends a new line; the newest is what merges). merge-back compares the
+  whole id, so a shortened id reads as no approval.
 - Merge back: `scripts/sdd-state merge-back PLAN_FILE N --session <sid> --commit <sha>`.
   `merged` continues (`already=1` on a resume means the ref was moved
   before the crash). `conflict paths=<list>`: merge the integration branch

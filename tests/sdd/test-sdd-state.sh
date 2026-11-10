@@ -4653,6 +4653,14 @@ if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ ! -e
 git -C "$awt" checkout-index -f -- docs/plan.md
 aw_retry idx
 if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$awt" status --porcelain)" ] && [ ! -e "$wsaw/amends/$n_aw" ]; then pass "the same amend finishes once the deleted file is restored"; else fail "the same amend finishes once the deleted file is restored (rc=$rc: $out)"; fi
+# An aside name another process turned into a directory takes the plan file inside it when mv renames; the plan is put back from there, never left under the directory.
+aw_amend dirrace HYPERPOWERS_TEST_WRITER_AT=amend-refresh-before-rename:dir
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.dirrace")
+aside_aw=$(find "$awt/docs" -name '.plan.md.sdd-amend-*' ! -name '*EARLY1' | head -n 1)
+if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$awt/docs/plan.md" ] && [ "$(git -C "$awt" hash-object docs/plan.md)" = "$(git -C "$awt" rev-parse :docs/plan.md)" ] && [ -d "$aside_aw" ] && [ ! -e "$aside_aw/plan.md" ] && [ ! -e "$aw_jn" ] && [ -f "$wsaw/amends/$n_aw" ]; then pass "a plan file renamed into a directory that took the aside name is put back, the record kept"; else fail "a plan file renamed into a directory that took the aside name is put back, the record kept (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+rm -rf "$aside_aw"
+aw_retry dirrace
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$awt" status --porcelain)" ]; then pass "the same amend finishes once the directory is removed"; else fail "the same amend finishes once the directory is removed (rc=$rc: $out)"; fi
 printf 'early\n' > "$awt/docs/.plan.md.sdd-amend-EARLY1"
 aw_amend early
 if [ "$rc" -eq 0 ] && [ "$(cat "$awt/docs/.plan.md.sdd-amend-EARLY1")" = early ] && [ "$(aw_asides)" = 0 ]; then pass "a file left at an earlier run's aside name stays untouched"; else fail "a file left at an earlier run's aside name stays untouched (rc=$rc: $out)"; fi

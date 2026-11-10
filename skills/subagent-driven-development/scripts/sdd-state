@@ -2589,7 +2589,7 @@ amend_settle_asides() {
 # already holds the new plan (an earlier refresh that a crash cut short)
 # needs no write, and is checked and updated in place.
 amend_refresh_one() {
-  local w=$1 p="$1/$rel" e aside why lt
+  local w=$1 p="$1/$rel" e aside why lt nested
   e=$(amend_wt_index "$w")
   [ -n "$e" ] || { amend_refresh_differs "$w"; return 1; }
   amend_settle_asides "$w" "$2" "$3" "$e" || return 1
@@ -2610,9 +2610,10 @@ amend_refresh_one() {
   # name for the retry to find.
   amend_journal_add "$w" "$aside" || { rm -f "$aside"; echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it: the refresh journal could not be written; run the same amend again" >&2; return 1; }
       # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-refresh-before-rename:<delete|chmod|unlink>
-      # deletes the plan file, flips its executable bit, or replaces a
-      # symbolic link with a regular file holding its target text, right
-      # before the rename aside, once.
+      # deletes the plan file, flips its executable bit, replaces a
+      # symbolic link with a regular file holding its target text, or turns
+      # the reserved aside name into a directory, right before the rename
+      # aside, once.
       case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
         amend-refresh-before-rename:*)
           [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"
@@ -2620,6 +2621,7 @@ amend_refresh_one() {
             delete) rm -f "$w/$rel" ;;
             chmod) if [ -x "$w/$rel" ]; then chmod -x "$w/$rel"; else chmod +x "$w/$rel"; fi ;;
             unlink) lt=$(readlink "$w/$rel"); rm -f "$w/$rel"; printf '%s' "$lt" > "$w/$rel" ;;
+            dir) rm -f "$aside"; mkdir "$aside" ;;
           esac
           HYPERPOWERS_TEST_WRITER_AT="" ;;
       esac
@@ -2627,6 +2629,16 @@ amend_refresh_one() {
       # Test seam: HYPERPOWERS_TEST_CRASH_AT=amend-refresh-after-aside stops
       # the call right after the rename aside.
       if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = amend-refresh-after-aside ]; then [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; hp_unlock; exit 99; fi
+  # mv moves the plan into the reserved name when another process turned it
+  # into a directory, instead of replacing it; the plan is then at the
+  # nested path, and goes back from there like any copy.
+  if [ -d "$aside" ] && [ ! -L "$aside" ]; then
+    nested="$aside/$(basename "$p")"
+    amend_journal_drop "$aside"
+    if ln -P "$nested" "$p" 2>/dev/null; then rm -f "$nested"; amend_refresh_differs "$w"; return 1; fi
+    echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it: a file appeared at $p while its copy was aside at $nested; keep the one you want at $p, then run the same amend again" >&2
+    return 1
+  fi
       # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-refresh-after-rename
       # creates a file at the plan path right after the rename aside, once.
       case "${HYPERPOWERS_TEST_WRITER_AT:-}" in amend-refresh-after-rename) [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; printf 'created during the refresh\n' > "$w/$rel"; HYPERPOWERS_TEST_WRITER_AT="" ;; esac

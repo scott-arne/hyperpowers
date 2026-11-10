@@ -1649,6 +1649,16 @@ echo "exit $?"
 
 Expected: `exit 0`, and `summary.txt` starts `calls 329 (agent 286, sendmessage 43)`. Exit 1 is a manifest mismatch, and the manifest is never edited. First compare `scanSession`'s reading rule with `field/manifest.py` (line splitting, which lines are skipped, the cutoff test, the count rule) on the session `replay.out` names: a difference there is a `replay.mjs` defect, fixed with a test in `replay.test.mjs` and committed before the replay is run again. If the two rules agree, the corpus changed: report BLOCKED with `replay.out`.
 
+Correction (2026-11-10): the replay runs on a frozen copy of the corpus. Task 5's Codex gate found manifest row 8 (ae183251) no longer matching its live transcript: the transcript's first 14231 lines still hash to `8f47c39aad88`, but a resume at 22:12Z appended a timestamp-less `tools-used` record before the first post-cutoff record, and the manifest's stop rule stops only at a timestamped record. Your human partner chose to freeze a copy over re-freezing the corpus or stopping. Task 5's fix round 1 added `freeze.mjs`, which cuts each transcript at the first line where the manifest rule's hash and both counts equal its row, and refuses a row when no line matches or when a dropped line carries a timestamp. Before Step 2, run from the evidence directory:
+
+```bash
+node --max-old-space-size=8192 freeze.mjs --manifest field/manifest.tsv --projects /Users/johnss51/.claude/projects --out /Users/johnss51/.cache/hyperpowers/sdd-dispatch-guard/corpus > task-6-replay/freeze.out 2>&1
+echo "exit $?"
+cp /Users/johnss51/.cache/hyperpowers/sdd-dispatch-guard/corpus/freeze.tsv task-6-replay/freeze.tsv
+```
+
+Expected: `exit 0`, and `freeze.tsv` shows row 8 dropping one `tools-used` line (a session resumed since may drop further timestamp-less lines; record them). A nonzero exit is BLOCKED with `freeze.out`. Then run Step 2 with `--projects /Users/johnss51/.cache/hyperpowers/sdd-dispatch-guard/corpus` in place of `/Users/johnss51/.claude/projects`. The copies hold private transcripts and are never committed; `freeze.tsv` is, with each copy's full sha256. Step 4's result adds one sentence after its first line: `Run on a frozen copy of the corpus (task-6-replay/freeze.tsv): <the lines each row dropped, by session and type>.`
+
 - [ ] **Step 3: Classify every refusal**
 
 For each row of `refusals.tsv`, fill `class` and `evidence`. Use `context.tsv` (the session's SDD skill invocations, `sdd-state`/`sdd-dir` commands, Finish calls and compactions) and the transcript itself (read by line number or timestamp with a streaming script; never grep a 290 MB transcript with long context).

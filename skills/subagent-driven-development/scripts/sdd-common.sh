@@ -294,6 +294,11 @@ hp_plan_graph() {
     # task-brief reads "## Task 1" as a task, and a plan of such headings read
     # here as having none would report itself complete.
     /^#+[ \t]+Task[ \t]+[0-9]/ && !/^### Task [0-9]/ { printf "malformed task heading: %s\n", $0 > "/dev/stderr"; bad = 1; exit 2 }
+    # A level-3 heading that names its task with a word, a colon alone or
+    # nothing would drop the task from the graph without a word: it is a
+    # malformed heading too. A heading that only begins with the word, such
+    # as "### Tasks overview" or "### Task-runner notes", is prose.
+    /^### Task([ \t]*(:|$)|[ \t]+[^0-9 \t])/ { printf "malformed task heading: %s\n", $0 > "/dev/stderr"; bad = 1; exit 2 }
     /^### Task [0-9]/ { if ($0 !~ /^### Task [0-9]+:([ \t]|$)/) { printf "malformed task heading: %s\n", $0 > "/dev/stderr"; bad = 1; exit 2 }
       n = $0; sub(/^### Task /, "", n); sub(/:.*$/, "", n); if (n in seen) { printf "duplicate heading: task %s\n", n > "/dev/stderr"; bad = 1; exit 2 } seen[n] = 1; order[++k] = n; cur = n; next }
     cur != "" && /^\*\*Depends on:\*\*/ {

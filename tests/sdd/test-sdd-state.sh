@@ -3166,6 +3166,21 @@ printf '# P\n\n### Task 1: A\n\n**Depends on:** none\n\n### Task 2: B\n\n**Depen
 b_from1=$(git -C "$dp" hash-object docs/dep.from1.md); rm -f "$TEST_ROOT/dep.seam"
 out=$(cd "$dp" && HYPERPOWERS_TEST_SEAM_MARK="$TEST_ROOT/dep.seam" HYPERPOWERS_TEST_WRITER_AT="deps-from-after-copy:$TEST_ROOT/dep.from2" bash "$SDD_STATE" deps --from docs/dep.from1.md docs/plan.md 2>/dev/null); rc=$?
 if [ -f "$TEST_ROOT/dep.seam" ] && [ "$rc" -eq 0 ] && [ "$out" = "$(printf 'status=deps plan=%s tasks=2\ntask=1 depends=none\ntask=2 depends=1' "${b_from1:0:7}")" ] && cmp -s "$dp/docs/dep.from1.md" "$TEST_ROOT/dep.from2"; then pass "deps --from hashes and parses one copy of its file, whatever happens to the file after the copy"; else fail "deps --from hashes and parses one copy of its file, whatever happens to the file after the copy (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+# A level-3 heading that names its task with a word, a colon alone or nothing is a malformed task heading, where it was read as prose and its task dropped; headings that only begin with the word Task still parse as no task.
+# dep_head <name> <heading> <label>
+dep_head() {
+  printf '# P\n\n### Task 1: A\n\n%s\n\nbody\n' "$2" > "$dp/docs/dh.$1.md"
+  out=$(run_state "$dp" deps --from "docs/dh.$1.md" docs/plan.md 2>"$TEST_ROOT/dh.$1.err"); rc=$?
+  if [ "$rc" -eq 2 ] && [ "${out%% *}" = "status=invalid" ] && grep -qxF "malformed task heading: $2" "$TEST_ROOT/dh.$1.err"; then pass "$3"; else fail "$3 (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/dh.$1.err"))"; fi
+}
+dep_head word '### Task One: x' "a heading ### Task One: x is a malformed task heading"
+dep_head colon '### Task: x' "a heading ### Task: x is a malformed task heading"
+dep_head bare '### Task' "a bare ### Task heading is a malformed task heading"
+for dh in '### Tasks overview' '### Task-runner notes'; do
+  printf '# P\n\n### Task 1: A\n\n%s\n\nbody\n' "$dh" > "$dp/docs/dh.ok.md"
+  out=$(run_state "$dp" deps --from docs/dh.ok.md docs/plan.md 2>/dev/null); rc=$?
+  if [ "$rc" -eq 0 ] && [ "$out" = "$(printf 'status=deps plan=%s tasks=1\ntask=1 depends=none' "$(git -C "$dp" hash-object docs/dh.ok.md | cut -c1-7)")" ]; then pass "a heading $dh still parses as no task"; else fail "a heading $dh still parses as no task (rc=$rc: $(printf '%s' "$out" | tr '\n' '|'))"; fi
+done
 # The Global Constraints scope ends at the first task heading, so a task's prose cannot widen the allowlist.
 cat > "$dp/docs/gcscope.md" <<'GCSCOPE'
 # Plan

@@ -2169,6 +2169,22 @@ cmd_lease() {
   hp_unlock; echo "status=closing"
 }
 
+# <repo> <full refname> -> the commit a direct ref names, from one read of
+# the ref, so its symbolic status and its value cannot come from two
+# moments. 3 when the ref is symbolic, 1 when it does not exist or names no
+# commit (a symbolic ref whose target is missing is not listed at all).
+# for-each-ref matches its pattern as a prefix up to a slash, so the line is
+# picked by exact refname; the object id is peeled afterwards, a read of the
+# object and not of the ref.
+direct_ref_commit() {
+  local line rest sym oid
+  line=$(git -C "$1" for-each-ref --format='%(refname)%09%(symref)%09%(objectname)' "$2" 2>/dev/null | awk -F '\t' -v r="$2" '$1 == r { print }') || return 1
+  [ -n "$line" ] || return 1
+  rest=${line#*$'\t'}; sym=${rest%%$'\t'*}; oid=${rest#*$'\t'}
+  [ -z "$sym" ] || return 3
+  git -C "$1" rev-parse -q --verify "$oid^{commit}" 2>/dev/null
+}
+
 # --- amend -------------------------------------------------------------------
 # The plan ref's only writer while a plan is open. The candidate is validated
 # whole (graph and overlaps) before anything moves, the base blob must still
@@ -2907,9 +2923,19 @@ cmd_merge_back() {
     # (--no-deref), so a symbolic ref is refused here: merge-back would
     # otherwise move the branch it names, which no plan line registered.
     # Checked on every attempt, as another writer can make it one between
-    # attempts.
-    if git -C "$code" symbolic-ref -q "$ref" >/dev/null 2>&1; then hp_unlock; echo "sdd-state: the integration branch $integ is a symbolic ref; merge-back writes only a branch that holds a commit" >&2; echo "status=error"; return 2; fi
-    H=$(git -C "$code" rev-parse -q --verify "$ref^{commit}" 2>/dev/null) || { hp_unlock; echo "sdd-state: the integration branch $integ does not exist in $code" >&2; echo "status=error"; return 2; }
+    # attempts. The check and the read of the head are one read of the ref:
+    # a separate rev-parse would follow a ref made symbolic after the check
+    # and take the branch it names for the integration head.
+    # Test seam: HYPERPOWERS_TEST_WRITER_AT=merge-back-symref-before-read:<branch>
+    # makes the integration ref a symbolic ref to that branch, once, before
+    # the read.
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in merge-back-symref-before-read:*) [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; git -C "$code" symbolic-ref "$ref" "refs/heads/${HYPERPOWERS_TEST_WRITER_AT#merge-back-symref-before-read:}"; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
+    H=$(direct_ref_commit "$code" "$ref"); rc=$?
+    case "$rc" in
+      0) ;;
+      3) hp_unlock; echo "sdd-state: the integration branch $integ is a symbolic ref; merge-back writes only a branch that holds a commit" >&2; echo "status=error"; return 2 ;;
+      *) hp_unlock; echo "sdd-state: the integration branch $integ does not exist in $code" >&2; echo "status=error"; return 2 ;;
+    esac
     # Already published: only the bookkeeping is owed, and it names the
     # commit that published the approved one, whatever has merged since.
     if git -C "$code" merge-base --is-ancestor "$sha" "$H" 2>/dev/null; then

@@ -1,6 +1,6 @@
 ---
 sources: skills/subagent-driven-development hooks/sdd-stop-guard hooks/lib/stop-guard.mjs skills/writing-plans/SKILL.md docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md
-source-digest: 8017a8e8c099
+source-digest: f97a0d51270e
 ---
 # subagent-driven-development
 
@@ -24,7 +24,7 @@ Example requests:
 
 The controller (your main session) coordinates and leaves implementation to subagents, apart from one narrow exception: it may apply a fix fully specified by a finding, of at most three lines in one file with no new logic. Each task goes through the same loop.
 
-**Setup.** The controller settles where the work happens through {doc}`using-git-worktrees`, syncs the plan's state with `scripts/sdd-state sync`, and finds the plan's workspace with `scripts/sdd-dir`. The workspace lives in a per-repository state checkout under your user cache, outside the working tree, so nothing in it can be committed with your code. It holds the plan's ledger (`progress.md`), task briefs, reports, and review packages. The ledger is the recovery map: it records each completed task, so a controller that loses its context to compaction resumes at the first task without a completion line instead of redoing finished work. It also registers the plan's integration branch with `scripts/sdd-state register`, so other sessions can join the same plan. The controller reads the plan and its spec, then scans the plan for conflicts between tasks and asks you about any it finds in one batched question before execution begins.
+**Setup.** The controller syncs the plan's state with `scripts/sdd-state sync`, finds the plan's workspace with `scripts/sdd-dir`, and reads the ledger's plan line if there is one. It then settles where the work happens through {doc}`using-git-worktrees`; when the plan line names an integration branch, the session is a later one on a running plan, and it hands that branch and its session id to using-git-worktrees. The workspace lives in a per-repository state checkout under your user cache, outside the working tree, so nothing in it can be committed with your code. It holds the plan's ledger (`progress.md`), task briefs, reports, and review packages. The ledger is the recovery map: it records each completed task, so a controller that loses its context to compaction resumes at the first task without a completion line instead of redoing finished work. It also registers the plan's integration branch with `scripts/sdd-state register`, so other sessions can join the same plan. The controller reads the plan and its spec, then scans the plan for conflicts between tasks and asks you about any it finds in one batched question before execution begins.
 
 **Per task.**
 

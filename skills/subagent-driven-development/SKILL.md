@@ -130,10 +130,14 @@ digraph process {
 
 ## Setup
 
-Settle where the work happens first: use hyperpowers:using-git-worktrees,
+Read before you settle: run the `sync` and `sdd-dir` steps below and read
+the ledger's plan line, if the ledger exists (reading it changes nothing).
+Then settle where the work happens: use hyperpowers:using-git-worktrees,
 which detects an existing worktree or asks your human partner to choose
 between staying on the current branch, a new branch in place, and a
-worktree, and reports the mode. Never start implementation on a main/master
+worktree, and reports the mode. When the plan line names an integration
+branch, this is a later session of a running plan: hand using-git-worktrees
+that branch and your session id. Never start implementation on a main/master
 branch unless your human partner chose "stay on the current branch" in that
 question; that answer is the consent, and the dossier no longer depends on
 the branch.

@@ -642,6 +642,10 @@ assert_contains "$WT" 'path="$LOCATION/<integration branch>-<session id>"' "usin
 assert_contains "$WT" "the later session compares \`git rev-parse --show-toplevel\` with the \`at <toplevel>\` of every other session's newest session line in the plan's ledger" "using-git-worktrees checks whose worktree a later session is in"
 assert_contains "$WT" "it must not detach, switch or claim there. It leaves that worktree" "using-git-worktrees keeps a later session out of another session's worktree"
 assert_contains "$WT" "creates its own, with a name that carries its session id" "using-git-worktrees names the later session's own worktree after its session id"
+assert_contains "$SDD" "Read before you settle: run the \`sync\` and \`sdd-dir\` steps below and read the ledger's plan line" "Setup reads the ledger's plan line before it settles the worktree"
+assert_contains "$SDD" "When the plan line names an integration branch, this is a later session of a running plan: hand using-git-worktrees that branch and your session id" "a later session hands using-git-worktrees the integration branch and its session id"
+assert_not_contains "$SDD" "Settle where the work happens first" "Setup no longer settles the worktree before it reads the plan line"
+assert_before "$SDD" "Read before you settle" "Then settle where the work happens" "the read comes before the worktree is settled"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

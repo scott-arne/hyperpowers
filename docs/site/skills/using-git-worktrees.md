@@ -1,6 +1,6 @@
 ---
 sources: skills/using-git-worktrees skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/writing-plans/SKILL.md skills/finishing-a-development-branch/SKILL.md
-source-digest: 2581e0a22c14
+source-digest: ee274642f362
 ---
 # using-git-worktrees
 

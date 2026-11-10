@@ -33,6 +33,7 @@ Each check prints the line number and the line.
 | `skills/subagent-driven-development/SKILL.md` | 800 | `approved <full id>` | `grep -nF 'approved <full id>' skills/subagent-driven-development/SKILL.md` |
 | `skills/subagent-driven-development/example-workflow.md` | 40 | `approved d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3` | `grep -nF 'approved d4e5f6a7' skills/subagent-driven-development/example-workflow.md` |
 | `skills/subagent-driven-development/example-workflow.md` | 78 | `approved b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6` | `grep -nF 'approved b7c8d9e0' skills/subagent-driven-development/example-workflow.md` |
+| `skills/subagent-driven-development/example-workflow.md` | 7 | `[Setup: branch question answered: worktree]` | `grep -nF '[Setup: branch question answered: worktree]' skills/subagent-driven-development/example-workflow.md` |
 | `skills/finishing-a-development-branch/SKILL.md` | 104 | `It refuses three cases` | `grep -nF 'It refuses three cases' skills/finishing-a-development-branch/SKILL.md` |
 | `skills/finishing-a-development-branch/SKILL.md` | 278 | `The withheld-merge line replaces option 1` | `grep -nF 'The withheld-merge line replaces option 1' skills/finishing-a-development-branch/SKILL.md` |
 

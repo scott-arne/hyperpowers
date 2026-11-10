@@ -2519,6 +2519,7 @@ amend_journal_add() {
 amend_journal_drop() {
   local jf="$WSDIR/amends/.asides" t="$WSDIR/amends/.asides.$$" a jw ja kept=0
   [ -f "$jf" ] || return 0
+  hp_contained "$ROOT" "plans/$WS/amends/.asides.$$" || return 1
   amend_jenc "$1"; a=$JENC
   : > "$t" || return 1
   while IFS=$'\t' read -r jw ja; do
@@ -2546,10 +2547,14 @@ amend_old_entry() {
 #     that changed is kept and named.
 #   - Anything else is not this refresh's to resolve: the copy is kept and
 #     both paths are named.
+# A journaled name that has become a directory, or a link to one, is settled
+# through the plan file inside it when there is one, and the directory itself
+# is left alone. A crash between the restore's hard link and its removal
+# leaves two names for one file; the aside name is then removed.
 # An empty regular file beside a present plan is a reservation the crash cut
 # off before the rename, and is removed.
 amend_settle_asides() {
-  local w=$1 p="$1/$rel" jf="$WSDIR/amends/.asides" jw ja a oe i=0
+  local w=$1 p="$1/$rel" jf="$WSDIR/amends/.asides" jw ja a oe orig i=0
   local -a pend=()
   [ -f "$jf" ] || return 0
   while IFS=$'\t' read -r jw ja; do
@@ -2557,17 +2562,19 @@ amend_settle_asides() {
     amend_jdec "$ja"; pend[${#pend[@]}]=$JDEC
   done < "$jf"
   while [ "$i" -lt "${#pend[@]}" ]; do
-    a=${pend[$i]}; i=$((i + 1))
-    { [ -f "$a" ] || [ -L "$a" ]; } || { amend_journal_drop "$a"; continue; }
+    orig=${pend[$i]}; i=$((i + 1)); a=$orig
+    if [ -d "$orig" ] && { [ -e "$orig/${p##*/}" ] || [ -L "$orig/${p##*/}" ]; }; then a="$orig/${p##*/}"; fi
+    { [ -f "$a" ] || [ -L "$a" ]; } || { amend_journal_drop "$orig"; continue; }
     if [ ! -e "$p" ] && [ ! -L "$p" ]; then
-      if ln -P "$a" "$p" 2>/dev/null; then rm -f "$a"; amend_journal_drop "$a"; continue; fi
+      if ln -P "$a" "$p" 2>/dev/null; then rm -f "$a"; amend_journal_drop "$orig"; continue; fi
       echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it: a file appeared at $p while its copy was aside at $a; keep the one you want at $p, then run the same amend again" >&2
       return 1
     fi
-    if [ -f "$a" ] && [ ! -L "$a" ] && [ ! -s "$a" ]; then rm -f "$a"; amend_journal_drop "$a"; continue; fi
+    if [ ! -L "$a" ] && [ ! -L "$p" ] && [ "$a" -ef "$p" ]; then rm -f "$a"; amend_journal_drop "$orig"; continue; fi
+    if [ -f "$a" ] && [ ! -L "$a" ] && [ ! -s "$a" ]; then rm -f "$a"; amend_journal_drop "$orig"; continue; fi
     if [ "${4#* }" = "$(git -C "$w" rev-parse -q --verify "$3:$rel" 2>/dev/null)" ]; then
       oe=$(amend_old_entry "$w" "$2") || oe=""
-      if [ -n "$oe" ] && amend_aside_matches "$w" "$a" "$oe"; then rm -f "$a"; amend_journal_drop "$a"; continue; fi
+      if [ -n "$oe" ] && amend_aside_matches "$w" "$a" "$oe"; then rm -f "$a"; amend_journal_drop "$orig"; continue; fi
       echo "sdd-state: the worktree $w has the new plan, but its old copy at $a differs from the old plan; keep what you need from it, remove it, then run the same amend again" >&2
       return 1
     fi
@@ -2612,8 +2619,8 @@ amend_refresh_one() {
       # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-refresh-before-rename:<delete|chmod|unlink>
       # deletes the plan file, flips its executable bit, replaces a
       # symbolic link with a regular file holding its target text, or turns
-      # the reserved aside name into a directory, right before the rename
-      # aside, once.
+      # the reserved aside name into a directory or a link to one, right
+      # before the rename aside, once.
       case "${HYPERPOWERS_TEST_WRITER_AT:-}" in
         amend-refresh-before-rename:*)
           [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"
@@ -2622,6 +2629,7 @@ amend_refresh_one() {
             chmod) if [ -x "$w/$rel" ]; then chmod -x "$w/$rel"; else chmod +x "$w/$rel"; fi ;;
             unlink) lt=$(readlink "$w/$rel"); rm -f "$w/$rel"; printf '%s' "$lt" > "$w/$rel" ;;
             dir) rm -f "$aside"; mkdir "$aside" ;;
+            dirlink) rm -f "$aside"; mkdir "$(dirname "$aside")/racer"; ln -s racer "$aside" ;;
           esac
           HYPERPOWERS_TEST_WRITER_AT="" ;;
       esac
@@ -2630,12 +2638,15 @@ amend_refresh_one() {
       # the call right after the rename aside.
       if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = amend-refresh-after-aside ]; then [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; hp_unlock; exit 99; fi
   # mv moves the plan into the reserved name when another process turned it
-  # into a directory, instead of replacing it; the plan is then at the
-  # nested path, and goes back from there like any copy.
-  if [ -d "$aside" ] && [ ! -L "$aside" ]; then
-    nested="$aside/$(basename "$p")"
-    amend_journal_drop "$aside"
-    if ln -P "$nested" "$p" 2>/dev/null; then rm -f "$nested"; amend_refresh_differs "$w"; return 1; fi
+  # into a directory, or a link to one, instead of replacing it; the plan is
+  # then at the nested path, and goes back from there like any copy. The test
+  # is whether the plan is there, not whether the name is a link: a plan that
+  # is itself a link to a directory has nothing nested and takes the normal
+  # path below. The journal line is dropped only after the plan is back, so a
+  # crash in between leaves a trail for settle.
+  nested="$aside/$(basename "$p")"
+  if [ -d "$aside" ] && { [ -e "$nested" ] || [ -L "$nested" ]; }; then
+    if ln -P "$nested" "$p" 2>/dev/null; then rm -f "$nested"; amend_journal_drop "$aside"; amend_refresh_differs "$w"; return 1; fi
     echo "sdd-state: the plan ref $ref carries the amendment, but the worktree $w could not be refreshed to it: a file appeared at $p while its copy was aside at $nested; keep the one you want at $p, then run the same amend again" >&2
     return 1
   fi

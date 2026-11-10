@@ -4661,6 +4661,39 @@ if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "
 rm -rf "$aside_aw"
 aw_retry dirrace
 if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$awt" status --porcelain)" ]; then pass "the same amend finishes once the directory is removed"; else fail "the same amend finishes once the directory is removed (rc=$rc: $out)"; fi
+# A symbolic link to a directory at the aside name takes the plan inside the link's target the same way; the plan is put back as a regular file, and the racer's directory and link are left alone.
+aw_amend dirlink HYPERPOWERS_TEST_WRITER_AT=amend-refresh-before-rename:dirlink
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.dirlink")
+aside_aw=$(find "$awt/docs" -name '.plan.md.sdd-amend-*' ! -name '*EARLY1' | head -n 1)
+if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ -f "$awt/docs/plan.md" ] && [ ! -L "$awt/docs/plan.md" ] && [ "$(git -C "$awt" hash-object docs/plan.md)" = "$(git -C "$awt" rev-parse :docs/plan.md)" ] && [ -L "$aside_aw" ] && [ -d "$awt/docs/racer" ] && [ ! -e "$awt/docs/racer/plan.md" ] && [ ! -e "$aw_jn" ] && [ -f "$wsaw/amends/$n_aw" ]; then pass "a plan file renamed through a link to a directory at the aside name is put back as a regular file, the record kept"; else fail "a plan file renamed through a link to a directory at the aside name is put back as a regular file, the record kept (seam=$([ -f "$seam_aw" ] && echo 1 || echo 0) rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+rm -f "$aside_aw"; rm -rf "$awt/docs/racer"
+aw_retry dirlink
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$awt" status --porcelain)" ]; then pass "the same amend finishes once the link and its directory are removed"; else fail "the same amend finishes once the link and its directory are removed (rc=$rc: $out)"; fi
+# A crash between the restore's hard link and its removal leaves two names for one file and the journal line; the retry removes the aside name and finishes.
+aw_amend crash4 HYPERPOWERS_TEST_CRASH_AT=amend-refresh-after-aside
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.crash4")
+aside_aw=$(find "$awt/docs" -name '.plan.md.sdd-amend-*' ! -name '*EARLY1' | head -n 1)
+ln -P "$aside_aw" "$awt/docs/plan.md"
+aw_retry crash4
+if [ -f "$seam_aw" ] && [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ "$(git -C "$awt" hash-object docs/plan.md)" = "$n_aw" ] && [ -z "$(git -C "$awt" status --porcelain)" ] && [ "$(aw_asides)" = 0 ] && [ ! -e "$aw_jn" ] && [ ! -e "$wsaw/amends/$n_aw" ]; then pass "a retry after a crash between the restore's link and its removal drops the second name and finishes"; else fail "a retry after a crash between the restore's link and its removal drops the second name and finishes (seam=$([ -f "$seam_aw" ] && echo 1 || echo 0) rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+# A journaled aside that has become a directory holding the plan is settled through the plan inside it: restored when the plan path is empty, kept and named when a file stands there.
+aw_amend crash5 HYPERPOWERS_TEST_CRASH_AT=amend-refresh-after-aside
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.crash5")
+aside_aw=$(find "$awt/docs" -name '.plan.md.sdd-amend-*' ! -name '*EARLY1' | head -n 1)
+mv "$aside_aw" "$awt/docs/racer.tmp"; mkdir "$aside_aw"; mv "$awt/docs/racer.tmp" "$aside_aw/plan.md"
+aw_retry crash5
+if [ -f "$seam_aw" ] && [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ "$(git -C "$awt" hash-object docs/plan.md)" = "$n_aw" ] && [ -z "$(git -C "$awt" status --porcelain)" ] && [ ! -e "$aside_aw/plan.md" ] && [ ! -e "$aw_jn" ] && [ ! -e "$wsaw/amends/$n_aw" ]; then pass "a retry settles a journaled aside that became a directory by restoring the plan from inside it"; else fail "a retry settles a journaled aside that became a directory by restoring the plan from inside it (seam=$([ -f "$seam_aw" ] && echo 1 || echo 0) rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+rm -rf "$aside_aw"
+aw_amend crash6 HYPERPOWERS_TEST_CRASH_AT=amend-refresh-after-aside
+n_aw=$(git -C "$aw" hash-object "$TEST_ROOT/aw.crash6")
+aside_aw=$(find "$awt/docs" -name '.plan.md.sdd-amend-*' ! -name '*EARLY1' | head -n 1)
+mv "$aside_aw" "$awt/docs/racer.tmp"; mkdir "$aside_aw"; mv "$awt/docs/racer.tmp" "$aside_aw/plan.md"
+printf 'file at the plan path\n' > "$awt/docs/plan.md"
+aw_retry crash6
+if [ -f "$seam_aw" ] && [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(cat "$awt/docs/plan.md")" = "file at the plan path" ] && [ -f "$aside_aw/plan.md" ] && grep -qF "a copy of the old plan aside at $aside_aw/plan.md" "$TEST_ROOT/aw.err" && [ -f "$wsaw/amends/$n_aw" ]; then pass "a retry keeps and names the plan inside a journaled directory aside while a file stands at the plan path"; else fail "a retry keeps and names the plan inside a journaled directory aside while a file stands at the plan path (seam=$([ -f "$seam_aw" ] && echo 1 || echo 0) rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+rm -rf "$aside_aw"; git -C "$awt" checkout-index -f -- docs/plan.md
+aw_retry crash6
+if [ "$rc" -eq 0 ] && [ "${out##* }" = "already=1" ] && [ -z "$(git -C "$awt" status --porcelain)" ] && [ ! -e "$aw_jn" ]; then pass "the same amend finishes once the directory aside is settled"; else fail "the same amend finishes once the directory aside is settled (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
 printf 'early\n' > "$awt/docs/.plan.md.sdd-amend-EARLY1"
 aw_amend early
 if [ "$rc" -eq 0 ] && [ "$(cat "$awt/docs/.plan.md.sdd-amend-EARLY1")" = early ] && [ "$(aw_asides)" = 0 ]; then pass "a file left at an earlier run's aside name stays untouched"; else fail "a file left at an earlier run's aside name stays untouched (rc=$rc: $out)"; fi

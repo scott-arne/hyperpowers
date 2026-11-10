@@ -1,6 +1,6 @@
 ---
 sources: skills/using-hyperpowers hooks/session-start hooks/session-start-codex hooks/hooks.json hooks/hooks-codex.json hooks/hooks-cursor.json hooks/run-hook.cmd .cursor-plugin/plugin.json .codex-plugin/plugin.json skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/writing-skills/SKILL.md skills/requesting-code-review/scripts/ungated-ledger skills/subagent-driven-development/scripts/sdd-common.sh .claude-plugin/plugin.json README.md RELEASE-NOTES.md
-source-digest: 6e2b049c57c9
+source-digest: 3443ff96142b
 ---
 # using-hyperpowers
 

@@ -1,6 +1,6 @@
 ---
 sources: skills/subagent-driven-development hooks/session-start hooks/hooks.json hooks/sdd-stop-guard hooks/lib/stop-guard.mjs docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md
-source-digest: f3cae96cbc23
+source-digest: f16a9759a3f0
 ---
 # How subagent-driven development keeps its place
 
@@ -69,7 +69,7 @@ The waiting board lets you find the session that needs you among several. Before
 Two scripts keep requirements and diffs out of the controller's context by writing them to files that other agents read.
 
 - {source}`skills/subagent-driven-development/scripts/task-brief` with `PLAN_FILE N` extracts one task's text from the plan into `task-N-brief.md` in the workspace and prints `wrote <path>: <N> lines`. The dispatch prompt points the implementer at that path as its requirements, with the exact values to use verbatim. The skill says never to make a subagent read the whole plan.
-- {source}`skills/subagent-driven-development/scripts/review-package` with `PLAN_FILE BASE HEAD` writes the commit list, the stat, and the full diff with extended context to one file. The controller records `BASE` before it dispatches the implementer, as the fork point of the task branch from the integration branch (`git merge-base HEAD <integration branch>`), and the skill says never to use `HEAD~1`, which drops all but the last commit of a multi-commit task. The script exits 3 when the range is empty or `HEAD` is not a descendant of `BASE`.
+- {source}`skills/subagent-driven-development/scripts/review-package` with `PLAN_FILE BASE HEAD` writes the commit list, the stat, and the full diff with extended context to one file. The controller records `BASE` before it dispatches the implementer, as the fork point of the task branch from the integration branch (`git merge-base HEAD refs/heads/<integration branch>`), and the skill says never to use `HEAD~1`, which drops all but the last commit of a multi-commit task. The script exits 3 when the range is empty or `HEAD` is not a descendant of `BASE`.
 
 The implementer writes its full report to a file named after the brief (`task-N-report.md`) and returns only a status, commits, a one-line test summary, and concerns. The controller treats that report as a claim: it re-runs the named covering command itself, and a misreported result is a failed task. The task reviewer receives three paths (brief, report, review package) plus a file of the global constraints that bind the task. The per-task Codex gate takes that same global-constraints file.
 

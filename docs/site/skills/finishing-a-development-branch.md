@@ -1,6 +1,6 @@
 ---
 sources: skills/finishing-a-development-branch skills/requesting-code-review/scripts/codex-review-dir skills/subagent-driven-development/SKILL.md skills/executing-plans/SKILL.md skills/using-git-worktrees/SKILL.md docs/hyperpowers/specs/2026-10-21-decision-records-design.md
-source-digest: 07c45fd3b13c
+source-digest: eb8a6a3ef240
 ---
 # finishing-a-development-branch
 

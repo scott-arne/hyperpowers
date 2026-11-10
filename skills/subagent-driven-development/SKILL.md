@@ -414,11 +414,14 @@ On a harness whose subagents run asynchronously, never poll a wait interface wit
 
 Record BASE right after `git switch <branch>` and before dispatching, as the
 task branch's fork point from the integration branch:
-`git merge-base HEAD <integration branch>`. On a fresh claim that is the
-claim's `from=` commit. On a takeover it is the original claim's base, so the
-previous holder's commits stay in the review package and the fix-round diffs,
-which both need BASE. A HEAD read before the claim can lag the integration
-branch while other sessions merge.
+`git merge-base HEAD refs/heads/<integration branch>` (the full ref name, so
+a tag with the branch's name cannot be read instead). On a fresh claim that
+is the claim's `from=` commit. On a takeover it is the original claim's base,
+or, once the conflict route has merged the integration branch into the task
+branch, the integration head merged in; the previous holder's commits stay in
+the review package and the fix-round diffs either way, which both need BASE.
+A HEAD read before the claim can lag the integration branch while other
+sessions merge.
 
 - **Task brief:** before dispatching an implementer, run this skill's
   `scripts/task-brief PLAN_FILE N` — it extracts the task's full text to a

@@ -2270,6 +2270,11 @@ $2"; shift 2 ;;
       hp_unlock; echo "status=checked-out worktree=lease:$lowner"; return 13
     fi
   fi
+  # A symbolic plan ref is refused before amend's first write: the
+  # crash-window refresh, the bookkeeping and the record below all assume
+  # the ref is the branch the plan line registered. The attempt loop checks
+  # again, as another writer can make it one meanwhile.
+  if git -C "$REPO" symbolic-ref -q "refs/heads/$ref" >/dev/null 2>&1; then hp_unlock; echo "sdd-state: the plan ref $ref is a symbolic ref; amend writes only a branch that holds a commit" >&2; echo "status=error"; return 2; fi
   hp_contained "$ROOT" "plans/$WS/amends" || { hp_unlock; echo "status=error"; return 2; }
   mkdir -p "$WSDIR/amends" || { hp_unlock; echo "status=error"; return 2; }
   record="$WSDIR/amends/$blob"
@@ -2312,6 +2317,11 @@ $2"; shift 2 ;;
   idx="$WSDIR/amends/.index-$$"
   { hp_contained "$ROOT" "plans/$WS/amends/.index-$$" && hp_contained "$ROOT" "plans/$WS/amends/$blob"; } || { hp_unlock; echo "status=error"; return 2; }
   for _ in 1 2 3; do
+    # The swap writes the plan ref itself, never through it (--no-deref), so
+    # a symbolic ref is refused here: amend would otherwise move the branch
+    # it names, which no plan line registered. Checked on every attempt, as
+    # another writer can make it one between attempts.
+    if git -C "$REPO" symbolic-ref -q "refs/heads/$ref" >/dev/null 2>&1; then rm -f "$record"; hp_unlock; echo "sdd-state: the plan ref $ref is a symbolic ref; amend writes only a branch that holds a commit" >&2; echo "status=error"; return 2; fi
     P=$(git -C "$REPO" rev-parse -q --verify "refs/heads/$ref^{commit}") || { hp_unlock; echo "status=error"; return 2; }
     if ! cur=$(git -C "$REPO" rev-parse -q --verify "$P:$rel" 2>/dev/null); then
       rm -f "$record"; hp_unlock; echo "sdd-state: the plan ref $ref does not carry $rel" >&2; echo "status=error"; return 2
@@ -2367,7 +2377,11 @@ $2"; shift 2 ;;
         git -C "$REPO" update-ref "refs/heads/$ref" "${sv%%:*}" 2>/dev/null
         HYPERPOWERS_TEST_WRITER_AT="" ;;
     esac
-    if uerr=$(git -C "$REPO" update-ref -m "sdd amend" "refs/heads/$ref" "$commit" "$P" 2>&1); then
+    # Test seam: HYPERPOWERS_TEST_WRITER_AT=amend-symref-before-swap:<branch>
+    # makes the plan ref a symbolic ref to refs/heads/<branch> after the check
+    # and before the swap, once.
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in amend-symref-before-swap:*) [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; git -C "$REPO" symbolic-ref "refs/heads/$ref" "refs/heads/${HYPERPOWERS_TEST_WRITER_AT#amend-symref-before-swap:}"; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
+    if uerr=$(git -C "$REPO" update-ref --no-deref -m "sdd amend" "refs/heads/$ref" "$commit" "$P" 2>&1); then
       if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = amend-after-swap ]; then hp_unlock; exit 99; fi
       # The refresh comes before the bookkeeping, which removes the record:
       # a refresh that fails keeps it, for the same amend run again.
@@ -2886,10 +2900,20 @@ cmd_merge_back() {
   # merge as reverted.
   wt=$(merge_back_checked_out "$code" "$ref") || { hp_unlock; echo "sdd-state: the worktrees of $code could not be listed" >&2; echo "status=error"; return 2; }
   [ -z "$wt" ] || { hp_unlock; echo "status=checked-out worktree=$(enc "$wt")"; return 13; }
+  # A symbolic integration ref is refused before merge-back's first write;
+  # the attempt loop checks again, as another writer can make it one
+  # meanwhile.
+  if git -C "$code" symbolic-ref -q "$ref" >/dev/null 2>&1; then hp_unlock; echo "sdd-state: the integration branch $integ is a symbolic ref; merge-back writes only a branch that holds a commit" >&2; echo "status=error"; return 2; fi
   record="$WSDIR/merges/task-$n"
   hp_contained "$ROOT" "plans/$WS/merges/task-$n" || { hp_unlock; echo "status=error"; return 2; }
   mkdir -p "$WSDIR/merges" || { hp_unlock; echo "status=error"; return 2; }
   for _ in 1 2 3; do
+    # The swap writes the integration ref itself, never through it
+    # (--no-deref), so a symbolic ref is refused here: merge-back would
+    # otherwise move the branch it names, which no plan line registered.
+    # Checked on every attempt, as another writer can make it one between
+    # attempts.
+    if git -C "$code" symbolic-ref -q "$ref" >/dev/null 2>&1; then hp_unlock; echo "sdd-state: the integration branch $integ is a symbolic ref; merge-back writes only a branch that holds a commit" >&2; echo "status=error"; return 2; fi
     H=$(git -C "$code" rev-parse -q --verify "$ref^{commit}" 2>/dev/null) || { hp_unlock; echo "sdd-state: the integration branch $integ does not exist in $code" >&2; echo "status=error"; return 2; }
     # Already published: only the bookkeeping is owed, and it names the
     # commit that published the approved one, whatever has merged since.
@@ -2927,7 +2951,11 @@ cmd_merge_back() {
     # Test seam: HYPERPOWERS_TEST_WRITER_AT=merge-back-before-swap:<sha> moves
     # the integration ref to <sha> after the record and before the swap, once.
     case "${HYPERPOWERS_TEST_WRITER_AT:-}" in merge-back-before-swap:*) git -C "$code" update-ref "$ref" "${HYPERPOWERS_TEST_WRITER_AT#merge-back-before-swap:}" 2>/dev/null; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
-    if uerr=$(git -C "$code" update-ref -m "sdd merge-back task $n" "$ref" "$new" "$H" 2>&1); then
+    # Test seam: HYPERPOWERS_TEST_WRITER_AT=merge-back-symref-before-swap:<branch>
+    # makes the integration ref a symbolic ref to refs/heads/<branch> after
+    # the check and before the swap, once.
+    case "${HYPERPOWERS_TEST_WRITER_AT:-}" in merge-back-symref-before-swap:*) [ -z "${HYPERPOWERS_TEST_SEAM_MARK:-}" ] || : > "$HYPERPOWERS_TEST_SEAM_MARK"; git -C "$code" symbolic-ref "$ref" "refs/heads/${HYPERPOWERS_TEST_WRITER_AT#merge-back-symref-before-swap:}"; HYPERPOWERS_TEST_WRITER_AT="" ;; esac
+    if uerr=$(git -C "$code" update-ref --no-deref -m "sdd merge-back task $n" "$ref" "$new" "$H" 2>&1); then
       if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = merge-back-after-swap ]; then hp_unlock; exit 99; fi
       published=$new
       merge_back_bookkeeping || { hp_unlock; echo "sdd-state: $integ carries ${published:0:7}, but the merge-back's bookkeeping could not be written; run the same merge-back again to finish it" >&2; echo "status=error"; return 2; }

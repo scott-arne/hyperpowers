@@ -4749,6 +4749,15 @@ printf 'early\n' > "$awt/docs/.plan.md.sdd-amend-EARLY1"
 aw_amend early
 if [ "$rc" -eq 0 ] && [ "$(cat "$awt/docs/.plan.md.sdd-amend-EARLY1")" = early ] && [ "$(aw_asides)" = 0 ]; then pass "a file left at an earlier run's aside name stays untouched"; else fail "a file left at an earlier run's aside name stays untouched (rc=$rc: $out)"; fi
 rm -f "$awt/docs/.plan.md.sdd-amend-EARLY1"; git -C "$aw" worktree remove --force "$awt" >/dev/null 2>&1
+# amend and a symbolic plan ref: refused at the check, and a ref made symbolic after the check is overwritten as itself by the swap.
+hs_aw=$(git -C "$aw" rev-parse feat); git -C "$aw" update-ref refs/heads/aw-other "$hs_aw"; git -C "$aw" symbolic-ref refs/heads/feat refs/heads/aw-other
+lg_awsym=$(cksum < "$wsaw/progress.md"); am_awsym=$(ls -A "$wsaw/amends" 2>/dev/null)
+aw_amend sym
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "the plan ref feat is a symbolic ref; amend writes only a branch that holds a commit" "$TEST_ROOT/aw.err" && [ "$(git -C "$aw" rev-parse aw-other)" = "$hs_aw" ] && [ "$(cksum < "$wsaw/progress.md")" = "$lg_awsym" ] && [ "$(ls -A "$wsaw/amends" 2>/dev/null)" = "$am_awsym" ]; then pass "amend refuses a symbolic plan ref and leaves the branch it points to unmoved"; else fail "amend refuses a symbolic plan ref and leaves the branch it points to unmoved (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/aw.err"))"; fi
+git -C "$aw" update-ref --no-deref refs/heads/feat "$hs_aw"; git -C "$aw" update-ref refs/heads/aw-other "$hs_aw"
+aw_amend sym2 HYPERPOWERS_TEST_WRITER_AT=amend-symref-before-swap:aw-other
+if [ -f "$seam_aw" ] && [ "$rc" -eq 0 ] && [ "${out%% *}" = "status=amended" ] && [ "$(git -C "$aw" rev-parse aw-other)" = "$hs_aw" ] && ! git -C "$aw" symbolic-ref -q refs/heads/feat >/dev/null 2>&1 && [ "$(git -C "$aw" rev-parse "feat^")" = "$hs_aw" ]; then pass "a plan ref made symbolic after amend's check is overwritten as itself, the branch it pointed to unmoved"; else fail "a plan ref made symbolic after amend's check is overwritten as itself, the branch it pointed to unmoved (rc=$rc: $out aw-other=$(git -C "$aw" rev-parse aw-other))"; fi
+git -C "$aw" update-ref -d refs/heads/aw-other
 # The link variant: where the index holds a symbolic link, a regular file holding the link's target text hashes to the same blob, and is still no match. hp_plan_dir refuses a linked plan path, so the plan line is written by hand and the caller stays on main, where the plan is a regular file.
 al="$TEST_ROOT/al"; make_repo "$al"
 mkdir -p "$al/docs"; : > "$al/docs/spec.md"
@@ -4969,7 +4978,7 @@ git -C "$mb_a" update-ref -d "refs/heads/$zp"
 printf 'Task 7: approved %s\n' "${z1:0:7}" >> "$wsmb2/progress.md"
 # Three lost swaps: a git wrapper moves the integration ref ahead before each swap. The merge-back gives up after three attempts naming the head it expected and the one it found, and publishes nothing.
 mkdir -p "$TEST_ROOT/racegit"; : > "$TEST_ROOT/race.log"
-printf '#!/bin/sh\nreal="%s"\nif [ "$3" = update-ref ] && [ "$4" = -m ]; then case "$5" in "sdd merge-back task "*) tip=$("$real" -C "$2" rev-parse "$6") && adv=$("$real" -C "$2" commit-tree "$tip^{tree}" -p "$tip" -m race) && "$real" -C "$2" update-ref "$6" "$adv" "$tip" && echo "$adv" >> "%s" ;; esac; fi\nexec "$real" "$@"\n' "$(command -v git)" "$TEST_ROOT/race.log" > "$TEST_ROOT/racegit/git"; chmod 755 "$TEST_ROOT/racegit/git"
+printf '#!/bin/sh\nreal="%s"\nif [ "$3" = update-ref ] && [ "$4" = --no-deref ] && [ "$5" = -m ]; then case "$6" in "sdd merge-back task "*) tip=$("$real" -C "$2" rev-parse "$7") && adv=$("$real" -C "$2" commit-tree "$tip^{tree}" -p "$tip" -m race) && "$real" -C "$2" update-ref "$7" "$adv" "$tip" && echo "$adv" >> "%s" ;; esac; fi\nexec "$real" "$@"\n' "$(command -v git)" "$TEST_ROOT/race.log" > "$TEST_ROOT/racegit/git"; chmod 755 "$TEST_ROOT/racegit/git"
 out=$(cd "$mb_a" && PATH="$TEST_ROOT/racegit:$PATH" bash "$SDD_STATE" merge-back docs/plan2.md 7 --session s3 --commit "$z1" 2>"$TEST_ROOT/mb.race.err"); rc=$?
 r2=$(sed -n 2p "$TEST_ROOT/race.log"); r3=$(sed -n 3p "$TEST_ROOT/race.log")
 if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && [ "$(grep -c . "$TEST_ROOT/race.log")" = 3 ] && grep -qF "expected ${r2:0:7}, found ${r3:0:7}" "$TEST_ROOT/mb.race.err" && [ "$(git -C "$mb_a" rev-parse feat)" = "$r3" ] && ! git -C "$mb_a" merge-base --is-ancestor "$z1" feat && ! grep -q '^Task 7: merged' "$wsmb2/progress.md"; then pass "three lost swaps give up naming both heads and publish nothing"; else fail "three lost swaps (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.race.err"))"; fi
@@ -5007,6 +5016,19 @@ mkdir -p "$mb_a/.git/info"; printf '%s %s\n' "$g1" "$hg" > "$mb_a/.git/info/graf
 out=$(run_state "$mb_a" merge-back docs/plan2.md 10 --session s3 --commit "$g1" 2>"$TEST_ROOT/mb.graft.err"); rc=$?
 rm -f "$mb_a/.git/info/grafts"; hm10=$(git -C "$mb_a" rev-parse feat)
 if [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=10 head=${hm10:0:7}" ] && [ "$(git -C "$mb_a" rev-parse "$hm10^1")" = "$hg" ] && [ "$(git -C "$mb_a" rev-parse "$hm10^2" 2>/dev/null)" = "$g1" ] && [ "$(git -C "$mb_a" show "$hm10:src/io.txt" 2>/dev/null)" = "integration only" ] && ! grep -q 'grafts is deprecated' "$TEST_ROOT/mb.graft.err"; then pass "a graft cannot fake ancestry for merge-back: a divergent merge keeps both parents and the integration-only content"; else fail "a graft cannot fake ancestry for merge-back: a divergent merge keeps both parents and the integration-only content (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.graft.err"))"; fi
+# A symbolic integration ref: merge-back refuses one, and its swap never writes through one made symbolic after that check, so the branch it points to never moves.
+printf '\n### Task 11: Y\n\n**Risk tier:** standard\n\n**Depends on:** none\n' >> "$mb_a/docs/plan2.md"; git -C "$mb_a" switch -q feat; git -C "$mb_a" commit -qam "plan2 task 11"; git -C "$mb_a" switch -q --detach feat
+run_state "$mb_a" claim docs/plan2.md 11 --session s3 >/dev/null; git -C "$mb_a" switch -q "feat.$ws8mb2.task-11"; printf 'y\n' > "$mb_a/src/y11.txt"; git -C "$mb_a" add src; git -C "$mb_a" commit -qm y; y11=$(git -C "$mb_a" rev-parse HEAD); git -C "$mb_a" switch -q --detach feat
+printf 'Task 11: approved %s\n' "${y11:0:7}" >> "$wsmb2/progress.md"
+h11=$(git -C "$mb_a" rev-parse feat); git -C "$mb_a" update-ref refs/heads/mb-other "$h11"; git -C "$mb_a" symbolic-ref refs/heads/feat refs/heads/mb-other
+lg_mbsym=$(cksum < "$wsmb2/progress.md")
+out=$(run_state "$mb_a" merge-back docs/plan2.md 11 --session s3 --commit "$y11" 2>"$TEST_ROOT/mb.sym.err"); rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "status=error" ] && grep -qF "the integration branch feat is a symbolic ref; merge-back writes only a branch that holds a commit" "$TEST_ROOT/mb.sym.err" && [ "$(git -C "$mb_a" rev-parse mb-other)" = "$h11" ] && [ "$(cksum < "$wsmb2/progress.md")" = "$lg_mbsym" ] && [ ! -e "$wsmb2/merges/task-11" ]; then pass "merge-back refuses a symbolic integration ref and leaves the branch it points to unmoved"; else fail "merge-back refuses a symbolic integration ref and leaves the branch it points to unmoved (rc=$rc: $out: $(tr '\n' '|' < "$TEST_ROOT/mb.sym.err"))"; fi
+git -C "$mb_a" update-ref --no-deref refs/heads/feat "$h11"; git -C "$mb_a" update-ref refs/heads/mb-other "$h11"
+rm -f "$TEST_ROOT/mb.sym.seam"
+out=$(cd "$mb_a" && HYPERPOWERS_TEST_SEAM_MARK="$TEST_ROOT/mb.sym.seam" HYPERPOWERS_TEST_WRITER_AT=merge-back-symref-before-swap:mb-other bash "$SDD_STATE" merge-back docs/plan2.md 11 --session s3 --commit "$y11" 2>/dev/null); rc=$?
+if [ -f "$TEST_ROOT/mb.sym.seam" ] && [ "$rc" -eq 0 ] && [ "$out" = "status=merged task=11 head=${y11:0:7}" ] && [ "$(git -C "$mb_a" rev-parse mb-other)" = "$h11" ] && ! git -C "$mb_a" symbolic-ref -q refs/heads/feat >/dev/null 2>&1 && [ "$(git -C "$mb_a" rev-parse feat)" = "$y11" ]; then pass "an integration ref made symbolic after merge-back's check is overwritten as itself, the branch it pointed to unmoved"; else fail "an integration ref made symbolic after merge-back's check is overwritten as itself, the branch it pointed to unmoved (rc=$rc: $out mb-other=$(git -C "$mb_a" rev-parse mb-other))"; fi
+git -C "$mb_a" update-ref -d refs/heads/mb-other
 
 echo "board: waiting records, activity and the board"
 make_pair bd; bd_a=$PAIR_A; bd_b=$PAIR_B

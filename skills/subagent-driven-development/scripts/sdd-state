@@ -1613,13 +1613,15 @@ restore_tomb() {
 # because the takeover claims on the strength of the plan being open, and a
 # workspace that appears at the path, even during the restore, makes the
 # plan someone else's to settle. It also restores only a copy that holds a
-# ledger.
+# ledger and, on the branch backend, that the branch still tracks: a copy
+# whose removal was committed is leftover, not an open plan.
 restore_removed_copy() {
   local mode=${1:-} t
   for t in "$(dirname "$WSDIR")/.removing-$(basename "$WSDIR")-"*; do
     [ -d "$t" ] || continue
     if [ "$mode" = takeover ]; then
       [ -f "$t/progress.md" ] || continue
+      if [ "$BACKEND" = branch ]; then git -C "$CO" cat-file -e "refs/heads/$BRANCH:plans/$WS" 2>/dev/null || continue; fi
     fi
     if [ -d "$WSDIR" ] || { [ "$mode" = takeover ] && { [ -e "$WSDIR" ] || [ -L "$WSDIR" ]; }; }; then
       echo "sdd-state: a copy from an interrupted removal remains at $t; move its files back into $WSDIR or delete it" >&2
@@ -1963,6 +1965,7 @@ cmd_finish() {
   # deletes it, and a copy that survives the deletion is named on stderr.
   commit=$(hp_commit_paths --remove "$CO" "$BRANCH" "sdd $SLUG: finish" "plans/$WS"); rc=$?
   if [ "$rc" -ne 0 ]; then restore_tomb "$WSDIR" "$TOMB"; release_receipt "$WSDIR"; hp_unlock; echo "status=error"; return 2; fi
+  if [ "${HYPERPOWERS_TEST_CRASH_AT:-}" = finish-after-commit ]; then hp_unlock; exit 99; fi
   discard_tomb "$TOMB" || true
   hp_unlock
   if [ -d "$WSDIR" ]; then

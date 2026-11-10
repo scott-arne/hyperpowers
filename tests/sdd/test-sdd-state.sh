@@ -4094,6 +4094,19 @@ lease_fr=""; for fr_f in "$STATE_ROOT/$(state_key "$fr").final-"*; do [ -f "$fr_
 out=$(cd "$fr" && HYPERPOWERS_TEST_WRITER_AT="claim-before-restore:late.md" bash "$SDD_STATE" claim docs/plan.md final --session s2 --takeover 2>"$TEST_ROOT/fr.err"); rc=$?
 tomb_fr=""; for fr_f in "$(dirname "$wsfr")/.removing-$(basename "$wsfr")-"*; do [ -d "$fr_f" ] && tomb_fr=$fr_f; done
 if [ "$rcf" -eq 99 ] && [ "$rc" -eq 3 ] && [ "$out" = "status=busy" ] && [ "$(sed -n 's/^session=//p' "$lease_fr")" = s1 ] && [ "$(sed -n 's/^session=//p' "$tomb_fr/claims/final/owner" 2>/dev/null)" = s1 ] && [ "$(cat "$wsfr/late.md" 2>/dev/null)" = "written before restore" ] && [ -z "$(ls -d "$wsfr".reappeared-* 2>/dev/null)" ] && [ -f "$tomb_fr/progress.md" ] && grep -qF "a copy from an interrupted removal remains at $tomb_fr" "$TEST_ROOT/fr.err"; then pass "a takeover whose workspace is recreated during the restore answers busy, moves nothing aside and leaves the lease and owner"; else fail "a takeover whose workspace is recreated during the restore answers busy, moves nothing aside and leaves the lease and owner (finish rc=$rcf rc=$rc: $out: tomb=$tomb_fr: $(tr '\n' '|' < "$TEST_ROOT/fr.err"))"; fi
+# A copy whose removal the branch already committed is leftover, not an open plan: the takeover leaves it and takes the orphan path.
+fc="$TEST_ROOT/fc"; make_repo "$fc"; git -C "$fc" switch -q -c feat
+mkdir -p "$fc/docs"; : > "$fc/docs/spec.md"; printf '# T\n\n**Spec:** docs/spec.md\n\n### Task 1: A\n\n**Risk tier:** standard\n\n**Depends on:** none\n' > "$fc/docs/plan.md"; git -C "$fc" add docs; git -C "$fc" commit -qm plan
+wsfc=$(run_sdd_dir "$fc" docs/plan.md 2>/dev/null); printf '# SDD ledger — plan: docs/plan.md\n' > "$wsfc/progress.md"
+run_state "$fc" register docs/plan.md --session s1 --integration feat >/dev/null
+printf 'Task 1: complete (commits 1111111..2222222, review clean)\n' >> "$wsfc/progress.md"
+run_state "$fc" claim docs/plan.md final --session s1 >/dev/null
+lease_fc=""; for fc_f in "$STATE_ROOT/$(state_key "$fc").final-"*; do [ -f "$fc_f" ] && lease_fc=$fc_f; done
+( cd "$fc" && HYPERPOWERS_TEST_CRASH_AT=finish-after-commit bash "$SDD_STATE" finish docs/plan.md --session s1 >/dev/null 2>&1 ); rcf=$?
+out=$(run_state "$fc" claim docs/plan.md final --session s2 --takeover 2>/dev/null); rc=$?
+tomb_fc=""; for fc_f in "$(dirname "$wsfc")/.removing-$(basename "$wsfc")-"*; do [ -d "$fc_f" ] && tomb_fc=$fc_f; done
+co_fc=$(dirname "$(dirname "$wsfc")")
+if [ "$rcf" -eq 99 ] && [ "$rc" -eq 0 ] && [ "$out" = "status=claimed task=final lease=$(basename "$lease_fc") takeover=1" ] && [ ! -e "$wsfc" ] && [ -f "$tomb_fc/progress.md" ] && ! git -C "$co_fc" cat-file -e "refs/heads/hyperpowers/state:plans/$(basename "$wsfc")" 2>/dev/null && [ "$(sed -n 's/^session=//p' "$lease_fc")" = s2 ]; then pass "a takeover leaves a killed finish's copy alone once the removal is committed and takes the orphan path"; else fail "a takeover leaves a killed finish's copy alone once the removal is committed and takes the orphan path (finish rc=$rcf rc=$rc: $out: tomb=$tomb_fc)"; fi
 # A takeover reads a missing or malformed closing= in the replaced lease as closing, at both takeover sites: an open plan's, and the orphan path after finish removed the workspace. A sibling's register on the branch then answers branch-closing.
 dc="$TEST_ROOT/dc"; make_repo "$dc"; git -C "$dc" switch -q -c feat
 mkdir -p "$dc/docs"; : > "$dc/docs/spec.md"

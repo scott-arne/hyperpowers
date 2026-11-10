@@ -109,7 +109,8 @@ release that ships the hook; not part of this plan.
 
 ### Field replay
 
-Pending.
+Date 2026-11-10; pin `f2e915c`; evals `3d184725d`; artifacts `task-6-replay/`.
+calls 329 (agent 286, sendmessage 43); 59 refusals: 48 expected, 11 outside a plan, 0 false. Run on a frozen copy of the corpus (task-6-replay/freeze.tsv): ae183251 dropped one `tools-used` line, and no other session dropped any. ec562ba3's 07:22, 17:47 and 18:02 calls are expected refusals (a SendMessage resume of the Task 3 implementer, a background Agent dispatch of the Task 5 review, and a SendMessage resume of the Task 5 implementer, all inside the 2026-11-10 SDD run). Pass.
 
 ### Scenario
 

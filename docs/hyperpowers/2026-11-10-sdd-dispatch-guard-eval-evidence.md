@@ -124,5 +124,5 @@ Date 2026-11-11; evals `1cfa22068`; artifacts `task-9-runs/fork/`, `tally-fork.t
 
 ### Zed run
 
-Date 2026-11-11; pin `f2e915c`; claude-agent-acp 0.106.0; evals `59d978077`; artifacts `task-10-zed/`.
-One `background-agent` refusal and one `sendmessage-resume` refusal, 2 of 2 paired; the human partner reports the thread showed the session working throughout ("Seemed to work throughout, the run finished"). Pass.
+Date 2026-11-11; pin `f2e915c`; Claude Code 2.1.322 (from the transcript), via claude-agent-acp (0.106.0 inferred from Zed's install time); evals `4a00f374b`; artifacts `task-10-zed/`.
+One `background-agent` refusal and one `sendmessage-resume` refusal, 2 of 2 paired; the human partner reports the thread showed the session working throughout ("Seemed to work throughout, the run finished"). The turn ended on a hand-back at 05:23Z after Claude Code's worktree-isolation check refused `sdd-state complete` (it reads the argument `complete` as a command), so Task 1 has no completion line and Task 2 never started; that refusal is outside the dispatch guard. Pass.

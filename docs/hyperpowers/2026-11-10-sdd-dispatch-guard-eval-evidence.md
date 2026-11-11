@@ -114,11 +114,13 @@ calls 329 (agent 286, sendmessage 43); 59 refusals: 48 expected, 11 outside a pl
 
 ### Scenario
 
-Pending.
+Date 2026-11-11; pin `f2e915c`; Claude Code 2.1.317; evals `1cfa22068`; artifacts `task-9-runs/` (`tally-treatment.tsv`, `denied-results.tsv`).
+5 runs launched, 0 void, 5 counted: 5 of 5 passed; paired background-agent refusal in run(s) all five (6abf, e527, 4def, 501a, 792a). Agent denials carry Claude Code's `PreToolUse:Agent hook error: ` prefix and SendMessage denials the guard's text alone; both come from the same `permissionDecision: deny`, so the prefix is Claude Code's rendering and not a hook failure. Quorum's own grade failed 4 of 5 runs on the fixture's end state (the plan's Task 1 code makes Task 2's test fail by design, the script says to follow the plan, and the agent will not merge red code), and the pairing rule does not read the end state. Pass.
 
 ### Fork-mode run
 
-Pending.
+Date 2026-11-11; evals `1cfa22068`; artifacts `task-9-runs/fork/`, `tally-fork.tsv`.
+0 refusals, 1 fork-mode lines; the controller passed run_in_background on 4 of 4 dispatches (values "false","true"); a dispatch came back `{isAsync: true, status: "async_launched"}`. Pass.
 
 ### Zed run
 

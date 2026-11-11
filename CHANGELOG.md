@@ -2,7 +2,7 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
-## Unreleased
+## 6.18.1 (2026-11-11)
 
 In Zed, a finishing session looked idle while a long test suite ran: the session started the suite in the background and ended its turn.
 

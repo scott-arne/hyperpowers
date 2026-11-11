@@ -124,4 +124,5 @@ Date 2026-11-11; evals `1cfa22068`; artifacts `task-9-runs/fork/`, `tally-fork.t
 
 ### Zed run
 
-Pending.
+Date 2026-11-11; pin `f2e915c`; claude-agent-acp 0.106.0; evals `59d978077`; artifacts `task-10-zed/`.
+One `background-agent` refusal and one `sendmessage-resume` refusal, 2 of 2 paired; the human partner reports the thread showed the session working throughout ("Seemed to work throughout, the run finished"). Pass.

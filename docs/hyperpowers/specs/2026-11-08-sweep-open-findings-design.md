@@ -1,5 +1,7 @@
 # Open review-sweep findings: final train, amend, records, hardening, skill text
 
+**Outcome:** implemented 2026-11-10 (2026-11-09-sweep-open-findings.md); 14 decisions under docs/hyperpowers/decisions/.
+
 **Date:** 2026-11-08
 **Status:** design approved in chat on 2026-11-08, section by section (final
 train and amend; records, board, hardening and single findings; skill text,

@@ -21,7 +21,7 @@ for t in tests/hooks/test-*.sh tests/codex-review-gate/test-*.sh tests/sdd/test-
   case "$t" in tests/opencode/test-tools.sh|tests/opencode/test-priority.sh) continue ;; esac
   [ -f "$t" ] && run "$t"
 done
-for t in tests/claude-code/test-sdd-dir-path.sh tests/claude-code/test-codex-review-dir-path.sh tests/claude-code/test-delivery-resolution.sh tests/claude-code/test-worktree-path-policy.sh tests/claude-code/test-docs-allowlist.sh tests/claude-code/test-decisions-compile.sh; do run "$t"; done
+for t in tests/claude-code/test-sdd-dir-path.sh tests/claude-code/test-codex-review-dir-path.sh tests/claude-code/test-delivery-resolution.sh tests/claude-code/test-worktree-path-policy.sh tests/claude-code/test-docs-allowlist.sh tests/claude-code/test-decisions-compile.sh tests/claude-code/test-wait-exit.sh; do run "$t"; done
 ( cd tests/brainstorm-server && npm test > "$OUT/brainstorm-npm.log" 2>&1 ) || { echo "FAILED: tests/brainstorm-server npm test (log: $OUT/brainstorm-npm.log)"; fails=$((fails + 1)); }
 run tests/brainstorm-server/windows-lifecycle.test.sh
 node tests/pi/test-pi-extension.mjs > "$OUT/pi.log" 2>&1 || { echo "FAILED: tests/pi/test-pi-extension.mjs (log: $OUT/pi.log)"; fails=$((fails + 1)); }

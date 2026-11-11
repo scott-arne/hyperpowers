@@ -82,8 +82,27 @@ has no records: for it, this step is the test run alone.
    you hand back). Otherwise compose the dispatch from
    [decision-notes-prompt.md](decision-notes-prompt.md) with the merge-base
    diff and `<dir>/decision-notes.md` as its output path, and start it in
-   the background. Then run the project's full test suite in the
-   foreground (`npm test` / `cargo test` / `pytest` / `go test ./...`).
+   the background. Then run the project's full test suite (`npm test` /
+   `cargo test` / `pytest` / `go test ./...`) and wait for its result in
+   this turn:
+   - A suite expected to finish within 10 minutes runs in the foreground,
+     with an explicit timeout of at least its expected runtime and at most
+     600000 ms.
+   - A suite that may run longer starts through your harness's tracked
+     background option (`run_in_background` on Claude Code, with a timeout
+     above its expected runtime), never with a trailing `&` or `nohup`, as
+     `<suite> > <dir>/suite.log 2>&1; echo $? > <dir>/suite.exit`. `<dir>`
+     is the scratch directory from item 2; when item 2 was skipped, take
+     one the same way now. Then wait in the foreground with repeated
+     `bash <this skill's directory>/scripts/wait-exit <dir>/suite.exit --max-ms 540000`
+     calls, each with a 600000 ms tool timeout: `running` means call it
+     again; `exited code=0` is a green suite; any other code is a failing
+     suite, read from `<dir>/suite.log`. A launch whose timeout passes with
+     no exit file is a failing suite too.
+
+   Ending the turn while the suite runs leaves an editor such as Zed
+   showing the session idle, and there the result goes unreported until
+   your human partner types.
 4. **If tests fail**, stop a still-running extractor (TaskStop), report the
    failures and stop — the menu comes after a green suite. Nothing is
    compiled; the plan stays.

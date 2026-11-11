@@ -2,6 +2,12 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
+## Unreleased
+
+In Zed, a finishing session looked idle while a long test suite ran: the session started the suite in the background and ended its turn.
+
+- **Finish waits for a long suite in the foreground.** finishing-a-development-branch Step 1 item 3 now says how to run the full suite and wait for it in the same turn. A suite expected to finish within 10 minutes runs in the foreground with an explicit timeout. A longer suite starts through the harness's tracked background option with its exit status written to a file in the Finish scratch directory, and the session waits with repeated calls to the new `scripts/wait-exit <file> --max-ms 540000` helper, which prints `running` or `exited code=N` and reads its bound from the clock. SDD's `tracked-job` does not reach Finish, because SDD removes its ledger before it hands off. Measured over ten runs per arm of a scenario whose suite runs about 11.7 minutes: every control run (6.17.0) ended at least one turn while the suite ran (50 such turn ends in all), no treatment run did (two-sided Fisher p = 1.1e-5), and both arms ran the suite and merged in 10 of 10. Evidence: hyperpowers-evals `evidence/2026-11-07-finish-long-suite/` and `docs/hyperpowers/2026-11-07-finish-long-suite-eval-evidence.md`.
+
 ## 6.18.0 (2026-11-11)
 
 - **The dispatch guard keeps an SDD turn open on Claude Code.** A new PreToolUse hook refuses an SDD controller's `Agent` call with `run_in_background: true`, and its `SendMessage` to one of its own subagents, while the session has a plan ledger, and tells it to dispatch in the foreground instead. Both calls end the turn while the subagent works, so Zed showed the session idle; after a compaction the controller no longer has the skill's foreground rule. The decision extractor's background dispatch passes, a fork-mode session passes, a subagent's own calls pass, and anything the hook cannot read passes. It logs to `~/.cache/hyperpowers/dispatch-guard/<session>.jsonl`.

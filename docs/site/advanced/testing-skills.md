@@ -1,6 +1,6 @@
 ---
 sources: skills/writing-skills docs/testing.md CLAUDE.md
-source-digest: a800f41248fd
+source-digest: fbf18a608007
 ---
 # How skills are tested
 

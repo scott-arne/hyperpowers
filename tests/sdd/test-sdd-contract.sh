@@ -12,6 +12,7 @@ FIXP="$REPO_ROOT/skills/subagent-driven-development/fix-subagent-prompt.md"
 REREVW="$REPO_ROOT/skills/subagent-driven-development/re-review-prompt.md"
 WPLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
 FIN="$REPO_ROOT/skills/finishing-a-development-branch/SKILL.md"
+DNP="$REPO_ROOT/skills/finishing-a-development-branch/decision-notes-prompt.md"
 
 FAILURES=0
 
@@ -655,6 +656,8 @@ assert_not_contains "$SDD" "Settle where the work happens first" "Setup no longe
 assert_before "$SDD" "Read before you settle" "Then settle where the work happens" "the read comes before the worktree is settled"
 assert_contains "$SDD" "Setup: sync and workspace, read the plan line, branch question" "the process graph reads the plan line before the branch question"
 assert_not_contains "$SDD" "Setup: branch question, sync and workspace" "no process-graph label settles the branch before sync"
+
+assert_contains "$DNP" "You write implementation notes for a list of design decisions" "decision-notes-prompt keeps the opening sentence the dispatch guard recognizes the extractor by"
 
 echo
 [ "$FAILURES" -eq 0 ] && { echo "STATUS: PASSED"; exit 0; } || { echo "STATUS: FAILED ($FAILURES)"; exit 1; }

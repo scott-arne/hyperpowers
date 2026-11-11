@@ -1,13 +1,13 @@
 ---
-sources: skills/subagent-driven-development hooks/sdd-stop-guard hooks/lib/stop-guard.mjs skills/writing-plans/SKILL.md docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md
-source-digest: dac13c11ceac
+sources: skills/subagent-driven-development hooks/sdd-stop-guard hooks/lib/stop-guard.mjs skills/writing-plans/SKILL.md docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md hooks/sdd-dispatch-guard hooks/lib/dispatch-guard.mjs
+source-digest: b976ef64d825
 ---
 # subagent-driven-development
 
 `subagent-driven-development` (SDD) runs a written plan by dispatching a fresh implementer subagent for each task, or one subagent for a batch of small same-shape tasks, reviewing each task's result, and reviewing the whole branch at the end.
 
 :::{card} At a glance
-**Category:** Process · **Triggers on:** executing an implementation plan with independent tasks in the current session · **Hands off to:** {doc}`finishing-a-development-branch` · **Harness notes:** the Codex task and final gates and the stop guard run on Claude Code only; the skill degrades to its Claude reviewers when Codex is absent
+**Category:** Process · **Triggers on:** executing an implementation plan with independent tasks in the current session · **Hands off to:** {doc}`finishing-a-development-branch` · **Harness notes:** the Codex task and final gates, the stop guard and the dispatch guard run on Claude Code only; the skill degrades to its Claude reviewers when Codex is absent
 :::
 
 ## When it triggers
@@ -96,3 +96,4 @@ If you want one agent to do the work in your session, say "execute inline" and t
 - {source}`skills/subagent-driven-development/scripts/task-brief` extracts a task's text, and {source}`skills/subagent-driven-development/scripts/review-package` builds the diff file a reviewer reads.
 - {source}`skills/subagent-driven-development/scripts/sdd-dir` prints the plan's workspace path, and {source}`skills/subagent-driven-development/scripts/sdd-state` syncs, registers, offers and claims tasks, merges them back, records completions, hand-backs and waiting records, prints the board, amends the plan, snapshots, hands off, and finishes the workspace. {source}`skills/subagent-driven-development/scripts/tracked-job` allocates, runs, watches, and stops tracked jobs. `sdd-common.sh` holds their shared code.
 - {source}`hooks/sdd-stop-guard` is the Claude Code Stop hook, and {source}`hooks/lib/stop-guard.mjs` holds its logic.
+- {source}`hooks/sdd-dispatch-guard` is the Claude Code PreToolUse hook that refuses a background `Agent` dispatch, or a `SendMessage` to one of the session's own subagents, while a plan is in progress outside fork mode, and {source}`hooks/lib/dispatch-guard.mjs` holds its logic.

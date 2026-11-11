@@ -1,5 +1,7 @@
 # SDD Dispatch Guard: Design
 
+**Outcome:** implemented 2026-11-11; 9 decisions under docs/hyperpowers/decisions/.
+
 Date: 2026-11-10. Status: draft for review. This design follows the
 sdd-stop-guard spec (`2026-10-23-sdd-stop-guard-design.md`), whose Z4
 contingency put the foreground fix-round rule into the SDD skill. It adds a

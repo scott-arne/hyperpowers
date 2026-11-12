@@ -1,6 +1,6 @@
 ---
 sources: skills/using-hyperpowers hooks .opencode/plugins .pi/extensions .kimi-plugin/plugin.json skills/writing-skills/SKILL.md .cursor-plugin/plugin.json .codex-plugin/plugin.json scripts/claude-skill-root.md skills/subagent-driven-development/SKILL.md README.md tests/antigravity/test-antigravity-tools.sh RELEASE-NOTES.md docs/porting-to-a-new-harness.md docs/README.kimi.md
-source-digest: ce61c7ed3a08
+source-digest: 43cc663ebd9b
 ---
 # How skills trigger
 
@@ -39,8 +39,9 @@ After the skill text, `hooks/session-start` can append one-line notices. Each ap
 - A count of ungated review items pending in the repository, with the phrase that clears them ("run the review sweep").
 - A line saying the marketplace has a newer plugin version than the one the session loaded.
 - On a start whose source is `compact`, inside a git repository that has a subagent-driven-development ledger, a line that names the newest ledger, says it records which tasks are complete, tells the agent to read it and `git log` before dispatching anything, and tells the agent to treat task instructions in the compaction summary as stale by default.
+- On every start whose source is `compact`, with or without a repository or ledger and ahead of the ledger line, a line that names the installed plugin's `skills/<name>/SKILL.md` and tells the agent to Read in full each hyperpowers skill it is following. The re-attached copy of a skill is cut to 20,000 characters, and a long session can hold an older copy than the one installed.
 
-A comment in the script states a ceiling of 1200 characters of injected context beyond the skill body when all notices fire.
+A comment in the script states a ceiling of 1400 characters of injected context beyond the skill body when all notices fire.
 
 ## What decides whether a skill fires
 

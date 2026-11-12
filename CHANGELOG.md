@@ -2,6 +2,10 @@
 
 This file records **this fork's own releases**. The fork's version stream is independent of upstream Superpowers and may collide numerically with upstream tags without sharing content; the current upstream base is recorded in [`.upstream-version.json`](.upstream-version.json). Upstream's release history is preserved unchanged in [RELEASE-NOTES.md](RELEASE-NOTES.md).
 
+## Unreleased
+
+- **The compaction notice tells the session to re-read its skills from the installed plugin.** After a compaction, `hooks/session-start` now adds one line on every `compact` run naming the plugin's `skills/` directory and telling the session to Read in full each hyperpowers skill it is following. A long-running session keeps the skill text it loaded at process start, so a fix to a skill file never reached it, while the hook runs from disk on every event. In the field since 2026-11-04, the re-attached SDD copy lacked the re-read paragraph in 60 of 77 compactions; with the paragraph present the session re-read after 15 of 17. The A9 ledger notice's path spelling moved into a shared `spell_path` helper, and the notice budget rose from 1200 to 1400 characters.
+
 ## 6.18.1 (2026-11-11)
 
 In Zed, a finishing session looked idle while a long test suite ran: the session started the suite in the background and ended its turn.

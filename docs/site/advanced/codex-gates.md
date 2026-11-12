@@ -1,6 +1,6 @@
 ---
 sources: skills/requesting-code-review skills/brainstorming/codex-approach-gate.md skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/subagent-driven-development/risk-tiers.md hooks/session-start scripts/claude-skill-root.md
-source-digest: e356b6c1d73f
+source-digest: 18a31f13493c
 ---
 # Codex reviews
 

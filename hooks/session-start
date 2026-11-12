@@ -118,7 +118,7 @@ session_context="<EXTREMELY_IMPORTANT>\nYou have superpowers.\n\n**Below is the 
 # --- Notice budget ----------------------------------------------------------
 # Every notice appended to session_context is ONE line. With all of them
 # firing, the injected context minus the using-hyperpowers body stays under
-# 1200 characters; tests/hooks/test-session-start.sh asserts that ceiling.
+# 1400 characters; tests/hooks/test-session-start.sh asserts that ceiling.
 # ---------------------------------------------------------------------------
 
 # --- Ungated-work notice (spec 4.3) ----------------------------------------
@@ -176,6 +176,28 @@ version_notice="$(
 )" || version_notice=""
 if [ -n "$version_notice" ]; then
   session_context="${session_context}\n\n${version_notice}"
+fi
+# ---------------------------------------------------------------------------
+
+# --- Re-read notice on compaction --------------------------------------------
+# After a compaction Claude Code re-attaches each invoked skill cut to its
+# first 20,000 characters, and a long-running session keeps the skill text it
+# loaded at process start, which can be releases old. This hook runs from disk
+# on every event, so its text is current even then: it points the session at
+# the installed copy of each skill it follows. It needs no repository and no
+# ledger, comes before the ledger notice because SDD reads the skill and then
+# the ledger, and is fail-silent like the notices above it.
+reread_notice=""
+if [ "$hook_source" = "compact" ]; then
+  reread_notice="$(
+    ( set +e
+      root_shown="$(spell_path "$PLUGIN_ROOT")" || exit 0
+      printf 'Context was compacted. Each skill you invoked came back cut to 20,000 characters, and a long session can hold an older copy than the one installed. Before your next action, Read in full %s/skills/<name>/SKILL.md for each hyperpowers skill you are following; if none, skip this.' "$(escape_for_json "$root_shown")"
+    ) 2>/dev/null
+  )" || reread_notice=""
+fi
+if [ -n "$reread_notice" ]; then
+  session_context="${session_context}\n\n${reread_notice}"
 fi
 # ---------------------------------------------------------------------------
 

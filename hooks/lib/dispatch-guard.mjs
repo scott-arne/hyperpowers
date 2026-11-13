@@ -1,10 +1,10 @@
 // The SDD dispatch guard, a PreToolUse hook on Claude Code. It refuses the two
 // calls that end an SDD controller's turn while a subagent works: an Agent
 // dispatch with run_in_background true, and a SendMessage resume of one of the
-// session's own subagents. The skill already forbids both outside fork mode,
-// but after a compaction the controller no longer has those lines, and an
-// editor such as Zed shows the session idle for as long as the background
-// subagent runs. The design is
+// session's own subagents. The skill forbids both outside fork mode, in the
+// part of SKILL.md Claude Code re-attaches whole after a compaction; a
+// controller can still make either call, and an editor such as Zed then shows
+// the session idle for as long as the background subagent runs. The design is
 // docs/hyperpowers/specs/2026-11-10-sdd-dispatch-guard-design.md.
 //
 // The hook refuses or stays silent. A PreToolUse allow would skip the user's
@@ -132,7 +132,7 @@ export function decideDispatch({ tool, toolInput = {}, discovery, plan = null, f
 
 export function refusalText(reason, plan, skill = SKILL_PATH) {
   const head = `SDD plan ${plan} is in progress in this session.`;
-  const reread = `If you have not Read ${skill} in full since the last compaction, Read it now.`;
+  const reread = `If you have not Read ${skill} and the step file its step table names since the last compaction, Read them now.`;
   if (reason === 'background-agent') return `${head} On this harness every subagent is dispatched in the foreground (run_in_background: false): the turn stays open while it works, which is what the editor shows as the session working. Dispatch this one again with run_in_background: false. ${reread}`;
   return `${head} On this harness a SendMessage resume runs in the background and the turn ends while the subagent works. Dispatch a fresh subagent in the foreground (run_in_background: false) with the brief path, the report-file path, and what you meant to send; for a fix round, the open findings verbatim on the original implementer's model. The report file records what the earlier subagent did. ${reread}`;
 }

@@ -122,7 +122,7 @@ of the portable dossiers design) reached `ec562ba3` at 16:55Z on 2026-11-10.
    the A9 notice, which is tested text outside this slice.
 
 7. **SDD's SKILL.md becomes a controller under 19,000 characters, and its
-   step text moves verbatim into four sibling files.** At the 100,000-token
+   step text moves into five sibling files.** At the 100,000-token
    window released 6.18.1 failed 10 of 10 runs of `sdd-compaction-reread`
    with Claude Code's "Autocompact is thrashing" stop, and so did the notice
    arm: a full re-read of the 76,445-character skill (41,751 when 6.16.2
@@ -135,12 +135,14 @@ of the portable dossiers design) reached `ec562ba3` at 16:55Z on 2026-11-10.
    that can go stale; a short recovery document holding the rules the cut
    drops, a second copy that drifts and summarizes 56,000 characters of
    loop rules lossily; re-reading only the text past the cut, about 15,000
-   tokens, too close to the threshold; supporting only windows of 200,000
+   tokens and growing with every addition to the skill, where offline size
+   checks cap the controller and one step file near 10,000 tokens; supporting only windows of 200,000
    or more.
    Supersedes: docs/hyperpowers/decisions/2026-11-03-fix-truncation-with-a-re-read-paragraph.md
 
-8. **SDD's re-read paragraph sends the session to the ledger and the step
-   file for its current step.** This amends decision 4 for SDD; the
+8. **SDD's re-read paragraph sends the session to the board, the ledger
+   lines of the task it holds, and the step file a table in the
+   controller names for that state.** This amends decision 4 for SDD; the
    brainstorming paragraph is unchanged, since that skill re-reads in one
    Read for about 7,000 tokens and passed 10 of 10 in 6.16.2. Rejected:
    keeping the full-file re-read, which loops at 100,000 (measured).
@@ -347,33 +349,67 @@ added a second such instruction.
 `skills/subagent-driven-development/SKILL.md` stays under 19,000
 characters, below the 20,000 Claude Code re-attaches with room to grow. It
 keeps the overview, the narration and communication lines, Continuous
-execution, Tracked work only, the compaction paragraph, When to Use and
-Model Selection as they are, plus three new parts:
+execution, Tracked work only, When to Use and Model Selection as they are,
+and the rewritten compaction paragraph below, plus:
 
 - a numbered outline of the plan's steps in place of the dot graph in The
-  Process, each line naming the step, its decision points, and the file to
-  Read when the step comes;
-- the rules that hold whatever step the session is in: tasks with a
-  completion line are never dispatched again, and the ledger and `git log`
-  outrank memory; foreground waits and one implementer at a time; the
-  controller never fixes code itself outside the de-minimis exception; the
-  shared five-round cap and its breaker; when a turn may end and the
-  handback line; a step file read before a compaction is gone and is read
-  again;
+  Process, each line naming the step, its decision points, and its file;
+- the step table below, which names one step file for each ledger state;
+- the rules that hold in every step: tasks with a completion line are never
+  dispatched again, and the ledger and `git log` outrank memory; subagents
+  and covering commands are waited on in the foreground, one implementer at
+  a time; the controller never fixes code itself outside the de-minimis
+  exception; the shared five-round cap and its breaker; when a turn may end
+  and the handback line; a step file read before a compaction is gone and
+  is read again;
 - the waiting board and the Risk Tiers pointer.
 
-The step text moves verbatim into sibling files in the same directory:
+Each rule in that list is stated once, in SKILL.md. Moving the step text
+deletes the sentences that state the same rule (the plan lists each
+deletion) and otherwise moves it verbatim; the step text keeps the
+mechanics of carrying a rule out. Where a step file and SKILL.md differ on
+a rule, SKILL.md governs. An offline check finds each rule's sentence
+exactly once across SKILL.md and the step files.
+
+The step files, in the same directory:
 
 | File | Holds | Size today |
 |---|---|---|
 | `setup.md` | Setup | 16,660 |
-| `task-loop.md` | The Task Loop's introduction and steps 1, 2, 3 and 5 | 22,368 |
+| `task-loop.md` | The Task Loop's introduction, step 1 (dispatch) and step 2 (the report) | 15,886 |
+| `review-and-complete.md` | Step 3 (the task review) and step 5 (completing the task) | 6,482 |
 | `fix-loop.md` | Step 4, the fix loop | 11,581 |
 | `final-and-finish.md` | Final Review and Finish | 9,590 |
 
 Every link from the moved text to another sibling file keeps working from
-its new place. The only new prose is the outline, the step pointers, the
-rules summary and the paragraph below.
+its new place. Offline checks hold SKILL.md under 19,000 characters and
+each step file under 17,000, so SKILL.md and any one step file together
+stay under 36,000 characters, about 10,000 tokens.
+
+Recovery reads the ledger in two bounded parts, not whole: the board
+(`scripts/sdd-state board PLAN_FILE`, a few lines naming the task this
+session holds) and the lines of that task and of this session's Setup
+(`grep -E '^(Task <N>:|session <sid>: setup complete)' <workspace>/progress.md`,
+with `Task <N>:` left out when no task is held). Whole ledgers on this host
+reach 105,391 characters for a 13-task plan; the largest one task's lines
+reach 11,932 (seven ledgers measured 2026-11-12). The step table:
+
+| State | Step file |
+|---|---|
+| no ledger in the workspace `scripts/sdd-dir PLAN_FILE` prints, or no `setup complete` line of this session in it | `setup.md` |
+| the board shows no task held by this session and a task without a completion line | `task-loop.md` |
+| the held task's newest line is its branch, base, implementer identity or `report` line | `task-loop.md` |
+| its newest line is a `review` line approving it, an `approved` line or a `merged` line | `review-and-complete.md` |
+| its newest line is a `fix round` line, or a `review` or Codex gate line with blocking findings | `fix-loop.md` |
+| this session holds the final claim, or every task has a completion line | `final-and-finish.md` |
+
+Three ledger lines become mandatory so the table can be read: at the end
+of Setup, `session <sid>: setup complete`; after a report,
+`Task <N>: report <status> ...`; after a review or a Codex gate round,
+`Task <N>: review <approved|blocking> ...` and
+`Task <N>: codex gate round <R> <approved|blocking> ...`. A state the table
+does not cover reads `task-loop.md`, and the session records that in the
+ledger.
 
 ### The paragraph and the notice
 
@@ -381,10 +417,10 @@ SDD's paragraph becomes:
 
 > **After every context compaction:** this file fits within the 20,000
 > characters Claude Code re-attaches, so the copy you hold is whole. A step
-> file you read before the compaction (`setup.md`, `task-loop.md`,
-> `fix-loop.md`, `final-and-finish.md`) does not survive it. Before your
-> next action, Read the ledger and, in full, the step file for the step you
-> are on.
+> file you read before the compaction does not survive it. Before your next
+> action, print the board and the ledger lines the step table names (your
+> task's and your Setup's, never the whole ledger), find your step in the
+> table, and Read that step file in full.
 
 The notice keeps its trigger, order and root spelling; its text becomes:
 
@@ -399,15 +435,24 @@ A session on stale 6.18 text is pointed at the installed controller, about
 5,500 tokens. A current session re-reads a SKILL.md it already holds whole,
 the same cost, accepted because the hook cannot tell the two apart.
 
+The dispatch guard's refusal texts (`hooks/lib/dispatch-guard.mjs`) end
+"If you have not Read <skill> in full since the last compaction, Read it
+now." That becomes "If you have not Read <skill> and the step file its step
+table names since the last compaction, Read them now.", and the module's
+opening comment no longer says a compaction removes the foreground rule,
+since SKILL.md now always holds it.
+
 ### Components (revised)
 
-In this repository: the SDD SKILL.md and the four new step files; every
-offline test that looks for SDD text, pointed at the file the text moved to
-(`tests/sdd/` and the other suites listed in `docs/testing.md`); a new
-offline check that SKILL.md is under 19,000 characters and each step file
-under 25,000; `hooks/session-start` and `tests/hooks/test-session-start.sh`
-for the notice text and the measured ceiling; the `docs/site/` pages whose
-`sources:` list SDD or the hook; `CHANGELOG.md`.
+In this repository: the SDD SKILL.md and the five step files; every
+offline test that looks for SDD text, pointed at the file the text moved
+to (`tests/sdd/` and the other suites listed in `docs/testing.md`); new
+offline checks for the size bounds and the once-only rule sentences;
+`hooks/session-start` and `tests/hooks/test-session-start.sh` for the
+notice text and the measured ceiling; `hooks/lib/dispatch-guard.mjs` and
+`hooks/lib/dispatch-guard.test.mjs` for the refusal texts; the
+`docs/site/` pages whose `sources:` list SDD, the hook or the dispatch
+guard; `CHANGELOG.md`.
 
 In hyperpowers-evals: `tally.py` and its tests for the arms and rules
 below, the manifest and README in the evidence directory. The scenario,
@@ -421,27 +466,52 @@ Arms, ten valid runs each, the harness pin, Claude Code 2.1.317 and
 - control: released v6.18.1 on `sdd-compaction-reread` (decision 10);
 - treatment: the slice head on `sdd-compaction-reread`;
 - sentinel: the slice head on `compaction-no-skill`, with the validity and
-  failure rules of the Testing section above.
+  failure rules of the Testing section above, unchanged.
 
-A run that ends in the thrash stop or never dispatches is a valid failed
-run, not a void. A compaction is followed when, after it and before the
-next dispatch or ledger write, the session reads SKILL.md or an SDD step
-file whole: a Read with no truncation banner, or reads together covering
-the file; persisted Bash output earns no credit, as before.
+Validity for the two SDD arms replaces the earlier window rule. A run is a
+void when the launch failed its pin checks (`launch`), setup errored
+(`setup`), the Gauntlet-Agent gave no pass or fail (`grader`), a quorum
+stage after setup errored (`instrument`), or no compaction came after the
+skill loaded (`no-compaction`). Every other run is valid, a run that ends in
+the thrash stop or never dispatches among them, and counts as an outcome
+failure. Voids are replaced under the replacement cap and recorded in
+`sentinel-reruns.tsv` as before.
+
+A treatment compaction is followed when, after it and before the session's
+next governed action (an Agent dispatch, a ledger write, or a
+`sdd-state` call other than `board`), the session reads in full the step
+file the step table names for the state at the compaction, and, when a
+ledger existed then, prints the board and the ledger lines the step table
+names. The tally
+reads the state from the ledger writes and `sdd-state` output in the
+transcript before the compaction; a state it cannot read counts the
+compaction as not followed. A read in full is a Read with no truncation
+banner, or Reads that together cover the file; persisted Bash output earns
+no credit. The tally also reports, separately, compactions followed by any
+step file, by the board and task lines, and by SKILL.md, so a session that
+reads the wrong step file, only SKILL.md, or skips the ledger parts shows
+in its own count; the tally's tests cover each of those cases and the
+no-ledger case.
 
 Bars:
 
 1. Treatment outcome (plan finished, every post-check passing) in at least
    8 of 10 valid runs, and more than the control's.
 2. No treatment run ends in the thrash stop.
-3. At least 85% of treatment compactions are followed.
+3. At least 85% of treatment compactions after the skill load, valid runs
+   pooled, are followed.
 4. Median treatment compactions per run at most 16.
 5. Sentinel failures at most 1 of 10.
 
-Assumption: moving the step text verbatim keeps SDD's behavior in the
-steps it governs, validate via bar 1 and the existing offline SDD suites.
-Assumption: a session reaching a step reads its file before acting on it,
-validate via bar 3 and a read of three treatment transcripts.
+Assumption: moving the step text keeps SDD's behavior in the steps it
+governs, validate via bar 1 and the existing offline SDD suites.
+Assumption: one task's ledger lines stay under about 15,000 characters
+(largest measured 11,932), so the whole recovery read, SKILL.md, one step
+file, the board and the task lines, stays under about 52,000 characters,
+about 14,000 tokens, validate via the same measurement over the state
+checkouts on this host when the plan is written. The campaign measures one
+four-task plan; longer plans rely on reading one task's lines, which does
+not grow with the plan.
 
 Out of scope for the revision: brainstorming, finishing-a-development-branch
 and writing-skills, also over the cut but each re-read in one Read of about

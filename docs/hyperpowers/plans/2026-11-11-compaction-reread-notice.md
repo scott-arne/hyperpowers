@@ -1328,6 +1328,8 @@ if grep -Fq 'session <sid>: setup complete' "$SDD_DIR/setup.md"; then pass "setu
 if grep -Fq 'Task <N>: report <status>' "$SDD_DIR/task-loop.md"; then pass "task-loop.md writes the report line"; else fail "task-loop.md writes the report line"; fi
 if grep -Fq 'Task <N>: review <approved|blocking>' "$SDD_DIR/review-and-complete.md"; then pass "review-and-complete.md writes the review line"; else fail "review-and-complete.md writes the review line"; fi
 if grep -Fq 'Task <N>: codex gate round <R> <approved|blocking>' "$SDD_DIR/review-and-complete.md"; then pass "review-and-complete.md writes the gate line"; else fail "review-and-complete.md writes the gate line"; fi
+if grep -Fq 'a line it does not name, such as a deferred minor or the gate directory, leaves your step unchanged' "$SDD_DIR/SKILL.md"; then pass "the step table reads only the lines it names"; else fail "the step table reads only the lines it names"; fi
+if grep -Fq "line (SKILL.md's ledger lines) after the round's \`fix round\` line" "$SDD_DIR/fix-loop.md"; then pass "fix-loop.md writes the review line after the fix round line"; else fail "fix-loop.md writes the review line after the fix round line"; fi
 ```
 
 The rule list is fed with `printf`, not a heredoc (Global Constraints). In `tests/sdd/test-compaction-reread.sh`, replace the SDD `check` line with:
@@ -1364,7 +1366,7 @@ Each step's full text is in its own file beside this one. Read a step's file whe
 
 ## After a compaction: the step table
 
-Print the board (`scripts/sdd-state board PLAN_FILE`) and the ledger lines of your task and your Setup (`grep -E '^(Task <N>:|session <sid>: setup complete)' <workspace>/progress.md`, leaving out `Task <N>:` when you hold no task); `scripts/sdd-dir PLAN_FILE` prints the workspace. Do not Read the whole ledger after a compaction: it grows with the plan. Then Read the step file this table names:
+Print the board (`scripts/sdd-state board PLAN_FILE`) and the ledger lines of your task and your Setup (`grep -E '^(Task <N>:|session <sid>: setup complete)' <workspace>/progress.md`, leaving out `Task <N>:` when you hold no task); `scripts/sdd-dir PLAN_FILE` prints the workspace. Do not Read the whole ledger after a compaction: it grows with the plan. A row's newest line is the newest of your task's lines the table names (its branch, base, implementer identity, `report`, `review`, Codex gate round, `approved`, `merged` and `fix round` lines); a line it does not name, such as a deferred minor or the gate directory, leaves your step unchanged. Then Read the step file this table names:
 
 | State | Step file |
 |---|---|
@@ -1419,7 +1421,8 @@ If the layout test still counts a rule twice, the remaining copy is a restatemen
 - `setup.md`, as the last paragraph: "Setup's last action: append `session <sid>: setup complete` to the ledger (a later session writes its own). The step table in SKILL.md reads it to tell a compaction during Setup from one after it."
 - `task-loop.md`, in step 2 (Handle the report), first bullet: "Append `Task <N>: report <status> <one line>` to the ledger when the report arrives, before acting on it."
 - `review-and-complete.md`, in step 3 where the reviewer's verdict is read: "Append `Task <N>: review <approved|blocking> <reviewer id> <one line>` when a task review or scoped re-review returns." In the gate subsection, after the line that records `Task N gate dir: <path>`: "After each gate round, append `Task <N>: codex gate round <R> <approved|blocking> <one line>`, R being the gate's own round number."
-- `fix-loop.md`, where a scoped re-review returns: "Append the `Task <N>: review ...` line (SKILL.md's ledger lines) before the round's `fix round` line."
+- `fix-loop.md`, where a scoped re-review returns: "Append the `Task <N>: review ...` line (SKILL.md's ledger lines) after the round's `fix round` line, so the newest line tells a resumed session whether the round left findings open."
+- `setup.md`: "A task whose last line is a fix round is mid-loop: resume the loop at the next round." becomes "A task whose newest line is a `fix round` line, or a blocking `review` line after one, is mid-loop: resume the loop at the next round; a round whose `review` line approves goes on to the gate."
 
 - [ ] **Step 5: Run the suites**
 
@@ -1439,6 +1442,8 @@ git -C <worktree> diff --cached > <sw>/logs/t8.staged.diff
 python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t8.staged.diff
 git -C <worktree> commit -m "feat(sdd): a compact controller that comes back whole after a compaction"
 ```
+
+Correction (2026-11-13), decision 8 (SDD's re-read paragraph sends the session to the board, the ledger lines of the task it holds, and the step file a table in the controller names for that state): the per-task Codex gate on Task 8 (round 1, three lenses) found that the table as the spec words it routes on a task's newest line of any kind, so a deferred minor, a gate-directory line or a BLOCKED line as the newest line falls through to `task-loop.md`, and that a clean fix round ended on its `fix round` line because `fix-loop.md` wrote the re-review's `review` line first. Your human partner chose to correct it (2026-11-13): the table reads the newest line it names and ignores the rest (the sentence added before the table in Step 2), `fix-loop.md` writes the `review` line after the `fix round` line, and `setup.md`'s resume rule matches (both in Step 4); the layout test checks both (Step 1). Task 11's tally already classifies only the lines the table names, so it needs no change. These edits land as a fix round on Task 8.
 
 ---
 

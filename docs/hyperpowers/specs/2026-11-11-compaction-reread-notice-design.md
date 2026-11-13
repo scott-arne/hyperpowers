@@ -1,14 +1,15 @@
 # Compaction Re-read Notice: Design
 
-Date: 2026-11-11, revised 2026-11-12. Status: revised after the campaign
-stopped; the section "Revision (2026-11-12): a compact SDD controller"
-governs wherever it differs from the Design and Testing sections. This
-design is the
+Date: 2026-11-11, revised 2026-11-12 and 2026-11-13. Status: revised twice
+after campaigns. The section "Revision (2026-11-13): the controller without
+the notice" governs wherever it differs from earlier sections, and
+"Revision (2026-11-12): a compact SDD controller" governs wherever it
+differs from the Design and Testing sections. This design is the
 compaction-loss slice that decision 2 of the SDD dispatch guard spec
 (`2026-11-10-sdd-dispatch-guard-design.md`) deferred. A new measurement
-changes its premise, so it supersedes that decision and changes the plan:
-the slice adds one notice to `hooks/session-start` and evaluates it, instead
-of building an eval that reproduces the field rate.
+changed its premise, so it supersedes that decision: the slice first added
+a notice to `hooks/session-start` and evaluated it, instead of building an
+eval that reproduces the field rate.
 
 ## Problem
 
@@ -166,6 +167,31 @@ of the portable dossiers design) reached `ec562ba3` at 16:55Z on 2026-11-10.
     dispatch, which hid all 20 failing runs on 2026-11-12; a shipped arm
     beside the treatment, since the treatment now is the shipped
     configuration.
+
+11. **The notice comes out of `hooks/session-start`, and the notice ceiling
+    returns to 1,200 characters.** The controller with the notice finished 5
+    of 10 runs at the 100,000-token window, and all five failures stopped in
+    the finishing step; the human partner had ruled the notice off any
+    release (2026-11-12) and chose to remove it and measure the controller
+    alone (2026-11-13). This amends decisions 2, 3 and 9 and reverses
+    decision 6. Rejected: keeping the notice on the branch unreleased, which
+    a merge would ship and the decision records would record as adopted;
+    keeping the branch unmerged, which leaves the controller's gain over
+    6.18.1 unused.
+
+12. **SDD's re-read paragraph keeps v6.18.1's clause for other skills whose
+    re-attached copy is cut short.** Without the notice, the clause is the
+    only pointer to finishing-a-development-branch after a compaction; that
+    skill is cut at its line 379 and carries no re-read paragraph of its
+    own. This amends decision 8. Rejected: leaving the clause out, which
+    loses the finishing steps after a compaction during Finish.
+
+13. **The eval adds a `controller` arm against the same control and bars
+    1-4, without a sentinel.** Once the notice is off, the treatment the
+    revised campaign measured is no longer the configuration that ships.
+    This amends decision 10. Rejected: merging the controller unmeasured,
+    which the evaluation rule for skill changes forbids; re-running the
+    sentinel, which measures only the notice.
 
 ## Design
 
@@ -517,6 +543,57 @@ not grow with the plan.
 Out of scope for the revision: brainstorming, finishing-a-development-branch
 and writing-skills, also over the cut but each re-read in one Read of about
 7,000 to 8,000 tokens.
+
+## Revision (2026-11-13): the controller without the notice
+
+### What the revised campaign found
+
+The revised campaign ran `slice` (the controller plus the notice) on
+`sdd-compaction-reread` at a 100,000-token window. It finished 5 of 10
+valid runs against released 6.18.1's 0 of 10. The other five ended in
+Claude Code's "Autocompact is thrashing" stop after all four tasks and the
+final review were done, in or entering the finishing step; one Gauntlet
+summary says the stop came while the session was re-reading skill files
+after a compaction. It followed 49 of 208 compactions (24%), with a median
+of 19 compactions per run. Bars 1-4 failed and bar 5 passed (0 of 10
+sentinel failures). `docs/hyperpowers/2026-11-11-compaction-reread-notice-eval-evidence.md`
+records the runs.
+
+The human partner had ruled the notice off any release on 2026-11-12. The
+final whole-branch review found that a merge would ship it anyway, with
+decisions 2, 3, 6 and 9 recording it as adopted, and that the
+configuration a merge could ship, the controller without the notice, was
+never measured. On 2026-11-13 the human partner chose to remove the notice
+and measure the controller alone.
+
+### The change
+
+`hooks/session-start` returns to its text before the notice (the
+`spell_path` refactor stays), and its notice budget returns to 1,200
+characters. SDD's paragraph keeps the controller's recovery read and
+regains v6.18.1's last clause:
+
+> **After every context compaction:** this file fits within the 20,000
+> characters Claude Code re-attaches, so the copy you hold is whole. A step
+> file you read before the compaction does not survive it. Before your next
+> action, print the board and the ledger lines the step table names (your
+> task's and your Setup's, never the whole ledger), find your step in the
+> table, and Read that step file in full, along with any other skill you
+> are following whose re-attached copy is cut short.
+
+The dispatch guard sentence, the step table and the step files do not
+change.
+
+### Testing (second revision)
+
+One arm, `controller` (the integration head after the notice comes out),
+runs ten times on `sdd-compaction-reread` at a 100,000-token window, with
+the same harness pin, Claude Code version, models, validity rules and
+replacement cap as the revised campaign, against the same `baseline-6181`
+control. Bars 1-4 of "Testing (revised)" apply with `controller` as the
+treatment. The sentinel does not run again: without the notice no hook
+text reaches a session that follows no skill. The `slice` results stand as
+measured.
 
 ## Out of Scope
 

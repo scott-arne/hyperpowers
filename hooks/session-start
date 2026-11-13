@@ -192,7 +192,7 @@ if [ "$hook_source" = "compact" ]; then
   reread_notice="$(
     ( set +e
       root_shown="$(spell_path "$PLUGIN_ROOT")" || exit 0
-      printf 'Context was compacted. Each skill you invoked came back cut to 20,000 characters, and a long session can hold an older copy than the one installed. Before your next action, Read in full %s/skills/<name>/SKILL.md for each hyperpowers skill you are following; if none, skip this.' "$(escape_for_json "$root_shown")"
+      printf 'Context was compacted. Each skill you invoked came back cut to 20,000 characters, and a long session can hold an older copy than the one installed. Before your next action, Read in full %s/skills/<name>/SKILL.md for each hyperpowers skill you are following, then the files it tells you to read after a compaction; if none, skip this.' "$(escape_for_json "$root_shown")"
     ) 2>/dev/null
   )" || reread_notice=""
 fi

@@ -458,7 +458,7 @@ NOTICE_TAIL=": it records which tasks are already complete. Read it and git log 
 
 # The re-read notice, asserted verbatim apart from the plugin root.
 REREAD_HEAD="Context was compacted. Each skill you invoked came back cut to 20,000 characters, and a long session can hold an older copy than the one installed. Before your next action, Read in full "
-REREAD_TAIL="/skills/<name>/SKILL.md for each hyperpowers skill you are following; if none, skip this."
+REREAD_TAIL="/skills/<name>/SKILL.md for each hyperpowers skill you are following, then the files it tells you to read after a compaction; if none, skip this."
 
 make_repo() { # <name> -> prints repo path
     local repo="$TEST_ROOT/$1/repo"

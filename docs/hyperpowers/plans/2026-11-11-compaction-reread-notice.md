@@ -51,6 +51,19 @@ These supersede, for Tasks 7-13, the lines above on the notice text, the notice 
 - Voids for the SDD arms: `launch`, `setup`, `grader`, `instrument`, `no-compaction`; a thrash stop or a run with no dispatch is a valid failure. Replacements r1-r3 per arm and scenario, recorded in `<E>/sentinel-reruns.tsv`.
 - The notice stays off any release; nothing is pushed.
 
+### Revision 2 constraints (Tasks 14-17)
+
+These supersede, for Tasks 14-17, the revision constraints above on the notice, the notice ceiling, the SDD paragraph, the arms and the bars. The spec section "Revision (2026-11-13): the controller without the notice" and decisions 11-13 (which Task 14 appends to the spec) govern.
+
+- The human partner's decision (2026-11-13), after the final whole-branch review: remove the notice and measure the controller alone. Rejected: keeping the branch unmerged; removing the notice and merging unmeasured.
+- Notice: none. `hooks/session-start` and `tests/hooks/test-session-start.sh` return to their text at `d2474402` (the `spell_path` commit, which stays), except the one comment and the one negative test case Task 14 adds. The notice ceiling is 1200 again.
+- SDD paragraph, verbatim: `**After every context compaction:** this file fits within the 20,000 characters Claude Code re-attaches, so the copy you hold is whole. A step file you read before the compaction does not survive it. Before your next action, print the board and the ledger lines the step table names (your task's and your Setup's, never the whole ledger), find your step in the table, and Read that step file in full, along with any other skill you are following whose re-attached copy is cut short.` The brainstorming paragraph, the step table, the step files and the dispatch guard sentence (Task 9) do not change.
+- Regression: `bash <worktree>/tests/run-offline.sh` exits 0 after Task 14, apart from the environmental brainstorm-server failure already recorded in the ledger (no `node_modules` in the worktree); the controller runs it as a tracked job.
+- Arms: control `baseline-6181` as in the revision constraints; treatment `controller`, the integration head after Task 14 (CONTROLLER), on `sdd-compaction-reread`, window 100000, same harness pin, Claude Code version, models, validity rules and replacement cap. The `slice` results stand as measured and are not re-run. No sentinel wave.
+- Bars for `controller` (bars 1-4 of the revised spec, with `controller` as the treatment): 1. Outcome (plan finished, every post-check passing, at least one implement dispatch) in at least 8 of 10 valid runs, and more than the control's. 2. No valid run ends in the thrash stop. 3. At least 85% of compactions after the skill load, valid runs pooled, are followed. 4. Median compactions per run at most 16. A FAIL is a result to report, not a reason to re-run.
+- No dollar figures. Before staging any run archive or quorum log in `<E>`, run `python3 <sw>/scrub-costs.py --check <E>/logs <E>/task-6-runs`; when it reports changes, save `python3 <E>/tally.py` output, run `python3 <sw>/scrub-costs.py <E>/logs <E>/task-6-runs`, and confirm the tally output is byte-identical afterwards. The staged diff holds no dollar sign followed by a digit.
+- The notice stays off any release; nothing is pushed. Before any push of evals `main`, its unpushed range is rewritten with the 2026-11-11 rules (human partner, 2026-11-13); that rewrite is not part of this plan.
+
 ## Grounding
 
 - `hooks/session-start:16-35`: `escape_for_json`, the byte-exact JSON escaper `spell_path` builds on.
@@ -1950,3 +1963,383 @@ git -C <ev> diff --cached > <sw>/logs/t13-ev.staged.diff
 python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t13-ev.staged.diff
 git -C <ev> commit -m "docs(experiments): compaction re-read campaign and its revision"
 ```
+
+### Task 14: Remove the notice and keep the other-skills clause
+
+**Risk tier:** standard — removes hook output and changes behavior-shaping paragraph text, with tests, docs and the spec's decisions.
+
+**Depends on:** Task 13
+
+**Files:**
+- Modify: `docs/hyperpowers/specs/2026-11-11-compaction-reread-notice-design.md` (header, decisions 11-13, a new revision section)
+- Modify: `hooks/session-start`, `tests/hooks/test-session-start.sh`
+- Modify: `skills/subagent-driven-development/SKILL.md` (line 23, the paragraph), `tests/sdd/test-compaction-reread.sh` (line 33 pins the paragraph)
+- Modify: `docs/site/advanced/triggering.md`, `docs/site/advanced/sdd-internals.md`, `docs/site/advanced/codex-gates.md`, `docs/site/skills/using-hyperpowers.md`, and any other page `bash tests/docs/docs-check.sh` reports stale
+- Modify: `CHANGELOG.md` (the `## Unreleased` notice bullet)
+
+**Interfaces:**
+- Consumes: commits `ffb81ef8` and `d00c689f` (the notice and its follow-up), `d2474402` (the `spell_path` refactor, which stays).
+- Produces: the integration head CONTROLLER that Task 16 pins: no re-read notice in `hooks/session-start`, the paragraph above in `SKILL.md`.
+
+**Mirror:** `git show d2474402:hooks/session-start` and `git show d2474402:tests/hooks/test-session-start.sh` are the end state for those two files (before the notice).
+
+- [ ] **Step 1: Record the decision in the spec**
+
+In the spec, replace the header paragraph (from `Date: 2026-11-11, revised 2026-11-12.` through `of building an eval that reproduces the field rate.`) with:
+
+```markdown
+Date: 2026-11-11, revised 2026-11-12 and 2026-11-13. Status: revised twice
+after campaigns. The section "Revision (2026-11-13): the controller without
+the notice" governs wherever it differs from earlier sections, and
+"Revision (2026-11-12): a compact SDD controller" governs wherever it
+differs from the Design and Testing sections. This design is the
+compaction-loss slice that decision 2 of the SDD dispatch guard spec
+(`2026-11-10-sdd-dispatch-guard-design.md`) deferred. A new measurement
+changed its premise, so it supersedes that decision: the slice first added
+a notice to `hooks/session-start` and evaluated it, instead of building an
+eval that reproduces the field rate.
+```
+
+Append after decision 10, in this order:
+
+```markdown
+11. **The notice comes out of `hooks/session-start`, and the notice ceiling
+    returns to 1,200 characters.** The controller with the notice finished 5
+    of 10 runs at the 100,000-token window, and all five failures stopped in
+    the finishing step; the human partner had ruled the notice off any
+    release (2026-11-12) and chose to remove it and measure the controller
+    alone (2026-11-13). This amends decisions 2, 3 and 9 and reverses
+    decision 6. Rejected: keeping the notice on the branch unreleased, which
+    a merge would ship and the decision records would record as adopted;
+    keeping the branch unmerged, which leaves the controller's gain over
+    6.18.1 unused.
+
+12. **SDD's re-read paragraph keeps v6.18.1's clause for other skills whose
+    re-attached copy is cut short.** Without the notice, the clause is the
+    only pointer to finishing-a-development-branch after a compaction; that
+    skill is cut at its line 379 and carries no re-read paragraph of its
+    own. This amends decision 8. Rejected: leaving the clause out, which
+    loses the finishing steps after a compaction during Finish.
+
+13. **The eval adds a `controller` arm against the same control and bars
+    1-4, without a sentinel.** Once the notice is off, the treatment the
+    revised campaign measured is no longer the configuration that ships.
+    This amends decision 10. Rejected: merging the controller unmeasured,
+    which the evaluation rule for skill changes forbids; re-running the
+    sentinel, which measures only the notice.
+```
+
+Insert before `## Out of Scope`:
+
+```markdown
+## Revision (2026-11-13): the controller without the notice
+
+### What the revised campaign found
+
+The revised campaign ran `slice` (the controller plus the notice) on
+`sdd-compaction-reread` at a 100,000-token window. It finished 5 of 10
+valid runs against released 6.18.1's 0 of 10. The other five ended in
+Claude Code's "Autocompact is thrashing" stop after all four tasks and the
+final review were done, in or entering the finishing step; one Gauntlet
+summary says the stop came while the session was re-reading skill files
+after a compaction. It followed 49 of 208 compactions (24%), with a median
+of 19 compactions per run. Bars 1-4 failed and bar 5 passed (0 of 10
+sentinel failures). `docs/hyperpowers/2026-11-11-compaction-reread-notice-eval-evidence.md`
+records the runs.
+
+The human partner had ruled the notice off any release on 2026-11-12. The
+final whole-branch review found that a merge would ship it anyway, with
+decisions 2, 3, 6 and 9 recording it as adopted, and that the
+configuration a merge could ship, the controller without the notice, was
+never measured. On 2026-11-13 the human partner chose to remove the notice
+and measure the controller alone.
+
+### The change
+
+`hooks/session-start` returns to its text before the notice (the
+`spell_path` refactor stays), and its notice budget returns to 1,200
+characters. SDD's paragraph keeps the controller's recovery read and
+regains v6.18.1's last clause:
+
+> **After every context compaction:** this file fits within the 20,000
+> characters Claude Code re-attaches, so the copy you hold is whole. A step
+> file you read before the compaction does not survive it. Before your next
+> action, print the board and the ledger lines the step table names (your
+> task's and your Setup's, never the whole ledger), find your step in the
+> table, and Read that step file in full, along with any other skill you
+> are following whose re-attached copy is cut short.
+
+The dispatch guard sentence, the step table and the step files do not
+change.
+
+### Testing (second revision)
+
+One arm, `controller` (the integration head after the notice comes out),
+runs ten times on `sdd-compaction-reread` at a 100,000-token window, with
+the same harness pin, Claude Code version, models, validity rules and
+replacement cap as the revised campaign, against the same `baseline-6181`
+control. Bars 1-4 of "Testing (revised)" apply with `controller` as the
+treatment. The sentinel does not run again: without the notice no hook
+text reaches a session that follows no skill. The `slice` results stand as
+measured.
+```
+
+Run `bash <finishing skill directory>/scripts/decisions-compile docs/hyperpowers/specs/2026-11-11-compaction-reread-notice-design.md --dry-run` (the directory is `/Users/johnss51/Development/agents/hyperpowers/.worktrees/plugin-install/skills/finishing-a-development-branch`); it lists 13 decisions and exits 0 once the spec is committed (Step 7), so run it after that commit too.
+
+- [ ] **Step 2: Write the failing tests**
+
+Restore the pre-notice test file and add one negative case and one comment pin:
+
+```bash
+git show d2474402:tests/hooks/test-session-start.sh > tests/hooks/test-session-start.sh
+```
+
+Add, beside the existing compact-run cases, a case that runs the hook with `hook_source` `compact` (reuse the helper the A9 cases use to build a compact payload) and asserts the context does not contain `came back cut to 20,000 characters`, with the pass/fail label `compact run adds no re-read notice`. Add to the comment-pin block (the block that begins `# The four constraints below live only as comments in the hook.`; update its count in the comment to five) a pin:
+
+```bash
+if grep -Fq 'one unpaired apostrophe there, even inside a comment, takes the hook down' "$HOOK_UNDER_TEST"; then
+    pass "session-start records the bash 3.2 apostrophe rule"
+else
+    fail "session-start records the bash 3.2 apostrophe rule"
+fi
+```
+
+In `tests/sdd/test-compaction-reread.sh` line 33, replace the pinned paragraph with the Revision 2 paragraph verbatim.
+
+Run: `bash tests/hooks/test-session-start.sh > <sw>/logs/t14-red-hook.log 2>&1; echo $?` and `bash tests/sdd/test-compaction-reread.sh > <sw>/logs/t14-red-sdd.log 2>&1; echo $?`.
+Expected: both non-zero: the negative case fails (the notice still prints), the apostrophe pin fails, the paragraph pin fails, and the ceiling case fails if the overhead with the notice is at or above 1200.
+
+- [ ] **Step 3: Restore the hook and add the apostrophe comment**
+
+```bash
+git show d2474402:hooks/session-start > hooks/session-start
+```
+
+Then, in the `# --- Notice budget` block, after the line `# 1200 characters; tests/hooks/test-session-start.sh asserts that ceiling.`, insert:
+
+```bash
+# Each notice below builds its line inside a $( ) body. Bash 3.2 scans that
+# body for its closing paren before it parses, counting quotes as it goes, so
+# one unpaired apostrophe there, even inside a comment, takes the hook down at
+# run time. Keep those bodies and their comments free of them.
+```
+
+Check: `git diff d2474402 -- hooks/session-start` shows only those four added lines; the file mode stays executable.
+
+- [ ] **Step 4: Restore the clause in SDD's paragraph**
+
+In `skills/subagent-driven-development/SKILL.md` line 23, replace the paragraph with the Revision 2 paragraph verbatim (it adds `, along with any other skill you are following whose re-attached copy is cut short` before the final period). `SKILL.md` stays under 19,000 characters.
+
+Run: `bash tests/hooks/test-session-start.sh > <sw>/logs/t14-hook.log 2>&1; echo $?`, `bash tests/sdd/test-compaction-reread.sh > <sw>/logs/t14-sdd.log 2>&1; echo $?`, `bash tests/sdd/test-sdd-layout.sh > <sw>/logs/t14-layout.log 2>&1; echo $?`, `bash tests/sdd/test-sdd-contract.sh > <sw>/logs/t14-contract.log 2>&1; echo $?`, `node --test hooks/lib/dispatch-guard.test.mjs > <sw>/logs/t14-guard.log 2>&1; echo $?`, `bash scripts/lint-shell.sh hooks/session-start tests/hooks/test-session-start.sh tests/sdd/test-compaction-reread.sh > <sw>/logs/t14-lint.log 2>&1; echo $?`.
+Expected: every exit status 0.
+
+- [ ] **Step 5: Docs pages**
+
+`git show ffb81ef8 d00c689f -- docs/site` shows the notice's edits to the four pages. Reverse each notice description (the text those two commits added about the compaction notice), keeping every edit later commits made; where a page quotes the SDD paragraph, use the Revision 2 paragraph. Then refresh each changed page's `source-digest:` with the value `bash tests/docs/docs-check.sh --digest <page>` prints after staging (the digests cover tracked content), and fix any other page docs-check names. `bash tests/docs/docs-check.sh` exits 0.
+
+- [ ] **Step 6: CHANGELOG**
+
+Under `## Unreleased`, delete the bullet that begins `- **The compaction notice tells the session to re-read its skills from the installed plugin.**`. Leave the controller bullet and the measured-result bullet (Task 17 rewrites the latter).
+
+- [ ] **Step 7: Commit**
+
+Two commits, each passing docs-check:
+
+```bash
+git add docs/hyperpowers/specs/2026-11-11-compaction-reread-notice-design.md
+git diff --cached > <sw>/logs/t14-spec.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t14-spec.staged.diff
+git commit -m "docs(hyperpowers): the notice comes out; the eval measures the controller alone"
+git add hooks/session-start tests/hooks/test-session-start.sh tests/sdd/test-compaction-reread.sh skills/subagent-driven-development/SKILL.md docs/site CHANGELOG.md
+git diff --cached > <sw>/logs/t14.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t14.staged.diff
+git commit -m "fix(hooks): drop the compaction re-read notice; SDD keeps the clause for other cut skills"
+```
+
+Then the decisions dry run from Step 1 exits 0 and lists 13 decisions.
+
+### Task 15: Tally and launchers for the controller arm
+
+**Risk tier:** high — the tally's output decides the controller bars.
+
+**Depends on:** Task 13
+
+**Files (in `<E>`):**
+- Modify: `tally.py`, `test_tally.py`, `logs/measure-launch.sh`, `launch-all.sh`, `archive-runs.sh`, `README.md` (arms, pins note, bars, launching)
+
+**Interfaces:**
+- Consumes: the Task 11 tally (revision mode) as committed in evals `db70c8d345`.
+- Produces: `python3 tally.py` printing, when `manifest.tsv` holds a `controller` pin, a `controller sdd-compaction-reread:` cell line and four controller bar lines after the existing output; launchers accepting arm `controller`.
+
+**Mirror:** evals `cb35700ea8` and `3676acb78c` (how Task 11 added the `slice` arm to `tally.py`, `test_tally.py` and the three scripts).
+
+Rules:
+
+- Arm `controller` reads exactly as `slice` does on `sdd-compaction-reread`: revised SDD validity (void kinds `launch`, `setup`, `grader`, `instrument`, `no-compaction`; a thrash stop under a grader void is a valid failure), outcome, thrash, dispatches and the per-compaction recovery counts. Logs: `logs/controller-sdd-compaction-reread-p<k>.log` (k = 1..10) and `logs/controller-sdd-compaction-reread-r<n>.log` (n = 1..3). A `controller` log on any other scenario makes `main()` exit 1 naming the file.
+- Step-file line counts come from each arm's own pin: `slice` from the `slice` pin, `controller` from the `controller` pin (`STEP_LINES` keyed by arm, or an equivalent that keeps the two apart). A `controller` log without a `controller` pin in `manifest.tsv` makes `main()` exit 1 naming the missing pin, as a `slice` log without its pin does.
+- Output. With no `controller` pin and no `controller` rows, `python3 tally.py` prints exactly what it prints today (`tally-revision.txt` byte for byte). When `manifest.tsv` holds a `controller` pin or the runs hold a `controller` row, after the five existing bar lines it prints the controller cell line in the slice SDD cell format, then:
+
+```text
+bar 1, controller SDD outcome (at least 8 of 10 valid, and more than baseline-6181's): <PASS|FAIL|incomplete>
+bar 2, controller SDD thrash (no valid run with thrash=1): <PASS|FAIL|incomplete>
+bar 3, controller SDD compactions followed (at least 85%, valid runs pooled): <PASS|FAIL|incomplete>
+bar 4, controller SDD median compactions per run (at most 16): <PASS|FAIL|incomplete>
+```
+
+  A controller cell with fewer than ten valid runs reads `incomplete`, and so do its bars. `summarize_revision` takes a keyword argument `controller_pinned: bool = False`; `main()` passes `"controller" in manifest_pins()`.
+- Run lines for `controller` use the slice SDD run-line format. `--run` with `--arm controller --scenario sdd-compaction-reread` reads one run.
+- `--waves-1-2` output is unchanged (`tally.txt` byte for byte).
+- `logs/measure-launch.sh`: `controller) root=/Users/johnss51/.cache/hyperpowers/compaction-reread-notice/arms/controller ;;`; the arm error message lists `controller`; the pin check covers it; a `controller` launch on any scenario but `sdd-compaction-reread` exits 2 with `controller runs only on sdd-compaction-reread`.
+- `launch-all.sh` accepts `controller` as a pin row and as an arm; `archive-runs.sh` accepts `controller`.
+- `README.md`: the arms list adds `controller` (spec decision 13: the integration head after the notice comes out); the pins section says the `controller` pin row is added to `manifest.tsv` before its wave and `tally.py` exits 1 for a `controller` log without it; the bars section adds the four controller bars; the launching section names `manifest-revision-c.tsv` (the pin rows plus ten `controller` rows).
+
+- [ ] **Step 1: Write the failing tests**
+
+In `test_tally.py`:
+
+```python
+class ControllerArm(unittest.TestCase):
+    def test_controller_reads_as_slice(self) -> None:
+        entries = [SDD_LOAD, compact(), agent("Implement Task 1: a", "i1"), notif("i1"), compact(), THRASH_ENTRY]
+        slice_row, _ = revision_row("slice", entries)
+        controller_row, line = revision_row("controller", entries)
+        for key in ("valid", "void_kind", "outcome", "thrash", "compactions"):
+            self.assertEqual(controller_row[key], slice_row[key], key)
+        self.assertIn("thrash=1", line)
+
+    def test_controller_bars(self) -> None:
+        runs = {
+            **revision_cell("baseline-6181", SDD, 10, outcome=False, thrash=1, compactions=9, followed=0),
+            **revision_cell("slice", SDD, 10, outcome=True, thrash=0, compactions=20, followed=17,
+                            any_step=17, ledger_parts=17, skill=17),
+            **revision_cell("slice", NOSKILL, 10, failed=False, reads=[]),
+            **revision_cell("controller", SDD, 10, outcome=True, thrash=0, compactions=10, followed=9,
+                            any_step=9, ledger_parts=9, skill=9),
+        }
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            tally.summarize_revision(runs, set(), controller_pinned=True)
+        lines = out.getvalue().splitlines()
+        bars = [line for line in lines if line.startswith("bar ") and " controller " in line]
+        self.assertEqual([b.rsplit(" ", 1)[1] for b in bars], ["PASS", "PASS", "PASS", "PASS"])
+
+    def test_no_controller_prints_no_controller_lines(self) -> None:
+        runs = {
+            **revision_cell("baseline-6181", SDD, 10, outcome=False, thrash=1, compactions=9, followed=0),
+            **revision_cell("slice", SDD, 10, outcome=True, thrash=0, compactions=20, followed=17,
+                            any_step=17, ledger_parts=17, skill=17),
+            **revision_cell("slice", NOSKILL, 10, failed=False, reads=[]),
+        }
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            tally.summarize_revision(runs, set())
+        self.assertNotIn("controller", out.getvalue())
+```
+
+Add tests for: nine valid controller runs read `incomplete` on the cell and all four controller bars; a controller thrash run fails bar 2; a `controller-compaction-no-skill-p1.log` makes the collection step raise or `main()` return 1 (follow how the existing tests check an unknown log); the step-line lookup for `controller` uses the `controller` pin (stub `manifest_pins` and `subprocess.run` as the existing `load_step_lines` tests do, or as `revision_row` stubs `run_paths`).
+
+Run: `python3 -m unittest test_tally -v > <sw>/logs/t15-red.log 2>&1; echo $?` from `<E>`.
+Expected: non-zero; the new tests fail (`controller` is not a revision arm; `summarize_revision` has no `controller_pinned`).
+
+- [ ] **Step 2: Implement the tally changes**
+
+Make the rules above true in `tally.py`, then run the tests until they pass.
+
+- [ ] **Step 3: Scripts and README**
+
+Make the script and README changes above.
+
+- [ ] **Step 4: Verify**
+
+From `<E>`: `python3 -m unittest test_tally > <sw>/logs/t15-unit.log 2>&1; echo $?` (0); `ruff check tally.py test_tally.py` and `mypy tally.py test_tally.py` clean; `shellcheck logs/measure-launch.sh launch-all.sh archive-runs.sh` clean; `python3 tally.py > $TMPDIR/rev.txt 2>&1; diff $TMPDIR/rev.txt tally-revision.txt` prints nothing; `python3 tally.py --waves-1-2 > $TMPDIR/w12.txt 2>&1; diff $TMPDIR/w12.txt tally.txt` prints nothing; `bash logs/measure-launch.sh controller compaction-no-skill 1 r1 default; echo $?` prints the refusal and 2 without launching anything.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git -C <ev> add evidence/2026-11-11-compaction-reread-notice/tally.py evidence/2026-11-11-compaction-reread-notice/test_tally.py evidence/2026-11-11-compaction-reread-notice/logs/measure-launch.sh evidence/2026-11-11-compaction-reread-notice/launch-all.sh evidence/2026-11-11-compaction-reread-notice/archive-runs.sh evidence/2026-11-11-compaction-reread-notice/README.md
+git -C <ev> diff --cached > <sw>/logs/t15.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t15.staged.diff
+git -C <ev> commit -m "evidence(compaction-reread-notice): tally and launchers for the controller arm"
+```
+
+### Task 16: Controller campaign
+
+**Risk tier:** standard — runs the measurement; no code changes.
+
+**Depends on:** Task 14, Task 15
+
+**Files (in `<E>`):**
+- Create: `manifest-revision-c.tsv`, `logs/controller-*.log`, `task-6-runs/controller/`, `tally-revision-2.txt`
+- Modify: `manifest.tsv` (the `controller` pin row), `README.md` (pin table), `sentinel-reruns.tsv` only for replacements
+
+**Interfaces:**
+- Consumes: the integration head after Task 14 (CONTROLLER); the Task 15 tally and launchers; `<sw>/wave-rev.sh`, `<sw>/rerun-rev.sh` and `<sw>/scrub-costs.py` from Task 12.
+- Produces: `tally-revision-2.txt` with the four controller bar lines; archived runs Task 17 cites.
+
+- [ ] **Step 1: Pre-flight and the controller arm**
+
+`claude --version` prints `2.1.317`; `GAUNTLET_AGENT_MODEL` is `claude-opus-5-5`; the proxy variables are set. CONTROLLER = `git -C <worktree> rev-parse compaction-reread-notice`; `git -C <worktree> log --oneline -4 compaction-reread-notice` shows the Task 14 merge. With the sandbox off: `git -C <worktree> worktree add --detach <sw>/arms/controller <CONTROLLER>`. Checks: `grep -c "came back cut to 20,000 characters" <sw>/arms/controller/hooks/session-start` is `0`; `grep -c "whose re-attached copy is cut short" <sw>/arms/controller/skills/subagent-driven-development/SKILL.md` is `1`; `bash <sw>/arms/controller/tests/sdd/test-sdd-layout.sh` passes. Add `controller<TAB><CONTROLLER>` to `manifest.tsv` after the `slice` row and a `controller` row to the README pin table; `python3 <E>/tally.py` still exits 0 and prints the controller cell as `incomplete`; commit both in evals with the leak scan ("evidence(compaction-reread-notice): controller pin").
+
+- [ ] **Step 2: Wave C, controller (10 rows)**
+
+`<E>/manifest-revision-c.tsv`: the pin rows of `manifest.tsv` (every two-field row) plus ten `controller<TAB>sdd-compaction-reread<TAB>1<TAB>p<k><TAB>default` rows, k = 1..10. Launch from `<ev>` as a tracked job (SDD's tracked-job commands, budget 7200000 ms): `bash <sw>/wave-rev.sh c`, which runs `ANTHROPIC_MODEL=claude-opus-5-5 bash <E>/launch-all.sh <E>/manifest-revision-c.tsv 10 > <sw>/logs/wave-c.out 2>&1` and appends `exit=<status>`. Then `python3 <E>/tally.py > <sw>/logs/tally-wave-c.txt 2>&1`. Voids (`void=<kind>` on a controller run line) get one replacement each, launched as a tracked job: `bash <sw>/rerun-rev.sh controller sdd-compaction-reread r<n>`, the pair (original run id, replacement run id) appended to `<E>/sentinel-reruns.tsv`, at most r3, the tally re-run after each append.
+
+- [ ] **Step 3: Archive, scrub and tally**
+
+`bash <E>/archive-runs.sh controller <E>/task-6-runs` (sandbox off if the copy fails with `Operation not permitted`, deleting the untracked partial `task-6-runs/controller` first). Apply the cost-scrub constraint (Global Constraints, Revision 2). Then `cd <E> && python3 tally.py > tally-revision-2.txt 2>&1; echo "exit=$?"`. The controller cell has ten valid runs and each controller bar line prints PASS or FAIL.
+
+- [ ] **Step 4: Commit the evidence**
+
+Follow `<ev>/evidence/README.md` "Before committing a run". Then:
+
+```bash
+git -C <ev> add evidence/2026-11-11-compaction-reread-notice/logs evidence/2026-11-11-compaction-reread-notice/tally-revision-2.txt evidence/2026-11-11-compaction-reread-notice/sentinel-reruns.tsv evidence/2026-11-11-compaction-reread-notice/manifest-revision-c.tsv
+git -C <ev> add -f evidence/2026-11-11-compaction-reread-notice/task-6-runs/controller
+git -C <ev> diff --cached > <sw>/logs/t16.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t16.staged.diff
+grep -cE '\$[0-9]' <sw>/logs/t16.staged.diff
+git -C <ev> commit -m "evidence(compaction-reread-notice): controller campaign runs and tally"
+```
+
+The scan prints `hits: 0` and the grep prints `0`; the staged tree holds no gitlink and no `.git`, `.claude-env`, `home/.codex` or cache path.
+
+### Task 17: Evidence notes for the controller arm
+
+**Risk tier:** standard — the durable record the release decision cites.
+
+**Depends on:** Task 16
+
+**Files:**
+- Modify: `<worktree>/docs/hyperpowers/2026-11-11-compaction-reread-notice-eval-evidence.md`, `<ev>/docs/experiments/2026-11-11-compaction-reread-notice.md`, `<worktree>/CHANGELOG.md`
+
+**Interfaces:**
+- Consumes: `<E>/tally-revision-2.txt`, the archived controller run ids, decisions 11-13.
+
+**Mirror:** the sections Task 13 wrote in the same two files.
+
+- [ ] **Step 1: The hyperpowers evidence note**
+
+Add a section `## Second revision (2026-11-13): the controller without the notice` after the revised campaign's results: the change (decisions 11-13; the notice removed; the Revision 2 paragraph verbatim); method (arm `controller`, its pin, everything else as the revised campaign); one results table (runs, valid, voids by kind, outcome, thrash) and the per-compaction table for `controller` (compactions, followed, any step file, board and grep, SKILL.md read); the four controller bar lines copied verbatim from `tally-revision-2.txt`; one line comparing outcome and thrash with `baseline-6181` and `slice` (counts only); where any controller thrash runs stopped, from their Gauntlet summaries (`verdict.json` `gauntlet.summary`), stating only what the records say. Update the note's opening paragraph so it says the branch no longer carries the notice and gives the controller result. Cite runs as `evals/evidence/2026-11-11-compaction-reread-notice/task-6-runs/controller/<run-id>`.
+
+- [ ] **Step 2: The experiment log entry**
+
+In `<ev>/docs/experiments/2026-11-11-compaction-reread-notice.md` add the third hypothesis (the controller alone keeps SDD working at a 100,000-token window), its configuration, run pointers and a verdict per controller bar, with any failure at equal billing.
+
+- [ ] **Step 3: CHANGELOG**
+
+Replace the `## Unreleased` bullet that begins `- Measured on \`sdd-compaction-reread\`` with one sentence giving the controller's outcome, thrash count and per-compaction rate at the 100,000-token window, beside released 6.18.1's 0 of 10 and the notice arm's 5 of 10, and the evidence paths. Counts and percentages only.
+
+- [ ] **Step 4: Commit both repos**
+
+```bash
+git -C <worktree> add docs/hyperpowers/2026-11-11-compaction-reread-notice-eval-evidence.md CHANGELOG.md
+git -C <worktree> diff --cached > <sw>/logs/t17-hp.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t17-hp.staged.diff
+git -C <worktree> commit -m "docs(hyperpowers): controller-only eval evidence"
+git -C <ev> add docs/experiments/2026-11-11-compaction-reread-notice.md
+git -C <ev> diff --cached > <sw>/logs/t17-ev.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t17-ev.staged.diff
+git -C <ev> commit -m "docs(experiments): the controller without the notice"
+```
+
+`bash <worktree>/tests/docs/docs-check.sh` exits 0 after the hyperpowers commit.

@@ -1,6 +1,9 @@
 # Compaction Re-read Notice: Design
 
-Date: 2026-11-11. Status: draft for review. This design is the
+Date: 2026-11-11, revised 2026-11-12. Status: revised after the campaign
+stopped; the section "Revision (2026-11-12): a compact SDD controller"
+governs wherever it differs from the Design and Testing sections. This
+design is the
 compaction-loss slice that decision 2 of the SDD dispatch guard spec
 (`2026-11-10-sdd-dispatch-guard-design.md`) deferred. A new measurement
 changes its premise, so it supersedes that decision and changes the plan:
@@ -117,6 +120,50 @@ of the portable dossiers design) reached `ec562ba3` at 16:55Z on 2026-11-10.
    a longer test path. Rejected: cutting the notice further, which drops
    either the stale-copy reason or the path; keeping 1,200 by shortening
    the A9 notice, which is tested text outside this slice.
+
+7. **SDD's SKILL.md becomes a controller under 19,000 characters, and its
+   step text moves verbatim into four sibling files.** At the 100,000-token
+   window released 6.18.1 failed 10 of 10 runs of `sdd-compaction-reread`
+   with Claude Code's "Autocompact is thrashing" stop, and so did the notice
+   arm: a full re-read of the 76,445-character skill (41,751 when 6.16.2
+   measured the paragraph) costs about 27,000 tokens, needs two Reads, and
+   puts the context back at the threshold. A controller that fits Claude
+   Code's 20,000-character re-attachment comes back whole, so only the
+   current step's file is re-read. The human partner set the 100,000-token
+   floor as the window SDD must work at (2026-11-12). Rejected: phase
+   modules with the current phase recorded in the ledger, which add state
+   that can go stale; a short recovery document holding the rules the cut
+   drops, a second copy that drifts and summarizes 56,000 characters of
+   loop rules lossily; re-reading only the text past the cut, about 15,000
+   tokens, too close to the threshold; supporting only windows of 200,000
+   or more.
+   Supersedes: docs/hyperpowers/decisions/2026-11-03-fix-truncation-with-a-re-read-paragraph.md
+
+8. **SDD's re-read paragraph sends the session to the ledger and the step
+   file for its current step.** This amends decision 4 for SDD; the
+   brainstorming paragraph is unchanged, since that skill re-reads in one
+   Read for about 7,000 tokens and passed 10 of 10 in 6.16.2. Rejected:
+   keeping the full-file re-read, which loops at 100,000 (measured).
+
+9. **The notice gains a clause sending the session on to the files the
+   skill names after a compaction, and its ceiling follows a measurement.**
+   This amends decision 6: the plan measures the ceiling case with the new
+   text and raises the ceiling only by what that measurement needs.
+   Rejected: dropping the notice, which leaves sessions on stale skill text
+   with no pointer to the installed copy; keeping its old text, which names
+   only SKILL.md while the step text now lives beside it.
+
+10. **The eval compares released 6.18.1 with the slice head, counts a
+    thrash or a run with no dispatch as a failure, and reuses the 2026-11-12
+    baseline as its control.** This replaces decision 5. The baseline ran
+    the v6.18.1 tree on the same scenario, Claude Code version and model;
+    it stands as the control once its harness paths are shown identical to
+    the pin, and otherwise the control is run again. Rejected: the
+    stripped-paragraph control, which finished 10 of 10 by never re-reading
+    and does not stand for the release users run; voiding runs with no
+    dispatch, which hid all 20 failing runs on 2026-11-12; a shipped arm
+    beside the treatment, since the treatment now is the shipped
+    configuration.
 
 ## Design
 
@@ -275,6 +322,130 @@ counted, and reported separately.
    `/skills/<name>/SKILL.md` for a skill it never invoked;
    `using-hyperpowers` is exempt, because the bootstrap injects it. Bar: at
    most 1 of 10 valid runs fail.
+
+## Revision (2026-11-12): a compact SDD controller
+
+### What the campaign found
+
+Wave 1 (control, the paragraph stripped) gave 10 valid runs, all finishing
+the plan, with 4 of 93 compactions followed by a re-read. Wave 2 (the
+notice, paragraph stripped) gave 10 runs that each ended in Claude Code's
+"Autocompact is thrashing" stop without dispatching a subagent. In the
+traced run the first compaction came during SDD Setup at about 68,000
+tokens; the session then read SKILL.md (a truncated view, then the rest
+from line 824) and compacted again 35 to 40 seconds later at about 66,000,
+nine times. A baseline of released v6.18.1, which has the paragraph and no
+notice, failed the same way in 10 of 10 runs (9 with no dispatch, 1 with
+one). Evidence: hyperpowers-evals `b59b12e16c` and
+`evidence/2026-11-11-compaction-reread-notice/README.md`, "Outcome"; the
+baseline logs are `logs/baseline-6181-p<n>.log` there. The cause is SDD's
+size together with any instruction to re-read it whole; the notice only
+added a second such instruction.
+
+### The SDD layout
+
+`skills/subagent-driven-development/SKILL.md` stays under 19,000
+characters, below the 20,000 Claude Code re-attaches with room to grow. It
+keeps the overview, the narration and communication lines, Continuous
+execution, Tracked work only, the compaction paragraph, When to Use and
+Model Selection as they are, plus three new parts:
+
+- a numbered outline of the plan's steps in place of the dot graph in The
+  Process, each line naming the step, its decision points, and the file to
+  Read when the step comes;
+- the rules that hold whatever step the session is in: tasks with a
+  completion line are never dispatched again, and the ledger and `git log`
+  outrank memory; foreground waits and one implementer at a time; the
+  controller never fixes code itself outside the de-minimis exception; the
+  shared five-round cap and its breaker; when a turn may end and the
+  handback line; a step file read before a compaction is gone and is read
+  again;
+- the waiting board and the Risk Tiers pointer.
+
+The step text moves verbatim into sibling files in the same directory:
+
+| File | Holds | Size today |
+|---|---|---|
+| `setup.md` | Setup | 16,660 |
+| `task-loop.md` | The Task Loop's introduction and steps 1, 2, 3 and 5 | 22,368 |
+| `fix-loop.md` | Step 4, the fix loop | 11,581 |
+| `final-and-finish.md` | Final Review and Finish | 9,590 |
+
+Every link from the moved text to another sibling file keeps working from
+its new place. The only new prose is the outline, the step pointers, the
+rules summary and the paragraph below.
+
+### The paragraph and the notice
+
+SDD's paragraph becomes:
+
+> **After every context compaction:** this file fits within the 20,000
+> characters Claude Code re-attaches, so the copy you hold is whole. A step
+> file you read before the compaction (`setup.md`, `task-loop.md`,
+> `fix-loop.md`, `final-and-finish.md`) does not survive it. Before your
+> next action, Read the ledger and, in full, the step file for the step you
+> are on.
+
+The notice keeps its trigger, order and root spelling; its text becomes:
+
+> Context was compacted. Each skill you invoked came back cut to 20,000
+> characters, and a long session can hold an older copy than the one
+> installed. Before your next action, Read in full
+> `<root>/skills/<name>/SKILL.md` for each hyperpowers skill you are
+> following, then the files it tells you to read after a compaction; if
+> none, skip this.
+
+A session on stale 6.18 text is pointed at the installed controller, about
+5,500 tokens. A current session re-reads a SKILL.md it already holds whole,
+the same cost, accepted because the hook cannot tell the two apart.
+
+### Components (revised)
+
+In this repository: the SDD SKILL.md and the four new step files; every
+offline test that looks for SDD text, pointed at the file the text moved to
+(`tests/sdd/` and the other suites listed in `docs/testing.md`); a new
+offline check that SKILL.md is under 19,000 characters and each step file
+under 25,000; `hooks/session-start` and `tests/hooks/test-session-start.sh`
+for the notice text and the measured ceiling; the `docs/site/` pages whose
+`sources:` list SDD or the hook; `CHANGELOG.md`.
+
+In hyperpowers-evals: `tally.py` and its tests for the arms and rules
+below, the manifest and README in the evidence directory. The scenario,
+the sentinel scenario and the launchers stay.
+
+### Testing (revised)
+
+Arms, ten valid runs each, the harness pin, Claude Code 2.1.317 and
+`claude-opus-5-5` as controller and grader:
+
+- control: released v6.18.1 on `sdd-compaction-reread` (decision 10);
+- treatment: the slice head on `sdd-compaction-reread`;
+- sentinel: the slice head on `compaction-no-skill`, with the validity and
+  failure rules of the Testing section above.
+
+A run that ends in the thrash stop or never dispatches is a valid failed
+run, not a void. A compaction is followed when, after it and before the
+next dispatch or ledger write, the session reads SKILL.md or an SDD step
+file whole: a Read with no truncation banner, or reads together covering
+the file; persisted Bash output earns no credit, as before.
+
+Bars:
+
+1. Treatment outcome (plan finished, every post-check passing) in at least
+   8 of 10 valid runs, and more than the control's.
+2. No treatment run ends in the thrash stop.
+3. At least 85% of treatment compactions are followed.
+4. Median treatment compactions per run at most 16.
+5. Sentinel failures at most 1 of 10.
+
+Assumption: moving the step text verbatim keeps SDD's behavior in the
+steps it governs, validate via bar 1 and the existing offline SDD suites.
+Assumption: a session reaching a step reads its file before acting on it,
+validate via bar 3 and a read of three treatment transcripts.
+
+Out of scope for the revision: brainstorming, finishing-a-development-branch
+and writing-skills, also over the cut but each re-read in one Read of about
+7,000 to 8,000 tokens.
 
 ## Out of Scope
 

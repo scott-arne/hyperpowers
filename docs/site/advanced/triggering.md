@@ -1,6 +1,6 @@
 ---
 sources: skills/using-hyperpowers hooks .opencode/plugins .pi/extensions .kimi-plugin/plugin.json skills/writing-skills/SKILL.md .cursor-plugin/plugin.json .codex-plugin/plugin.json scripts/claude-skill-root.md skills/subagent-driven-development/SKILL.md README.md tests/antigravity/test-antigravity-tools.sh RELEASE-NOTES.md docs/porting-to-a-new-harness.md docs/README.kimi.md
-source-digest: 2b761815bbcd
+source-digest: e41954c79826
 ---
 # How skills trigger
 
@@ -66,4 +66,4 @@ What each mechanism does when the context is compacted:
 - Kimi: the manifest declares a session-start skill and nothing else. No code here shows re-injection after compaction.
 - Antigravity and Copilot CLI: no file here says whether the hook runs again at compaction.
 
-The subagent-driven-development skill separately tells the controller to re-read the skill after each compaction. {doc}`sdd-internals` covers that instruction.
+The subagent-driven-development skill separately tells the controller, after each compaction, to read the step file its step table names. {doc}`sdd-internals` covers that instruction.

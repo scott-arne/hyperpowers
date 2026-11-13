@@ -1,6 +1,6 @@
 ---
 sources: skills/writing-plans/SKILL.md README.md docs/hyperpowers/2026-11-03-cost-reduction-6-16-2-eval-evidence.md skills/brainstorming/SKILL.md skills/subagent-driven-development/SKILL.md skills/writing-skills/SKILL.md
-source-digest: d61d50b51558
+source-digest: 6313c2377b90
 ---
 
 # Recommended settings
@@ -25,7 +25,7 @@ The environment variable `CLAUDE_CODE_AUTO_COMPACT_WINDOW` sets the same value.
 
 On models with a 1M-token window, Claude Code otherwise compacts only near 968K tokens. In a replay of a month of long sessions, a 400K window cut cost by about 28%. A 300K or 200K window saved only 4 or 7 points more, while adding 1.5 or 2.6 times as many extra compactions as the 400K window, and each compaction drops detail.
 
-After a compaction, Claude Code re-attaches only the first 20,000 characters of each skill that the session used. {doc}`skills/brainstorming` and {doc}`skills/subagent-driven-development` are long skills, and both tell the agent to read their full text again after every compaction, so that they do not keep running from the cut copy. In testing at a forced 100K window, where compactions come far more often than at 400K, agents re-read after 98% of compactions in subagent-driven-development and after 100% in brainstorming. The 400K window itself was not measured. It leaves about 300K of headroom after each compaction.
+After a compaction, Claude Code re-attaches only the first 20,000 characters of each skill that the session used. {doc}`skills/brainstorming` is a long skill, and it tells the agent to read its full text again after every compaction, so that it does not keep running from the cut copy. {doc}`skills/subagent-driven-development` keeps its `SKILL.md` short enough to come back whole, and tells the agent to read again the one step file it is working in. In testing at a forced 100K window, where compactions come far more often than at 400K, agents re-read after 98% of compactions in subagent-driven-development (measured before its step text moved into separate files) and after 100% in brainstorming. The 400K window itself was not measured. It leaves about 300K of headroom after each compaction.
 
 {doc}`skills/writing-skills` is also longer than 20,000 characters and does not yet carry the re-read instruction.
 

@@ -156,7 +156,7 @@ assert_contains "$SDD_RISK_TIERS" "tier declared" "escalation record line format
 assert_contains "$SDD_RISK_TIERS" "--class tier-skip" "skip appends the durable record"
 assert_contains "$SDD" "tier-skips.md" "final review receives the skip list"
 assert_contains "$SDD" "no escalation trigger fired" "skip precondition is explicit"
-assert_contains "$SDD" "plan-gate-reviewed; no escalation trigger fired" "diagram skip path carries the full precondition"
+assert_contains "$SDD" "unless the task's effective tier is low, run the per-task Codex gate" "the process outline skips the task gate only at an effective-low tier"
 assert_contains "$SDD_RISK_TIERS" "missing tier line" "fail-closed default is pinned"
 assert_contains "$SDD_REVIEW" "gate dir:" "GATE_DIR is persisted in ledger"
 assert_contains "$WPLANS" "unreviewed low tiers execute as standard" \
@@ -165,8 +165,8 @@ assert_contains "$SDD_RISK_TIERS" "unreviewed low tiers execute as standard" \
   "plan-gate skip demotes low tiers (dispatch side)"
 assert_contains "$SDD_RISK_TIERS" "a demoted task runs the full train and records NO tier-skip event" \
   "demote path never writes a skip record"
-assert_contains "$SDD" "Record tier-skip (ungated-ledger), skip Codex task gate" \
-  "process diagram carries the skip path"
+assert_contains "$SDD_REVIEW" "recording the tier-skip event instead" \
+  "the task gate's skip path records the tier-skip"
 assert_contains "$WPLANS" "no escalation trigger fired at any point during execution" \
   "authoring rubric carries the strong escalation window"
 # Finish section (6.6.0 deletion fix)
@@ -274,8 +274,6 @@ assert_contains "$SDD_FIX_LOOP" "or one controller-applied de-minimis fix" \
   "fix-round definition counts controller-applied fixes"
 assert_contains "$SDD_REVIEW" "where you keep todos" \
   "completion line keeps todos conditional"
-assert_contains "$SDD" "Mark the task's todo complete (where kept)" \
-  "digraph todo node stays conditional"
 assert_contains "$SDD_RATIONALIZATIONS" "Outside the de-minimis exception" "rationalization row scoped to the exception"
 assert_contains "$SDD_RATIONALIZATIONS" "Hand the findings to an implementer at rounds 1-3; dispatch the takeover at rounds 4-5." "rationalization row defers to the round's own rule"
 
@@ -420,8 +418,8 @@ assert_contains "$SDD_RATIONALIZATIONS" "is declined only as refuted or correcte
   "common-rationalizations.md narrows a disagreement to an evidenced decline"
 assert_contains "$REREVW" "All findings addressed or declined, no new Critical/Important breakage" \
   "re-review-prompt.md round verdict lets a decline close the round"
-assert_contains "$SDD" '"All findings addressed or declined?" [shape=diamond];' \
-  "SKILL.md flowchart exit node accepts a decline"
+assert_contains "$SDD" "When no finding is left open, go back to review-and-complete.md for the gate." \
+  "the process outline leaves the fix loop once no finding is open"
 assert_contains "$SDD_REVIEW" "every fix-loop finding is addressed or declined" \
   "SKILL.md completion accepts a declined finding"
 assert_contains "$SDD_FIX_LOOP" "**A round that declines every finding changes no code.**" \
@@ -474,7 +472,7 @@ assert_contains "$SDD_SETUP" "none of them is a hand-off, so report nothing as r
 assert_contains "$SDD_SETUP" "A workspace in the list that is not this plan's belongs to another plan" "remote-finished routes by the workspace list"
 assert_contains "$SDD_TASK_LOOP" "read its completion line, mark the task done, and never dispatch" "claim done skips the task"
 assert_contains "$SDD_SETUP" "The scan only reads" "the ledger scan acts only after verify"
-assert_contains "$SDD" "Complete the task (scripts/sdd-state complete); any status but complete stops" "the process graph completes the task through the helper"
+assert_contains "$SDD" "run \`scripts/sdd-state complete\`; any status but \`complete\` stops" "the process outline completes the task through the helper"
 
 assert_contains "$SDD_SETUP" "set -o noclobber" "ledger creation is exclusive"
 assert_contains "$SDD_SETUP" "both stop until the snapshot succeeds" "a failed snapshot stops the loop"
@@ -511,7 +509,6 @@ assert_before "$SDD_FINAL" "The final train is claimed." "whole-branch review ge
 assert_contains "$SDD_TASK_LOOP" "Record BASE right after \`git switch <branch>\` and before dispatching, as the task branch's fork point from the integration branch: \`git merge-base HEAD refs/heads/<integration branch>\`" "the task BASE is the task branch's fork point from the integration branch, named by its full ref"
 assert_contains "$SDD_TASK_LOOP" "once the conflict route has merged the integration branch into the task branch, the integration head merged in" "after the conflict route the task BASE is the integration head merged in"
 assert_not_contains_sdd "\`git merge-base HEAD <integration branch>\`" "no BASE command names the integration branch by its short name"
-assert_contains "$SDD" "\"Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back\" [shape=box];" "the graph's final claim continues on the session's own hold"
 assert_not_contains_sdd "held means post, print the board, hand back" "no graph edge names the old final-claim node"
 assert_contains "$SDD_FINAL" "scripts/sdd-state finish PLAN_FILE --session <sid>" "finish takes the session"
 assert_not_contains_sdd "\`scripts/sdd-state finish PLAN_FILE\`" "no finish call omits the session"
@@ -605,7 +602,7 @@ assert_contains "$SDD" "A message that names your next step is followed by that 
   "an announced step is taken in the same turn"
 assert_contains "$SDD" 'never start it with a trailing `&`, `nohup`, `setsid`, `disown`, or a script that detaches a process' \
   "untracked launches are forbidden"
-assert_contains "$SDD_TASK_LOOP" 'subagents with `run_in_background: false`' \
+assert_contains "$SDD" 'subagents with `run_in_background: false`' \
   "Claude Code dispatches SDD subagents in the foreground"
 for template in "$IMPL" "$REVW" "$REREVW" "$FIXP" "$CODEREVW"; do
   assert_contains "$template" 'run_in_background: false # Claude Code: dispatch in the foreground (SKILL.md "Waiting on subagents"); omit on harnesses without the flag' \
@@ -645,8 +642,8 @@ assert_contains "$SDD_TASK_LOOP" 'report a nonzero `survivors` or `skipped`, or 
 assert_contains "$SDD_TASK_LOOP" '`status=error` means the job directory could not be read, so escalate it the same way, naming the jobdir' "an errored stop on the budget path escalates too"
 assert_contains "$SDD" 'Completing the last task does not end the plan: it opens the final whole-branch review, and the plan ends only after Finish' "the last task opens the final review instead of ending the plan"
 assert_contains "$SDD" 'finishing the tasks is never a reason for it' "a hand-back is not written for finishing the tasks"
-assert_contains "$SDD" "\"Complete the task (scripts/sdd-state complete); any status but complete stops\" -> \"Mark the task's todo complete (where kept)\";" "the graph completes the task before the todo node"
-assert_contains "$SDD" "\"Mark the task's todo complete (where kept)\" -> \"next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)\";" "the todo node leads back to the loop"
+assert_before "$SDD_REVIEW" "scripts/sdd-state complete PLAN_FILE N" "Mark the todo complete" "the task is completed before its todo is marked"
+assert_contains "$SDD_REVIEW" "Mark the todo complete (where you keep todos), and run \`next\`." "the todo step leads back to the loop"
 assert_not_contains_sdd "Append completion to ledger" "the hand-written completion node is gone"
 assert_contains "$SDD_FIX_LOOP" 'a fix round on Claude Code dispatches a fresh foreground implementer; a SendMessage resume is for harnesses without the option' "fix rounds dispatch a fresh foreground implementer on Claude Code"
 assert_not_contains_sdd 'the stop guard treats it as live work, and your turn may end while it runs' "the resumed-agent-is-live-work sentence is gone"
@@ -678,7 +675,7 @@ assert_contains "$SDD_SETUP" "Read before you settle: run the \`sync\` and \`sdd
 assert_contains "$SDD_SETUP" "When the plan line names an integration branch, this is a later session of a running plan: hand using-git-worktrees that branch and your session id" "a later session hands using-git-worktrees the integration branch and its session id"
 assert_not_contains_sdd "Settle where the work happens first" "Setup no longer settles the worktree before it reads the plan line"
 assert_before "$SDD_SETUP" "Read before you settle" "Then settle where the work happens" "the read comes before the worktree is settled"
-assert_contains "$SDD" "Setup: sync and workspace, read the plan line, branch question" "the process graph reads the plan line before the branch question"
+assert_contains "$SDD" "sync the state branch and find the plan's workspace, settle where the work happens" "the process outline syncs before it settles where the work happens"
 assert_not_contains_sdd "Setup: branch question, sync and workspace" "no process-graph label settles the branch before sync"
 
 assert_contains "$DNP" "You write implementation notes for a list of design decisions" "decision-notes-prompt keeps the opening sentence the dispatch guard recognizes the extractor by"

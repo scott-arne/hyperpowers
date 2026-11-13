@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# The re-read-after-compaction paragraph must exist in SDD and brainstorming
-# and must end well inside the first 20,000 characters, which is what Claude
-# Code keeps when it re-attaches a skill after a compaction.
+# The after-compaction paragraph must exist in SDD and brainstorming and must
+# end well inside the first 20,000 characters, which is what Claude Code keeps
+# when it re-attaches a skill after a compaction. SDD's SKILL.md stays whole
+# after a compaction, so its paragraph sends the session to the one step file
+# its step table names; brainstorming's paragraph still asks for a full Read.
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -28,7 +30,7 @@ check() {
   [ "$res" = "ok" ] && pass "$label" || fail "$label ($res)"
 }
 
-check "$SDD" "**After every context compaction:** Claude Code re-attaches this skill cut to its first 20,000 characters, which ends before the task loop, and a full Read you made before the compaction does not survive it. After each compaction, the first and every later one, Read this file in full before your next action (a dispatch, a ledger write, or the finishing steps), then the ledger, along with any other skill you are following whose re-attached copy is cut short." "## When to Use" "SDD re-read paragraph present, early, before When to Use"
+check "$SDD" "**After every context compaction:** this file fits within the 20,000 characters Claude Code re-attaches, so the copy you hold is whole. A step file you read before the compaction does not survive it. Before your next action, print the board and the ledger lines the step table names (your task's and your Setup's, never the whole ledger), find your step in the table, and Read that step file in full." "## When to Use" "SDD re-read paragraph present, early, before When to Use"
 check "$BRAIN" "**After every context compaction:** Claude Code re-attaches this skill cut to its first 20,000 characters, which ends before the spec-writing steps, and a full Read you made before the compaction does not survive it. After each compaction, the first and every later one, Read this file in full before your next action (a question to your human partner, a visual-companion step, or writing the spec), along with any other skill you are following whose re-attached copy is cut short." "## Three Paths" "brainstorming re-read paragraph present, early, before Three Paths"
 
 echo

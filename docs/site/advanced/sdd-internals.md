@@ -1,6 +1,6 @@
 ---
 sources: skills/subagent-driven-development hooks/session-start hooks/hooks.json hooks/sdd-stop-guard hooks/lib/stop-guard.mjs docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md hooks/sdd-dispatch-guard hooks/lib/dispatch-guard.mjs docs/hyperpowers/specs/2026-11-10-sdd-dispatch-guard-design.md
-source-digest: 1a91c5e7c3db
+source-digest: 32f128cb8a5f
 ---
 # How subagent-driven development keeps its place
 
@@ -38,16 +38,16 @@ The ledger is `progress.md` in the workspace. Its first line records the plan's 
 The ledger is the recovery map. The skill says that after compaction the controller trusts the ledger and `git log` over its own recollection, because the commits the ledger names exist in git even when the context no longer remembers them. These are the lines it holds:
 
 - A plan line naming the plan's integration branch, written by `sdd-state register`.
-- A session line with the mode, the branch the session is on (a task branch, or detached), the integration branch it integrates, and its toplevel, appended again whenever the session moves to a new task branch or detaches, plus a `tasks` line if you assigned this session specific tasks.
+- A session line with the mode, the branch the session is on (a task branch, or detached), the integration branch it integrates, and its toplevel, appended again whenever the session moves to a new task branch or detaches, plus a `tasks` line if you assigned this session specific tasks, and a `session <sid>: setup complete` line as Setup's last action.
 - The pre-flight scan table, one row per pair of tasks that share a file or interface and one per task.
-- For each task: the implementer's agent identity with its model, session, worktree, and branch, each fix round (`Task N: fix round R/5 (...)`), deferred minor findings (`Task N: minor (deferred): ...`), the task's gate directory when a Codex gate ran, an `approved <full id>` line for the head the reviewers saw, a `merged` line once the task is on the integration branch, and the completion line (`Task N: complete (commits <base7>..<head7>, review clean)`).
+- For each task: the implementer's agent identity with its model, session, worktree, and branch, a `report` line when the implementer's report arrives, a `review` line with the verdict and the reviewer's id after each task review or scoped re-review, a `codex gate round` line after each per-task Codex gate round, each fix round (`Task N: fix round R/5 (...)`), deferred minor findings (`Task N: minor (deferred): ...`), the task's gate directory when a Codex gate ran, an `approved <full id>` line for the head the reviewers saw, a `merged` line once the task is on the integration branch, and the completion line (`Task N: complete (commits <base7>..<head7>, review clean)`).
 - A `jobdir=` line for each tracked job, written by `tracked-job new`.
 - A hand-back line for each turn ended by a question, a BLOCKED report, or your request to stop, written by `sdd-state handback`.
 - A `Decisions listing:` line and a `Decision extractor:` line when the plan has a spec.
 - Tier lines, described below.
 - The task dependency graph that `sdd-state deps` prints, quoted after the scan table.
 
-On resume, a task with a completion line is done and is never re-dispatched. A task with a `merged` line and no completion line resumes at its completion line and is never re-dispatched. A task whose last line is a fix round resumes at the next round. A task whose last line is its implementer identity is a dispatch in flight: the controller reconciles that agent first, resumes it by its recorded id where the harness allows, and dispatches a takeover only if it cannot be recovered. The controller appends to the ledger with a quoted heredoc when another session may be live, because an edit that rewrites the file would drop a line another session appended in between.
+On resume, a task with a completion line is done and is never re-dispatched. A task with a `merged` line and no completion line resumes at its completion line and is never re-dispatched. A task whose newest line is a `fix round` line, or a blocking `review` line after one, resumes at the next round; a round whose `review` line approves goes on to the gate, since a scoped re-review's `review` line is written after its round's `fix round` line. A task whose last line is its implementer identity is a dispatch in flight: the controller reconciles that agent first, resumes it by its recorded id where the harness allows, and dispatches a takeover only if it cannot be recovered. The controller appends to the ledger with a quoted heredoc when another session may be live, because an edit that rewrites the file would drop a line another session appended in between.
 
 The controller does not write the completion line by hand. `sdd-state complete PLAN_FILE N --commits <base7>..<head7>` appends it and snapshots the workspace, and the controller repeats the command until it prints `status=complete`. `busy` and `error` are retried. `unknown-task` (the number is not a task of the plan every session reads, the copy on the plan ref rather than the working tree's), `no-workspace`, and a usage error stop the run. A plan whose task graph does not parse prints `status=invalid`: the run cannot continue until the plan at the plan ref parses again, so the controller surfaces it instead of retrying. After the pre-flight scan and before the final review, the controller runs `sdd-state snapshot` itself, so a hand-off or a crash loses at most the task in flight. A snapshot outcome of `none` or `error` stops the run until a snapshot succeeds.
 
@@ -127,9 +127,11 @@ The watch budget for one job is three times the plan's stated runtime for it, or
 
 ## Resuming after compaction
 
+The skill's `SKILL.md` is a controller under 19,000 characters, so the copy Claude Code re-attaches after a compaction, which keeps the first 20,000 characters, is whole. The step text lives in five files beside it: `setup.md`, `task-loop.md`, `review-and-complete.md`, `fix-loop.md`, and `final-and-finish.md`. A step file read before the compaction does not survive it, so the controller prints the board and the ledger lines of its task and its Setup, never the whole ledger, and the controller's step table maps the newest of those lines it names to the one step file to read; a line it does not name, such as a deferred minor or the gate directory, leaves the step unchanged. The `setup complete`, `report`, `review`, and `codex gate round` lines exist for that table. Rules that hold in every step, such as the foreground dispatch and the five-round cap, are stated once, in `SKILL.md`.
+
 Three things bring a controller back to its place.
 
-- The skill says Claude Code re-attaches it cut to its first 20,000 characters, which ends before the task loop, and that a full read made before the compaction does not survive it. After each compaction, the first and every later one, the controller reads the whole skill file before its next action, then the ledger.
+- The step table above, and the step file it names, read in full before the next action.
 - On Claude Code, the session-start hook adds a line when a session resumes after compaction in a repository that has a ledger. {doc}`triggering` describes it. After a compaction the hook also tells the session to Read in full, from the installed plugin, each hyperpowers skill it is following, because the re-attached copy is cut to 20,000 characters and a long session can hold an older copy.
 - The ledger's resume rules above, which tell the controller which task is done, mid-loop, or in flight.
 

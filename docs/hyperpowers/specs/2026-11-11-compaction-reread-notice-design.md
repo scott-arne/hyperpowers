@@ -399,7 +399,7 @@ reach 11,932 (seven ledgers measured 2026-11-12). The step table:
 | no ledger in the workspace `scripts/sdd-dir PLAN_FILE` prints, or no `setup complete` line of this session in it | `setup.md` |
 | the board shows no task held by this session and a task without a completion line | `task-loop.md` |
 | the held task's newest line is its branch, base, implementer identity or `report` line | `task-loop.md` |
-| its newest line is a `review` line approving it, an `approved` line or a `merged` line | `review-and-complete.md` |
+| its newest line is a `review` or Codex gate line approving it, an `approved` line or a `merged` line | `review-and-complete.md` |
 | its newest line is a `fix round` line, or a `review` or Codex gate line with blocking findings | `fix-loop.md` |
 | this session holds the final claim, or every task has a completion line | `final-and-finish.md` |
 
@@ -490,8 +490,9 @@ banner, or Reads that together cover the file; persisted Bash output earns
 no credit. The tally also reports, separately, compactions followed by any
 step file, by the board and task lines, and by SKILL.md, so a session that
 reads the wrong step file, only SKILL.md, or skips the ledger parts shows
-in its own count; the tally's tests cover each of those cases and the
-no-ledger case.
+in its own count; the tally's tests cover each of those cases, the
+no-ledger case, and every row of the step table (a gate line approving and
+one blocking among them).
 
 Bars:
 

@@ -1,6 +1,6 @@
 ---
 sources: skills/subagent-driven-development hooks/session-start hooks/hooks.json hooks/sdd-stop-guard hooks/lib/stop-guard.mjs docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md hooks/sdd-dispatch-guard hooks/lib/dispatch-guard.mjs docs/hyperpowers/specs/2026-11-10-sdd-dispatch-guard-design.md
-source-digest: 1ed007e6544a
+source-digest: 32f128cb8a5f
 ---
 # How subagent-driven development keeps its place
 
@@ -47,7 +47,7 @@ The ledger is the recovery map. The skill says that after compaction the control
 - Tier lines, described below.
 - The task dependency graph that `sdd-state deps` prints, quoted after the scan table.
 
-On resume, a task with a completion line is done and is never re-dispatched. A task with a `merged` line and no completion line resumes at its completion line and is never re-dispatched. A task whose last line is a fix round resumes at the next round. A task whose last line is its implementer identity is a dispatch in flight: the controller reconciles that agent first, resumes it by its recorded id where the harness allows, and dispatches a takeover only if it cannot be recovered. The controller appends to the ledger with a quoted heredoc when another session may be live, because an edit that rewrites the file would drop a line another session appended in between.
+On resume, a task with a completion line is done and is never re-dispatched. A task with a `merged` line and no completion line resumes at its completion line and is never re-dispatched. A task whose newest line is a `fix round` line, or a blocking `review` line after one, resumes at the next round; a round whose `review` line approves goes on to the gate, since a scoped re-review's `review` line is written after its round's `fix round` line. A task whose last line is its implementer identity is a dispatch in flight: the controller reconciles that agent first, resumes it by its recorded id where the harness allows, and dispatches a takeover only if it cannot be recovered. The controller appends to the ledger with a quoted heredoc when another session may be live, because an edit that rewrites the file would drop a line another session appended in between.
 
 The controller does not write the completion line by hand. `sdd-state complete PLAN_FILE N --commits <base7>..<head7>` appends it and snapshots the workspace, and the controller repeats the command until it prints `status=complete`. `busy` and `error` are retried. `unknown-task` (the number is not a task of the plan every session reads, the copy on the plan ref rather than the working tree's), `no-workspace`, and a usage error stop the run. A plan whose task graph does not parse prints `status=invalid`: the run cannot continue until the plan at the plan ref parses again, so the controller surfaces it instead of retrying. After the pre-flight scan and before the final review, the controller runs `sdd-state snapshot` itself, so a hand-off or a crash loses at most the task in flight. A snapshot outcome of `none` or `error` stops the run until a snapshot succeeds.
 
@@ -127,7 +127,7 @@ The watch budget for one job is three times the plan's stated runtime for it, or
 
 ## Resuming after compaction
 
-The skill's `SKILL.md` is a controller under 19,000 characters, so the copy Claude Code re-attaches after a compaction, which keeps the first 20,000 characters, is whole. The step text lives in five files beside it: `setup.md`, `task-loop.md`, `review-and-complete.md`, `fix-loop.md`, and `final-and-finish.md`. A step file read before the compaction does not survive it, so the controller prints the board and the ledger lines of its task and its Setup, never the whole ledger, and the controller's step table maps the newest of those lines to the one step file to read. The `setup complete`, `report`, `review`, and `codex gate round` lines exist for that table. Rules that hold in every step, such as the foreground dispatch and the five-round cap, are stated once, in `SKILL.md`.
+The skill's `SKILL.md` is a controller under 19,000 characters, so the copy Claude Code re-attaches after a compaction, which keeps the first 20,000 characters, is whole. The step text lives in five files beside it: `setup.md`, `task-loop.md`, `review-and-complete.md`, `fix-loop.md`, and `final-and-finish.md`. A step file read before the compaction does not survive it, so the controller prints the board and the ledger lines of its task and its Setup, never the whole ledger, and the controller's step table maps the newest of those lines it names to the one step file to read; a line it does not name, such as a deferred minor or the gate directory, leaves the step unchanged. The `setup complete`, `report`, `review`, and `codex gate round` lines exist for that table. Rules that hold in every step, such as the foreground dispatch and the five-round cap, are stated once, in `SKILL.md`.
 
 Three things bring a controller back to its place.
 

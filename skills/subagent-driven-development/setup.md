@@ -72,8 +72,10 @@ sequences, the single most expensive failure observed.
   written on another machine), when it ends with that relative path. Tasks
   with a `Task <N>: complete` line are done (SKILL.md, Rules for every
   step); resume at the first task without one. A
-  task whose last line is a fix round is mid-loop: resume the loop at the
-  next round. A task whose last line is its implementer identity is a
+  task whose newest line is a `fix round` line, or a blocking `review`
+  line after one, is mid-loop: resume the loop at the next round; a round
+  whose `review` line approves goes on to the gate. A task whose last
+  line is its implementer identity is a
   dispatch in flight: do not re-dispatch — reconcile that agent first
   (list your live children, chase its report), resume it by the recorded
   id where your harness allows, and only if it cannot be recovered

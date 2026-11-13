@@ -61,7 +61,7 @@ Each step's full text is in its own file beside this one. Read a step's file whe
 
 ## After a compaction: the step table
 
-Print the board (`scripts/sdd-state board PLAN_FILE`) and the ledger lines of your task and your Setup (`grep -E '^(Task <N>:|session <sid>: setup complete)' <workspace>/progress.md`, leaving out `Task <N>:` when you hold no task); `scripts/sdd-dir PLAN_FILE` prints the workspace. Do not Read the whole ledger after a compaction: it grows with the plan. Then Read the step file this table names:
+Print the board (`scripts/sdd-state board PLAN_FILE`) and the ledger lines of your task and your Setup (`grep -E '^(Task <N>:|session <sid>: setup complete)' <workspace>/progress.md`, leaving out `Task <N>:` when you hold no task); `scripts/sdd-dir PLAN_FILE` prints the workspace. Do not Read the whole ledger after a compaction: it grows with the plan. A row's newest line is the newest of your task's lines the table names (its branch, base, implementer identity, `report`, `review`, Codex gate round, `approved`, `merged` and `fix round` lines); a line it does not name, such as a deferred minor or the gate directory, leaves your step unchanged. Then Read the step file this table names:
 
 | State | Step file |
 |---|---|

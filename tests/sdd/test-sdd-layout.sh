@@ -80,6 +80,8 @@ if grep -Fq 'session <sid>: setup complete' "$SDD_DIR/setup.md"; then pass "setu
 if grep -Fq 'Task <N>: report <status>' "$SDD_DIR/task-loop.md"; then pass "task-loop.md writes the report line"; else fail "task-loop.md writes the report line"; fi
 if grep -Fq 'Task <N>: review <approved|blocking>' "$SDD_DIR/review-and-complete.md"; then pass "review-and-complete.md writes the review line"; else fail "review-and-complete.md writes the review line"; fi
 if grep -Fq 'Task <N>: codex gate round <R> <approved|blocking>' "$SDD_DIR/review-and-complete.md"; then pass "review-and-complete.md writes the gate line"; else fail "review-and-complete.md writes the gate line"; fi
+if grep -Fq 'a line it does not name, such as a deferred minor or the gate directory, leaves your step unchanged' "$SDD_DIR/SKILL.md"; then pass "the step table reads only the lines it names"; else fail "the step table reads only the lines it names"; fi
+if grep -Fq "line (SKILL.md's ledger lines) after the round's \`fix round\` line" "$SDD_DIR/fix-loop.md"; then pass "fix-loop.md writes the review line after the fix round line"; else fail "fix-loop.md writes the review line after the fix round line"; fi
 
 echo
 if [ "$FAILURES" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$FAILURES FAILURES"; exit 1; fi

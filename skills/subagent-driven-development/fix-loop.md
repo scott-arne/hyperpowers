@@ -77,9 +77,9 @@ controller records each DECLINED finding in the ledger with its evidence. New
 Critical/Important breakage in the fix diff joins the open findings list.
 Out-of-scope observations go to the ledger as deferred minors — they never
 extend the loop. Every round in this loop ends with the scoped re-review —
-never a full task-reviewer re-run, whatever the finding's origin. Append the
-`Task <N>: review ...` line (SKILL.md's ledger lines) before the round's
-`fix round` line.
+never a full task-reviewer re-run, whatever the finding's origin. Append the `Task <N>: review ...`
+line (SKILL.md's ledger lines) after the round's `fix round` line, so the
+newest line tells a resumed session whether the round left findings open.
 
 **A round that declines every finding changes no code.** There is no fix
 diff and no covering test to confirm; the implementer's report is the

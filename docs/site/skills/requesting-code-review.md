@@ -1,6 +1,6 @@
 ---
 sources: skills/requesting-code-review skills/subagent-driven-development/SKILL.md skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/executing-plans/SKILL.md skills/receiving-code-review/SKILL.md skills/optimizing-performance/SKILL.md scripts/claude-skill-root.md
-source-digest: f92fab3b15ba
+source-digest: 2f273de21da3
 ---
 # requesting-code-review
 
@@ -59,7 +59,7 @@ The skill's core principle is to review early and review often, so that issues a
 ## Cons and costs
 
 - A review adds a subagent run to every task or feature it covers, and the Codex gate adds a longer one, with a fix-and-re-review loop when it finds blockers.
-- The Codex gate depends on a third-party plugin, and it has to run outside the Bash sandbox, so a sandboxed shell cannot run it.
+- The Codex gate depends on a third-party plugin, and it has to run outside the Bash sandbox, so a sandboxed shell cannot run it. Each companion call also has to be the whole Bash command, with no `cd` or variable assignment in front of it, or the sandbox exclusions stop matching and the call is sandboxed again.
 - The gate runs under Claude Code only. The gate document says to skip it silently in other harnesses, and the Claude Desktop and claude.ai bundle prints a one-time notice instead.
 - Findings can send the agent back into fixes, so a review that was meant to end the task can lengthen it.
 - The reviewer sees only the range and the context the agent writes down, so a vague description or missing requirements weakens the review.

@@ -1,6 +1,6 @@
 ## 1. Preflight availability
 
-Run the preflight by its absolute path inside the installed plugin
+**Every companion command is one command, run with the Bash sandbox off** — that holds for the preflight and for every `codex-companion.mjs` call after it, on every route. No `cd`, no `VAR=value` prefix, nothing chained in front: Claude Code matches its sandbox exclusions against the whole command, so a compound command is not excluded, and a sandboxed companion call fails with `EPERM` on its state directory under `~/.claude/plugins/data` and can unlink a live broker's record (codex-review-gate.md explains that failure). Paste every path in as literal text, since a Bash call carries neither environment nor working directory from the call before it, and run companion calls from the repo or worktree root, because the companion derives its state directory from the working directory. Run the preflight by its absolute path inside the installed plugin
 (`$CLAUDE_PLUGIN_ROOT` is set by Claude Code to this plugin's install
 directory):
 
@@ -16,8 +16,8 @@ newest install: `ls -d ~/.claude/plugins/cache/hyperpowers/hyperpowers/*/ | sort
 
 It prints one JSON line. Branch on `.status`:
 
-- **`"ok"`** — a Codex review can run. Capture `.codexPath` as `CODEX_PATH`
-  and `.codexVersion` as `CODEX_VERSION` (report it in the §6 hand-back).
+- **`"ok"`** — a Codex review can run. Keep `.codexPath` and `.codexVersion`
+  (report the version in the §6 hand-back). Where a later command needs the install path, paste `.codexPath` in as literal text: the recipes write it `$CODEX_PATH` for readability, and an assignment prefix would put the call back in the sandbox.
   The JSON field paths in §4b's payloads are verified against codex-plugin-cc
   **1.0.5–1.0.6**; on another version, confirm a field exists in the actual
   payload before relying on it.

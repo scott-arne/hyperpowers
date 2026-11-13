@@ -1,4 +1,4 @@
-**Document review prompt templates.** Rounds 2+ compose from these as written here, after the round-aware preamble from gate-fix-loop.md. Round 1 does not: it builds one prompt per lens from the skeleton in gate-lenses.md, reusing only this file's `task --fresh` invocation form and — plan gate only — its Round-1 Algorithm Assessment block.
+**Document review prompt templates.** Rounds 2+ compose from these as written here, after the round-aware preamble from gate-fix-loop.md. Round 1 does not: it builds one prompt per lens from the skeleton in gate-lenses.md, reusing only this file's `task --fresh` invocation form and — plan gate only — its Round-1 Algorithm Assessment block. Each invocation here is the whole Bash command, run with the sandbox off and with `$CODEX_PATH` and every other path pasted in literally; §1 of gate-preflight.md has the reason.
 
 **Spec documents** — use `task`, read-only (no `--write`):
 

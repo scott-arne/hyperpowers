@@ -29,15 +29,26 @@ Run the scratch dir helper once at gate start and capture its output as `SCRATCH
 SCRATCH_DIR="$(bash "${CLAUDE_PLUGIN_ROOT:-.}/skills/requesting-code-review/scripts/codex-review-dir")"
 ```
 
-(In a hyperpowers dev checkout `$CLAUDE_PLUGIN_ROOT` is unset; the `:-.` fallback runs `skills/requesting-code-review/scripts/codex-review-dir` from the repo root.)
+(In a hyperpowers dev checkout `$CLAUDE_PLUGIN_ROOT` is unset; the `:-.` fallback runs `skills/requesting-code-review/scripts/codex-review-dir` from the repo root.) This helper only writes under `~/.cache/hyperpowers`, so it is fine to run sandboxed and fine to assign from; the single-command rule below applies to companion calls.
 
 ## Invocation
 
-One foreground call, read-only, with the explicit 600000 ms (10-minute) timeout:
+One foreground call, read-only, with the explicit 600000 ms (10-minute) timeout.
+Run it with the Bash sandbox off, as the whole command, from the repo or
+worktree root — see the sandbox paragraph at the top of
+[../requesting-code-review/gate-preflight.md](../requesting-code-review/gate-preflight.md),
+which is already on this gate's route. No `cd` into the scratch directory: the
+prompt file goes in as an absolute path, and the companion keys its state
+directory on the working directory.
 
 ```bash
 node "$CODEX_PATH/scripts/codex-companion.mjs" task --fresh --prompt-file <APPROACH_PROMPT_PATH>
 ```
+
+`$CODEX_PATH` is the preflight's `.codexPath` and `<APPROACH_PROMPT_PATH>` the
+prompt file under `SCRATCH_DIR`; paste both into the command as literal paths
+rather than setting a variable, which would stop the sandbox exclusions from
+matching the call and put it back in the sandbox.
 
 The prompt file points Codex at `approach-context.md` and requires this output shape (copy it into the prompt so Codex has the schema in its own context). The prompt file also carries, on one line: "You are a stateless reviewer for this request only; do not load or read skill bootstraps or skills."
 

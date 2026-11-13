@@ -27,9 +27,8 @@ Before the loop starts, two routes leave it immediately:
   contradicts the plan without asking.
 
 Everything else enters the loop — the Claude task reviewer's blocking
-findings and the per-task Codex gate's blocking findings alike. They are ONE
-loop with ONE shared cap of **five rounds per task**: the gate does not run
-a count of its own. A fix round is one fix dispatch — or one
+findings and the per-task Codex gate's blocking findings alike. They share
+the five-round cap SKILL.md sets. A fix round is one fix dispatch — or one
 controller-applied de-minimis fix — plus one scoped re-review.
 
 **Rounds 1-3 — the same model, carrying the task's record.** Where the Agent
@@ -49,7 +48,7 @@ with the brief path, the report-file path, and the findings; the report file
 is the persistent memory either way.
 
 **Rounds 4-5 — dispatch a fresh takeover implementer on a more capable
-model** (per Model Selection), with the brief path, the report-file path,
+model** (per Model Selection in SKILL.md), with the brief path, the report-file path,
 the open findings, and this framing: "A prior implementer attempted this
 task [N] times; you own it now. Read the report file for what was tried." A
 loop that survives three rounds usually means the same model cannot see
@@ -78,7 +77,9 @@ controller records each DECLINED finding in the ledger with its evidence. New
 Critical/Important breakage in the fix diff joins the open findings list.
 Out-of-scope observations go to the ledger as deferred minors — they never
 extend the loop. Every round in this loop ends with the scoped re-review —
-never a full task-reviewer re-run, whatever the finding's origin.
+never a full task-reviewer re-run, whatever the finding's origin. Append the
+`Task <N>: review ...` line (SKILL.md's ledger lines) before the round's
+`fix round` line.
 
 **A round that declines every finding changes no code.** There is no fix
 diff and no covering test to confirm; the implementer's report is the
@@ -94,9 +95,7 @@ keeps that finding open and the round counts toward the cap as usual.
 **After each round,** append to the ledger:
 `Task <N>: fix round <R>/5 (<X> addressed, <Y> declined, <Z> open — <finding one-liners>; commits <a7>..<b7>)`
 
-Never fix findings yourself in the controller session — your context stays
-clean for coordination, and controller fixes skip review. One narrow
-exception: a fix fully specified by the finding itself — exact file, exact
+One narrow exception to the controller rule in SKILL.md: a fix fully specified by the finding itself — exact file, exact
 lines, exact replacement, no judgment left — touching at most 3 lines in
 one file with no new logic, may be controller-applied — one finding per
 reach; a round holding two such findings is not de minimis. The exception
@@ -116,8 +115,7 @@ implementer at rounds 1-3, dispatch the takeover at rounds 4-5.
 
 When the re-review leaves no finding open, go to the per-task Codex gate in [review-and-complete.md](review-and-complete.md), or, for an effective-low task, to step 5 there.
 
-**The breaker.** When round 5's re-review — or a per-task Codex gate at the
-spent cap — still leaves blocking findings open, stop dispatching. The task
+**The breaker.** At the spent cap SKILL.md stops dispatching. The task
 does not silently continue and nothing is parked on your own authority:
 surface the open findings to your human partner as BLOCKED, each with the
 rounds already spent, what was tried, and the evidence. Ledger it:

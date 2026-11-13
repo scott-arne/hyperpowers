@@ -8,7 +8,7 @@ report missing either verdict — spec compliance AND task quality are both
 required. Implementer self-review never replaces the task review; both are
 needed. Note the task's effective risk tier as you go (see Risk Tiers
 in [SKILL.md](SKILL.md)) — the Claude task review always runs, but the tier decides whether
-step 4's per-task Codex gate does.
+step 5's per-task Codex gate does.
 
 - Hand the reviewer its diff as a file: run this skill's
   `scripts/review-package PLAN_FILE BASE HEAD` — it prints
@@ -44,6 +44,10 @@ step 4's per-task Codex gate does.
   pre-judging, usually to spare yourself a review loop. When the plan supplies
   example code, weaknesses in that code are fair review targets — the example
   was a starting point, not evidence that its weaknesses were chosen.
+
+Append `Task <N>: review <approved|blocking> <reviewer id> <one line>` when a
+task review or scoped re-review returns.
+
 The task reviewer may report "⚠️ Cannot verify from diff" items — requirements
 that live in unchanged code or span tasks. These do not block the rest of the
 review, but you must resolve each one yourself before marking the task
@@ -83,7 +87,9 @@ no-Codex notice once and run both gates as no-ops.
      prior gate rounds as unknown and fail closed: do not assume zero —
      reconstruct the consumed-round count from the ledger's fix-round
      entries and, if gate rounds cannot be established, surface via BLOCKED
-     rather than restarting the count.
+     rather than restarting the count. After each gate round, append
+     `Task <N>: codex gate round <R> <approved|blocking> <one line>`, R being
+     the gate's own round number.
   2. **Let the counter do the arithmetic.** `gate-round` compares its LOCAL
      count — gate rounds only, monotonic within the `GATE_DIR` — against a
      ceiling, so the ceiling must leave gate rounds out; they are already in

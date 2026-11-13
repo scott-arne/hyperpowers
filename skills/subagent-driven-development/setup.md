@@ -14,10 +14,9 @@ branch unless your human partner chose "stay on the current branch" in that
 question; that answer is the consent, and the dossier no longer depends on
 the branch.
 
-Conversation memory does not survive compaction. In real sessions,
+Track progress in a ledger file, not only in todos: in real sessions,
 controllers that lost their place have re-dispatched entire completed task
-sequences — the single most expensive failure observed. Track progress in
-a ledger file, not only in todos.
+sequences, the single most expensive failure observed.
 
 - Each plan owns a workspace: at skill start, run `scripts/sdd-state sync PLAN_FILE`
   (it fetches the repository's state branch; outcomes below), then this
@@ -71,8 +70,8 @@ a ledger file, not only in todos.
   when it lies inside this repository and reduces to the same relative path,
   or, when it names a path that does not exist on this host (a ledger
   written on another machine), when it ends with that relative path. Tasks
-  with a `Task <N>: complete` line are
-  DONE — do not re-dispatch them; resume at the first task without one. A
+  with a `Task <N>: complete` line are done (SKILL.md, Rules for every
+  step); resume at the first task without one. A
   task whose last line is a fix round is mid-loop: resume the loop at the
   next round. A task whose last line is its implementer identity is a
   dispatch in flight: do not re-dispatch — reconcile that agent first
@@ -153,8 +152,7 @@ a ledger file, not only in todos.
   plan file itself, which `amend` refuses) and never by editing the plan in
   the worktree alone, because the plan ref is what every session reads.
 - The ledger is your recovery map: the commits it names exist in git even
-  when your context no longer remembers creating them. After compaction,
-  trust the ledger and `git log` over your own recollection.
+  when your context no longer remembers creating them.
 - The workspace is scratch for the working tree and a record on the branch:
   the Finish step removes the plan's directory through
   `scripts/sdd-state finish PLAN_FILE --session <sid>`, and the branch history keeps it, so
@@ -247,3 +245,6 @@ costs in chat, then the selection widget to collect the answers. If the scan
 is clean, proceed without comment. The review loop remains the net for
 conflicts that only emerge from implementation.
 
+Setup's last action: append `session <sid>: setup complete` to the ledger (a
+later session writes its own). The step table in SKILL.md reads it to tell a
+compaction during Setup from one after it.

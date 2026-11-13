@@ -20,7 +20,7 @@ ledger and the tool results carry the record.
 
 **Tracked work only:** anything that outlives one tool call starts through your harness's tracked background option (`run_in_background` on Claude Code); never start it with a trailing `&`, `nohup`, `setsid`, `disown`, or a script that detaches a process. The harness never reports on such a process, so nothing wakes you when it ends, and a turn you end to wait for it does not resume.
 
-**After every context compaction:** Claude Code re-attaches this skill cut to its first 20,000 characters, which ends before the task loop, and a full Read you made before the compaction does not survive it. After each compaction, the first and every later one, Read this file in full before your next action (a dispatch, a ledger write, or the finishing steps), then the ledger, along with any other skill you are following whose re-attached copy is cut short.
+**After every context compaction:** this file fits within the 20,000 characters Claude Code re-attaches, so the copy you hold is whole. A step file you read before the compaction does not survive it. Before your next action, print the board and the ledger lines the step table names (your task's and your Setup's, never the whole ledger), find your step in the table, and Read that step file in full.
 
 ## When to Use
 
@@ -50,87 +50,48 @@ digraph when_to_use {
 
 ## The Process
 
-```dot
-digraph process {
-    rankdir=TB;
+Each step's full text is in its own file beside this one. Read a step's file when you enter the step; after a compaction, the step table below names the one to read.
 
-    subgraph cluster_per_task {
-        label="Per Task";
-        "Claim the first task next offers (scripts/sdd-state claim), git switch to its branch" [shape=box];
-        "Dispatch implementer subagent (./implementer-prompt.md)" [shape=box];
-        "Implementer asks questions?" [shape=diamond];
-        "Answer questions, provide context" [shape=box];
-        "Implementer implements, tests, commits, self-reviews" [shape=box];
-        "Generate review package, dispatch task reviewer (./task-reviewer-prompt.md)" [shape=box];
-        "Spec ✅ and quality approved?" [shape=diamond];
-        "Finding conflicts with plan text?" [shape=diamond];
-        "Ask your human partner which governs" [shape=box];
-        "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model" [shape=box];
-        "Dispatch scoped re-review (./re-review-prompt.md)" [shape=box];
-        "All findings addressed or declined?" [shape=diamond];
-        "R = 5?" [shape=diamond];
-        "Surface open findings to your human partner (BLOCKED)" [shape=box];
-        "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" [shape=diamond];
-        "Record tier-skip (ungated-ledger), skip Codex task gate" [shape=box];
-        "Codex task code gate\n(Claude Code; degrade if absent)" [shape=box];
-        "Codex gate blocking findings?" [shape=diamond];
-        "Append approved line, merge back (scripts/sdd-state merge-back), detach, delete the task branch" [shape=box];
-        "Complete the task (scripts/sdd-state complete); any status but complete stops" [shape=box];
-        "Mark the task's todo complete (where kept)" [shape=box];
-    }
+1. **Setup** ([setup.md](setup.md)): sync the state branch and find the plan's workspace, settle where the work happens (hyperpowers:using-git-worktrees), create or read the ledger and append your session line, verify, read the plan and the spec, run the pre-flight scan. Setup's last action appends `session <sid>: setup complete`.
+2. **Take a task and dispatch** ([task-loop.md](task-loop.md)): `scripts/sdd-state next` offers a task; claim the first and switch to its branch (none to take, or blocked: post, print the board, hand back). Dispatch the implementer, answer its questions, handle its report.
+3. **Review the task** ([review-and-complete.md](review-and-complete.md)): generate the review package and dispatch the task reviewer. Blocking findings go to step 4; a finding that conflicts with the plan text goes to your human partner first.
+4. **Fix loop** ([fix-loop.md](fix-loop.md)): fix rounds, each with a scoped re-review, under the shared cap in the rules below. When no finding is left open, go back to review-and-complete.md for the gate.
+5. **Codex task gate and completion** ([review-and-complete.md](review-and-complete.md)): unless the task's effective tier is low, run the per-task Codex gate (blocking findings re-enter step 4). Append the `approved` line, merge back, detach, delete the task branch, and run `scripts/sdd-state complete`; any status but `complete` stops. Then step 2.
+6. **Final review and Finish** ([final-and-finish.md](final-and-finish.md)): when no task remains, claim the final train, dispatch the final reviewer (one fix dispatch, one scoped re-review), the decision extractor and the Codex final gate, delete the workspace, then use hyperpowers:finishing-a-development-branch.
 
-    "Setup: sync and workspace, read the plan line, branch question, ledger and session line, verify, read plan and spec, pre-flight review" [shape=box];
-    "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)" [shape=diamond];
-    "Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back" [shape=box];
-    "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [shape=box];
-    "Final findings? ONE fix dispatch, one scoped re-review, surface residuals" [shape=box];
-    "Dispatch decision extractor (background)" [shape=box];
-    "Codex final code gate\n(Claude Code; degrade if absent)" [shape=box];
-    "Final review clean: delete this plan's workspace" [shape=box];
-    "Use hyperpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
+## After a compaction: the step table
 
-    "Setup: sync and workspace, read the plan line, branch question, ledger and session line, verify, read plan and spec, pre-flight review" -> "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)";
-    "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)" -> "Claim the first task next offers (scripts/sdd-state claim), git switch to its branch" [label="yes"];
-    "Claim the first task next offers (scripts/sdd-state claim), git switch to its branch" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="claimed"];
-    "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer asks questions?";
-    "Implementer asks questions?" -> "Answer questions, provide context" [label="yes"];
-    "Answer questions, provide context" -> "Implementer implements, tests, commits, self-reviews";
-    "Implementer asks questions?" -> "Implementer implements, tests, commits, self-reviews" [label="no"];
-    "Implementer implements, tests, commits, self-reviews" -> "Generate review package, dispatch task reviewer (./task-reviewer-prompt.md)";
-    "Generate review package, dispatch task reviewer (./task-reviewer-prompt.md)" -> "Spec ✅ and quality approved?";
-    "Spec ✅ and quality approved?" -> "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" [label="yes"];
-    "Spec ✅ and quality approved?" -> "Finding conflicts with plan text?" [label="no"];
-    "Finding conflicts with plan text?" -> "Ask your human partner which governs" [label="yes"];
-    "Ask your human partner which governs" -> "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model";
-    "Finding conflicts with plan text?" -> "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model" [label="no"];
-    "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model" -> "Dispatch scoped re-review (./re-review-prompt.md)";
-    "Dispatch scoped re-review (./re-review-prompt.md)" -> "All findings addressed or declined?";
-    "All findings addressed or declined?" -> "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" [label="yes"];
-    "All findings addressed or declined?" -> "R = 5?" [label="no"];
-    "R = 5?" -> "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model" [label="no - next round"];
-    "R = 5?" -> "Surface open findings to your human partner (BLOCKED)" [label="yes - breaker trips"];
-    "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Record tier-skip (ungated-ledger), skip Codex task gate" [label="yes"];
-    "Record tier-skip (ungated-ledger), skip Codex task gate" -> "Append approved line, merge back (scripts/sdd-state merge-back), detach, delete the task branch";
-    "Effective tier low (plan-gate-reviewed; no escalation trigger fired)?" -> "Codex task code gate\n(Claude Code; degrade if absent)" [label="no"];
-    "Codex task code gate\n(Claude Code; degrade if absent)" -> "Codex gate blocking findings?";
-    "Codex gate blocking findings?" -> "Fix round R of 5: R≤3 same-model implementer; R≥4 fresh implementer, more capable model" [label="yes - same five-round cap"];
-    "Codex gate blocking findings?" -> "Append approved line, merge back (scripts/sdd-state merge-back), detach, delete the task branch" [label="no"];
-    "Append approved line, merge back (scripts/sdd-state merge-back), detach, delete the task branch" -> "Complete the task (scripts/sdd-state complete); any status but complete stops" [label="merged"];
-    "Complete the task (scripts/sdd-state complete); any status but complete stops" -> "Mark the task's todo complete (where kept)";
-    "Mark the task's todo complete (where kept)" -> "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)";
-    "next (scripts/sdd-state next) offers a task? (none held or blocked: post, print the board, hand back)" -> "Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back" [label="none - complete"];
-    "Claim the final train (scripts/sdd-state claim final): held own=1 continues as the holder; held by another session: post, print the board, hand back" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="claimed"];
-    "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, surface residuals";
-    "Final findings? ONE fix dispatch, one scoped re-review, surface residuals" -> "Dispatch decision extractor (background)";
-    "Dispatch decision extractor (background)" -> "Codex final code gate\n(Claude Code; degrade if absent)";
-    "Codex final code gate\n(Claude Code; degrade if absent)" -> "Final review clean: delete this plan's workspace";
-    "Final review clean: delete this plan's workspace" -> "Use hyperpowers:finishing-a-development-branch";
-}
-```
+Print the board (`scripts/sdd-state board PLAN_FILE`) and the ledger lines of your task and your Setup (`grep -E '^(Task <N>:|session <sid>: setup complete)' <workspace>/progress.md`, leaving out `Task <N>:` when you hold no task); `scripts/sdd-dir PLAN_FILE` prints the workspace. Do not Read the whole ledger after a compaction: it grows with the plan. Then Read the step file this table names:
 
-## Setup
+| State | Step file |
+|---|---|
+| no ledger in the workspace, or no `setup complete` line of this session in it | [setup.md](setup.md) |
+| the board shows no task held by this session and a task without a completion line | [task-loop.md](task-loop.md) |
+| the held task's newest line is its branch, base, implementer identity or `report` line | [task-loop.md](task-loop.md) |
+| its newest line is a `review` or Codex gate line approving it, an `approved` line or a `merged` line | [review-and-complete.md](review-and-complete.md) |
+| its newest line is a `fix round` line, or a `review` or Codex gate line with blocking findings | [fix-loop.md](fix-loop.md) |
+| this session holds the final claim, or every task has a completion line | [final-and-finish.md](final-and-finish.md) |
 
-Setup's full text is in [setup.md](setup.md).
+A state the table does not cover reads [task-loop.md](task-loop.md), and you record that in the ledger.
+
+The table reads these ledger lines, so write each one where its step says:
+
+- `session <sid>: setup complete`, Setup's last action;
+- `Task <N>: report <status> <one line>`, after an implementer's report;
+- `Task <N>: review <approved|blocking> <reviewer id> <one line>`, after a task review or scoped re-review;
+- `Task <N>: codex gate round <R> <approved|blocking> <one line>`, after each per-task Codex gate round.
+
+## Rules for every step
+
+These hold in every step file. Where a step file and this section differ, this section governs.
+
+- Tasks with a `Task <N>: complete` line are DONE — do not re-dispatch them. Conversation memory does not survive compaction. After compaction, trust the ledger and `git log` over your own recollection.
+- Dispatch implementer, task-reviewer, fix-round, re-review and final-reviewer subagents with `run_in_background: false`. Your next step always depends on the result, and a foreground call keeps your turn open, which is what an editor such as Zed shows as the session working. A background dispatch ends the turn while the subagent runs, and the editor shows the session idle.
+- Run a covering command expected to finish within 10 minutes in the foreground, with an explicit timeout of at least its expected runtime and at most 600000 ms. A command that may run past 10 minutes is a tracked job; [task-loop.md](task-loop.md), "Waiting on subagents and long commands", gives its commands and watch budget.
+- One implementer at a time in this session: parallel work is other sessions' (one controller per task branch); never dispatch two implementers at once here.
+- Never fix findings yourself in the controller session — your context stays clean for coordination, and controller fixes skip review. The one exception is the de-minimis fix in [fix-loop.md](fix-loop.md).
+- The task reviewer's blocking findings and the per-task Codex gate's blocking findings form one loop with ONE shared cap of **five rounds per task**: the gate does not run a count of its own.
+- When round 5's re-review — or a per-task Codex gate at the spent cap — still leaves blocking findings open, stop dispatching and surface the task as BLOCKED, as [fix-loop.md](fix-loop.md) describes under the breaker.
 
 ## Model Selection
 
@@ -144,10 +105,6 @@ transcription, where the task's own text carries the complete code to write,
 and for single-file mechanical fixes. The per-role guidance, the complexity
 signals, and the fix-loop escalation rule are in
 [model-selection.md](model-selection.md).
-
-## The Task Loop
-
-Steps 1 and 2 are in [task-loop.md](task-loop.md); step 3, the per-task Codex gate and step 5 in [review-and-complete.md](review-and-complete.md); step 4 in [fix-loop.md](fix-loop.md).
 
 ## The waiting board
 
@@ -176,10 +133,6 @@ final reviewer and the final Codex gate. The escalation triggers, the
 fallback rules, and the exact ledger line shape are in
 [risk-tiers.md](risk-tiers.md) — read it before dispatching any task declared
 low.
-
-## Final Review and Finish
-
-Both are in [final-and-finish.md](final-and-finish.md).
 
 ## Common Rationalizations
 

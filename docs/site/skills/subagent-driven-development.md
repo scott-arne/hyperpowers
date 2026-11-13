@@ -1,6 +1,6 @@
 ---
 sources: skills/subagent-driven-development hooks/sdd-stop-guard hooks/lib/stop-guard.mjs skills/writing-plans/SKILL.md docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md hooks/sdd-dispatch-guard hooks/lib/dispatch-guard.mjs
-source-digest: c05c9c8ed312
+source-digest: bb4f58a1fd30
 ---
 # subagent-driven-development
 
@@ -47,11 +47,11 @@ The controller (your main session) coordinates and leaves implementation to suba
 
 **Model selection.** The controller names a model for every dispatch, because an omitted model inherits the session's, usually the most expensive. A mid-tier model is the floor for reviewers and for implementers working from prose. The cheapest tier is for transcription, where the task text carries the complete code. The final review takes the most capable model. {source}`skills/subagent-driven-development/model-selection.md` has the per-role guidance.
 
-**After compaction.** Claude Code re-attaches the skill cut to its first 20,000 characters, which ends before the task loop. The skill tells the controller to re-read its full text after every compaction, then the ledger, before its next action.
+**After compaction.** The skill's `SKILL.md` is a short controller that Claude Code re-attaches whole after a compaction, and the step text lives in five files beside it. After every compaction the controller prints the board and the ledger lines of its task and its Setup, finds its step in the controller's step table, and reads that one step file before its next action.
 
 ## Why it exists
 
-Controllers that lost their place after a compaction have re-dispatched whole completed task sequences, which the skill calls the most expensive failure it has observed. The ledger, the claims, and the re-read paragraph exist to prevent that. Fresh subagents keep each task's context small and focused, and they keep the controller's context free for coordination. Per-task review catches problems while they are cheap to fix, and the five-round cap stops a loop that is not converging. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`. The state branch that carries the ledger between machines is explained in {source}`docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md`, and the risk-tier design is in {source}`docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md`.
+Controllers that lost their place after a compaction have re-dispatched whole completed task sequences, which the skill calls the most expensive failure it has observed. The ledger, the claims, and the step table exist to prevent that. Fresh subagents keep each task's context small and focused, and they keep the controller's context free for coordination. Per-task review catches problems while they are cheap to fix, and the five-round cap stops a loop that is not converging. The decision records are indexed in {source}`docs/hyperpowers/decisions/README.md`. The state branch that carries the ledger between machines is explained in {source}`docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md`, and the risk-tier design is in {source}`docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md`.
 
 ## Pros
 
@@ -65,7 +65,7 @@ Controllers that lost their place after a compaction have re-dispatched whole co
 ## Cons and costs
 
 - A run is many subagent dispatches: an implementer, a task reviewer, and often fix rounds and a Codex gate per task. It costs more tokens and wall-clock time than doing the work in one session.
-- The skill is long, and the controller re-reads it in full after every compaction.
+- The skill is long. Its step text is spread over five files, and after every compaction the controller re-reads the step file its step table names.
 - Within one session, tasks run one at a time: the skill forbids dispatching two implementers at once. Parallel work means more sessions, each with its own worktree and task branch, and that adds setup, merge-backs, and the chance of a merge conflict.
 - The plan must be good. A vague task produces an implementer that guesses, and the review loop then spends rounds on it.
 - Setup has moving parts: the workspace, the state branch, and sync outcomes that can stop the run until you answer a question.
@@ -87,7 +87,7 @@ If you want one agent to do the work in your session, say "execute inline" and t
 
 ## Under the hood
 
-- {source}`skills/subagent-driven-development/SKILL.md` holds the setup, the task loop, the fix loop, the final review, and the finish steps.
+- {source}`skills/subagent-driven-development/SKILL.md` is the controller: the process outline, the step table a resumed session reads, and the rules that hold in every step. {source}`skills/subagent-driven-development/setup.md`, {source}`skills/subagent-driven-development/task-loop.md`, {source}`skills/subagent-driven-development/review-and-complete.md`, {source}`skills/subagent-driven-development/fix-loop.md`, and {source}`skills/subagent-driven-development/final-and-finish.md` hold the setup, the task loop, the task review and completion, the fix loop, and the final review and finish steps.
 - {source}`skills/subagent-driven-development/implementer-prompt.md`, {source}`skills/subagent-driven-development/task-reviewer-prompt.md`, {source}`skills/subagent-driven-development/re-review-prompt.md`, and {source}`skills/subagent-driven-development/fix-subagent-prompt.md` are the dispatch templates.
 - {source}`skills/subagent-driven-development/risk-tiers.md` has the escalation triggers and the ledger line shapes.
 - {source}`skills/subagent-driven-development/model-selection.md` is the per-role model guidance.

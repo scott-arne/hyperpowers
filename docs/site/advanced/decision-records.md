@@ -1,6 +1,6 @@
 ---
 sources: skills/finishing-a-development-branch skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/subagent-driven-development/SKILL.md docs/hyperpowers/specs/2026-10-21-decision-records-design.md
-source-digest: a6fe5bdf696e
+source-digest: 1685a21ce55f
 ---
 # How decision records are made
 

@@ -1,6 +1,6 @@
 ---
 sources: skills/test-driven-development skills/systematic-debugging/SKILL.md skills/subagent-driven-development/SKILL.md skills/writing-skills/SKILL.md
-source-digest: 917f8941d020
+source-digest: 91e4abcef077
 ---
 # test-driven-development
 

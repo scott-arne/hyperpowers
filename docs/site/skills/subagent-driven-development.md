@@ -1,6 +1,6 @@
 ---
 sources: skills/subagent-driven-development hooks/sdd-stop-guard hooks/lib/stop-guard.mjs skills/writing-plans/SKILL.md docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md hooks/sdd-dispatch-guard hooks/lib/dispatch-guard.mjs
-source-digest: 07ca5e0c1bef
+source-digest: 5b023d1dbbb1
 ---
 # subagent-driven-development
 
@@ -47,7 +47,7 @@ The controller (your main session) coordinates and leaves implementation to suba
 
 **Model selection.** The controller names a model for every dispatch, because an omitted model inherits the session's, usually the most expensive. A mid-tier model is the floor for reviewers and for implementers working from prose. The cheapest tier is for transcription, where the task text carries the complete code. The final review takes the most capable model. {source}`skills/subagent-driven-development/model-selection.md` has the per-role guidance.
 
-**After compaction.** The skill's `SKILL.md` is a short controller that Claude Code re-attaches whole after a compaction, and the step text lives in five files beside it. After every compaction the controller prints the board and the ledger lines of its task and its Setup, finds its step in the controller's step table, and reads that one step file before its next action.
+**After compaction.** The skill's `SKILL.md` is a short controller that Claude Code re-attaches whole after a compaction, and the step text lives in five files beside it. After every compaction the controller prints the board and the ledger lines of its task and its Setup, finds its step in the controller's step table, and reads that one step file before its next action, along with any other skill it is following whose re-attached copy is cut short.
 
 ## Why it exists
 

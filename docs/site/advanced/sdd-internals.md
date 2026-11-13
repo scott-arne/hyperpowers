@@ -1,6 +1,6 @@
 ---
 sources: skills/subagent-driven-development hooks/session-start hooks/hooks.json hooks/sdd-stop-guard hooks/lib/stop-guard.mjs docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md hooks/sdd-dispatch-guard hooks/lib/dispatch-guard.mjs docs/hyperpowers/specs/2026-11-10-sdd-dispatch-guard-design.md
-source-digest: 112356437f15
+source-digest: 63ae35a09e7f
 ---
 # How subagent-driven development keeps its place
 
@@ -131,8 +131,8 @@ The skill's `SKILL.md` is a controller under 19,000 characters, so the copy Clau
 
 Three things bring a controller back to its place.
 
-- The step table above, and the step file it names, read in full before the next action.
-- On Claude Code, the session-start hook adds a line when a session resumes after compaction in a repository that has a ledger. {doc}`triggering` describes it. After a compaction the hook also tells the session to Read in full, from the installed plugin, each hyperpowers skill it is following, because the re-attached copy is cut to 20,000 characters and a long session can hold an older copy.
+- The step table above, and the step file it names, read in full before the next action, along with any other skill the controller is following whose re-attached copy is cut short.
+- On Claude Code, the session-start hook adds a line when a session resumes after compaction in a repository that has a ledger. {doc}`triggering` describes it.
 - The ledger's resume rules above, which tell the controller which task is done, mid-loop, or in flight.
 
 The skill also covers a decision extractor, a background subagent that drafts notes for the decision records. The controller records its task id and output path in the ledger before any other call, because after a compaction that line is the only record of them.

@@ -4,6 +4,8 @@
 
 **Spec:** docs/hyperpowers/specs/2026-11-11-compaction-reread-notice-design.md
 
+**Revision (2026-11-12):** the campaign stopped after wave 2: every notice-arm run, and every run of released v6.18.1, ended in Claude Code's "Autocompact is thrashing" stop at the 100,000-token window. Tasks 7-13 implement the spec's "Revision (2026-11-12): a compact SDD controller": SDD's SKILL.md becomes a controller under 19,000 characters with its step text in five sibling files, the notice and the dispatch guard point at the step file, and a revised campaign compares v6.18.1 with the slice head. Tasks 1-5 stand; Task 6 is closed as stopped; the old Task 7 is replaced.
+
 **Goal:** Add a one-line re-read notice to `hooks/session-start` on every `compact` run, pointing the session at the installed copy of each hyperpowers skill it follows, and measure it with a paired campaign (stripped-paragraph control and treatment, a shipped arm, and a no-skill sentinel).
 
 **Architecture:** The A9 notice's path-spelling code moves into a top-level `spell_path` function, which both notices call. The new notice is built beside the A9 block and appended before it. The campaign reuses the 6.16.2 tooling: the existing `sdd-compaction-reread` scenario, plus a new `compaction-no-skill` scenario and an evidence directory whose tally is adapted from the 6.16.2 `tally.py`. Arms are pinned by commit: control (B) and treatment live on an unmerged side branch, and shipped is the slice branch commit.
@@ -32,6 +34,23 @@
 - Lint: `bash <worktree>/scripts/lint-shell.sh hooks/session-start tests/hooks/test-session-start.sh` exits 0 (run from `<worktree>`); evals shell scripts pass `shellcheck`; `ruff check` and `mypy` pass on `tally.py` and `test_tally.py`.
 - Comments explain why, in complete sentences.
 
+### Revision constraints (Tasks 7-13)
+
+These supersede, for Tasks 7-13, the lines above on the notice text, the notice ceiling, the paragraph staying unchanged (Decision 4), the arms, the bars and the voids. The spec section "Revision (2026-11-12): a compact SDD controller" and decisions 7-10 govern.
+
+- Notation. `<sdd>` is `<worktree>/skills/subagent-driven-development`. Hyperpowers commits go on the task branch each claim creates (SDD), merged into `compaction-reread-notice`.
+- Sizes, in characters (code points): `<sdd>/SKILL.md` under 19,000; each step file under 17,000. Step files: `setup.md`, `task-loop.md`, `review-and-complete.md`, `fix-loop.md`, `final-and-finish.md`, in `<sdd>`.
+- SDD paragraph, verbatim: `**After every context compaction:** this file fits within the 20,000 characters Claude Code re-attaches, so the copy you hold is whole. A step file you read before the compaction does not survive it. Before your next action, print the board and the ledger lines the step table names (your task's and your Setup's, never the whole ledger), find your step in the table, and Read that step file in full.` The brainstorming paragraph does not change.
+- Notice text, verbatim (`<root>` substituted as today): `Context was compacted. Each skill you invoked came back cut to 20,000 characters, and a long session can hold an older copy than the one installed. Before your next action, Read in full <root>/skills/<name>/SKILL.md for each hyperpowers skill you are following, then the files it tells you to read after a compaction; if none, skip this.` Ceiling: 1400 unless Task 10's measurement needs more (Decision 9).
+- Dispatch guard sentence, verbatim: ``If you have not Read ${skill} and the step file its step table names since the last compaction, Read them now.``
+- Mandatory ledger lines: `session <sid>: setup complete`; `Task <N>: report <status> <one line>`; `Task <N>: review <approved|blocking> <reviewer id> <one line>`; `Task <N>: codex gate round <R> <approved|blocking> <one line>`.
+- Every commit that changes a file a `docs/site/` page lists in `sources:` (several pages list the `skills/subagent-driven-development` directory) refreshes that page's digest; `bash <worktree>/tests/docs/docs-check.sh` exits 0 after each such commit.
+- Regression: `bash <worktree>/tests/run-offline.sh` exits 0 after Tasks 7 and 8.
+- Arms: control `baseline-6181` (released v6.18.1 `7f7c399ca1eef6e931d01fa47c02303eef32f44a`, the ten 2026-11-12 baseline runs; harness paths at their evals head `b59b12e16c` identical to the pin `474ea8c8df`, Claude Code 2.1.317, controller and grader `claude-opus-5-5`, checked 2026-11-12); treatment `slice` (the integration head after Tasks 7-10) on `sdd-compaction-reread`; sentinel `slice` on `compaction-no-skill`. Window 100000.
+- Bars, verbatim from the spec: 1. Treatment outcome (plan finished, every post-check passing) in at least 8 of 10 valid runs, and more than the control's. 2. No treatment run ends in the thrash stop. 3. At least 85% of treatment compactions after the skill load, valid runs pooled, are followed. 4. Median treatment compactions per run at most 16. 5. Sentinel failures at most 1 of 10.
+- Voids for the SDD arms: `launch`, `setup`, `grader`, `instrument`, `no-compaction`; a thrash stop or a run with no dispatch is a valid failure. Replacements r1-r3 per arm and scenario, recorded in `<E>/sentinel-reruns.tsv`.
+- The notice stays off any release; nothing is pushed.
+
 ## Grounding
 
 - `hooks/session-start:16-35`: `escape_for_json`, the byte-exact JSON escaper `spell_path` builds on.
@@ -51,6 +70,14 @@
 - `<ev>/evidence/2026-11-03-cost-reduction-6-16-2/tally.py:143-223` (`events`), `:349-380` (`compaction_follow`), `:426` (`LOG_NAME`), `:593-652` (summaries and bars); `test_tally.py` (unittest, synthetic transcripts via `tool_use`).
 - `<ev>/evidence/2026-11-03-cost-reduction-6-16-2/launch-all.sh:41,47` (accepted two-field keys and arms) and `logs/measure-launch.sh` (pin checks, arm roots, `CC_PIN`).
 - `<ev>/evidence/2026-11-10-sdd-dispatch-guard/archive-runs.sh`: archive hygiene, arm whitelist at line 26.
+- `skills/subagent-driven-development/SKILL.md:131-377` (Setup), `:391-559` (Task Loop intro, steps 1-2), `:560-612` (step 3), `:613-726` and `:785-792` (step 4 and the breaker), `:727-784` (per-task Codex gate), `:793-843` (step 5), `:872-1024` (Final Review, Finish), at the Task 6 head `53e9380d`.
+- `skills/subagent-driven-development/SKILL.md:386-389,867-870,1026-1034`: SKILL.md links its existing siblings (`model-selection.md`, `risk-tiers.md`, `common-rationalizations.md`, `example-workflow.md`) by bare relative path; `risk-tiers.md:1-5` opens with its own `##` heading.
+- `tests/sdd/test-sdd-contract.sh:5-12,22-38`: file variables per SDD file and `assert_contains` over whitespace-normalized text.
+- `tests/sdd/test-compaction-reread.sh:15-29`: the node `check` for a paragraph's position.
+- `hooks/lib/dispatch-guard.mjs:1-8,135` and `hooks/lib/dispatch-guard.test.mjs:67-69`: the refusal's re-read sentence and its exact-text expectations; `tests/hooks/test-sdd-dispatch-guard.sh:24` runs the node tests.
+- `hooks/session-start:118-122,195` and `tests/hooks/test-session-start.sh:461,1403-1410`: the notice budget comment, the notice `printf`, the expected tail, the ceiling.
+- `<E>/tally.py:568-677` (`events`), `:807-830` (`compaction_follow`), `:952-955` (`LOG_NAME`), `:958-981` (`void_kind`), `:1011-1061` (`read_run`), `:1133-1205` (cells and summaries); `<E>/test_tally.py:24-64,477-502,661-664` (helpers, `PerCompaction`, `bash`).
+- `<E>/logs/measure-launch.sh:37-41` (arm roots), `<E>/launch-all.sh:44,50` (arm whitelists), `<E>/archive-runs.sh:25` (arm whitelist).
 - Naming: hook notices are lowercase `<name>_notice` variables; tests name cases "SessionStart ..." in the present tense.
 
 ---
@@ -1048,53 +1075,873 @@ python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t6.staged.diff
 git -C <ev> commit -m "evidence(compaction-reread-notice): campaign runs and tally"
 ```
 
+
+**Stopped (2026-11-12).** After Step 3 the human partner stopped the campaign: every treatment run thrashed (wave 2), and released v6.18.1 thrashed the same way (the baseline). Waves 1-2 are archived and committed in evals `b59b12e16c` with the outcome in `<E>/README.md`; Steps 4-7 are superseded by Tasks 11-12. Done when the spec revision (commits `ff884834`, `f3586fae`, `53e9380d` on this task's branch, Codex spec gate converged in round 3, approved by the human partner) is merged back.
+
 ---
 
-### Task 7: Evidence notes
+### Task 7: Move SDD's step text into five files
 
-**Risk tier:** standard — the durable record the release cites.
+**Risk tier:** standard — behavior-shaping skill surgery across SKILL.md, five new files and two test suites; the text moves verbatim.
 
 **Depends on:** Task 6
 
 **Files:**
-- Create: `<worktree>/docs/hyperpowers/2026-11-11-compaction-reread-notice-eval-evidence.md`
-- Create: `<ev>/docs/experiments/2026-11-11-compaction-reread-notice.md`
-- Modify: `<worktree>/CHANGELOG.md` (append the measured result to the Task 4 entry)
+- Create: `<sdd>/setup.md`, `<sdd>/task-loop.md`, `<sdd>/review-and-complete.md`, `<sdd>/fix-loop.md`, `<sdd>/final-and-finish.md`, `tests/sdd/test-sdd-layout.sh`
+- Modify: `<sdd>/SKILL.md`, `tests/sdd/test-sdd-contract.sh`, `tests/codex-review-gate/test-gate-contract.sh`, `docs/testing.md` (the `tests/sdd/` row names the layout check), the `docs/site/` pages `bash tests/docs/docs-check.sh` reports stale (digests only in this task)
 
 **Interfaces:**
-- Consumes: `<E>/tally.txt`, the archived run ids, the pins.
+- Produces: the five step files with the headings below, and the test variables `SDD_SETUP`, `SDD_TASK_LOOP`, `SDD_REVIEW`, `SDD_FIX_LOOP`, `SDD_FINAL` in both contract tests. Task 8 rewrites SKILL.md around them.
 
-**Mirror:** `docs/hyperpowers/2026-11-03-cost-reduction-6-16-2-eval-evidence.md` (sections: change under test, method, environment, scenarios, results tables per arm, bars, not measured); `<ev>/docs/experiments/2026-11-10-sdd-dispatch-guard.md`.
+**Mirror:** `<sdd>/SKILL.md:386-389` and `<sdd>/risk-tiers.md:1-5`: a sibling file SKILL.md links by bare relative path, opening with its own `##` heading.
+
+The region boundaries below are the heading lines as they stand at the Task 6 head (53e9380d line numbers in brackets); the script asserts each marker occurs exactly once.
+
+| Step file | Regions, in this order |
+|---|---|
+| `setup.md` | `## Setup` [131] up to `## Model Selection` [378] |
+| `task-loop.md` | `## The Task Loop` [391] up to `### 3. Review the task` [560] |
+| `review-and-complete.md` | `### 3. Review the task` [560] up to `### 4. The fix loop` [613]; then `**Codex Review Gate (Claude Code only).**` [727] up to `**The breaker.**` [785]; then `### 5. Complete the task` [793] up to `## The waiting board` [844] |
+| `fix-loop.md` | `### 4. The fix loop` [613] up to `**Codex Review Gate (Claude Code only).**` [727]; then `**The breaker.**` [785] up to `### 5. Complete the task` [793] |
+| `final-and-finish.md` | `## Final Review` [872] up to `## Common Rationalizations` [1025] |
+
+The per-task Codex gate subsection goes with step 3 and step 5, not with the fix loop: the step table (Task 8) sends a session whose newest line approves a review to `review-and-complete.md`, and that is where the gate runs next. The fix loop ends by sending the session back there.
+
+- [ ] **Step 1: Baseline the three suites**
+
+From `<worktree>`: `bash tests/sdd/test-sdd-contract.sh > <sw>/logs/t7-contract-before.log 2>&1; echo "exit=$?"`, the same for `tests/codex-review-gate/test-gate-contract.sh` (`t7-gate-before.log`) and `tests/sdd/test-compaction-reread.sh` (`t7-reread-before.log`). Expected: `exit=0` for all three.
+
+- [ ] **Step 2: Write the layout test (fails)**
+
+Create `tests/sdd/test-sdd-layout.sh` (mode 644, like its neighbors):
+
+```bash
+#!/usr/bin/env bash
+# SDD's step text lives in five files beside SKILL.md. Each must stay small
+# enough to re-read whole in one Read after a compaction, SKILL.md must link
+# each one, and every relative link in the skill's files must resolve from
+# the file that holds it.
+set -uo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SDD_DIR="$REPO_ROOT/skills/subagent-driven-development"
+STEPS="setup.md task-loop.md review-and-complete.md fix-loop.md final-and-finish.md"
+
+FAILURES=0
+pass() { echo "  [PASS] $1"; }
+fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
+
+# chars FILE: length in characters (code points), the unit of Claude Code's
+# 20,000-character re-attach cut.
+chars() { node -e 'console.log([...require("fs").readFileSync(process.argv[1], "utf8")].length)' "$1"; }
+
+for f in $STEPS; do
+  p="$SDD_DIR/$f"
+  if [ ! -f "$p" ]; then fail "$f exists"; continue; fi
+  n="$(chars "$p")"
+  if [ "$n" -lt 17000 ]; then pass "$f is under 17,000 characters ($n)"; else fail "$f is under 17,000 characters ($n)"; fi
+  if grep -Fq "]($f)" "$SDD_DIR/SKILL.md"; then pass "SKILL.md links $f"; else fail "SKILL.md links $f"; fi
+done
+
+for f in SKILL.md $STEPS; do
+  p="$SDD_DIR/$f"
+  [ -f "$p" ] || continue
+  missing="$(node -e '
+    const fs = require("fs"), path = require("path");
+    const file = process.argv[1], dir = path.dirname(file);
+    const bad = [];
+    for (const m of fs.readFileSync(file, "utf8").matchAll(/\]\(([^)\s#]+)(#[^)]*)?\)/g)) {
+      if (/^[a-z]+:/i.test(m[1])) continue;
+      if (!fs.existsSync(path.resolve(dir, m[1]))) bad.push(m[1]);
+    }
+    console.log(bad.join(" "));
+  ' "$p")"
+  if [ -z "$missing" ]; then pass "$f links resolve"; else fail "$f links resolve (missing: $missing)"; fi
+done
+
+echo
+if [ "$FAILURES" -eq 0 ]; then echo "ALL PASS"; exit 0; else echo "$FAILURES FAILURES"; exit 1; fi
+```
+
+Run `bash tests/sdd/test-sdd-layout.sh > <sw>/logs/t7-layout-red.log 2>&1; echo "exit=$?"`. Expected: `exit=1`, every step file failing "exists".
+
+- [ ] **Step 3: Move the text**
+
+Run this script with `python3` from `<worktree>` (save it as `<sw>/t7-move.py`). It writes the five files and replaces each moved region in SKILL.md with a pointer that keeps the heading.
+
+```python
+"""Move SDD's step regions into five sibling files, verbatim."""
+from pathlib import Path
+
+sdd = Path("skills/subagent-driven-development")
+lines = (sdd / "SKILL.md").read_text(encoding="utf-8").splitlines(keepends=True)
+
+
+def at(marker: str) -> int:
+    hits = [i for i, line in enumerate(lines) if line.startswith(marker)]
+    assert len(hits) == 1, (marker, hits)
+    return hits[0]
+
+
+SETUP, MODEL = at("## Setup"), at("## Model Selection")
+LOOP, REVIEW, FIX = at("## The Task Loop"), at("### 3. Review the task"), at("### 4. The fix loop")
+GATE, BREAKER = at("**Codex Review Gate (Claude Code only).**"), at("**The breaker.**")
+COMPLETE, BOARD = at("### 5. Complete the task"), at("## The waiting board")
+FINAL, RATIONAL = at("## Final Review"), at("## Common Rationalizations")
+assert SETUP < MODEL < LOOP < REVIEW < FIX < GATE < BREAKER < COMPLETE < BOARD < FINAL < RATIONAL
+
+
+def text(a: int, b: int) -> str:
+    return "".join(lines[a:b])
+
+
+HEAD = "Part of [SKILL.md](SKILL.md); the rules there hold in this step.\n\n"
+files = {
+    "setup.md": text(SETUP, MODEL),
+    "task-loop.md": text(LOOP, REVIEW),
+    "review-and-complete.md": text(REVIEW, FIX) + text(GATE, BREAKER) + text(COMPLETE, BOARD),
+    "fix-loop.md": text(FIX, GATE) + text(BREAKER, COMPLETE),
+    "final-and-finish.md": text(FINAL, RATIONAL),
+}
+for name, body in files.items():
+    first, rest = body.split("\n", 1)
+    (sdd / name).write_text(first + "\n\n" + HEAD + rest.lstrip("\n"), encoding="utf-8")
+
+pointer = {
+    "setup": "## Setup\n\nSetup's full text is in [setup.md](setup.md).\n\n",
+    "loop": "## The Task Loop\n\nSteps 1 and 2 are in [task-loop.md](task-loop.md); step 3, the per-task "
+    "Codex gate and step 5 in [review-and-complete.md](review-and-complete.md); step 4 in "
+    "[fix-loop.md](fix-loop.md).\n\n",
+    "final": "## Final Review and Finish\n\nBoth are in [final-and-finish.md](final-and-finish.md).\n\n",
+}
+out = (
+    text(0, SETUP) + pointer["setup"] + text(MODEL, LOOP) + pointer["loop"]
+    + text(BOARD, FINAL) + pointer["final"] + text(RATIONAL, len(lines))
+)
+(sdd / "SKILL.md").write_text(out, encoding="utf-8")
+```
+
+Check: `git diff --stat` shows SKILL.md shrinking and five new untracked files; `wc -c` of the five files plus SKILL.md is the old SKILL.md's size plus the five headers and pointers (within about 1,000 bytes).
+
+- [ ] **Step 4: Fix references that crossed a file boundary**
+
+Relative links (`./implementer-prompt.md`, `../requesting-code-review/...`) still resolve, since the files share a directory. Prose references to a section now in another file do not. Run `grep -nE 'below|above|step [1-5]|Risk Tiers|Setup|waiting board|Final Review' skills/subagent-driven-development/{setup,task-loop,review-and-complete,fix-loop,final-and-finish}.md` and, for each hit whose referent now lives in a different file, add that file's name in the same sentence, as a link. At least these change: "per Risk Tiers below" (gate subsection) → "per Risk Tiers in [SKILL.md](SKILL.md)"; "follow the breaker below" (gate mechanics item 3) → "follow the breaker in [fix-loop.md](fix-loop.md)"; "the same five-round loop above" → "the five-round loop in [fix-loop.md](fix-loop.md)"; "the per-task Codex gate below" (step 4's opening) → "the per-task Codex gate in [review-and-complete.md](review-and-complete.md)". At the end of `fix-loop.md`'s step 4 text, before **The breaker.**, add one sentence: "When the re-review leaves no finding open, go to the per-task Codex gate in [review-and-complete.md](review-and-complete.md), or, for an effective-low task, to step 5 there." Change no other wording in this task.
+
+- [ ] **Step 5: Repoint the contract tests**
+
+In `tests/sdd/test-sdd-contract.sh` and `tests/codex-review-gate/test-gate-contract.sh`, add beside `SDD=`:
+
+```bash
+SDD_SETUP="$REPO_ROOT/skills/subagent-driven-development/setup.md"
+SDD_TASK_LOOP="$REPO_ROOT/skills/subagent-driven-development/task-loop.md"
+SDD_REVIEW="$REPO_ROOT/skills/subagent-driven-development/review-and-complete.md"
+SDD_FIX_LOOP="$REPO_ROOT/skills/subagent-driven-development/fix-loop.md"
+SDD_FINAL="$REPO_ROOT/skills/subagent-driven-development/final-and-finish.md"
+```
+
+Run each suite to a log. For every failing assertion on `"$SDD"`, find the file that now holds the needle with this finder (save as `<sw>/t7-where.py`; it normalizes whitespace the way `assert_contains` does) and point the assertion at that variable:
+
+```python
+"""Print which SDD file holds a needle, whitespace-normalized like the contract tests."""
+import re
+import sys
+from pathlib import Path
+
+needle = re.sub(r"\s+", " ", sys.argv[1])
+d = Path("skills/subagent-driven-development")
+for name in ("SKILL.md", "setup.md", "task-loop.md", "review-and-complete.md", "fix-loop.md", "final-and-finish.md"):
+    if needle in re.sub(r"\s+", " ", (d / name).read_text(encoding="utf-8")):
+        print(name)
+```
+
+An `assert_before` whose two needles now sit in different files becomes two `assert_contains`, one per file; list each such change in your report. Do not change a needle's text. Re-run until both suites print `ALL PASS` (or their existing success line) with `exit=0`.
+
+- [ ] **Step 6: Run the layout test and the offline set**
+
+`bash tests/sdd/test-sdd-layout.sh > <sw>/logs/t7-layout.log 2>&1; echo "exit=$?"`: expected `exit=0`, every step file under 17,000 characters. If one is not, stop and report its size; do not trim text in this task. Add the layout check to the `tests/sdd/` row of `docs/testing.md` ("the step-file layout (`test-sdd-layout.sh`)"). Refresh the digest of every page `bash tests/docs/docs-check.sh > <sw>/logs/t7-docs.log 2>&1` reports stale, with `bash tests/docs/docs-check.sh --digest <page>`, then run docs-check again: `exit=0`. Then the offline set: `bash tests/run-offline.sh > <sw>/logs/t7-offline.log 2>&1; echo "exit=$?"` in the foreground with a 600000 ms timeout (a tracked job if it runs longer); expected `exit=0`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git -C <worktree> add skills/subagent-driven-development tests/sdd/test-sdd-layout.sh tests/sdd/test-sdd-contract.sh tests/codex-review-gate/test-gate-contract.sh docs/testing.md docs/site
+git -C <worktree> diff --cached > <sw>/logs/t7.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t7.staged.diff
+git -C <worktree> commit -m "refactor(sdd): move the step text into five files beside SKILL.md"
+```
+
+---
+
+### Task 8: The compact controller
+
+**Risk tier:** high — adds three mandatory ledger lines (durable records the step table and the tally read) and rewrites the part of SDD every session holds after a compaction.
+
+**Depends on:** Task 7
+
+**Files:**
+- Modify: `<sdd>/SKILL.md`, the five step files, `tests/sdd/test-sdd-layout.sh`, `tests/sdd/test-compaction-reread.sh`, `tests/sdd/test-sdd-contract.sh` and `tests/codex-review-gate/test-gate-contract.sh` (only needles whose sentence moved or was deleted), `docs/site/skills/subagent-driven-development.md` and `docs/site/advanced/sdd-internals.md` (text and digest), other stale digests, `CHANGELOG.md`
+
+**Interfaces:**
+- Consumes: Task 7's five files and test variables.
+- Produces: the paragraph, the step table, the rules section and the ledger-line list in SKILL.md, verbatim as below; Task 9's refusal text and Task 11's tally read them.
+
+- [ ] **Step 1: Extend the layout test (fails)**
+
+Insert before the final `echo` in `tests/sdd/test-sdd-layout.sh`:
+
+```bash
+n="$(chars "$SDD_DIR/SKILL.md")"
+if [ "$n" -lt 19000 ]; then pass "SKILL.md is under 19,000 characters ($n)"; else fail "SKILL.md is under 19,000 characters ($n)"; fi
+
+# count FILE NEEDLE: occurrences of NEEDLE in FILE, whitespace-normalized.
+count() {
+  node -e '
+    const fs = require("fs"), norm = (s) => s.replace(/\s+/g, " ");
+    console.log(norm(fs.readFileSync(process.argv[1], "utf8")).split(norm(process.argv[2])).length - 1);
+  ' "$1" "$2"
+}
+
+# Each rule that holds in every step is stated once, in SKILL.md, so a step
+# file and the controller cannot drift apart.
+while IFS= read -r rule; do
+  [ -n "$rule" ] || continue
+  total=0
+  for f in SKILL.md $STEPS; do total=$((total + $(count "$SDD_DIR/$f" "$rule"))); done
+  here="$(count "$SDD_DIR/SKILL.md" "$rule")"
+  if [ "$total" -eq 1 ] && [ "$here" -eq 1 ]; then pass "rule stated once, in SKILL.md: $rule"; else fail "rule stated once, in SKILL.md: $rule (total=$total, SKILL.md=$here)"; fi
+done < <(printf '%s\n' \
+  'DONE — do not re-dispatch them' \
+  'Conversation memory does not survive compaction.' \
+  'trust the ledger and `git log` over your own recollection' \
+  'Dispatch implementer, task-reviewer, fix-round, re-review and final-reviewer subagents with `run_in_background: false`.' \
+  'Run a covering command expected to finish within 10 minutes in the foreground' \
+  'A command that may run past 10 minutes is a tracked job' \
+  'One implementer at a time in this session' \
+  'Never fix findings yourself in the controller session' \
+  'ONE shared cap of **five rounds per task**' \
+  'still leaves blocking findings open, stop dispatching')
+
+for f in $STEPS; do
+  if grep -Fq "| [$f]($f) |" "$SDD_DIR/SKILL.md"; then pass "step table names $f"; else fail "step table names $f"; fi
+done
+
+if grep -Fq 'session <sid>: setup complete' "$SDD_DIR/setup.md"; then pass "setup.md writes the setup complete line"; else fail "setup.md writes the setup complete line"; fi
+if grep -Fq 'Task <N>: report <status>' "$SDD_DIR/task-loop.md"; then pass "task-loop.md writes the report line"; else fail "task-loop.md writes the report line"; fi
+if grep -Fq 'Task <N>: review <approved|blocking>' "$SDD_DIR/review-and-complete.md"; then pass "review-and-complete.md writes the review line"; else fail "review-and-complete.md writes the review line"; fi
+if grep -Fq 'Task <N>: codex gate round <R> <approved|blocking>' "$SDD_DIR/review-and-complete.md"; then pass "review-and-complete.md writes the gate line"; else fail "review-and-complete.md writes the gate line"; fi
+```
+
+The rule list is fed with `printf`, not a heredoc (Global Constraints). In `tests/sdd/test-compaction-reread.sh`, replace the SDD `check` line with:
+
+```bash
+check "$SDD" "**After every context compaction:** this file fits within the 20,000 characters Claude Code re-attaches, so the copy you hold is whole. A step file you read before the compaction does not survive it. Before your next action, print the board and the ledger lines the step table names (your task's and your Setup's, never the whole ledger), find your step in the table, and Read that step file in full." "## When to Use" "SDD re-read paragraph present, early, before When to Use"
+```
+
+and update the file's opening comment: SDD's paragraph sends the session to its step file and SKILL.md stays whole after a compaction; brainstorming's is unchanged. Run both tests: expected `exit=1` (rule counts, table rows, ledger lines, paragraph).
+
+- [ ] **Step 2: Rewrite SKILL.md's top half**
+
+In `<sdd>/SKILL.md`:
+
+1. Replace the paragraph that begins `**After every context compaction:**` with:
+
+> **After every context compaction:** this file fits within the 20,000 characters Claude Code re-attaches, so the copy you hold is whole. A step file you read before the compaction does not survive it. Before your next action, print the board and the ledger lines the step table names (your task's and your Setup's, never the whole ledger), find your step in the table, and Read that step file in full.
+
+(written as a plain paragraph, not a quote).
+
+2. Replace the whole `## The Process` section (heading, dot graph and all) with:
+
+````markdown
+## The Process
+
+Each step's full text is in its own file beside this one. Read a step's file when you enter the step; after a compaction, the step table below names the one to read.
+
+1. **Setup** ([setup.md](setup.md)): sync the state branch and find the plan's workspace, settle where the work happens (hyperpowers:using-git-worktrees), create or read the ledger and append your session line, verify, read the plan and the spec, run the pre-flight scan. Setup's last action appends `session <sid>: setup complete`.
+2. **Take a task and dispatch** ([task-loop.md](task-loop.md)): `scripts/sdd-state next` offers a task; claim the first and switch to its branch (none to take, or blocked: post, print the board, hand back). Dispatch the implementer, answer its questions, handle its report.
+3. **Review the task** ([review-and-complete.md](review-and-complete.md)): generate the review package and dispatch the task reviewer. Blocking findings go to step 4; a finding that conflicts with the plan text goes to your human partner first.
+4. **Fix loop** ([fix-loop.md](fix-loop.md)): fix rounds, each with a scoped re-review, under the shared cap in the rules below. When no finding is left open, go back to review-and-complete.md for the gate.
+5. **Codex task gate and completion** ([review-and-complete.md](review-and-complete.md)): unless the task's effective tier is low, run the per-task Codex gate (blocking findings re-enter step 4). Append the `approved` line, merge back, detach, delete the task branch, and run `scripts/sdd-state complete`; any status but `complete` stops. Then step 2.
+6. **Final review and Finish** ([final-and-finish.md](final-and-finish.md)): when no task remains, claim the final train, dispatch the final reviewer (one fix dispatch, one scoped re-review), the decision extractor and the Codex final gate, delete the workspace, then use hyperpowers:finishing-a-development-branch.
+
+## After a compaction: the step table
+
+Print the board (`scripts/sdd-state board PLAN_FILE`) and the ledger lines of your task and your Setup (`grep -E '^(Task <N>:|session <sid>: setup complete)' <workspace>/progress.md`, leaving out `Task <N>:` when you hold no task); `scripts/sdd-dir PLAN_FILE` prints the workspace. Do not Read the whole ledger after a compaction: it grows with the plan. Then Read the step file this table names:
+
+| State | Step file |
+|---|---|
+| no ledger in the workspace, or no `setup complete` line of this session in it | [setup.md](setup.md) |
+| the board shows no task held by this session and a task without a completion line | [task-loop.md](task-loop.md) |
+| the held task's newest line is its branch, base, implementer identity or `report` line | [task-loop.md](task-loop.md) |
+| its newest line is a `review` or Codex gate line approving it, an `approved` line or a `merged` line | [review-and-complete.md](review-and-complete.md) |
+| its newest line is a `fix round` line, or a `review` or Codex gate line with blocking findings | [fix-loop.md](fix-loop.md) |
+| this session holds the final claim, or every task has a completion line | [final-and-finish.md](final-and-finish.md) |
+
+A state the table does not cover reads [task-loop.md](task-loop.md), and you record that in the ledger.
+
+The table reads these ledger lines, so write each one where its step says:
+
+- `session <sid>: setup complete`, Setup's last action;
+- `Task <N>: report <status> <one line>`, after an implementer's report;
+- `Task <N>: review <approved|blocking> <reviewer id> <one line>`, after a task review or scoped re-review;
+- `Task <N>: codex gate round <R> <approved|blocking> <one line>`, after each per-task Codex gate round.
+
+## Rules for every step
+
+These hold in every step file. Where a step file and this section differ, this section governs.
+
+- Tasks with a `Task <N>: complete` line are DONE — do not re-dispatch them. Conversation memory does not survive compaction. After compaction, trust the ledger and `git log` over your own recollection.
+- Dispatch implementer, task-reviewer, fix-round, re-review and final-reviewer subagents with `run_in_background: false`. Your next step always depends on the result, and a foreground call keeps your turn open, which is what an editor such as Zed shows as the session working. A background dispatch ends the turn while the subagent runs, and the editor shows the session idle.
+- Run a covering command expected to finish within 10 minutes in the foreground, with an explicit timeout of at least its expected runtime and at most 600000 ms. A command that may run past 10 minutes is a tracked job; [task-loop.md](task-loop.md), "Waiting on subagents and long commands", gives its commands and watch budget.
+- One implementer at a time in this session: parallel work is other sessions' (one controller per task branch); never dispatch two implementers at once here.
+- Never fix findings yourself in the controller session — your context stays clean for coordination, and controller fixes skip review. The one exception is the de-minimis fix in [fix-loop.md](fix-loop.md).
+- The task reviewer's blocking findings and the per-task Codex gate's blocking findings form one loop with ONE shared cap of **five rounds per task**: the gate does not run a count of its own.
+- When round 5's re-review — or a per-task Codex gate at the spent cap — still leaves blocking findings open, stop dispatching and surface the task as BLOCKED, as [fix-loop.md](fix-loop.md) describes under the breaker.
+````
+
+3. Replace the three pointer sections Task 7 left (`## Setup`, `## The Task Loop`, `## Final Review and Finish`) with nothing: the outline and the step table now link every file. Keep `## When to Use`, `## Model Selection`, `## The waiting board`, `## Risk Tiers ...`, `## Common Rationalizations` and `## Example Workflow` as they are.
+
+- [ ] **Step 3: Delete the duplicated rule sentences from the step files**
+
+Each edit below removes a sentence SKILL.md now states; keep the surrounding mechanics. Match by text, not line number.
+
+- `setup.md`: "Conversation memory does not survive compaction. In real sessions, controllers that lost their place have re-dispatched entire completed task sequences — the single most expensive failure observed. Track progress in a ledger file, not only in todos." becomes "Track progress in a ledger file, not only in todos: in real sessions, controllers that lost their place have re-dispatched entire completed task sequences, the single most expensive failure observed."
+- `setup.md`: "Tasks with a `Task <N>: complete` line are DONE — do not re-dispatch them; resume at the first task without one." becomes "Tasks with a `Task <N>: complete` line are done (SKILL.md, Rules for every step); resume at the first task without one."
+- `setup.md`: delete "After compaction, trust the ledger and `git log` over your own recollection." from the bullet that begins "The ledger is your recovery map".
+- `task-loop.md`: "**Waiting on subagents and long commands.** On Claude Code, wait in the foreground:" becomes "**Waiting on subagents and long commands.** SKILL.md (Rules for every step) sets the foreground rule; a tracked job runs this way:". Delete the two bullets that begin "Dispatch implementer, task-reviewer, fix-round, re-review and final-reviewer subagents" and "Run a covering command expected to finish within 10 minutes". In the next bullet, "A command that may run past 10 minutes is a tracked job. Allocate it in the foreground" becomes "Allocate a tracked job in the foreground".
+- `task-loop.md`: delete the bullet "One implementer at a time in this session: parallel work is other sessions' (one controller per task branch); never dispatch two implementers at once here."
+- `fix-loop.md`: "They are ONE loop with ONE shared cap of **five rounds per task**: the gate does not run a count of its own." becomes "They share the five-round cap SKILL.md sets."
+- `fix-loop.md`: "Never fix findings yourself in the controller session — your context stays clean for coordination, and controller fixes skip review. One narrow exception:" becomes "One narrow exception to the controller rule in SKILL.md:".
+- `fix-loop.md`: "**The breaker.** When round 5's re-review — or a per-task Codex gate at the spent cap — still leaves blocking findings open, stop dispatching. The task does not silently continue" becomes "**The breaker.** At the spent cap SKILL.md stops dispatching. The task does not silently continue".
+
+If the layout test still counts a rule twice, the remaining copy is a restatement in a step file: replace it with a pointer to SKILL.md's rules in the same spirit and list it in your report.
+
+- [ ] **Step 4: Add the three ledger-line instructions**
+
+- `setup.md`, as the last paragraph: "Setup's last action: append `session <sid>: setup complete` to the ledger (a later session writes its own). The step table in SKILL.md reads it to tell a compaction during Setup from one after it."
+- `task-loop.md`, in step 2 (Handle the report), first bullet: "Append `Task <N>: report <status> <one line>` to the ledger when the report arrives, before acting on it."
+- `review-and-complete.md`, in step 3 where the reviewer's verdict is read: "Append `Task <N>: review <approved|blocking> <reviewer id> <one line>` when a task review or scoped re-review returns." In the gate subsection, after the line that records `Task N gate dir: <path>`: "After each gate round, append `Task <N>: codex gate round <R> <approved|blocking> <one line>`, R being the gate's own round number."
+- `fix-loop.md`, where a scoped re-review returns: "Append the `Task <N>: review ...` line (SKILL.md's ledger lines) before the round's `fix round` line."
+
+- [ ] **Step 5: Run the suites**
+
+`bash tests/sdd/test-sdd-layout.sh`, `bash tests/sdd/test-compaction-reread.sh`, `bash tests/sdd/test-sdd-contract.sh`, `bash tests/codex-review-gate/test-gate-contract.sh`, each to `<sw>/logs/t8-<name>.log`. Contract-test failures from Step 3's deletions are repointed to `$SDD` (the sentence's new home) with `<sw>/t7-where.py`; a needle whose sentence was reworded in Step 3 takes the new wording, listed in your report. Expected: all four `exit=0`; the layout test prints SKILL.md's size under 19,000.
+
+- [ ] **Step 6: Docs and changelog**
+
+Re-read `docs/site/skills/subagent-driven-development.md` and `docs/site/advanced/sdd-internals.md`: correct any sentence that says SDD re-reads SKILL.md in full after a compaction, describes the dot graph, or places Setup, the task loop or the final review inside SKILL.md; describe the step files and the step table in one short paragraph on the internals page ("how a run resumes after compaction"). Refresh every stale digest (`tests/docs/docs-check.sh`, as in Task 7), then docs-check `exit=0`. In `CHANGELOG.md`'s `## Unreleased` section, add one entry: SDD's SKILL.md is now a controller under 19,000 characters that Claude Code re-attaches whole after a compaction; its step text lives in five files beside it, and after a compaction the session reads the board, its task's ledger lines and one step file instead of the whole skill.
+
+- [ ] **Step 7: Offline set and commit**
+
+`bash tests/run-offline.sh > <sw>/logs/t8-offline.log 2>&1; echo "exit=$?"`: `exit=0`. Then:
+
+```bash
+git -C <worktree> add skills/subagent-driven-development tests/sdd tests/codex-review-gate/test-gate-contract.sh docs/site CHANGELOG.md
+git -C <worktree> diff --cached > <sw>/logs/t8.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t8.staged.diff
+git -C <worktree> commit -m "feat(sdd): a compact controller that comes back whole after a compaction"
+```
+
+---
+
+### Task 9: Dispatch guard refusal text
+
+**Risk tier:** standard — a hook every Agent dispatch runs through, its exact-text test and docs; the plan gives every string.
+
+**Depends on:** Task 8
+
+**Files:**
+- Modify: `hooks/lib/dispatch-guard.mjs:1-8,135`, `hooks/lib/dispatch-guard.test.mjs` (the expected texts), stale digests (`docs/site/advanced/sdd-internals.md` sources the module), `CHANGELOG.md` (one clause in Task 8's entry)
+
+**Interfaces:**
+- Consumes: Task 8's step table (the refusal names it).
+
+- [ ] **Step 1: Change the expected text (fails)**
+
+In `hooks/lib/dispatch-guard.test.mjs`, replace every occurrence of `If you have not Read ${skill} in full since the last compaction, Read it now.` in an expected string (BG_TEXT, SM_TEXT and any other) with `If you have not Read ${skill} and the step file its step table names since the last compaction, Read them now.` (keep however the test spells the skill path). Run `node --test hooks/lib/dispatch-guard.test.mjs > <sw>/logs/t9-red.log 2>&1; echo "exit=$?"`: expected non-zero.
+
+- [ ] **Step 2: Change the module**
+
+At `hooks/lib/dispatch-guard.mjs:135`: ``const reread = `If you have not Read ${skill} and the step file its step table names since the last compaction, Read them now.`;``. In the opening comment, replace "The skill already forbids both outside fork mode, but after a compaction the controller no longer has those lines, and an editor such as Zed shows the session idle for as long as the background subagent runs." with "The skill forbids both outside fork mode, in the part of SKILL.md Claude Code re-attaches whole after a compaction; a controller can still make either call, and an editor such as Zed then shows the session idle for as long as the background subagent runs." (re-wrapped to the comment's width).
+
+- [ ] **Step 3: Verify and commit**
+
+`node --test hooks/lib/dispatch-guard.test.mjs` and `bash tests/hooks/test-sdd-dispatch-guard.sh`, each to a log: `exit=0`. Refresh stale digests; docs-check `exit=0`. Add to Task 8's CHANGELOG entry: "The dispatch guard's refusal names the step file as well." Commit:
+
+```bash
+git -C <worktree> add hooks/lib/dispatch-guard.mjs hooks/lib/dispatch-guard.test.mjs docs/site CHANGELOG.md
+git -C <worktree> diff --cached > <sw>/logs/t9.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t9.staged.diff
+git -C <worktree> commit -m "fix(hooks): the dispatch guard sends the controller to its step file"
+```
+
+---
+
+### Task 10: Notice text and ceiling
+
+**Risk tier:** standard — injected context on every compaction; the ceiling follows a measurement.
+
+**Depends on:** Task 9
+
+**Files:**
+- Modify: `hooks/session-start:118-122,195` (budget comment and notice), `tests/hooks/test-session-start.sh:461,1403-1410` (expected tail and ceiling), stale digests (the four pages the Global Constraints name), `CHANGELOG.md` (Task 4's entry)
+
+**Interfaces:**
+- Produces: the notice text Task 12 measures.
+
+- [ ] **Step 1: Change the expected tail (fails)**
+
+`tests/hooks/test-session-start.sh:461` becomes `REREAD_TAIL="/skills/<name>/SKILL.md for each hyperpowers skill you are following, then the files it tells you to read after a compaction; if none, skip this."`. Run `bash tests/hooks/test-session-start.sh > <sw>/logs/t10-red.log 2>&1; echo "exit=$?"`: expected `exit=1` on the notice cases.
+
+- [ ] **Step 2: Change the notice**
+
+In the `printf` at `hooks/session-start:195`, replace `for each hyperpowers skill you are following; if none, skip this.` with `for each hyperpowers skill you are following, then the files it tells you to read after a compaction; if none, skip this.` Nothing else in the line changes.
+
+- [ ] **Step 3: Measure the ceiling**
+
+Run the test again to `<sw>/logs/t10.log`. The ceiling case prints the overhead when it fails; to read it when it passes, run the case's node block with `console.log(overhead)` added in a scratch copy under `<sw>` (never in the repo). Decision 9: if the overhead is under 1400, the ceiling stays 1400 and nothing else changes; if not, raise the ceiling to the next multiple of 100 above the measured overhead, in the test's three `1400`s and the budget comment at `hooks/session-start:118-122`, and record the measured value in the comment. Either way, write the measured overhead in your report.
+
+- [ ] **Step 4: Verify, docs, commit**
+
+`bash tests/hooks/test-session-start.sh` `exit=0`; `bash <worktree>/scripts/lint-shell.sh hooks/session-start tests/hooks/test-session-start.sh` `exit=0`. Re-read the four pages for the old notice wording, refresh digests, docs-check `exit=0`. In Task 4's CHANGELOG entry, quote the new notice text. Commit:
+
+```bash
+git -C <worktree> add hooks/session-start tests/hooks/test-session-start.sh docs/site CHANGELOG.md
+git -C <worktree> diff --cached > <sw>/logs/t10.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t10.staged.diff
+git -C <worktree> commit -m "feat(hooks): the compaction notice sends the session on to the skill's step file"
+```
+
+---
+
+### Task 11: Tally and launchers for the revised campaign
+
+**Risk tier:** high — the tally's output decides every revised bar.
+
+**Depends on:** Task 6
+
+**Files (in `<E>`):**
+- Modify: `tally.py`, `test_tally.py`, `logs/measure-launch.sh`, `launch-all.sh`, `archive-runs.sh`, `manifest.tsv` (the `baseline-6181` pin row), `README.md` (revised arms, rules and bars)
+
+**Interfaces:**
+- Consumes: the revised spec's Testing section; the step table and ledger lines from Task 8 (copied below, so this task does not wait for Task 8).
+- Produces: `python3 tally.py` printing the revision (cells `baseline-6181`/SDD, `slice`/SDD, `slice`/sentinel and the five bar lines); `python3 tally.py --waves-1-2` printing what `tally.txt` holds today; launchers accepting arms `slice` and `baseline-6181`.
+
+**Mirror:** `tally.py:807-830` (`compaction_follow`: compactions after the SDD skill load, a stop at the next dispatch or compaction) and `test_tally.py:477-502` (`PerCompaction`, synthetic transcripts through `tool_use`, `bash`, `compact`, `skill`, `read`).
+
+Rules the tally implements (spec, Testing (revised)):
+
+- Arms. `baseline-6181` (control, released v6.18.1 `7f7c399ca1eef6e931d01fa47c02303eef32f44a`, logs `logs/baseline-6181-p<k>.log` from the 2026-11-12 baseline, and replacements `logs/baseline-6181-sdd-compaction-reread-r<n>.log` from `measure-launch.sh`); `slice` on `sdd-compaction-reread` (treatment) and on `compaction-no-skill` (sentinel), logs `logs/slice-<scenario>-<proc>.log`. The old arms (`control`, `treatment`, `shipped`) are read only under `--waves-1-2`.
+- SDD validity (both SDD arms; replaces the 6.16.2 window rule): void kinds `launch`, `setup`, `grader`, `instrument` (as `void_kind` and the log rules read them today) and `no-compaction` (no automatic compaction after the SDD skill event). Every other run is valid. Outcome passes when `final_reading(verdict) == "pass"`, `post_checks_pass(verdict)`, and the run dispatched at least one `implement` subagent. A run ending in the thrash stop, or with no dispatch, is valid and fails its outcome.
+- Thrash: a main-thread assistant entry whose `message.model` is `<synthetic>` and whose text holds `Autocompact is thrashing` (this is how the wave-2 transcripts record it); the run row shows `thrash=1`.
+- Session: each run has one controller session; its id is the `sessionId` of the main transcript's entries (`transcript_session`). Only that session's `setup complete` line counts (a line written through `$CLAUDE_CODE_SESSION_ID` or a `%s` argument is the session's own, since the command text holds the expansion), and the held task is the newest task this session claimed (`sdd-state claim` in its own Bash calls) without a completion line. The scenario runs one controller, so no other session's claims appear; a `setup complete` line naming another session id is ignored.
+- Bash evidence is read where the call's result arrives, as Reads are: a call with an error result writes no ledger lines and earns no recovery credit, but still counts as a governed action if its command is one.
+- Treatment per compaction (each automatic compaction after the SDD skill event): the state is `step_state` over this session's ledger lines written before it; the compaction is followed when, before the next governed action, (a) the session made a credited Read covering the step file that state names (a whole Read, or Reads whose ranges cover every line of that file at the `slice` pin), and (b) when a ledger existed, an `sdd-state board` call returned a result holding `status=board`, and a `grep` over `progress.md` returned a result holding this session's `session <sid>: setup complete` line and, when a task is held, at least one `Task <N>:` line of that task. Governed actions: an Agent dispatch, a compaction, or a Bash call that writes the ledger (`>>` and `progress.md`) or runs an `sdd-state` subcommand other than `board`. An unreadable state (`step_state` returns None) is not followed. Report per run and pooled: compactions, followed, any step file read, board and grep both credited, SDD `SKILL.md` read.
+- Sentinel: unchanged (`noskill_reading`).
+- Bars: (1) `slice` SDD outcome at least 8 of 10 valid and more than `baseline-6181`'s; (2) no valid `slice` SDD run with `thrash=1`; (3) at least 85% of pooled `slice` SDD compactions followed; (4) median `slice` SDD compactions per run at most 16; (5) sentinel failures at most 1 of 10. A cell with fewer than ten valid runs reads `incomplete` and its bars read `incomplete`.
+- Replacements: `sentinel-reruns.tsv` as today, at most three per cell (`r1`-`r3`).
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `test_tally.py` (the helpers `tool_use`, `bash`, `compact`, `skill`, `agent`, `read` exist; `tally` is the module under test):
+
+```python
+SID = "s1"
+SETUP = [(f"session:{SID}", "setup complete")]
+
+
+class StepState(unittest.TestCase):
+    def test_rows(self) -> None:
+        cases = [
+            ([], "setup.md"),
+            ([("1", "branch")], "setup.md"),
+            ([("session:other", "setup complete")], "setup.md"),
+            ([("session:$CLAUDE_CODE_SESSION_ID", "setup complete")], "task-loop.md"),
+            ([("session:%s", "setup complete")], "task-loop.md"),
+            (SETUP, "task-loop.md"),
+            (SETUP + [("1", "branch"), ("1", "implementer")], "task-loop.md"),
+            (SETUP + [("1", "branch"), ("1", "report")], "task-loop.md"),
+            (SETUP + [("1", "branch"), ("1", "review approved")], "review-and-complete.md"),
+            (SETUP + [("1", "branch"), ("1", "gate approved")], "review-and-complete.md"),
+            (SETUP + [("1", "branch"), ("1", "approved")], "review-and-complete.md"),
+            (SETUP + [("1", "branch"), ("1", "merged")], "review-and-complete.md"),
+            (SETUP + [("1", "branch"), ("1", "review blocking")], "fix-loop.md"),
+            (SETUP + [("1", "branch"), ("1", "gate blocking")], "fix-loop.md"),
+            (SETUP + [("1", "branch"), ("1", "fix round")], "fix-loop.md"),
+            (SETUP + [("1", "branch"), ("1", "complete")], "task-loop.md"),
+            (SETUP + [(str(t), w) for t in range(1, 5) for w in ("branch", "complete")], "final-and-finish.md"),
+            (SETUP + [("final", "branch")], "final-and-finish.md"),
+        ]
+        for lines, want in cases:
+            with self.subTest(lines=lines):
+                self.assertEqual(tally.step_state(lines, 4, SID), want)
+
+    def test_held_task(self) -> None:
+        self.assertEqual(tally.held_task(SETUP + [("1", "branch"), ("1", "complete"), ("2", "branch")]), "2")
+        self.assertIsNone(tally.held_task(SETUP + [("1", "branch"), ("1", "complete")]))
+
+
+class LedgerParse(unittest.TestCase):
+    def test_heredoc_and_printf_lines(self) -> None:
+        cmd = "cat >> /w/progress.md <<'EOF'\nTask 2: review blocking a1 (sonnet) two findings\nEOF"
+        self.assertEqual(tally.ledger_lines(cmd), [("2", "review blocking")])
+        cmd = "printf 'Task 3: codex gate round 1 approved clean\\n' >> /w/progress.md"
+        self.assertEqual(tally.ledger_lines(cmd), [("3", "gate approved")])
+        cmd = "printf 'session abc: setup complete\\n' >> /w/progress.md"
+        self.assertEqual(tally.ledger_lines(cmd), [("session:abc", "setup complete")])
+
+    def test_sdd_state_calls(self) -> None:
+        self.assertEqual(tally.ledger_lines("bash scripts/sdd-state claim plan.md 2 --session s"), [("2", "branch")])
+        self.assertEqual(tally.ledger_lines("scripts/sdd-state claim plan.md final --session s"), [("final", "branch")])
+        self.assertEqual(tally.ledger_lines("scripts/sdd-state merge-back plan.md 2"), [("2", "merged")])
+        self.assertEqual(tally.ledger_lines("scripts/sdd-state complete plan.md 2 --commits a..b"), [("2", "complete")])
+        self.assertEqual(tally.ledger_lines("scripts/sdd-state board plan.md"), [])
+
+    def test_failed_call_writes_nothing(self) -> None:
+        e = tally.bash_event("printf 'Task 1: report DONE x\\n' >> /w/progress.md", ok=False, output="")
+        self.assertEqual((e["ledger_lines"], e["governed"]), ([], True))
+
+
+STEP = "/arms/slice/skills/subagent-driven-development"
+BOARD_OUT = "status=board sync=offline sessions=1\nheld task=1 owner=s1"
+SETUP_LINE = f"session {SID}: setup complete"
+
+
+class StepFollow(unittest.TestCase):
+    def setUp(self) -> None:
+        tally.STEP_LINES = {f: 10 for f in tally.STEP_FILES}
+
+    def follow(self, after: list[dict], before: list[dict] | None = None) -> dict:
+        found = [{"kind": "skill", "skill": "hyperpowers:subagent-driven-development"}]
+        if before is None:
+            before = [tally.bash_event(f"printf '{SETUP_LINE}\\n' >> /w/progress.md", ok=True, output="")]
+        found += before + [{"kind": "compact"}] + after + [{"kind": "dispatch", "class": "implement", "task": 1}]
+        return tally.step_follows(found, SID)
+
+    def read(self, name: str) -> dict:
+        return {"kind": "read", "path": f"{STEP}/{name}", "offset": None, "limit": None,
+                "whole": True, "via": "read", "persisted": False, "credited": True}
+
+    def board(self, ok: bool = True) -> dict:
+        return tally.bash_event("scripts/sdd-state board plan.md", ok=ok, output=BOARD_OUT if ok else "")
+
+    def grep(self, output: str = SETUP_LINE) -> dict:
+        return tally.bash_event("grep -E '^(session s1: setup complete)' /w/progress.md", ok=True, output=output)
+
+    def test_followed(self) -> None:
+        r = self.follow([self.board(), self.grep(), self.read("task-loop.md")])
+        self.assertEqual((r["compactions"], r["followed"]), (1, 1))
+
+    def test_wrong_file(self) -> None:
+        r = self.follow([self.board(), self.grep(), self.read("fix-loop.md")])
+        self.assertEqual((r["followed"], r["any_step"]), (0, 1))
+
+    def test_skill_only(self) -> None:
+        r = self.follow([self.board(), self.grep(), {**self.read("x"), "path": f"{STEP}/SKILL.md"}])
+        self.assertEqual((r["followed"], r["skill"]), (0, 1))
+
+    def test_ledger_parts_skipped(self) -> None:
+        r = self.follow([self.read("task-loop.md")])
+        self.assertEqual((r["followed"], r["ledger_parts"]), (0, 0))
+
+    def test_failed_board_earns_nothing(self) -> None:
+        r = self.follow([self.board(ok=False), self.grep(), self.read("task-loop.md")])
+        self.assertEqual(r["followed"], 0)
+
+    def test_grep_without_the_setup_line_earns_nothing(self) -> None:
+        r = self.follow([self.board(), self.grep(output="no match"), self.read("task-loop.md")])
+        self.assertEqual(r["followed"], 0)
+
+    def test_grep_must_show_the_held_task(self) -> None:
+        before = [
+            tally.bash_event(f"printf '{SETUP_LINE}\\n' >> /w/progress.md", ok=True, output=""),
+            tally.bash_event("scripts/sdd-state claim plan.md 1 --session s1", ok=True, output="status=claimed"),
+        ]
+        r = self.follow([self.board(), self.grep(), self.read("task-loop.md")], before=before)
+        self.assertEqual(r["followed"], 0)
+        r = self.follow([self.board(), self.grep(output=SETUP_LINE + "\nTask 1: branch t1"), self.read("task-loop.md")],
+                        before=before)
+        self.assertEqual(r["followed"], 1)
+
+    def test_no_ledger_needs_only_setup(self) -> None:
+        r = self.follow([self.read("setup.md")], before=[])
+        self.assertEqual(r["followed"], 1)
+
+    def test_partial_read_without_a_line_count_fails_closed(self) -> None:
+        tally.STEP_LINES = {}
+        partial = {**self.read("task-loop.md"), "offset": 1, "limit": 5, "whole": False}
+        r = self.follow([self.board(), self.grep(), partial])
+        self.assertEqual(r["followed"], 0)
+
+    def test_governed_action_stops_the_window(self) -> None:
+        r = self.follow([tally.bash_event("printf 'Task 1: report DONE x\\n' >> /w/progress.md", ok=True, output=""),
+                         self.board(), self.grep(), self.read("task-loop.md")])
+        self.assertEqual(r["followed"], 0)
+```
+
+Add, mirroring `PerCompaction`'s transcript style through `make_run`: a run whose transcript ends with a `<synthetic>` assistant message holding `Autocompact is thrashing` reads `thrash=1`, valid, outcome failed; a `slice` SDD run with a passing verdict and passing post-checks but no Agent dispatch reads valid with outcome failed; a `slice` SDD run with no compaction after the skill load is void `no-compaction`; a Bash `tool_use` whose `tool_result` has `is_error` yields a `bash` event with `ok=False`; `transcript_session` returns the entries' `sessionId`; `manifest_pins()` over a manifest with `baseline-6181` and `slice` rows returns both (write the manifest in a temporary directory and point `tally.HERE` at it for the test); `main()` exits 1 when a `slice` log exists without a `slice` pin; `LOG_NAME` accepts `baseline-6181-p1`, `baseline-6181-sdd-compaction-reread-r1` and `slice-compaction-no-skill-p10`, and rejects `slice-sdd-compaction-reread-r4`; `summarize_revision` prints `incomplete` for a cell with nine valid runs. Run `python3 -m unittest test_tally > <sw>/logs/t11-red.log 2>&1; echo "exit=$?"` from `<E>`: expected failures naming the missing functions.
+
+- [ ] **Step 2: Implement**
+
+In `tally.py` (keep every existing function; the waves-1-2 path must print exactly what it prints today):
+
+```python
+STEP_FILES = ("setup.md", "task-loop.md", "review-and-complete.md", "fix-loop.md", "final-and-finish.md")
+STEP_PATH = re.compile(r"/skills/subagent-driven-development/(" + "|".join(map(re.escape, STEP_FILES)) + r")$")
+STEP_LINES: dict[str, int] = {}  # filled from the slice pin by load_step_lines()
+THRASH = "Autocompact is thrashing"
+N_TASKS = 4  # the sdd-compaction-reread fixture plan has four tasks
+LEDGER_TEXT = re.compile(
+    r"(?<![^\s'\"])(?:session (?P<sid>\S+): (?P<setup>setup complete)"
+    r"|Task (?P<task>\d+): (?P<what>branch|base|implementer|report|review (?:approved|blocking)"
+    r"|codex gate round \d+(?:/\d+)? (?:approved|blocking)|fix round|approved|merged|complete)\b)"
+)
+SDD_STATE = re.compile(r"sdd-state\s+(?P<sub>[a-z-]+)(?:\s+(?:--\S+\s+)*\S+\s+(?P<arg>\d+|final)\b)?")
+
+
+def ledger_lines(command: str) -> list[tuple[str, str]]:
+    """Ledger lines a Bash command writes, as ``(key, what)`` pairs.
+
+    The key is the task number, ``final``, or ``session:<sid>`` for a Setup
+    line. Text lines count only when the command appends to ``progress.md``;
+    ``sdd-state`` calls count as the lines their helper writes (``claim`` a
+    branch line, ``merge-back`` merged, ``complete`` complete).
+    """
+    found: list[tuple[str, str]] = []
+    if ">>" in command and "progress.md" in command:
+        for m in LEDGER_TEXT.finditer(command):
+            if m.group("setup"):
+                found.append((f"session:{m.group('sid')}", "setup complete"))
+                continue
+            what = m.group("what")
+            if what.startswith("codex gate round"):
+                what = "gate " + what.rsplit(" ", 1)[1]
+            found.append((m.group("task"), what))
+    for m in SDD_STATE.finditer(command):
+        mapped = {"claim": "branch", "merge-back": "merged", "complete": "complete"}.get(m.group("sub"))
+        if mapped and m.group("arg"):
+            found.append((m.group("arg"), mapped))
+    return found
+
+
+def bash_event(command: str, ok: bool, output: str) -> dict[str, Any]:
+    """The ``bash`` event for one Bash call, built where its result arrives.
+
+    A failed call (``ok`` False) writes no ledger lines and earns no recovery
+    credit, but a ledger write or an ``sdd-state`` call still ends the
+    recovery window, since the session acted.
+    """
+    subs = [m.group("sub") for m in SDD_STATE.finditer(command)]
+    writes = ">>" in command and "progress.md" in command
+    return {
+        "kind": "bash",
+        "ok": ok,
+        "output": output if ok else "",
+        "ledger_lines": ledger_lines(command) if ok else [],
+        "ledger_create": ok and "progress.md" in command and "SDD ledger" in command,
+        "board": ok and "board" in subs and "status=board" in output,
+        "ledger_grep": ok and "grep" in command and "progress.md" in command and not writes,
+        "governed": writes or any(s != "board" for s in subs),
+    }
+
+
+def own_setup(key: str, sid: str) -> bool:
+    """Whether a Setup line's key is this session's.
+
+    SDD writes the id through ``$CLAUDE_CODE_SESSION_ID`` or a ``%s``
+    argument as often as literally; the command text then holds the
+    expansion, not the id, and in a one-controller run it is this session's.
+    """
+    named = key.removeprefix("session:")
+    return named == sid or named[:1] in ("$", "%")
+
+
+def held_task(lines: list[tuple[str, str]]) -> str | None:
+    """The newest task this session claimed that has no completion line, or None."""
+    done = {key for key, what in lines if what == "complete"}
+    held = [key for key, what in lines if what == "branch" and key != "final" and key not in done]
+    return held[-1] if held else None
+
+
+def step_state(lines: list[tuple[str, str]], n_tasks: int, sid: str) -> str | None:
+    """The step file SDD's step table names for this session's ledger lines so far, or None if unreadable."""
+    if not any(what == "setup complete" and own_setup(key, sid) for key, what in lines):
+        return "setup.md"
+    if ("final", "branch") in lines:
+        return "final-and-finish.md"
+    held = held_task(lines)
+    if held is None:
+        done = {key for key, what in lines if what == "complete"}
+        return "final-and-finish.md" if len(done) >= n_tasks else "task-loop.md"
+    newest = [what for key, what in lines if key == held][-1]
+    if newest in ("branch", "base", "implementer", "report"):
+        return "task-loop.md"
+    if newest in ("review approved", "gate approved", "approved", "merged"):
+        return "review-and-complete.md"
+    if newest in ("fix round", "review blocking", "gate blocking"):
+        return "fix-loop.md"
+    return None
+
+
+def step_follows(found: list[dict[str, Any]], sid: str) -> dict[str, int]:
+    """Per-compaction recovery for the slice arm: the step file the table names, plus the board and grep."""
+    skill = "subagent-driven-development"
+    load = next((i for i, e in enumerate(found) if e["kind"] == "skill" and e["skill"].endswith(skill)), None)
+    result = {"compactions": 0, "followed": 0, "any_step": 0, "ledger_parts": 0, "skill": 0}
+    if load is None:
+        return result
+    for i, event in enumerate(found):
+        if event["kind"] != "compact" or i <= load:
+            continue
+        result["compactions"] += 1
+        before = [e for e in found[:i] if e["kind"] == "bash"]
+        lines = [p for e in before for p in e["ledger_lines"]]
+        want = step_state(lines, N_TASKS, sid)
+        held = held_task(lines)
+        ledger = any(e["ledger_create"] or e["ledger_lines"] for e in before)
+        stop = next(
+            (j for j in range(i + 1, len(found))
+             if found[j]["kind"] in ("dispatch", "compact") or (found[j]["kind"] == "bash" and found[j]["governed"])),
+            len(found),
+        )
+        window = found[i + 1:stop]
+        reads = [e for e in window if e["kind"] == "read" and e["credited"]]
+        step = [(STEP_PATH.search(e["path"]), e) for e in reads]
+        hits = [e for m, e in step if m and m.group(1) == want]
+        board = any(e["kind"] == "bash" and e["board"] for e in window)
+        grep = any(
+            e["kind"] == "bash" and e["ledger_grep"]
+            and f"session {sid}: setup complete" in e["output"]
+            and (held is None or f"Task {held}:" in e["output"])
+            for e in window
+        )
+        # A partial Read earns coverage only against a known line count, so a
+        # missing count fails closed instead of covering an empty range.
+        file_ok = want is not None and bool(hits) and (
+            any(e["whole"] for e in hits) or (want in STEP_LINES and covers_cut(hits, (1, STEP_LINES[want])))
+        )
+        result["followed"] += file_ok and (board and grep or not ledger)
+        result["any_step"] += any(m for m, _ in step)
+        result["ledger_parts"] += board and grep
+        result["skill"] += any(e["path"].endswith(f"{skill}/SKILL.md") for e in reads)
+    return result
+```
+
+Then wire it in:
+
+- `events()`: hold each Bash `tool_use` in a pending map by id, as Reads are held (the existing skill-read handling stays), and on its `tool_result` append `bash_event(command, ok=not block.get("is_error"), output=result_text(block.get("content")))`, also for error results. For an assistant entry whose `message.model == "<synthetic>"` and whose text blocks hold `THRASH`, append `{"kind": "thrash"}`.
+- `transcript_session(transcripts)`: the first `sessionId` found in the main transcripts' entries.
+- `manifest_pins()`: accept the two-field rows `control`, `treatment`, `shipped`, `baseline-6181` and `slice` (today it filters to the first three, `tally.py:833-840`).
+- `load_step_lines()`: for each step file, the line count of `git -C HP_REPO show <slice pin>:skills/subagent-driven-development/<file>` (the pin from `manifest_pins()["slice"]`), stored in `STEP_LINES`; called once in `main()`. When a `slice` log exists and the manifest has no `slice` pin, or `git show` fails for a step file, `main()` prints the reason on stderr and exits 1: the revision is never tallied without its line counts.
+- `LOG_NAME`: also accept `baseline-6181-(p(?:[1-9]|10))`, `baseline-6181-sdd-compaction-reread-(r[1-3])` and `slice-(<scenarios>)-(p(?:[1-9]|10)|r[1-3])`; `collect()` maps the two baseline forms to arm `baseline-6181`, scenario `sdd-compaction-reread`.
+- `read_run()`: for arms `baseline-6181` and `slice` on SDD, apply the revised validity (no `sdd_reading` window; `no-compaction` when `step_follows(found, sid)["compactions"] == 0` and no void came first), set `outcome` as above (the dispatch requirement read from `dispatch_counts(found)`), `thrash`, `compactions`, and for `slice` the `step_follows` counts. Leave the old arms' path unchanged.
+- `summarize_revision()` and `REVISION_CELLS = (("baseline-6181", SDD), ("slice", SDD), ("slice", NOSKILL))`: one line per cell (runs, valid, voids by kind, outcome passes, thrash count, compactions) and the five bar lines, each `PASS`, `FAIL` or `incomplete`, worded as the bars above.
+- `main()`: default prints the revision; `--waves-1-2` runs today's `summarize` and `print_compaction_summary` over the old cells and skips the `baseline-6181` and `slice` logs without a line, so its output matches `tally.txt`.
+- Update the module docstring: the revised rules and bars above, and that `--waves-1-2` reproduces `tally.txt`.
+
+Launchers: `logs/measure-launch.sh` gains `slice) root=<sw>/arms/slice ;;` and `baseline-6181) root=<sw>/arms/v6181 ;;` (error text listing all five arms); `launch-all.sh` accepts `slice` and `baseline-6181` as arms and as two-field pin keys; `archive-runs.sh` accepts both arms. Add the pin row `baseline-6181<TAB>7f7c399ca1eef6e931d01fa47c02303eef32f44a` to `manifest.tsv` (the `slice` row comes in Task 12). In `README.md`, add a section "Revision (2026-11-12)" with the arms, the validity rule, the treatment predicate and the five bars, verbatim from this task, and the note that the 2026-11-12 baseline is the control (harness paths at its evals head `b59b12e16c` identical to the pin `474ea8c8df`, Claude Code 2.1.317, controller and grader `claude-opus-5-5`, checked 2026-11-12).
+
+- [ ] **Step 3: Verify**
+
+From `<E>`: `python3 -m unittest test_tally > <sw>/logs/t11.log 2>&1; echo "exit=$?"` `exit=0`; `ruff check tally.py test_tally.py` and `mypy tally.py test_tally.py` clean; `shellcheck logs/measure-launch.sh launch-all.sh archive-runs.sh` clean. `python3 tally.py --waves-1-2 > <sw>/logs/t11-waves.txt 2>&1; diff <sw>/logs/t11-waves.txt tally.txt` prints nothing. `python3 tally.py > <sw>/logs/t11-revision.txt 2>&1` reads the ten `baseline-6181` logs from `results/` (the runs are archived in Task 12): expect ten valid runs with outcome failed, thrash in each, and the slice cells `incomplete`. A baseline run that reads void is reported, not replaced, in this task.
+
+- [ ] **Step 4: Commit (evals)**
+
+```bash
+git -C <ev> add evidence/2026-11-11-compaction-reread-notice/tally.py evidence/2026-11-11-compaction-reread-notice/test_tally.py evidence/2026-11-11-compaction-reread-notice/logs/measure-launch.sh evidence/2026-11-11-compaction-reread-notice/launch-all.sh evidence/2026-11-11-compaction-reread-notice/archive-runs.sh evidence/2026-11-11-compaction-reread-notice/manifest.tsv evidence/2026-11-11-compaction-reread-notice/README.md
+git -C <ev> diff --cached > <sw>/logs/t11.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t11.staged.diff
+git -C <ev> commit -m "evidence(compaction-reread-notice): tally and launchers for the revised campaign"
+```
+
+---
+
+### Task 12: Revised campaign
+
+**Risk tier:** standard — runs the measurement; no code changes.
+
+**Depends on:** Task 7, Task 8, Task 9, Task 10, Task 11
+
+**Files (in `<E>`):**
+- Create: `manifest-revision-a.tsv`, `manifest-revision-b.tsv`, `logs/slice-*.log`, `task-6-runs/baseline-6181/`, `task-6-runs/slice/`, `tally-revision.txt`
+- Modify: `manifest.tsv` (the `slice` pin row), `README.md` (pin table), `sentinel-reruns.tsv` only for replacements
+
+**Interfaces:**
+- Consumes: the integration branch head after Tasks 7-10 merged (SLICE), the Task 11 tally and launchers.
+- Produces: `tally-revision.txt` with the five bar lines; archived runs Task 13 cites.
+
+- [ ] **Step 1: Pre-flight and the slice arm**
+
+`claude --version` prints `2.1.317`; `GAUNTLET_AGENT_MODEL` is `claude-opus-5-5`; the proxy variables are set. SLICE = `git -C <worktree> rev-parse compaction-reread-notice`; check `git -C <worktree> log --oneline -6 compaction-reread-notice` shows the Task 7-10 merges. With the sandbox off: `git -C <worktree> worktree add --detach <sw>/arms/slice <SLICE>`. Checks: `grep -c "Context was compacted" <sw>/arms/slice/hooks/session-start` is `1`; `bash <sw>/arms/slice/tests/sdd/test-sdd-layout.sh` passes. Add `slice<TAB><SLICE>` to `manifest.tsv` and the pin table in `README.md`; commit both in evals with the leak scan ("evidence(compaction-reread-notice): slice pin").
+
+- [ ] **Step 2: Wave A, treatment (10 rows)**
+
+`<E>/manifest-revision-a.tsv`: the pin rows plus ten `slice<TAB>sdd-compaction-reread<TAB>1<TAB>p<k><TAB>default` rows, k = 1..10. Launch from `<ev>` as a tracked job (SDD's tracked-job commands, budget 7200000 ms): `ANTHROPIC_MODEL=claude-opus-5-5 bash <E>/launch-all.sh <E>/manifest-revision-a.tsv 10 > <sw>/logs/wave-a.out 2>&1; echo "exit=$?" >> <sw>/logs/wave-a.out`. Then `python3 <E>/tally.py > <sw>/logs/tally-wave-a.txt 2>&1`. Voids (`void=<kind>` on a run line) get one replacement each, launched directly: `ANTHROPIC_MODEL=claude-opus-5-5 bash <E>/logs/measure-launch.sh slice sdd-compaction-reread 1 r<n> default`, the pair appended to `<E>/sentinel-reruns.tsv` as in Task 6 Step 2, at most r3, the tally re-run after each append.
+
+- [ ] **Step 3: Wave B, sentinel (10 rows)**
+
+The same with `manifest-revision-b.tsv` and ten `slice<TAB>compaction-no-skill` rows, output `<sw>/logs/wave-b.out`.
+
+- [ ] **Step 4: Archive and tally**
+
+For `baseline-6181` and `slice`: `bash <E>/archive-runs.sh <arm> <E>/task-6-runs` (sandbox off if the copy fails with `Operation not permitted`, deleting the partial run directory first). Then `cd <E> && python3 tally.py > tally-revision.txt 2>&1; echo "exit=$?"`. Every cell has ten valid runs and every bar line prints PASS or FAIL. A FAIL is a result to report, not a reason to re-run.
+
+- [ ] **Step 5: Commit the evidence**
+
+Follow `<ev>/evidence/README.md` "Before committing a run" (force-add `gauntlet-agent/results/` and `home/.claude/` paths; no `.git`, `.claude-env`, `home/.codex/` or caches). Then:
+
+```bash
+git -C <ev> add evidence/2026-11-11-compaction-reread-notice/logs evidence/2026-11-11-compaction-reread-notice/tally-revision.txt evidence/2026-11-11-compaction-reread-notice/sentinel-reruns.tsv evidence/2026-11-11-compaction-reread-notice/manifest-revision-a.tsv evidence/2026-11-11-compaction-reread-notice/manifest-revision-b.tsv
+git -C <ev> add -f evidence/2026-11-11-compaction-reread-notice/task-6-runs
+git -C <ev> diff --cached > <sw>/logs/t12.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t12.staged.diff
+git -C <ev> commit -m "evidence(compaction-reread-notice): revised campaign runs and tally"
+```
+
+---
+
+### Task 13: Evidence notes
+
+**Risk tier:** standard — the durable record the release cites.
+
+**Depends on:** Task 12
+
+**Files:**
+- Create: `<worktree>/docs/hyperpowers/2026-11-11-compaction-reread-notice-eval-evidence.md`, `<ev>/docs/experiments/2026-11-11-compaction-reread-notice.md`
+- Modify: `<worktree>/CHANGELOG.md` (the measured result, appended to the `## Unreleased` entries)
+
+**Interfaces:**
+- Consumes: `<E>/tally.txt` (waves 1-2), `<E>/tally-revision.txt`, the archived run ids, the pins.
+
+**Mirror:** `docs/hyperpowers/2026-11-03-cost-reduction-6-16-2-eval-evidence.md` (change under test, method, environment, scenarios, results per arm, bars, not measured); `<ev>/docs/experiments/2026-11-10-sdd-dispatch-guard.md`.
 
 - [ ] **Step 1: Check the marketplace assumption**
 
-Read `~/.claude/plugins/installed_plugins.json` (read-only) and record, for one cache-installed plugin (for example `codex@openai-codex`), whether its recorded `installPath` names a versioned cache directory. Write the finding (one sentence, path and version) into the evidence note's "Assumptions" section; it confirms or refutes the spec's marketplace assumption.
+Read `~/.claude/plugins/installed_plugins.json` (read-only) and record, for one cache-installed plugin (for example `codex@openai-codex`), whether its recorded `installPath` names a versioned cache directory. Write the finding (one sentence, path and version) into the note's "Assumptions" section.
 
 - [ ] **Step 2: Check the running-session assumption against the field**
 
-The spec assumes a hook edited on disk takes effect in a running session. Session `ec562ba3` loaded its plugin on 2026-10-21 (6.16.1 skill text) and compacted at 16:55Z on 2026-11-10, after `plugin-install` moved to v6.17.0 on 2026-11-06. Find its transcript (`ls ~/.claude/projects/*/ec562ba3*.jsonl`), read the SessionStart hook output recorded after the 16:55Z `compact_boundary` (the `hook_additional_context` attachment or the system entry carrying `resumed after context compaction`), and record whether its ledger path names the `state/` checkout directory, which only the 6.17.0 hook searches (`hooks/session-start` A9 block, "the state checkout (this release)"). A `state/` path means the hook ran from disk at 6.17.0 while the session held 6.16.1 skill text, which confirms the assumption; a `sdd/` path is inconclusive, and the note says so. Run `git -C <worktree> log --format=%h -S'state/$key/plans' -- hooks/session-start` to cite the commit that added the `state/` search. The post-release check on a current session stays a follow-up, listed under "Not measured".
+Session `ec562ba3` loaded its plugin on 2026-10-21 (6.16.1 skill text) and compacted at 16:55Z on 2026-11-10, after `plugin-install` moved to v6.17.0 on 2026-11-06. Find its transcript (`ls ~/.claude/projects/*/ec562ba3*.jsonl`), read the SessionStart hook output recorded after the 16:55Z `compact_boundary`, and record whether its ledger path names the `state/` checkout directory, which only the 6.17.0 hook searches. A `state/` path confirms that a hook edited on disk takes effect in a running session; a `sdd/` path is inconclusive, and the note says so. Cite the commit that added the `state/` search: `git -C <worktree> log --format=%h -S'state/$key/plans' -- hooks/session-start`.
 
 - [ ] **Step 3: Write the hyperpowers evidence note**
 
-Sections, mirroring the 6.16.2 note: the change under test (the notice, verbatim); method (arms, pins B, TREATMENT, SHIPPED, HARNESS; Claude Code 2.1.317; models); scenarios; one results table per scenario with runs, valid n, voids, outcome, mechanism; per-compaction table (compactions, followed, whole-file) for control, treatment and shipped; the eight bar lines copied from `tally.txt`; the smoke run from Task 1 (not a trial); assumptions (the marketplace check from Step 1; the field check from Step 2); not measured (brainstorming scenario; the post-release check on a current long-lived session; field re-measure on or after 2026-11-18). Cite run artifacts by `evals/evidence/2026-11-11-compaction-reread-notice/task-6-runs/<arm>/<run-id>`.
+Sections: the change under test (the controller layout and sizes, the step table, the paragraph, the notice and the dispatch-guard sentence, verbatim); the first campaign (waves 1-2 from `tally.txt`: control 10 valid, 4 of 93 compactions followed; treatment 10 of 10 thrash stops) and the v6.18.1 baseline (10 of 10 thrash stops), which led to the revision; method (arms `baseline-6181` and `slice`, pins, HARNESS, Claude Code 2.1.317, models, window 100000); one results table per scenario (runs, valid, voids by kind, outcome, thrash) and the per-compaction table for `slice` (compactions, followed, any step file, board and grep, SKILL.md read); the five bar lines copied from `tally-revision.txt`; the Task 1 smoke run (not a trial); assumptions (Steps 1 and 2; one task's ledger lines under about 15,000 characters, with the 2026-11-12 measurement: largest 11,932 across seven ledgers); not measured (the brainstorming scenario; plans longer than four tasks; the post-release check on a current long-lived session; the field re-measure on or after 2026-11-18). Cite runs as `evals/evidence/2026-11-11-compaction-reread-notice/task-6-runs/<arm>/<run-id>`.
 
 - [ ] **Step 4: Write the experiment log entry**
 
-In `<ev>/docs/experiments/2026-11-11-compaction-reread-notice.md`: hypothesis (the notice restores re-reads in sessions whose loaded skill text lacks the paragraph, without making no-skill sessions read skills or causing loops), configuration (pins, window 100000), run pointers, verdict per bar, negative results at equal billing.
+`<ev>/docs/experiments/2026-11-11-compaction-reread-notice.md`: both hypotheses (the notice restores re-reads; then, after it thrashed, a controller that comes back whole plus one step file keeps SDD working at a 100,000-token window), configuration, run pointers, a verdict per bar, and the negative results (waves 1-2 and the baseline) at equal billing.
 
 - [ ] **Step 5: CHANGELOG**
 
-Append to the Task 4 entry one sentence with the measured treatment mechanism, treatment per-compaction rate, shipped outcome and sentinel failures, and the evidence paths (`evals/evidence/2026-11-11-compaction-reread-notice/` and `docs/hyperpowers/2026-11-11-compaction-reread-notice-eval-evidence.md`). Percentages and counts only.
+Append to the `## Unreleased` entries one sentence with the measured treatment outcome, thrash count, per-compaction rate and sentinel failures, and the evidence paths. Counts and percentages only.
 
 - [ ] **Step 6: Commit both repos**
 
 ```bash
 git -C <worktree> add docs/hyperpowers/2026-11-11-compaction-reread-notice-eval-evidence.md CHANGELOG.md
-git -C <worktree> diff --cached > <sw>/logs/t7-hp.staged.diff
-python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t7-hp.staged.diff
-git -C <worktree> commit -m "docs(hyperpowers): compaction re-read notice eval evidence"
+git -C <worktree> diff --cached > <sw>/logs/t13-hp.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t13-hp.staged.diff
+git -C <worktree> commit -m "docs(hyperpowers): compaction re-read eval evidence"
 git -C <ev> add docs/experiments/2026-11-11-compaction-reread-notice.md
-git -C <ev> diff --cached > <sw>/logs/t7-ev.staged.diff
-python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t7-ev.staged.diff
-git -C <ev> commit -m "docs(experiments): compaction re-read notice campaign"
+git -C <ev> diff --cached > <sw>/logs/t13-ev.staged.diff
+python3 ~/.claude/scripts/realval-scan.py < <sw>/logs/t13-ev.staged.diff
+git -C <ev> commit -m "docs(experiments): compaction re-read campaign and its revision"
 ```

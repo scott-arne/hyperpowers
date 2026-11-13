@@ -1,6 +1,6 @@
 ---
 sources: skills/subagent-driven-development hooks/sdd-stop-guard hooks/lib/stop-guard.mjs skills/writing-plans/SKILL.md docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-08-09-risk-tiering-prompt-hygiene-design.md hooks/sdd-dispatch-guard hooks/lib/dispatch-guard.mjs
-source-digest: b976ef64d825
+source-digest: c05c9c8ed312
 ---
 # subagent-driven-development
 

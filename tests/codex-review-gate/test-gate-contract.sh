@@ -11,6 +11,11 @@ bash "$SCRIPT_DIR/assemble-gate.sh" "$REPO_ROOT" "$GATE" || exit 1
 BRAINSTORMING="$REPO_ROOT/skills/brainstorming/SKILL.md"
 WRITING_PLANS="$REPO_ROOT/skills/writing-plans/SKILL.md"
 SDD="$REPO_ROOT/skills/subagent-driven-development/SKILL.md"
+SDD_SETUP="$REPO_ROOT/skills/subagent-driven-development/setup.md"
+SDD_TASK_LOOP="$REPO_ROOT/skills/subagent-driven-development/task-loop.md"
+SDD_REVIEW="$REPO_ROOT/skills/subagent-driven-development/review-and-complete.md"
+SDD_FIX_LOOP="$REPO_ROOT/skills/subagent-driven-development/fix-loop.md"
+SDD_FINAL="$REPO_ROOT/skills/subagent-driven-development/final-and-finish.md"
 SDD_RATIONALIZATIONS="$REPO_ROOT/skills/subagent-driven-development/common-rationalizations.md"
 REQUESTING_REVIEW="$REPO_ROOT/skills/requesting-code-review/SKILL.md"
 APPROACH_GATE="$REPO_ROOT/skills/brainstorming/codex-approach-gate.md"
@@ -51,6 +56,25 @@ assert_not_contains() {
   else
     pass "$description"
   fi
+}
+
+# A negative guard on SDD text must cover SKILL.md and every step file: the
+# forbidden text can live in any of them, so a SKILL.md-only check passes
+# vacuously once text moves out.
+assert_not_contains_sdd() {
+  local needle="$1"
+  local description="$2"
+  local f haystack hit=0
+
+  for f in "$SDD" "$SDD_SETUP" "$SDD_TASK_LOOP" "$SDD_REVIEW" "$SDD_FIX_LOOP" "$SDD_FINAL"; do
+    haystack="$(tr '\n\t' '  ' <"$f" | sed 's/  */ /g')"
+    if grep -Fq -- "$needle" < <(printf '%s\n' "$haystack"); then
+      hit=1
+      echo "    did not expect to find: $needle"
+      echo "    in: $f"
+    fi
+  done
+  if [ "$hit" -eq 0 ]; then pass "$description"; else fail "$description"; fi
 }
 
 echo "Codex review gate contract tests"
@@ -104,11 +128,11 @@ assert_contains "$GATE" "Code gates get 3 rounds" \
 assert_not_contains "$GATE" "## 5. Fix-and-re-review loop (cap = 2 rounds)" \
   "gate no longer uses the single 2-round cap heading"
 
-assert_contains "$SDD" "the gate re-runs only once that re-review verdicts every finding ADDRESSED or DECLINED" \
+assert_contains "$SDD_REVIEW" "the gate re-runs only once that re-review verdicts every finding ADDRESSED or DECLINED" \
   "SDD per-task loop names Claude re-review order (scoped re-review, shared cap)"
-assert_not_contains "$SDD" "re-run the task reviewer before re-running the per-task Codex gate" \
+assert_not_contains_sdd "re-run the task reviewer before re-running the per-task Codex gate" \
   "SDD per-task loop no longer re-runs the full task reviewer for Codex fixes"
-assert_contains "$SDD" "After any Codex-triggered final-review fix, re-run the final code-reviewer before re-running the final Codex gate." \
+assert_contains "$SDD_FINAL" "After any Codex-triggered final-review fix, re-run the final code-reviewer before re-running the final Codex gate." \
   "SDD final loop names Claude re-review order"
 assert_contains "$REQUESTING_REVIEW" "After any Codex-triggered code fix, re-run the Claude code-reviewer before re-running Codex." \
   "requesting-code-review loop names Claude re-review order"
@@ -159,9 +183,9 @@ assert_contains "$WRITING_PLANS" "using the plan recipe" \
   "writing-plans points at the plan-specific recipe"
 assert_contains "$WRITING_PLANS" "the source spec path and the plan path" \
   "writing-plans requires both source spec and plan paths"
-assert_contains "$SDD" "using the per-task code recipe" \
+assert_contains "$SDD_REVIEW" "using the per-task code recipe" \
   "SDD points per-task gates at the per-task recipe"
-assert_contains "$SDD" "using the final whole-branch code recipe" \
+assert_contains "$SDD_FINAL" "using the final whole-branch code recipe" \
   "SDD points final gate at the final recipe"
 assert_contains "$REQUESTING_REVIEW" "using the code-review recipe" \
   "requesting-code-review points at the code-review recipe"
@@ -199,7 +223,7 @@ assert_contains "$GATE" "schedules a full follow-on gate over the recorded range
   "the backstop-fix ledger append is priced, not bookkeeping"
 
 # --- Task 4: SDD references new caps + completion Red Flag ---
-assert_contains "$SDD" "code-gate backstop of 3 rounds" \
+assert_contains "$SDD_FINAL" "code-gate backstop of 3 rounds" \
   "SDD names the code-gate backstop of 3 rounds"
 assert_contains "$SDD_RATIONALIZATIONS" "Treat an unfinished or \"still verifying\" Codex result as approval" \
   "SDD common-rationalizations echo the incomplete-is-not-approval rule"

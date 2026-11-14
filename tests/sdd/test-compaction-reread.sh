@@ -33,5 +33,16 @@ check() {
 check "$SDD" "**After every context compaction:** this file fits within the 20,000 characters Claude Code re-attaches, so the copy you hold is whole. A step file you read before the compaction does not survive it. Before your next action, print the board and the ledger lines the step table names (your task's and your Setup's, never the whole ledger), find your step in the table, and Read that step file in full, along with any other skill you are following whose re-attached copy is cut short." "## When to Use" "SDD re-read paragraph present, early, before When to Use"
 check "$BRAIN" "**After every context compaction:** Claude Code re-attaches this skill cut to its first 20,000 characters, which ends before the spec-writing steps, and a full Read you made before the compaction does not survive it. After each compaction, the first and every later one, Read this file in full before your next action (a question to your human partner, a visual-companion step, or writing the spec), along with any other skill you are following whose re-attached copy is cut short." "## Three Paths" "brainstorming re-read paragraph present, early, before Three Paths"
 
+# contains FILE NEEDLE LABEL: fixed-string needle present (whitespace-folded).
+contains() {
+  local file="$1" needle="$2" label="$3"
+  if tr '\n' ' ' < "$file" | tr -s ' ' | grep -qF -- "$needle"; then pass "$label"; else fail "$label"; fi
+}
+SDD_FIX="$REPO_ROOT/skills/subagent-driven-development/fix-loop.md"
+SDD_FINAL="$REPO_ROOT/skills/subagent-driven-development/final-and-finish.md"
+contains "$SDD" '| you ran `scripts/sdd-state finish` and it printed `finished`: the workspace is gone, and this row wins over every row below | none: do not run Setup and do not recreate the ledger; continue with hyperpowers:finishing-a-development-branch, from the hand-off message you sent (mode, plan, spec, decision extractor id and notes path, receipt path) |' "step table sends a finished workspace to the branch action, not Setup"
+contains "$SDD_FINAL" 'after a compaction, that message is what you resume from' "Finish names the hand-off message as the resume point"
+contains "$SDD_FIX" 'A task whose newest line is a `fix round` line, or a blocking `review` line after one, is mid-loop: resume the loop at the next round; a round whose `review` line approves goes on to the gate.' "fix-loop resumes mid-loop at the next round"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

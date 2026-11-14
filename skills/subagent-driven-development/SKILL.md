@@ -65,6 +65,7 @@ Print the board (`scripts/sdd-state board PLAN_FILE`) and the ledger lines of yo
 
 | State | Step file |
 |---|---|
+| you ran `scripts/sdd-state finish` and it printed `finished`: the workspace is gone, and this row wins over every row below | none: do not run Setup and do not recreate the ledger; continue with hyperpowers:finishing-a-development-branch, from the hand-off message you sent (mode, plan, spec, decision extractor id and notes path, receipt path) |
 | no ledger in the workspace, or no `setup complete` line of this session in it | [setup.md](setup.md) |
 | the board shows no task held by this session and a task without a completion line | [task-loop.md](task-loop.md) |
 | the held task's newest line is its branch, base, implementer identity or `report` line | [task-loop.md](task-loop.md) |

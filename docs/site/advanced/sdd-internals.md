@@ -1,6 +1,6 @@
 ---
 sources: skills/subagent-driven-development hooks/session-start hooks/hooks.json hooks/sdd-stop-guard hooks/lib/stop-guard.mjs docs/hyperpowers/specs/2026-10-20-portable-sdd-dossiers-design.md docs/hyperpowers/specs/2026-10-23-sdd-stop-guard-design.md hooks/sdd-dispatch-guard hooks/lib/dispatch-guard.mjs docs/hyperpowers/specs/2026-11-10-sdd-dispatch-guard-design.md
-source-digest: f358b2165579
+source-digest: 7ee3becc15cc
 ---
 # How subagent-driven development keeps its place
 
@@ -127,7 +127,7 @@ The watch budget for one job is three times the plan's stated runtime for it, or
 
 ## Resuming after compaction
 
-The skill's `SKILL.md` is a controller under 19,000 characters, so the copy Claude Code re-attaches after a compaction, which keeps the first 20,000 characters, is whole. The step text lives in five files beside it: `setup.md`, `task-loop.md`, `review-and-complete.md`, `fix-loop.md`, and `final-and-finish.md`. A step file read before the compaction does not survive it, so the controller prints the board and the ledger lines of its task and its Setup, never the whole ledger, and the controller's step table maps the newest of those lines it names to the one step file to read; a line it does not name, such as a deferred minor or the gate directory, leaves the step unchanged. The `setup complete`, `report`, `review`, and `codex gate round` lines exist for that table. Rules that hold in every step, such as the foreground dispatch and the five-round cap, are stated once, in `SKILL.md`.
+The skill's `SKILL.md` is a controller under 19,000 characters, so the copy Claude Code re-attaches after a compaction, which keeps the first 20,000 characters, is whole. The step text lives in five files beside it: `setup.md`, `task-loop.md`, `review-and-complete.md`, `fix-loop.md`, and `final-and-finish.md`. A step file read before the compaction does not survive it, so the controller prints the board and the ledger lines of its task and its Setup, never the whole ledger, and the controller's step table maps the newest of those lines it names to the one step file to read; a line it does not name, such as a deferred minor or the gate directory, leaves the step unchanged. The `setup complete`, `report`, `review`, and `codex gate round` lines exist for that table. The table's first row covers the one state with no ledger to read: once `sdd-state finish` has printed `finished`, the workspace is gone, so a resumed controller does not run Setup or recreate the ledger and instead continues with {doc}`../skills/finishing-a-development-branch` from the hand-off message it sent. `fix-loop.md` carries the mid-loop resume rule, so a session resumed in a fix loop continues at the next round without opening Setup. Rules that hold in every step, such as the foreground dispatch and the five-round cap, are stated once, in `SKILL.md`.
 
 Three things bring a controller back to its place.
 

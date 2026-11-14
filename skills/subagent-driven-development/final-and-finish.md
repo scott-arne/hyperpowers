@@ -101,7 +101,7 @@ When the final whole-branch review is clean and its fixes are merged:
    skip reason) into the hand-off message you are about to send: the next
    step removes the ledger from the working tree, and
    hyperpowers:finishing-a-development-branch takes the mode, the plan, the
-   spec and the extractor's task id and output path as its input.
+   spec and the extractor's task id and output path as its input; after a compaction, that message is what you resume from.
 2. **Finish the workspace** with `scripts/sdd-state finish PLAN_FILE --session <sid>`:
    it refuses with `open-claims` while any claimed task lacks a completion line
    (that is a plan not finished, not a reason for `--force`), and with

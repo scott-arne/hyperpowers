@@ -92,6 +92,10 @@ covering-tests precondition applies only to findings that were fixed. Record
 the round as `(0 addressed, <Y> declined, <Z> open)`; a NOT ADDRESSED verdict
 keeps that finding open and the round counts toward the cap as usual.
 
+A task whose newest line is a `fix round` line, or a blocking `review`
+line after one, is mid-loop: resume the loop at the next round; a round
+whose `review` line approves goes on to the gate.
+
 **After each round,** append to the ledger:
 `Task <N>: fix round <R>/5 (<X> addressed, <Y> declined, <Z> open — <finding one-liners>; commits <a7>..<b7>)`
 

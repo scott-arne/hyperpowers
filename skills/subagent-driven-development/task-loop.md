@@ -82,7 +82,9 @@ sessions merge.
   (list your live children, chase its report), resume it by the recorded
   id where your harness allows, and only if it cannot be recovered
   dispatch a takeover, recording the takeover's identity beside the
-  original.
+  original. A newest `report` line means the implementer has finished:
+  dispatch nothing, and resume at "2. Handle the report" from the report
+  file and the recorded `report` line, with the claim's `from=` as the base.
   `held` with `own=1` and `merged=1` means the task is already merged and its
   branch deleted: check nothing out and resume it at its completion line
   (Complete the task, in [review-and-complete.md](review-and-complete.md)); `claimed` with `takeover=1` and `merged=1`

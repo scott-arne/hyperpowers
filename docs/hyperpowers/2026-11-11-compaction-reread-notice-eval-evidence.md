@@ -167,7 +167,7 @@ Spec decisions 11 to 13. The human partner had ruled the notice off any release 
 - Decision 12: SDD's paragraph keeps the controller's recovery read and regains v6.18.1's last clause, for other skills whose re-attached copy is cut short. Without the notice, that clause is the only pointer to finishing-a-development-branch after a compaction; that skill is cut at its line 379 and has no re-read paragraph of its own.
 - Decision 13: the eval adds a `controller` arm against the same control and bars 1 to 4, with no sentinel. Without the notice, no hook text reaches a session that follows no skill.
 
-Between the slice pin and the controller pin, only `hooks/session-start` and this paragraph changed. The step table, the five step files and the dispatch guard sentence are the same. `SKILL.md` at the controller pin is 13,818 characters and 146 lines.
+Of the files a session loads, only `hooks/session-start` and this paragraph changed between the slice pin and the controller pin. The step table, the five step files and the dispatch guard sentence are the same. `SKILL.md` at the controller pin is 13,818 characters and 146 lines.
 
 The paragraph, verbatim, line 23 of `SKILL.md` at the controller pin:
 

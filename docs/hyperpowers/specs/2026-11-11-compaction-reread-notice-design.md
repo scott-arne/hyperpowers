@@ -85,6 +85,7 @@ of the portable dossiers design) reached `ec562ba3` at 16:55Z on 2026-11-10.
    PreCompact hook, because its output feeds the model-written summary and
    was dropped on 2026-11-04 for lack of evidence of wrong actions after
    compaction.
+   Reversed by decision 11 (2026-11-13); the notice did not ship.
 
 3. **The notice prints on every compaction, conditional in its text on
    following a skill.** It does not depend on an SDD ledger or a git
@@ -93,11 +94,13 @@ of the portable dossiers design) reached `ec562ba3` at 16:55Z on 2026-11-10.
    (human partner, 2026-11-11). Rejected: appending it to the ledger notice
    only, which covers SDD and leaves stale brainstorming and finishing
    copies without help.
+   Reversed by decision 11 (2026-11-13); the notice did not ship.
 
 4. **The re-read paragraphs in SDD and brainstorming stay unchanged.** They
    are tuned text, the 6.16.2 eval measured them, and they still serve a
    harness that does not run the hook. Rejected: removing them as redundant,
    which has no evidence behind it and drops coverage on other harnesses.
+   Amended by decision 8.
 
 5. **The eval strips the paragraph from both arms and adds a shipped-config
    arm and a no-skill sentinel.** Control is the branch with the paragraph
@@ -109,7 +112,7 @@ of the portable dossiers design) reached `ec562ba3` at 16:55Z on 2026-11-10.
    harness pins one commit per arm and the measured behavior is whether the
    Read happens, which the stripped control exercises; running the
    brainstorming compaction scenario as well, because the notice is generic
-   and the SDD scenario measures it at lower cost.
+   and the SDD scenario measures it at lower cost. Replaced by decision 10.
 
 6. **The notice ceiling rises from 1,200 to 1,400 characters.** The
    external workflow adoption spec (2026-09-10, B2) caps the context the
@@ -121,6 +124,7 @@ of the portable dossiers design) reached `ec562ba3` at 16:55Z on 2026-11-10.
    a longer test path. Rejected: cutting the notice further, which drops
    either the stale-copy reason or the path; keeping 1,200 by shortening
    the A9 notice, which is tested text outside this slice.
+   Reversed by decision 11 (2026-11-13); the notice did not ship.
 
 7. **SDD's SKILL.md becomes a controller under 19,000 characters, and its
    step text moves into five sibling files.** At the 100,000-token
@@ -155,6 +159,7 @@ of the portable dossiers design) reached `ec562ba3` at 16:55Z on 2026-11-10.
    Rejected: dropping the notice, which leaves sessions on stale skill text
    with no pointer to the installed copy; keeping its old text, which names
    only SKILL.md while the step text now lives beside it.
+   Reversed by decision 11 (2026-11-13); the notice did not ship.
 
 10. **The eval compares released 6.18.1 with the slice head, counts a
     thrash or a run with no dispatch as a failure, and reuses the 2026-11-12

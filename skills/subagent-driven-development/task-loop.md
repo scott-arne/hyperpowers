@@ -76,7 +76,13 @@ sessions merge.
   `scripts/sdd-state claim PLAN_FILE N --session <sid>`. `claimed` prints the
   task branch and its base: check the branch out (`git switch <branch>`) and
   dispatch on it; `held` with your own session id (`own=1`, a resume after
-  compaction) prints the same two fields: check the branch out and proceed;
+  compaction) prints the same two fields: check the branch out and proceed,
+  unless the task's newest ledger line is its implementer identity, which
+  is a dispatch in flight: do not re-dispatch — reconcile that agent first
+  (list your live children, chase its report), resume it by the recorded
+  id where your harness allows, and only if it cannot be recovered
+  dispatch a takeover, recording the takeover's identity beside the
+  original.
   `held` with `own=1` and `merged=1` means the task is already merged and its
   branch deleted: check nothing out and resume it at its completion line
   (Complete the task, in [review-and-complete.md](review-and-complete.md)); `claimed` with `takeover=1` and `merged=1`

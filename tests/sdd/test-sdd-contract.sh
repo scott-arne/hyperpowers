@@ -222,6 +222,8 @@ assert_contains "$SDD_EXAMPLE_WORKFLOW" "Re-run the fix's covering command mysel
   "example fix report is re-run before the scoped re-review"
 assert_contains "$SDD_SETUP" "is a dispatch in flight: do not re-dispatch" \
   "resume rules consume the implementer-identity ledger state"
+assert_contains "$SDD_TASK_LOOP" "is a dispatch in flight: do not re-dispatch — reconcile that agent first (list your live children, chase its report), resume it by the recorded id where your harness allows, and only if it cannot be recovered dispatch a takeover, recording the takeover's identity beside the original." \
+  "task-loop reconciles an in-flight dispatch after a compaction"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "Write tier-skips.md in this plan's workspace" \
   "example's low-tier skip writes the tier-skip summary"
 assert_contains "$SDD_EXAMPLE_WORKFLOW" "most capable model, with tier-skips.md" \

@@ -1,8 +1,8 @@
 # Compaction Re-read Notice and Compact SDD Controller: Evaluation Evidence
 
-Date: 2026-11-13. Spec: `docs/hyperpowers/specs/2026-11-11-compaction-reread-notice-design.md`, whose section "Revision (2026-11-12): a compact SDD controller" and its "Testing (revised)" govern this campaign. Run artifacts, logs, manifests and tallies: `evals/evidence/2026-11-11-compaction-reread-notice/` in hyperpowers-evals. A run is cited as `evals/evidence/2026-11-11-compaction-reread-notice/task-6-runs/<arm>/<run-id>`.
+Date: 2026-11-13. Spec: `docs/hyperpowers/specs/2026-11-11-compaction-reread-notice-design.md`, whose section "Revision (2026-11-12): a compact SDD controller" and its "Testing (revised)" govern the revised campaign, and whose section "Revision (2026-11-13): the controller without the notice" and its "Testing (second revision)" govern the controller arm. Run artifacts, logs, manifests and tallies: `evals/evidence/2026-11-11-compaction-reread-notice/` in hyperpowers-evals. A run is cited as `evals/evidence/2026-11-11-compaction-reread-notice/task-6-runs/<arm>/<run-id>`.
 
-The revised campaign failed bars 1 to 4 and passed bar 5. The human partner decided that the notice stays off any release. This note records the measured failure.
+The revised campaign, the controller with the notice, failed bars 1 to 4 and passed bar 5. The human partner decided that the notice stays off any release, and the branch no longer carries it. The controller alone, measured on 2026-11-13, finished 10 of 10 valid runs with no thrash stop and a median of 11 compactions per run, which passes bars 1, 2 and 4. It followed 30 of 126 compactions (24%) and failed bar 3. This note records both campaigns.
 
 ## The change under test
 
@@ -156,6 +156,82 @@ bar 5, sentinel failures (at most 1 of 10): PASS
 ```
 
 The slice finished 5 of 10 valid runs against the baseline's 0 of 10, and 5 slice runs ended in the thrash stop against the baseline's 10. It followed 49 of 208 compactions (24%) against the bar of 85%, and its median of 19 compactions per run is above the bar of 16.
+
+## Second revision (2026-11-13): the controller without the notice
+
+### The change
+
+Spec decisions 11 to 13. The human partner had ruled the notice off any release on 2026-11-12. The final whole-branch review then found that a merge would ship the notice anyway, and that the configuration a merge could ship, the controller without the notice, had never been measured. On 2026-11-13 the human partner chose to remove the notice and measure the controller alone.
+
+- Decision 11: the notice comes out of `hooks/session-start`, which returns to its text before the notice (the `spell_path` refactor stays), and the notice ceiling returns to 1,200 characters.
+- Decision 12: SDD's paragraph keeps the controller's recovery read and regains v6.18.1's last clause, for other skills whose re-attached copy is cut short. Without the notice, that clause is the only pointer to finishing-a-development-branch after a compaction; that skill is cut at its line 379 and has no re-read paragraph of its own.
+- Decision 13: the eval adds a `controller` arm against the same control and bars 1 to 4, with no sentinel. Without the notice, no hook text reaches a session that follows no skill.
+
+Between the slice pin and the controller pin, only `hooks/session-start` and this paragraph changed. The step table, the five step files and the dispatch guard sentence are the same. `SKILL.md` at the controller pin is 13,818 characters and 146 lines.
+
+The paragraph, verbatim, line 23 of `SKILL.md` at the controller pin:
+
+```markdown
+**After every context compaction:** this file fits within the 20,000 characters Claude Code re-attaches, so the copy you hold is whole. A step file you read before the compaction does not survive it. Before your next action, print the board and the ledger lines the step table names (your task's and your Setup's, never the whole ledger), find your step in the table, and Read that step file in full, along with any other skill you are following whose re-attached copy is cut short.
+```
+
+### Method
+
+The arm is `controller`, pin `96edc68e337af67f237cc1f65d65094ee8519216` (the integration branch head after Task 14), on `sdd-compaction-reread`, launch manifest `manifest-revision-c.tsv`. Evals `b2e4086bf5` added the pin to `manifest.tsv`. Everything else is as in the revised campaign: the control is the same ten `baseline-6181` runs, not run again; the harness pin, Claude Code 2.1.317, controller and grader `claude-opus-5-5`, the 100000 `autoCompactWindow`, the validity, outcome and per-compaction rules and the replacement cap (r1 to r3) are unchanged. The `slice` results stand as measured, and no sentinel wave ran.
+
+The ten runs launched 2026-11-13 at 22:48Z. All ten were valid, so none was replaced and `sentinel-reruns.tsv` has no `controller` row. From each run's token-usage record, the SDD subagents ran on `claude-sonnet-5-5` in all 10 runs, and four runs (`...-233f`, `...-3946`, `...-7324`, `...-c499`) also used `claude-haiku-4-5-20251001`.
+
+The runs and tally are evals `9bf70a2e94`. `tally-revision-2.txt` is the output of `python3 tally.py` in the evidence directory at that commit.
+
+### Results
+
+| Arm | Runs | Valid | Voids | Outcome pass | Thrash stops | Compactions | Median compactions per run |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `baseline-6181` | 10 | 10 | none | 0/10 | 10 | 49 | 4 |
+| `controller` | 10 | 10 | none | 10/10 | 0 | 126 | 11 |
+
+Every controller run dispatched four task reviews and at least one final review. Nine dispatched four implementers and p10 (`...-233f`) five. No run dispatched a fix subagent. The Gauntlet-Agent's status is `pass` in all ten.
+
+### Per compaction, controller SDD
+
+Columns as in the slice table above, from each run's line in `tally-revision-2.txt`.
+
+| Run | Outcome | Thrash | Compactions | Followed | Any step file | Board and grep | SKILL.md read |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| p1 `sdd-compaction-reread-claude-auto-20261113T224803Z-7324` | pass | 0 | 20 | 5 | 7 | 16 | 0 |
+| p2 `sdd-compaction-reread-claude-auto-20261113T224803Z-7392` | pass | 0 | 12 | 5 | 6 | 11 | 0 |
+| p3 `sdd-compaction-reread-claude-auto-20261113T224803Z-47cd` | pass | 0 | 9 | 3 | 3 | 6 | 0 |
+| p4 `sdd-compaction-reread-claude-auto-20261113T224803Z-3946` | pass | 0 | 10 | 3 | 3 | 8 | 0 |
+| p5 `sdd-compaction-reread-claude-auto-20261113T224803Z-6911` | pass | 0 | 10 | 1 | 1 | 7 | 0 |
+| p6 `sdd-compaction-reread-claude-auto-20261113T224803Z-b154` | pass | 0 | 8 | 3 | 3 | 6 | 0 |
+| p7 `sdd-compaction-reread-claude-auto-20261113T224803Z-c499` | pass | 0 | 11 | 2 | 4 | 9 | 0 |
+| p8 `sdd-compaction-reread-claude-auto-20261113T224803Z-2dc4` | pass | 0 | 12 | 1 | 2 | 10 | 0 |
+| p9 `sdd-compaction-reread-claude-auto-20261113T224803Z-c4a7` | pass | 0 | 11 | 2 | 3 | 8 | 0 |
+| p10 `sdd-compaction-reread-claude-auto-20261113T224803Z-233f` | pass | 0 | 23 | 5 | 6 | 13 | 0 |
+| pooled, valid runs | 10/10 | 0 | 126 | 30 (24%) | 38 | 94 | 0 |
+
+Each run directory is under `evals/evidence/2026-11-11-compaction-reread-notice/task-6-runs/controller/`.
+
+### Where thrash runs stopped
+
+No controller run ended in the thrash stop (`thrash=0` on all ten), so there is no stop to locate.
+
+### Bars
+
+Copied from `tally-revision-2.txt`:
+
+```text
+bar 1, controller SDD outcome (at least 8 of 10 valid, and more than baseline-6181's): PASS
+bar 2, controller SDD thrash (no valid run with thrash=1): PASS
+bar 3, controller SDD compactions followed (at least 85%, valid runs pooled): FAIL
+bar 4, controller SDD median compactions per run (at most 16): PASS
+```
+
+The controller finished 10 of 10 valid runs against `baseline-6181`'s 0 of 10 and `slice`'s 5 of 10, and 0 of its runs ended in the thrash stop against their 10 and 5.
+
+Bar 3 failed. The controller followed 30 of 126 compactions (24%) against the bar of 85%, the same rate as `slice` (49 of 208). Its median of 11 compactions per run is within the bar of 16.
+
+This paragraph derives counts from the tally's definitions; the records measure no cause. All four counts are taken in the window between a compaction and the next governed action. A compaction is followed only when that window holds a credited Read of the step file the table names, and, when a ledger existed, both the board and the ledger grep. The board and the grep were both credited after 94 of the 126 compactions (75%). A step file of any kind was read after 38 (30%). Since a followed compaction needs a step-file read, the 88 compactions with no step-file read are all unfollowed: 88 of the 96 unfollowed lacked the step-file read, and the other 8 had a step-file read in the window but missed another part of the rule (the named file read in full, or the board and the grep). The SDD `SKILL.md` was read after none, where the slice, whose notice asked for that read, read it after 141 of 208. The records do not say why sessions skipped the step-file read. All ten runs finished the plan with at most 5 of their compactions followed.
 
 ## Task 1 smoke run
 

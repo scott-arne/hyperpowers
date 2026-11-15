@@ -1,6 +1,6 @@
 # Fix truncation with a re-read paragraph
 
-- Status: accepted
+- Status: superseded by docs/hyperpowers/decisions/2026-11-11-sdd-s-skill-md-becomes-a-controller-under-19-000-characters.md
 - Spec: docs/hyperpowers/specs/2026-11-03-cost-reduction-6-16-2-design.md (decision 4)
 - Recorded: 2026-11-04; notes from the branch diff by a subagent at finish; plan docs/hyperpowers/plans/2026-11-03-cost-reduction-6-16-2.md removed at finish
 

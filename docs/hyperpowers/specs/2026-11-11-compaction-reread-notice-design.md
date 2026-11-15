@@ -1,5 +1,7 @@
 # Compaction Re-read Notice: Design
 
+**Outcome:** implemented 2026-11-14 (2026-11-11-compaction-reread-notice.md); 13 decisions under docs/hyperpowers/decisions/.
+
 Date: 2026-11-11, revised 2026-11-12 and 2026-11-13. Status: revised twice
 after campaigns. The section "Revision (2026-11-13): the controller without
 the notice" governs wherever it differs from earlier sections, and

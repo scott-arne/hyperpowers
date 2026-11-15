@@ -1,6 +1,6 @@
 # This slice fixes turn liveness; the compaction loss is the next slice
 
-- Status: accepted
+- Status: superseded by docs/hyperpowers/decisions/2026-11-11-the-field-rate-measured-stale-skill-text-this-slice-adds-a.md
 - Spec: docs/hyperpowers/specs/2026-11-10-sdd-dispatch-guard-design.md (decision 2)
 - Recorded: 2026-11-11; notes from the branch diff by a subagent at finish; plan docs/hyperpowers/plans/2026-11-10-sdd-dispatch-guard.md removed at finish
 

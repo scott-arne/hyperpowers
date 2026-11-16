@@ -78,8 +78,8 @@ sequences, the single most expensive failure observed.
   line is its implementer identity is a
   dispatch in flight: do not re-dispatch — reconcile that agent first
   (list your live children, chase its report), resume it by the recorded
-  id where your harness allows, and only if it cannot be recovered
-  dispatch a takeover, recording the takeover's identity beside the
+  id on a harness without `run_in_background` (Claude Code's fork mode
+  among them), and only if it cannot be recovered dispatch a takeover, recording the takeover's identity beside the
   original. The scan only reads: every action it calls for (a resume, a
   takeover, the next task) waits until `verify` below has returned `ok`.
   A first line that resolves to a genuinely different plan

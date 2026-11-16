@@ -191,6 +191,13 @@ fi
 # directories. Fail-silent like the notices above it.
 compaction_notice=""
 if [ "$hook_source" = "compact" ]; then
+  # The session's own ledger wins over a newer one from another plan. Ids
+  # with whitespace or a colon are not session ids, and would also break the
+  # "session <id>:" prefix match.
+  hook_session=""
+  if [ -n "$hook_input" ] && command -v node >/dev/null 2>&1; then
+    hook_session="$(printf '%s' "$hook_input" | node -e 'try { const s = JSON.parse(require("fs").readFileSync(0, "utf8")).session_id; process.stdout.write(typeof s === "string" && /^[A-Za-z0-9._-]+$/.test(s) ? s : ""); } catch (e) { /* no session id */ }' 2>/dev/null)" || hook_session=""
+  fi
   compaction_notice="$(
     ( set +e
       git rev-parse --absolute-git-dir >/dev/null 2>&1 || exit 0
@@ -216,8 +223,10 @@ if [ "$hook_source" = "compact" ]; then
       # Three places a ledger can be: the state checkout (this release), the
       # plain cache under the same key (the plain backend, and pointers for
       # cross-repository plans), and the plain cache under the pre-6.17
-      # per-worktree key. Newest wins across all three.
+      # per-worktree key. This session's newest ledger wins across all three,
+      # then the newest overall.
       newest=""
+      own=""
       for plans in "$cache/state/$key/plans" "$cache/sdd/$key/plans" "$cache/sdd/$legacy/plans"; do
         [ -d "$plans" ] || continue
         for ledger in "$plans"/*/progress.md; do
@@ -225,8 +234,14 @@ if [ "$hook_source" = "compact" ]; then
           if [ -z "$newest" ] || [ "$ledger" -nt "$newest" ]; then
             newest="$ledger"
           fi
+          if [ -n "$hook_session" ] && SID=$hook_session awk 'BEGIN { p = "session " ENVIRON["SID"] ":" } index($0, p) == 1 { f = 1; exit } END { exit !f }' "$ledger" 2>/dev/null; then
+            if [ -z "$own" ] || [ "$ledger" -nt "$own" ]; then
+              own="$ledger"
+            fi
+          fi
         done
       done
+      [ -n "$own" ] && newest="$own"
       [ -n "$newest" ] || exit 0
       # Every notice is ONE line: spell_path names a path that could break
       # one as a JSON literal, and refuses a path that is not valid UTF-8.

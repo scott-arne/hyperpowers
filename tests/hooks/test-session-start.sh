@@ -545,6 +545,30 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$fires_repo" "$HOOK_UNDER_TEST"
 
+# Two plans in one repo: the notice names the ledger this session wrote, even
+# when another session's ledger is newer. "session tt:" must not match "t".
+own_repo="$(make_repo compact-own)"
+own_home="$(make_home compact-own)"
+own_cache="$TEST_ROOT/compact-own/cache"
+own_ledger="$(seed_ledger "$own_cache" "$own_repo" "mine-1111aaaa")"
+printf 'session t: mode worktree on main at %s started 2026-11-15T00:00:00Z\n' "$own_repo" >> "$own_ledger"
+other_ledger="$(seed_ledger "$own_cache" "$own_repo" "other-2222bbbb")"
+printf 'session tt: mode worktree on main at %s started 2026-11-15T00:00:00Z\n' "$own_repo" >> "$other_ledger"
+touch -t 202401010000 "$own_ledger"
+touch -t 202403010000 "$other_ledger"
+own_stdin="$TEST_ROOT/compact-own/stdin.json"
+write_hook_input "$own_stdin" compact
+HOOK_STDIN="$own_stdin"
+assert_command_output \
+    "SessionStart names this session's ledger over a newer ledger of another session" \
+    "nested" \
+    "${NOTICE_HEAD}${own_ledger}${NOTICE_TAIL}" \
+    "" \
+    "$own_home" \
+    XDG_CACHE_HOME="$own_cache" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$own_repo" "$HOOK_UNDER_TEST"
+
 # The eval showed a re-read notice should not ship; a compact run carries only
 # the ledger notice, so a stray notice returning would show here.
 HOOK_STDIN="$fires_stdin"

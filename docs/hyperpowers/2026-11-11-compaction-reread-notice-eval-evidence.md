@@ -83,7 +83,7 @@ Released v6.18.1, which has the paragraph and no notice, failed the same way on 
 
 Arms, from the evidence README ("Revision (2026-11-12)") and `manifest.tsv`:
 
-- `baseline-6181` (control): released v6.18.1, `7f7c399ca1eef6e931d01fa47c02303eef32f44a`, on `sdd-compaction-reread`. These are the 2026-11-12 baseline runs, launched before the revised launcher existed. Their harness paths at evals `b59b12e16c` are identical to the harness pin, and they ran on the same Claude Code version and models (spec decision 10).
+- `baseline-6181` (control): released v6.18.1, `7f7c399ca1eef6e931d01fa47c02303eef32f44a`, on `sdd-compaction-reread`. These are the 2026-11-12 baseline runs, launched before the revised launcher existed. Their harness paths at evals `ec9c079d8b` are identical to the harness pin, and they ran on the same Claude Code version and models (spec decision 10).
 - `slice` (treatment): the slice pin above, on `sdd-compaction-reread` (launch manifest `manifest-revision-a.tsv`).
 - `slice` (sentinel): the slice pin on `compaction-no-skill` (`manifest-revision-b.tsv`).
 
@@ -95,10 +95,10 @@ Validity and outcome (spec, "Testing (revised)"). An SDD run is void when its la
 
 Two things changed after the runs were in.
 
-1. The tally as first written read the five slice SDD runs that ended in the thrash stop as grader voids, because the Gauntlet-Agent returned status `investigate` for each and gave no pass or fail. The spec counts a thrash run as a valid failure. `tally.py` was fixed to read a thrash stop as a valid failure even under a grader void (evals `db70c8d345`, with tests), and the five runs count as valid outcome failures. None was replaced.
-2. No dollar figure is kept in either repository. The archived runs carried cost keys and quorum's dollar column, so the 2026-11-11 history rewrite's two rules were applied to the new archive and to 27 files the waves 1-2 commit had already committed (evals `54bf447b9b`): quorum's dollar column is dropped, and `costUSD`, `totalCostUSD`, `lastCost`, `est_cost_usd`, `total_cost_usd`, `total_est_cost_usd` and `cost_usd` are set to null. A null cost value in an archived run comes from this scrub, not from capture. The tally output was byte-identical before and after the scrub.
+1. The tally as first written read the five slice SDD runs that ended in the thrash stop as grader voids, because the Gauntlet-Agent returned status `investigate` for each and gave no pass or fail. The spec counts a thrash run as a valid failure. `tally.py` was fixed to read a thrash stop as a valid failure even under a grader void (evals `0b2702aa90`, with tests), and the five runs count as valid outcome failures. None was replaced.
+2. No dollar figure is kept in either repository. The archived runs carried cost keys and quorum's dollar column, so the 2026-11-11 history rewrite's two rules were applied to the new archive and to 27 files the waves 1-2 commit had already committed (evals `6a590734fa`): quorum's dollar column is dropped, and `costUSD`, `totalCostUSD`, `lastCost`, `est_cost_usd`, `total_cost_usd`, `total_est_cost_usd` and `cost_usd` are set to null. A null cost value in an archived run comes from this scrub, not from capture. The tally output was byte-identical before and after the scrub.
 
-The revised runs and tally are evals `ac33ae7709`. `tally-revision.txt` is the output of `python3 tally.py` in the evidence directory.
+The revised runs and tally are evals `54f5fbdf0c`. `tally-revision.txt` is the output of `python3 tally.py` in the evidence directory.
 
 ## Results
 
@@ -177,11 +177,11 @@ The paragraph, verbatim, line 23 of `SKILL.md` at the controller pin:
 
 ### Method
 
-The arm is `controller`, pin `96edc68e337af67f237cc1f65d65094ee8519216` (the integration branch head after Task 14), on `sdd-compaction-reread`, launch manifest `manifest-revision-c.tsv`. Evals `b2e4086bf5` added the pin to `manifest.tsv`. Everything else is as in the revised campaign: the control is the same ten `baseline-6181` runs, not run again; the harness pin, Claude Code 2.1.317, controller and grader `claude-opus-5-5`, the 100000 `autoCompactWindow`, the validity, outcome and per-compaction rules and the replacement cap (r1 to r3) are unchanged. The `slice` results stand as measured, and no sentinel wave ran.
+The arm is `controller`, pin `96edc68e337af67f237cc1f65d65094ee8519216` (the integration branch head after Task 14), on `sdd-compaction-reread`, launch manifest `manifest-revision-c.tsv`. Evals `d8e6825286` added the pin to `manifest.tsv`. Everything else is as in the revised campaign: the control is the same ten `baseline-6181` runs, not run again; the harness pin, Claude Code 2.1.317, controller and grader `claude-opus-5-5`, the 100000 `autoCompactWindow`, the validity, outcome and per-compaction rules and the replacement cap (r1 to r3) are unchanged. The `slice` results stand as measured, and no sentinel wave ran.
 
 The ten runs launched 2026-11-13 at 22:48Z. All ten were valid, so none was replaced and `sentinel-reruns.tsv` has no `controller` row. From each run's token-usage record, the SDD subagents ran on `claude-sonnet-5-5` in all 10 runs, and four runs (`...-233f`, `...-3946`, `...-7324`, `...-c499`) also used `claude-haiku-4-5-20251001`.
 
-The runs and tally are evals `9bf70a2e94`. `tally-revision-2.txt` is the output of `python3 tally.py` in the evidence directory at that commit.
+The runs and tally are evals `af9879ccbb`. `tally-revision-2.txt` is the output of `python3 tally.py` in the evidence directory at that commit.
 
 ### Results
 

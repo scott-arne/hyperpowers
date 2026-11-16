@@ -1,6 +1,6 @@
 ---
-sources: skills/using-git-worktrees skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/writing-plans/SKILL.md skills/finishing-a-development-branch/SKILL.md
-source-digest: 2ff54a52906e
+sources: skills/using-git-worktrees skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/subagent-driven-development/setup.md skills/subagent-driven-development/task-loop.md skills/subagent-driven-development/review-and-complete.md skills/subagent-driven-development/fix-loop.md skills/subagent-driven-development/final-and-finish.md skills/writing-plans/SKILL.md skills/finishing-a-development-branch/SKILL.md
+source-digest: fdb9ae5ced4e
 ---
 # using-git-worktrees
 

@@ -1,6 +1,6 @@
 ---
-sources: skills/communication skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/using-hyperpowers/SKILL.md skills/finishing-a-development-branch/SKILL.md skills/dispatching-parallel-agents/SKILL.md skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/receiving-code-review/SKILL.md skills/requesting-code-review/SKILL.md skills/systematic-debugging/SKILL.md skills/profiling-performance/SKILL.md skills/optimizing-performance/SKILL.md
-source-digest: e1c617378fd1
+sources: skills/communication skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/using-hyperpowers/SKILL.md skills/finishing-a-development-branch/SKILL.md skills/dispatching-parallel-agents/SKILL.md skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md skills/subagent-driven-development/setup.md skills/subagent-driven-development/task-loop.md skills/subagent-driven-development/review-and-complete.md skills/subagent-driven-development/fix-loop.md skills/subagent-driven-development/final-and-finish.md skills/receiving-code-review/SKILL.md skills/requesting-code-review/SKILL.md skills/systematic-debugging/SKILL.md skills/profiling-performance/SKILL.md skills/optimizing-performance/SKILL.md
+source-digest: fcc6f6d1d560
 ---
 # communication
 

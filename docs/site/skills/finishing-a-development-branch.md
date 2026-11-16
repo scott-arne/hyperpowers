@@ -1,6 +1,6 @@
 ---
-sources: skills/finishing-a-development-branch skills/requesting-code-review/scripts/codex-review-dir skills/subagent-driven-development/SKILL.md skills/executing-plans/SKILL.md skills/using-git-worktrees/SKILL.md docs/hyperpowers/specs/2026-10-21-decision-records-design.md
-source-digest: f43d4ac29736
+sources: skills/finishing-a-development-branch skills/requesting-code-review/scripts/codex-review-dir skills/subagent-driven-development/SKILL.md skills/subagent-driven-development/setup.md skills/subagent-driven-development/task-loop.md skills/subagent-driven-development/review-and-complete.md skills/subagent-driven-development/fix-loop.md skills/subagent-driven-development/final-and-finish.md skills/executing-plans/SKILL.md skills/using-git-worktrees/SKILL.md docs/hyperpowers/specs/2026-10-21-decision-records-design.md
+source-digest: e52fc5d726c3
 ---
 # finishing-a-development-branch
 

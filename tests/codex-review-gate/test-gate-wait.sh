@@ -139,5 +139,25 @@ FAKE_WAIT_MS=10 run_gw "$s" --budget 100 A >/dev/null
 first="$(head -n 1 "$s/A.timeouts")"
 [ "$first" = "30000" ] && pass "9: first slice is 30000 ms" || fail "9: first slice was '$first', expected 30000"
 
+# 10. --codex-path supplies the install without an assignment prefix, which is
+# what keeps the call a single sandbox-excludable command.
+newstate; printf 'completed\n' > "$s/A"
+r="$(FAKE_STATE="$s" env -u CODEX_PATH bash "$GW" --codex-path "$CP" A 2>&1; echo "rc=$?")"
+expect "$r" "A completed" "10: --codex-path alone resolves the companion"
+expect_rc "$r" 0 "10: --codex-path alone exits 0"
+
+newstate; printf 'completed\n' > "$s/A"
+r="$(FAKE_STATE="$s" CODEX_PATH="$work/absent" bash "$GW" --codex-path "$CP" A 2>&1; echo "rc=$?")"
+expect_rc "$r" 0 "10: --codex-path wins over CODEX_PATH"
+
+newstate; printf 'completed\n' > "$s/A"
+r="$(FAKE_STATE="$s" env -u CODEX_PATH bash "$GW" --codex-path A 2>&1; echo "rc=$?")"
+expect_rc "$r" 1 "10: --codex-path without a value exits 1"
+
+newstate; printf 'completed\n' > "$s/A"
+r="$(FAKE_STATE="$s" env -u CODEX_PATH bash "$GW" --codex-path "$work/absent" A 2>&1; echo "rc=$?")"
+expect "$r" "no companion at" "10: a path with no companion is named"
+expect_rc "$r" 1 "10: a path with no companion exits 1"
+
 echo
 [ "$FAILURES" -eq 0 ] && { echo "ALL PASS"; exit 0; } || { echo "$FAILURES FAILURES"; exit 1; }

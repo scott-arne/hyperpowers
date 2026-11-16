@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# gate-wait [--budget SECONDS] JOB_ID...
+# gate-wait [--codex-path PATH] [--budget SECONDS] JOB_ID...
 # Watch one or more codex-plugin-cc companion jobs in a single shell call.
 # Each pass re-reads every pending job without blocking, then blocks on the
 # first job still pending for at most 30 s, so a stalled job cannot hide
 # others that finished. Every exit follows a full pass, so every status
-# printed is current. Requires CODEX_PATH (the install the recipes use).
+# printed is current. Needs the companion install the recipes use, as
+# --codex-path (preferred) or CODEX_PATH in the environment. Pass the flag:
+# Claude Code's sandbox exclusions do not match a call carrying a CODEX_PATH=
+# prefix, and a sandboxed companion call fails.
 # Stdout: one "<id> <status>" line per job, then "all-terminal" or
 # "running: <id> ...". Exit 0 = every job terminal; 2 = budget spent with jobs
 # still running; 1 = usage error, or a job whose status could not be read
@@ -16,10 +19,12 @@
 set -uo pipefail
 
 budget=480
+codex_path="${CODEX_PATH:-}"
 ids=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --budget) [ $# -ge 2 ] || { echo "gate-wait: --budget needs a value" >&2; exit 1; }; budget="$2"; shift 2 ;;
+    --codex-path) [ $# -ge 2 ] || { echo "gate-wait: --codex-path needs a value" >&2; exit 1; }; codex_path="$2"; shift 2 ;;
     --) shift; ids+=("$@"); break ;;
     -*) echo "gate-wait: unknown arg $1" >&2; exit 1 ;;
     *) ids+=("$1"); shift ;;
@@ -38,9 +43,9 @@ budget="${budget#"${budget%%[!0]*}"}"
 if [ -z "$budget" ] || [ "${#budget}" -gt 3 ] || [ "$budget" -lt 1 ] || [ "$budget" -gt 570 ]; then
   echo "gate-wait: --budget must be an integer from 1 to 570 (got '$raw_budget')" >&2; exit 1
 fi
-[ "${#ids[@]}" -gt 0 ] || { echo "usage: gate-wait [--budget SECONDS] JOB_ID..." >&2; exit 1; }
-[ -n "${CODEX_PATH:-}" ] || { echo "gate-wait: CODEX_PATH is not set" >&2; exit 1; }
-companion="$CODEX_PATH/scripts/codex-companion.mjs"
+[ "${#ids[@]}" -gt 0 ] || { echo "usage: gate-wait [--codex-path PATH] [--budget SECONDS] JOB_ID..." >&2; exit 1; }
+[ -n "$codex_path" ] || { echo "gate-wait: no companion install given (--codex-path, or CODEX_PATH in the environment)" >&2; exit 1; }
+companion="$codex_path/scripts/codex-companion.mjs"
 [ -f "$companion" ] || { echo "gate-wait: no companion at $companion" >&2; exit 1; }
 command -v node >/dev/null 2>&1 || { echo "gate-wait: node not found" >&2; exit 1; }
 

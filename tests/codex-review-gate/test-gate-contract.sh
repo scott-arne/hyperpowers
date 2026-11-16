@@ -156,15 +156,27 @@ assert_not_contains "$GATE" "adversarial-review --base <BASE_SHA> --wait" \
   "per-task and code-review recipes drop the ignored --wait flag"
 assert_not_contains "$GATE" "adversarial-review --base <MERGE_BASE_SHA> --wait" \
   "final whole-branch recipe drops the ignored --wait flag"
-assert_contains "$GATE" "skills/requesting-code-review/scripts/gate-wait\" <job-id>..." \
+assert_contains "$GATE" "skills/requesting-code-review/scripts/gate-wait\" --codex-path <CODEX_PATH> <job-id>..." \
   "recipe watch step blocks on gate-wait"
+assert_not_contains "$GATE" "with \`CODEX_PATH\` exported" \
+  "the watch call takes the install as a flag, not an assignment prefix"
 assert_contains "$GATE" "watch them all with one \`gate-wait\` call over every recorded id" \
   "lens fan-out watches every lens with one gate-wait call"
 assert_contains "$GATE" "keeps a blocking \`gate-wait\` call in the" \
   "red flag names gate-wait as the watch call"
 assert_not_contains "$GATE" "immediately issue the next \`status <job-id> --wait --json\`" \
   "agents no longer loop status --wait themselves"
-assert_contains "$REPO_ROOT/skills/requesting-code-review/gate-findings.md" "scripts/gate-wait\" <job-id>\` with \`CODEX_PATH\` exported (outside the shell sandbox)" \
+
+# --- Companion calls are single commands run outside the sandbox ---
+assert_contains "$GATE" "**Every companion command is one command, run with the Bash sandbox off**" \
+  "the single-command sandbox rule is on every route, in the preflight section"
+assert_contains "$GATE" "No \`cd\`, no \`VAR=value\` prefix, nothing chained in front" \
+  "the rule names the shapes that make a call compound"
+assert_contains "$GATE" "the companion derives its state directory from the working directory" \
+  "the rule says why a companion call runs from the repo root"
+assert_contains "$APPROACH_GATE" "No \`cd\` into the scratch directory" \
+  "the approach gate keeps its invocation a single command"
+assert_contains "$REPO_ROOT/skills/requesting-code-review/gate-findings.md" "scripts/gate-wait\" --codex-path <CODEX_PATH> <job-id>\` (outside the shell sandbox" \
   "gate-findings names gate-wait with its full path for document routes"
 assert_contains "$REPO_ROOT/skills/requesting-code-review/recipe-code.md" "if it is still unreadable, that review is incomplete per §4b" \
   "recipe defines the unreadable-job recovery"

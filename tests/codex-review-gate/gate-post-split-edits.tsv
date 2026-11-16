@@ -42,3 +42,4 @@
 29	sandbox-command-shape	- **`"ok"`** — a Codex review can run. Keep `.codexPath` and `.codexVersion`
 30	sandbox-command-shape	  (report the version in the §6 hand-back). Where a later command needs the install path, paste `.codexPath` in as literal text: the recipes write it `$CODEX_PATH` for readability, and an assignment prefix would put the call back in the sandbox.
 274	sandbox-command-shape	**Code reviews — launch detached, watch in the foreground.** Every companion call in this file is the whole Bash command, run with the sandbox off from the repo or worktree root, with `$CODEX_PATH` and every other path pasted in literally — §1 of gate-preflight.md has the reason. The three code
+635	sdd-fix-loop-pointer	   gate that path is SDD's fix loop (fix-loop.md), not a separate fix subagent).

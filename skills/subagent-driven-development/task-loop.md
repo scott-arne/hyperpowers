@@ -79,10 +79,10 @@ sessions merge.
   compaction) prints the same two fields: check the branch out and proceed,
   unless the task's newest ledger line is its implementer identity, which
   is a dispatch in flight: do not re-dispatch — reconcile that agent first
-  (list your live children, chase its report), resume it by the recorded
-  id where your harness allows, and only if it cannot be recovered
-  dispatch a takeover, recording the takeover's identity beside the
-  original. A newest `report` line means the implementer has finished:
+  (list your live children, chase its report); on a harness without
+  `run_in_background` (Claude Code's fork mode among them) resume it by
+  the recorded id; only if it cannot be recovered dispatch a takeover,
+  recording the takeover's identity beside the original. A newest `report` line means the implementer has finished:
   dispatch nothing, and resume at "2. Handle the report" from the report
   file and the recorded `report` line, with BASE as step 1 sets it.
   `held` with `own=1` and `merged=1` means the task is already merged and its

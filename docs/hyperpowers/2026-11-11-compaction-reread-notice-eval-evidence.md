@@ -249,3 +249,4 @@ One live smoke of the new `compaction-no-skill` scenario ran on 2026-11-12 befor
 - Plans longer than four tasks. The campaign ran one four-task plan.
 - The check of a current long-lived session's compaction output after a release, which the hook-reach assumption above still needs.
 - The field re-measure of the re-read rate, owed on or after 2026-11-18 with the cost re-scan.
+- The resume rules added after the campaign (commits eb5e7faa, 68f931eb, df16cf74, cc397588, and the 2026-11-15 wording that keeps resumes by id to harnesses without `run_in_background`). No campaign run reached them.

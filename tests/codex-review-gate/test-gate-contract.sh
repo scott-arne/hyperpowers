@@ -197,6 +197,8 @@ assert_contains "$WRITING_PLANS" "the source spec path and the plan path" \
   "writing-plans requires both source spec and plan paths"
 assert_contains "$SDD_REVIEW" "using the per-task code recipe" \
   "SDD points per-task gates at the per-task recipe"
+assert_contains "$GATE" "for SDD's per-task gate that path is SDD's fix loop (fix-loop.md), not a separate fix subagent" \
+  "the gate fix path defers to SDD's fix loop for how the implementer is reached"
 assert_contains "$SDD_FINAL" "using the final whole-branch code recipe" \
   "SDD points final gate at the final recipe"
 assert_contains "$REQUESTING_REVIEW" "using the code-review recipe" \

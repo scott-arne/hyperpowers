@@ -49,6 +49,9 @@ git -C "$REPO_ROOT" ls-files -z -- skills/ | while IFS= read -r -d '' f; do
   if [[ "$f" =~ ^skills/[^/]+/SKILL\.md$ ]]; then
     # Rename per-skill SKILL.md to INSTRUCTIONS.md
     cp "$REPO_ROOT/$f" "$STAGE/$(dirname "$f")/INSTRUCTIONS.md"
+  elif [[ "$f" == *.md ]]; then
+    # The bundle renames each SKILL.md, so a link to one is renamed with it.
+    sed -E 's#(\]\([^)]*)SKILL\.md([)#])#\1INSTRUCTIONS.md\2#g' "$REPO_ROOT/$f" > "$STAGE/$f"
   else
     cp "$REPO_ROOT/$f" "$STAGE/$f"
   fi

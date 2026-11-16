@@ -71,6 +71,13 @@ EXTRACT_DIR="$TEST_DIST/extracted"
 mkdir -p "$EXTRACT_DIR"
 unzip -q "$EXPECTED_ZIP" -d "$EXTRACT_DIR"
 
+# A link to a skill's SKILL.md must follow the rename to INSTRUCTIONS.md.
+if grep -rEl '\]\([^)]*SKILL\.md[)#]' "$EXTRACT_DIR/hyperpowers/skills" > "$TEST_DIST/skill-links.txt" 2>/dev/null; then
+  fail "bundled files still link SKILL.md: $(tr '\n' ' ' < "$TEST_DIST/skill-links.txt")"
+else
+  pass "no bundled file links a renamed SKILL.md"
+fi
+
 SKILL_MD="$EXTRACT_DIR/hyperpowers/SKILL.md"
 
 # Test 3: frontmatter has exactly name+description, name==hyperpowers (fix finding 2)

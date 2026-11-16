@@ -88,6 +88,8 @@ uv run --python 3.13 --with-requirements docs/site/requirements.txt \
 `bash tests/docs/docs-check.sh --digest <page>` prints the digest a page's
 `source-digest:` should hold after its sources change.
 
+After a version bump, run `bash tests/docs/docs-check.sh`: `vrzn` rewrites the plugin manifests, which are sources of the install, using-hyperpowers and triggering pages, so their digests must be re-taken (`--digest <page>`) before the release commit.
+
 ## Skill behavior evals
 
 Quorum is the harness. Scenarios live at `evals/scenarios/<name>/` as a

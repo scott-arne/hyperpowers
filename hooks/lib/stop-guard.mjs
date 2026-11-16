@@ -19,7 +19,26 @@ export const LIVE_JOB_STATES = new Set(['running', 'lost-unswept']);
 // under LC_ALL=C; the parity table in tests/hooks/test-sdd-stop-guard.sh
 // holds the two equal.
 export const completePattern = (n) => new RegExp(String.raw`^[ \t\v\f\r]*([-*][ \t\v\f\r]+)?(\*\*|__|\*|_)?Task ${n}: complete(\*\*|__|\*|_)?([ \t\v\f\r(.,]|$)`);
-const TASK_HEADING = /^### Task (\d+):/gm;
+// Task ids from "### Task N:" headings outside fenced blocks, read as
+// hp_plan_graph reads them (sdd-common.sh): a fence opens on a run of three or
+// more backticks or tildes and closes on a run of the same character at least
+// as long. A heading shown as an example in a fence is not a task.
+export function planTaskIds(planText) {
+  const ids = [];
+  let fence = '';
+  for (const text of planText.split('\n')) {
+    const run = text.match(/^(`{3,}|~{3,})/);
+    if (run) {
+      if (fence === '') fence = run[1];
+      else if (run[1][0] === fence[0] && run[1].length >= fence.length) fence = '';
+      continue;
+    }
+    if (fence !== '') continue;
+    const m = text.match(/^### Task (\d+):/);
+    if (m) ids.push(m[1]);
+  }
+  return [...new Set(ids)];
+}
 const HANDBACK = /^handback (\S+) (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z): /;
 const FRAGMENT = '\t#fragment';
 
@@ -184,7 +203,7 @@ export function planState({ workspace, cwd, sessionId }) {
   if (planText === null) return { plan: rel, unreadable: true };
   // Ids stay the strings the plan wrote, as sdd-state compares them: `01` and
   // `1` are two tasks, and a Number would round a long digit string.
-  const tasks = [...new Set([...planText.matchAll(TASK_HEADING)].map((x) => x[1]))];
+  const tasks = planTaskIds(planText);
   const done = tasks.filter((n) => { const re = completePattern(n); return records.some((l) => re.test(l)); }).length;
   return { plan: rel, total: tasks.length, open: tasks.length - done };
 }

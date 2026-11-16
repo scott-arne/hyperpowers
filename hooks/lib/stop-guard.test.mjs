@@ -91,6 +91,14 @@ test('planState: open and total from the plan and the ledger; the plan resolves 
   writeFileSync(join(ws, 'progress.md'), readFileSync(join(ws, 'progress.md'), 'utf8') + 'note: xTask 3: complete is prose, not a completion\n');
   assert.equal(guard.planState({ workspace: ws, cwd: e.repo, sessionId: SID }).open, 1);
 });
+test('planState: a task heading inside a fenced block is an example, not a task', () => {
+  const e = env(); const ws = workspaceFor(e); ledger(ws, e, { tasksDone: [1, 2, 3] });
+  const plan = join(e.repo, 'docs', 'plan.md');
+  writeFileSync(plan, readFileSync(plan, 'utf8')
+    + '\n````markdown\n### Task 9: an example heading\n```\n### Task 10: a shorter run does not close the fence\n````\n'
+    + '~~~\n### Task 11: a tilde fence\n~~~\n');
+  assert.deepEqual(guard.planState({ workspace: ws, cwd: e.repo, sessionId: SID }), { plan: 'docs/plan.md', open: 0, total: 3 });
+});
 test('planState: a mention of the marker inside a line is no completion', () => {
   const e = env(); const ws = workspaceFor(e);
   ledger(ws, e, { tasksDone: [1, 2], extra: ['see Task 3: complete'] });

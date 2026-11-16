@@ -189,13 +189,13 @@ Recommended setting in `~/.claude/settings.json` (the environment variable `CLAU
 
 Replaying that month of sessions, a 400K window cut cost by about 28%. A 300K or 200K window saved only 4 or 7 points more, while adding 1.5 or 2.6 times as many extra compactions as the 400K window, and each compaction drops detail.
 
-Do not set the window below about 200K. After each compaction, brainstorming re-reads its full text and subagent-driven-development reads one step file of up to about 17,000 characters, and at very small windows (the eval used 100K) a session can re-compact right after that re-read and loop.
+Do not set the window below about 200K. After each compaction, brainstorming is told to re-read its full text and subagent-driven-development is told to read one step file of up to about 17,000 characters, and at very small windows (the eval used 100K) a session can re-compact right after that re-read and loop.
 
 If you set `ENABLE_PROMPT_CACHING_1H=1`, keep it. With a five-minute cache the same replay cost about 56% more: long sessions pause for five to sixty minutes while subagents, reviews or you are busy, and every pause past five minutes rewrites the whole context.
 
 When a plan is written, run `/clear` before starting subagent-driven development. The spec and plan are on disk, so the execution session starts small.
 
-After a compaction, Claude Code re-attaches each skill the session used, cut to its first 20,000 characters. The brainstorming skill tells the agent to Read its full text after every compaction. subagent-driven-development keeps its `SKILL.md` under 19,000 characters, so it comes back whole, and the agent reads the one step file it needs. A lower window therefore does not leave either running from a cut copy. The writing-skills skill is also longer than 20,000 characters and does not yet carry that re-read paragraph.
+After a compaction, Claude Code re-attaches each skill the session used, cut to its first 20,000 characters. The brainstorming skill tells the agent to Read its full text after every compaction. subagent-driven-development keeps its `SKILL.md` under 19,000 characters, so it comes back whole, and the agent is told to read the one step file it needs. The writing-skills skill is also longer than 20,000 characters and does not yet carry that re-read paragraph.
 
 ## What's Inside
 

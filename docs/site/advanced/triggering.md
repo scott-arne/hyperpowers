@@ -1,6 +1,6 @@
 ---
 sources: skills/using-hyperpowers hooks .opencode/plugins .pi/extensions .kimi-plugin/plugin.json skills/writing-skills/SKILL.md .cursor-plugin/plugin.json .codex-plugin/plugin.json scripts/claude-skill-root.md skills/subagent-driven-development/SKILL.md skills/subagent-driven-development/setup.md skills/subagent-driven-development/task-loop.md skills/subagent-driven-development/review-and-complete.md skills/subagent-driven-development/fix-loop.md skills/subagent-driven-development/final-and-finish.md README.md tests/antigravity/test-antigravity-tools.sh RELEASE-NOTES.md docs/porting-to-a-new-harness.md docs/README.kimi.md
-source-digest: 14f03599085d
+source-digest: 57b67407031e
 ---
 # How skills trigger
 

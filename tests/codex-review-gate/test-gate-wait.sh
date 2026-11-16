@@ -151,8 +151,9 @@ r="$(FAKE_STATE="$s" CODEX_PATH="$work/absent" bash "$GW" --codex-path "$CP" A 2
 expect_rc "$r" 0 "10: --codex-path wins over CODEX_PATH"
 
 newstate; printf 'completed\n' > "$s/A"
-r="$(FAKE_STATE="$s" env -u CODEX_PATH bash "$GW" --codex-path A 2>&1; echo "rc=$?")"
+r="$(FAKE_STATE="$s" env -u CODEX_PATH bash "$GW" A --codex-path 2>&1; echo "rc=$?")"
 expect_rc "$r" 1 "10: --codex-path without a value exits 1"
+expect "$r" "--codex-path needs a value" "10: --codex-path without a value says it needs a value"
 
 newstate; printf 'completed\n' > "$s/A"
 r="$(FAKE_STATE="$s" env -u CODEX_PATH bash "$GW" --codex-path "$work/absent" A 2>&1; echo "rc=$?")"

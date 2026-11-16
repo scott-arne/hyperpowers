@@ -1,6 +1,6 @@
 ---
 sources: skills/requesting-code-review skills/subagent-driven-development/SKILL.md skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md skills/executing-plans/SKILL.md skills/receiving-code-review/SKILL.md skills/optimizing-performance/SKILL.md scripts/claude-skill-root.md
-source-digest: 3459669b883b
+source-digest: 5f8eae5c2c93
 ---
 # requesting-code-review
 

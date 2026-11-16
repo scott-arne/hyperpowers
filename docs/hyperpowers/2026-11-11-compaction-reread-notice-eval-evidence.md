@@ -190,7 +190,7 @@ The runs and tally are evals `af9879ccbb`. `tally-revision-2.txt` is the output 
 | `baseline-6181` | 10 | 10 | none | 0/10 | 10 | 49 | 4 |
 | `controller` | 10 | 10 | none | 10/10 | 0 | 126 | 11 |
 
-Every controller run dispatched four task reviews and at least one final review. Nine dispatched four implementers and p10 (`...-233f`) five. No run dispatched a fix subagent. The Gauntlet-Agent's status is `pass` in all ten.
+Every controller run dispatched four implementers, four task reviews and one final review. Three runs (p1 `...-7324`, p4 `...-3946`, p10 `...-233f`) also ran task fix rounds, 10 fix dispatches and 12 scoped re-reviews between them. Five runs (p1, p3 `...-47cd`, p4, p7 `...-c499`, p10) dispatched one final fix and one final re-review. These counts come from each dispatch's description; the `dispatches=` field of `tally-revision-2.txt` files fix rounds under `implement`, `other` and `final`. The Gauntlet-Agent's status is `pass` in all ten.
 
 ### Per compaction, controller SDD
 

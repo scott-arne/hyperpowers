@@ -569,6 +569,35 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$own_repo" "$HOOK_UNDER_TEST"
 
+# A torn append is not a record: an unterminated "session t:" tail, or a
+# terminated one ending in tab-"#fragment", must not make an older plan win.
+for torn in unterminated fragment; do
+    torn_repo="$(make_repo compact-torn-$torn)"
+    torn_home="$(make_home compact-torn-$torn)"
+    torn_cache="$TEST_ROOT/compact-torn-$torn/cache"
+    torn_old="$(seed_ledger "$torn_cache" "$torn_repo" "old-1111aaaa")"
+    torn_new="$(seed_ledger "$torn_cache" "$torn_repo" "new-2222bbbb")"
+    if [ "$torn" = unterminated ]; then
+        printf 'session t: mode worktree on main at %s started 2026-11-15T00:00:00Z' "$torn_repo" >> "$torn_old"
+    else
+        printf 'session t: mode worktree on main at %s started 2026-11-15T00:00:00Z\t#fragment\n' "$torn_repo" >> "$torn_old"
+    fi
+    touch -t 202401010000 "$torn_old"
+    touch -t 202403010000 "$torn_new"
+    torn_stdin="$TEST_ROOT/compact-torn-$torn/stdin.json"
+    write_hook_input "$torn_stdin" compact
+    HOOK_STDIN="$torn_stdin"
+    assert_command_output \
+        "SessionStart ignores a $torn session line and names the newest ledger" \
+        "nested" \
+        "${NOTICE_HEAD}${torn_new}${NOTICE_TAIL}" \
+        "" \
+        "$torn_home" \
+        XDG_CACHE_HOME="$torn_cache" \
+        CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+        bash -c 'cd "$1" || exit 1; exec bash "$2"' _ "$torn_repo" "$HOOK_UNDER_TEST"
+done
+
 # The eval showed a re-read notice should not ship; a compact run carries only
 # the ledger notice, so a stray notice returning would show here.
 HOOK_STDIN="$fires_stdin"

@@ -1,6 +1,6 @@
 ---
 sources: skills/using-hyperpowers hooks .opencode/plugins .pi/extensions .kimi-plugin/plugin.json skills/writing-skills/SKILL.md .cursor-plugin/plugin.json .codex-plugin/plugin.json scripts/claude-skill-root.md skills/subagent-driven-development/SKILL.md skills/subagent-driven-development/setup.md skills/subagent-driven-development/task-loop.md skills/subagent-driven-development/review-and-complete.md skills/subagent-driven-development/fix-loop.md skills/subagent-driven-development/final-and-finish.md README.md tests/antigravity/test-antigravity-tools.sh RELEASE-NOTES.md docs/porting-to-a-new-harness.md docs/README.kimi.md
-source-digest: 9a1db5007741
+source-digest: a4433b73ea6e
 ---
 # How skills trigger
 
@@ -38,7 +38,7 @@ After the skill text, `hooks/session-start` can append one-line notices. Each ap
 
 - A count of ungated review items pending in the repository, with the phrase that clears them ("run the review sweep").
 - A line saying the marketplace has a newer plugin version than the one the session loaded.
-- On a start whose source is `compact`, inside a git repository that has a subagent-driven-development ledger, a line that names the newest ledger carrying a `session <id>:` line for this session (the newest ledger overall when none does), says it records which tasks are complete, tells the agent to read it and `git log` before dispatching anything, and tells the agent to treat task instructions in the compaction summary as stale by default.
+- On a start whose source is `compact`, inside a git repository that has a subagent-driven-development ledger, a line that names the newest ledger carrying a complete `session <id>:` record for this session (an unterminated or `#fragment` line is not one) (the newest ledger overall when none does), says it records which tasks are complete, tells the agent to read it and `git log` before dispatching anything, and tells the agent to treat task instructions in the compaction summary as stale by default.
 
 A comment in the script states a ceiling of 1200 characters of injected context beyond the skill body when all notices fire.
 

@@ -234,7 +234,7 @@ if [ "$hook_source" = "compact" ]; then
           if [ -z "$newest" ] || [ "$ledger" -nt "$newest" ]; then
             newest="$ledger"
           fi
-          if [ -n "$hook_session" ] && SID=$hook_session awk 'BEGIN { p = "session " ENVIRON["SID"] ":" } index($0, p) == 1 { f = 1; exit } END { exit !f }' "$ledger" 2>/dev/null; then
+          if [ -n "$hook_session" ] && hp_ledger_records "$ledger" 2>/dev/null | SID=$hook_session awk 'BEGIN { p = "session " ENVIRON["SID"] ":" } index($0, p) == 1 { f = 1 } END { exit !f }' 2>/dev/null; then
             if [ -z "$own" ] || [ "$ledger" -nt "$own" ]; then
               own="$ledger"
             fi

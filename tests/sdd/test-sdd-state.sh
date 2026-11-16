@@ -615,7 +615,7 @@ git -C "$co_s2" add "plans/$(basename "$wsq")/progress.md"
 wait
 p_sha=$(sed -n 's/.*sha=\([0-9a-f]*\).*/\1/p' "$TEST_ROOT/s2.p"); q_sha=$(sed -n 's/.*sha=\([0-9a-f]*\).*/\1/p' "$TEST_ROOT/s2.q")
 if [ "$(git -C "$co_s2" rev-list --count hyperpowers/state)" -eq 3 ] && [ -n "$p_sha" ] && [ -n "$q_sha" ] && [ "$(git -C "$co_s2" show --name-only --format= "$p_sha" | grep -c .)" = 1 ] && git -C "$co_s2" show --name-only --format= "$p_sha" | grep -q "^plans/$(basename "$wsp")/" && [ "$(git -C "$co_s2" show --name-only --format= "$q_sha" | grep -c .)" = 1 ]; then pass "two concurrent snapshots of two plans both land, each with only its own directory"; else fail "two concurrent snapshots of two plans both land, each with only its own directory ($(cat "$TEST_ROOT/s2.p") / $(cat "$TEST_ROOT/s2.q"))"; fi
-# --code-repo, which SKILL.md has a controller pass to every call when the plan lives in another repository than the code: snapshot checks it against the plan line, as claim does, and otherwise does not use it. A foreign repository commits nothing.
+# --code-repo, which setup.md has a controller pass to every call when the plan lives in another repository than the code: snapshot checks it against the plan line, as claim does, and otherwise does not use it. A foreign repository commits nothing.
 mkreg snapcr; snapcr=$MR_REPO; make_repo "$TEST_ROOT/foreign-snapcr"
 co_snapcr="$STATE_ROOT/$(state_key "$snapcr")"; root_snapcr=$(git -C "$snapcr" rev-list --max-parents=0 HEAD | cut -c1-7)
 tip_snapcr=$(git -C "$co_snapcr" rev-parse hyperpowers/state)
@@ -2957,7 +2957,7 @@ git -C "$cmpa" commit -qam "a plan with one task unannotated"
 blob_cmpa=$(git -C "$cmpa" rev-parse main:docs/plan.md | cut -c1-7)
 out=$(run_state "$cmpa" complete docs/plan.md 1 --commits 1111111..2222222 --session s1 2>/dev/null); rc=$?
 if [ "$rc" -eq 2 ] && [ "$out" = "status=invalid plan=$blob_cmpa" ] && ! grep -q '^Task 1: complete' "$wscmpa/progress.md"; then pass "complete refuses a plan whose graph does not parse"; else fail "complete refuses a plan whose graph does not parse (rc=$rc: $out)"; fi
-# --code-repo, which SKILL.md has a controller pass to every call when the plan lives in another repository than the code: complete and handback check it against the plan line, as claim does, and otherwise do not use it. A foreign repository writes no line.
+# --code-repo, which setup.md has a controller pass to every call when the plan lives in another repository than the code: complete and handback check it against the plan line, as claim does, and otherwise do not use it. A foreign repository writes no line.
 mkreg cmcr; cmcr=$MR_REPO; wscmcr=$MR_WS; make_repo "$TEST_ROOT/foreign-cmcr"
 root_cmcr=$(git -C "$cmcr" rev-list --max-parents=0 HEAD | cut -c1-7)
 out=$(run_state "$cmcr" complete docs/plan.md 1 --commits 1111111..2222222 --session s1 --code-repo "$TEST_ROOT/foreign-cmcr" 2>/dev/null); rc=$?

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Emit the SDD workspace for a plan: the directory holding its ledger, briefs,
 # reports, review packages and claims. Single source of truth for task-brief,
-# review-package, sdd-state and the SKILL.md ledger guidance.
+# review-package, sdd-state and the ledger guidance in SKILL.md and its step files.
 #
 # With a plan argument the workspace lives inside the repository's state
 # checkout, a linked worktree of the orphan branch hyperpowers/state kept

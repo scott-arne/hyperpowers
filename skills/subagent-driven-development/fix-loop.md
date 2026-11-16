@@ -48,7 +48,7 @@ with the brief path, the report-file path, and the findings; the report file
 is the persistent memory either way.
 
 **Rounds 4-5 — dispatch a fresh takeover implementer on a more capable
-model** (per Model Selection in SKILL.md), with the brief path, the report-file path,
+model** (per [Model Selection](SKILL.md#model-selection)), with the brief path, the report-file path,
 the open findings, and this framing: "A prior implementer attempted this
 task [N] times; you own it now. Read the report file for what was tried." A
 loop that survives three rounds usually means the same model cannot see

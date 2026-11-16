@@ -12,7 +12,7 @@ Subagent (general-purpose):
   description: "Review Task N (spec + quality)"
   model: [MODEL — REQUIRED: choose per SKILL.md Model Selection; an omitted
          model silently inherits the session's most expensive one]
-  run_in_background: false   # Claude Code: dispatch in the foreground (SKILL.md "Waiting on subagents"); omit on harnesses without the flag
+  run_in_background: false   # Claude Code: dispatch in the foreground (task-loop.md "Waiting on subagents and long commands"); omit on harnesses without the flag
   prompt: |
     You are reviewing one task's implementation: first whether it matches its
     requirements, then whether it is well-built. This is a task-scoped gate,

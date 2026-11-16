@@ -166,7 +166,7 @@ code_repo_arg() { # <value or empty> [<ledger>] -> physical path; refuses a repo
   printf '%s\n' "$code"
 }
 # <--code-repo value or empty> <ledger>: for a subcommand that never uses the
-# code repository. SKILL.md has a controller whose plan lives in another
+# code repository. setup.md has a controller whose plan lives in another
 # repository pass --code-repo to every call, so one given is validated as
 # claim validates it, and a mistyped or wrong repository is refused rather
 # than ignored; an omitted one changes nothing. Prints the refusal's status

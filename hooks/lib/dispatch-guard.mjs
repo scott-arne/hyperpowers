@@ -1,10 +1,11 @@
 // The SDD dispatch guard, a PreToolUse hook on Claude Code. It refuses the two
 // calls that end an SDD controller's turn while a subagent works: an Agent
 // dispatch with run_in_background true, and a SendMessage resume of one of the
-// session's own subagents. The skill forbids both outside fork mode, in the
-// part of SKILL.md Claude Code re-attaches whole after a compaction; a
-// controller can still make either call, and an editor such as Zed then shows
-// the session idle for as long as the background subagent runs. The design is
+// session's own subagents. The skill forbids both outside fork mode: SKILL.md,
+// which Claude Code re-attaches whole after a compaction, forbids the
+// background dispatch, and fix-loop.md the SendMessage resume; a controller can
+// still make either call, and an editor such as Zed then shows the session idle
+// for as long as the background subagent runs. The design is
 // docs/hyperpowers/specs/2026-11-10-sdd-dispatch-guard-design.md.
 //
 // The hook refuses or stays silent. A PreToolUse allow would skip the user's

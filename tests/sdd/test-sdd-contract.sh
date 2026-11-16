@@ -608,10 +608,12 @@ assert_contains "$SDD" 'never start it with a trailing `&`, `nohup`, `setsid`, `
   "untracked launches are forbidden"
 assert_contains "$SDD" 'subagents with `run_in_background: false`' \
   "Claude Code dispatches SDD subagents in the foreground"
-for template in "$IMPL" "$REVW" "$REREVW" "$FIXP" "$CODEREVW"; do
-  assert_contains "$template" 'run_in_background: false # Claude Code: dispatch in the foreground (SKILL.md "Waiting on subagents"); omit on harnesses without the flag' \
+for template in "$IMPL" "$REVW" "$REREVW" "$FIXP"; do
+  assert_contains "$template" 'run_in_background: false # Claude Code: dispatch in the foreground (task-loop.md "Waiting on subagents and long commands"); omit on harnesses without the flag' \
     "the $(basename "$template") dispatch block carries the foreground flag"
 done
+assert_contains "$CODEREVW" 'run_in_background: false # Claude Code: dispatch in the foreground (subagent-driven-development task-loop.md "Waiting on subagents and long commands"); omit on harnesses without the flag' \
+  "the code-reviewer.md dispatch block carries the foreground flag"
 assert_contains "$SDD_TASK_LOOP" "capped at the harness's maximum background lifetime (7200000 ms on Claude Code)" \
   "the watch budget is capped at the background lifetime"
 assert_contains "$SDD_RATIONALIZATIONS" "I've said what's next; I'll pick it up on the next turn" \
